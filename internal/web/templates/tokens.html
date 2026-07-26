@@ -1,0 +1,134 @@
+{{define "title"}}{{.T "tokens.tab"}}{{end}}
+{{define "content"}}
+<div class="page-head">
+  <p class="eyebrow">{{.T "tokens.eyebrow"}}</p>
+  <h1 class="h1">{{.T "tokens.heading"}}</h1>
+  <p class="lede">{{.T "tokens.lede"}}</p>
+</div>
+
+<div class="grid-2">
+  <!-- issue form -->
+  <section>
+    <div class="card">
+      <div class="card__head"><h2 class="h3">{{.T "tokens.issue_heading"}}</h2></div>
+      <form method="post" action="/tokens">
+        <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+        <div class="field">
+          <label for="t-agent">{{.T "tokens.agent_name"}}</label>
+          <input class="input mono" id="t-agent" name="actor" type="text" required placeholder="e.g. claude-code@laptop">
+          <span class="help">{{.T "tokens.agent_name_help"}}</span>
+        </div>
+        <div class="field">
+          <label for="t-label">{{.T "tokens.label"}}</label>
+          <input class="input" id="t-label" name="label" type="text" placeholder="note">
+          <span class="help">{{.T "tokens.label_help"}}</span>
+        </div>
+        <fieldset style="border:0;padding:0;margin:0">
+          <legend class="label" style="margin-bottom:var(--sp-2)">{{.T "tokens.scopes"}}</legend>
+          <div style="display:grid;gap:var(--sp-2)">
+          {{range .Data.Scopes}}
+            <label class="check"><input type="checkbox" name="scope" value="{{.}}" checked><span class="check__text"><b>{{.}}</b></span></label>
+          {{end}}
+            <label class="check" style="opacity:.65;cursor:not-allowed"><input type="checkbox" disabled><span class="check__text"><b>curate</b><span>{{$.T "tokens.scope_curate_note"}} <code>curate</code></span></span></label>
+          </div>
+        </fieldset>
+        <button class="btn btn--primary" type="submit" style="margin-top:var(--sp-4)">{{.T "tokens.issue_submit"}}</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- one-time secret reveal -->
+  {{if .Data.NewSecret}}
+  <section>
+    <div class="reveal">
+      <div class="reveal__head"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{.T "tokens.reveal_head"}}</div>
+      <p class="reveal__note">{{.T "tokens.reveal_note"}}</p>
+      <div class="reveal__rows">
+        <div class="copyrow">
+          <span class="copyrow__label">{{.T "tokens.reveal_token_for" .Data.NewActor}}</span>
+          <div class="copyrow__box">
+            <span class="copyrow__code" id="tok-secret">{{.Data.NewSecret}}</span>
+            <button class="copyrow__btn" type="button" data-action="copy" data-copy-target="#tok-secret"><span class="idle"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M5 15V6a2 2 0 0 1 2-2h9" stroke="currentColor" stroke-width="1.8"/></svg> {{.T "tokens.copy"}}</span><span class="done"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{.T "tokens.copied"}}</span></button>
+          </div>
+        </div>
+        <div class="copyrow">
+          <span class="copyrow__label">{{.T "tokens.reveal_register"}}</span>
+          <div class="copyrow__box">
+            <span class="copyrow__code" id="tok-register">claude mcp add --transport http ken '{{.Data.MCPURL}}' --header "Authorization: Bearer {{.Data.NewSecret}}"</span>
+            <button class="copyrow__btn" type="button" data-action="copy" data-copy-target="#tok-register"><span class="idle"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M5 15V6a2 2 0 0 1 2-2h9" stroke="currentColor" stroke-width="1.8"/></svg> {{.T "tokens.copy"}}</span><span class="done"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{.T "tokens.copied"}}</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  {{end}}
+</div>
+
+<!-- existing tokens -->
+<section style="margin-top:var(--sp-7)">
+  <div class="section-head"><h2 style="font-size:1.2rem">{{.T "tokens.existing_heading"}}</h2></div>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table class="data">
+        <thead><tr><th>{{.T "tokens.col_agent"}}</th><th>{{.T "tokens.col_scopes"}}</th><th>{{.T "tokens.col_label"}}</th><th>{{.T "tokens.col_last_used"}}</th><th>{{.T "tokens.col_status"}}</th><th></th></tr></thead>
+        <tbody>
+        {{range .Data.Tokens}}
+          <tr{{if .RevokedAt}} style="opacity:.6"{{end}}>
+            <td class="cell-title"><b class="mono">{{.ActorName}}</b> <span class="badge badge--plain badge--sm">{{$.Enum "actorkind" .Kind}}</span><span class="slug">{{.TokenID}}</span></td>
+            <td class="mono">{{.Scopes}}</td>
+            <td class="muted">{{.Label}}</td>
+            <td class="mono muted" style="font-size:.82rem">{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}{{$.T "tokens.never"}}{{end}}</td>
+            <td>{{if .RevokedAt}}<span class="badge badge--danger badge--sm">{{$.T "tokens.status_revoked"}}</span>{{else}}<span class="badge badge--success badge--sm">{{$.T "tokens.status_active"}}</span>{{end}}</td>
+            <td>
+              {{if not .RevokedAt}}
+              <form class="inline" method="post" action="/tokens/{{.TokenID}}/revoke" data-confirm="{{$.T "tokens.revoke_confirm"}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <button class="btn btn--danger btn--sm" type="submit">{{$.T "tokens.revoke"}}</button>
+              </form>
+              {{end}}
+            </td>
+          </tr>
+        {{else}}
+          <tr><td colspan="6" class="muted">{{$.T "tokens.empty"}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+{{if .Data.OAuthEnabled}}
+<!-- connected apps (OAuth) -->
+<section style="margin-top:var(--sp-7)">
+  <div class="section-head">
+    <h2 style="font-size:1.2rem">{{.T "tokens.connected_heading"}}</h2>
+    <span class="muted" style="font-size:.85rem">{{.T "tokens.connected_sub"}}</span>
+  </div>
+  <div class="table-wrap">
+    <div class="table-scroll">
+      <table class="data">
+        <thead><tr><th>{{.T "tokens.col_application"}}</th><th>{{.T "tokens.col_approved_by"}}</th><th class="num">{{.T "tokens.col_active_tokens"}}</th><th>{{.T "tokens.col_connected"}}</th><th></th></tr></thead>
+        <tbody>
+        {{range .Data.Connectors}}
+          <tr>
+            <td class="cell-title"><b>{{.ClientName}}</b></td>
+            <td class="mono muted" style="font-size:.85rem">{{.ApprovedBy}}</td>
+            <td class="num mono">{{.ActiveTokens}}</td>
+            <td class="mono muted" style="font-size:.82rem">{{shortdate .CreatedAt}}</td>
+            <td>
+              <form class="inline" method="post" action="/connectors/{{.ID}}/revoke" data-confirm="{{$.T "tokens.connector_revoke_confirm"}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <button class="btn btn--danger btn--sm" type="submit">{{$.T "tokens.revoke_access"}}</button>
+              </form>
+            </td>
+          </tr>
+        {{else}}
+          <tr><td colspan="5" class="muted">{{$.T "tokens.connected_empty"}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{{end}}
+{{end}}

@@ -1,0 +1,23 @@
+# Litestream — continuous replication of the ken SQLite database to S3-compatible
+# object storage (backup tier 1, ~1s RPO). Install litestream separately and run
+# it as its own service (`litestream replicate -config /etc/ken/litestream.yml`).
+#
+# Replace the placeholders. This file holds secrets — keep it 0600, outside the
+# code install dir (e.g. /etc/ken/). See docs/BACKUP.md.
+dbs:
+  - path: /opt/ken/data/ken.db
+    replicas:
+      - name: s3
+        type: s3
+        bucket: YOUR_BUCKET
+        path: ken/ken.db
+        # Backblaze B2 / Cloudflare R2 / MinIO / AWS — set endpoint + region to match.
+        endpoint: https://s3.us-west-002.backblazeb2.com
+        region: us-west-002
+        access-key-id: YOUR_KEY_ID
+        secret-access-key: YOUR_SECRET
+        # Optional: age-encrypt the replicated data at rest (litestream >= 0.5):
+        # age:
+        #   recipients: [age1yourpublickey...]
+        retention: 168h        # 7 days of WAL history
+        snapshot-interval: 24h

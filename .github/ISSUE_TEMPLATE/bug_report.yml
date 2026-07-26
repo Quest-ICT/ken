@@ -1,0 +1,41 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do **not** report security vulnerabilities here — use
+        [private vulnerability reporting](../security/policy) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `ken version`.
+      placeholder: Ken 1.1.0 linux/amd64
+    validations: { required: true }
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations: { required: true }
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        From `journalctl -u ken` or the console. Please redact tokens, hostnames and
+        anything else you would rather not publish — it is a public issue tracker.
+      render: text
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: Deployment
+      description: |
+        Whatever is relevant: TLS mode (off/acme/file), behind a reverse proxy?,
+        OAuth enabled?, embeddings enabled?, which MCP client.

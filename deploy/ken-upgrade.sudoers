@@ -1,0 +1,24 @@
+# Ken remote upgrade — let the `YOUR_DEPLOY_USER` account run ONLY the ken-upgrade wrapper
+# as root, without a password. Nothing else gets passwordless sudo.
+#
+# TEMPLATE: replace YOUR_DEPLOY_USER (below and on the rule line) with the
+# unprivileged account that will run upgrades over SSH. Do NOT install this file
+# unedited — the literal name would create a rule for an account you did not choose.
+#
+# Install:
+#   install -o root -g root -m 0440 ken-upgrade.sudoers /etc/sudoers.d/ken-upgrade
+#   visudo -cf /etc/sudoers.d/ken-upgrade      # must print "parsed OK"
+#
+# The wrapper (/usr/local/sbin/ken-upgrade) is the security boundary: it must be
+# root-owned and root-only-writable, and it validates every argument against a
+# strict allowlist. That is why this rule allows arguments (no trailing "") — the
+# WRAPPER, not sudoers, enforces the flag allowlist. Review scripts/ken-upgrade.
+#
+# Strict no-parameters variant instead: append  ""  to the command (upgrades to
+# latest only, refuses all arguments):
+#   YOUR_DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/ken-upgrade ""
+#
+# If (and ONLY if) a global `Defaults requiretty` is set, also uncomment:
+# Defaults!/usr/local/sbin/ken-upgrade !requiretty
+
+YOUR_DEPLOY_USER ALL=(root) NOPASSWD: /usr/local/sbin/ken-upgrade

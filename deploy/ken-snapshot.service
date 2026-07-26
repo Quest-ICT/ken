@@ -1,0 +1,17 @@
+[Unit]
+Description=Ken nightly encrypted snapshot
+
+[Service]
+Type=oneshot
+User=ken
+Group=ken
+Environment=KEN_HOME=/opt/ken
+Environment=KEN_DB=/opt/ken/data/ken.db
+# Recommended: an age recipient so the snapshot is encrypted non-interactively.
+# Environment=KEN_AGE_RECIPIENT=age1yourpublickey...
+ExecStart=/opt/ken/scripts/ken-snapshot.sh
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/ken/data /opt/ken/backups

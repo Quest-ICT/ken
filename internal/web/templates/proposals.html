@@ -1,0 +1,41 @@
+{{define "title"}}{{.T "proposals.tab"}}{{end}}
+{{define "content"}}
+<div class="page-head">
+  <p class="eyebrow">{{.T "proposals.eyebrow"}}</p>
+  <h1 class="h1">{{.T "proposals.heading"}}</h1>
+  <p class="lede">{{.T "proposals.lede"}}</p>
+</div>
+
+{{if .Data.Proposals}}
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr><th>{{.T "proposals.col_entry"}}</th><th>{{.T "proposals.col_kind"}}</th><th>{{.T "proposals.col_language"}}</th><th class="num">{{.T "proposals.col_proposals"}}</th><th class="num">{{.T "proposals.col_latest_rev"}}</th><th>{{.T "proposals.col_confidence"}}</th><th>{{.T "proposals.col_change_note"}}</th><th></th></tr>
+      </thead>
+      <tbody>
+        {{range .Data.Proposals}}
+        <tr>
+          <td class="cell-title"><a href="/entry/{{.Slug}}">{{.Title}}</a><span class="slug">{{.Slug}}</span></td>
+          <td><span class="badge badge--plain badge--sm">{{$.Enum "kind" .Kind}}</span></td>
+          <td>{{if .LatestLang}}<span class="badge badge--sm {{if .Foreign}}badge--warn{{else}}badge--plain{{end}}"{{if .Foreign}} title="{{$.T "proposals.foreign_hint"}}"{{end}}>{{.LatestLang}}</span>{{end}}</td>
+          <td class="num mono">{{.NProposals}}</td>
+          <td class="num mono">{{.LatestRev}}</td>
+          <td><span class="score">{{printf "%.2f" .LatestConfidence}} <span class="score__bar"><span class="score__fill" style="width:calc({{.LatestConfidence}} * 100%)"></span></span></span></td>
+          <td class="cell-sum">{{.LatestChangeNote}}</td>
+          <td><a class="btn btn--ghost btn--sm" href="/entry/{{.Slug}}">{{$.T "proposals.review"}}</a></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{else}}
+<div class="empty">
+  <span class="empty__icon"><svg viewBox="0 0 24 24" fill="none"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+  <h3>{{.T "proposals.empty_heading"}}</h3>
+  <p>{{.T "proposals.empty_body"}}</p>
+  <a class="btn btn--ghost" href="/browse">{{.T "proposals.browse_library"}}</a>
+</div>
+{{end}}
+{{end}}

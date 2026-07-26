@@ -1,0 +1,60 @@
+# Prometheus alerting rules for Ken. Load via `rule_files:` in prometheus.yml.
+# Assumes the scrape job is named "ken" (see monitoring/README.md).
+groups:
+  - name: ken
+    rules:
+      - alert: KenInstanceDown
+        expr: up{job="ken"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ken is down (instance {{ $labels.instance }})"
+          description: "Prometheus has been unable to scrape Ken for 2 minutes."
+
+      - alert: KenHighServerErrorRate
+        expr: >-
+          sum(rate(ken_http_requests_total{surface="web",outcome="server_error"}[5m]))
+          / clamp_min(sum(rate(ken_http_requests_total{surface="web"}[5m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ken web 5xx rate above 5%"
+          description: "{{ $value | humanizePercentage }} of web requests returned 5xx over the last 5m."
+
+      - alert: KenRateLimitBlocking
+        expr: increase(ken_ratelimit_blocked_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "Ken auto-blocked an abusive IP"
+          description: "{{ $value }} requests were refused (403) from auto-blocked IPs in the last 15m."
+
+      - alert: KenProposalsBacklog
+        expr: ken_kb_proposals_pending > 25
+        for: 24h
+        labels:
+          severity: info
+        annotations:
+          summary: "Ken proposal queue is backing up"
+          description: "{{ $value }} proposals have awaited human promotion for over 24h — review the queue."
+
+      - alert: KenEmbeddingBackfillLag
+        expr: (ken_kb_embeddable_versions - ken_kb_embeddings) > 50
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Ken embedding backfill is lagging"
+          description: "{{ $value }} versions lack an embedding — run `ken embed backfill`. (Ignore if embeddings are disabled.)"
+
+      - alert: KenHighHeap
+        expr: ken_memory_heap_bytes > 512 * 1024 * 1024
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ken heap above 512 MiB"
+          description: "Heap in use is {{ $value | humanize1024 }}B for 15m."

@@ -1,0 +1,46 @@
+# Compiled binary / build output
+/ken
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Local database, WAL sidecars, snapshots, backups
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+/data/
+/backups/
+
+# Config with secrets (real config lives outside the repo / under external/)
+.env
+*.local.yml
+*.local.yaml
+config.local.*
+
+# Runtime secrets — the dedup HMAC key is written next to the DB; it lands under
+# /data/ by default (ignored above) but could sit elsewhere with a custom DB path.
+# Ignore it (and any encrypted snapshot) regardless of location. NOTE: *.key is
+# deliberately NOT blanket-ignored — it would silently swallow a contributor's TLS
+# test fixtures; the negation below keeps testdata usable.
+dedup.key
+*.key
+!**/testdata/*.key
+*.age
+
+# Design handoffs — referenced while porting the UI into the templates; the ported
+# HTML/CSS/JS in internal/web is the source of record.
+Web-UI-handoff.zip
+*-handoff.zip
+
+# Agent/tool working directory — local configuration, never part of a release.
+.claude/
+
+# OS / editor cruft
+.DS_Store
+*~
+.idea/
+.vscode/

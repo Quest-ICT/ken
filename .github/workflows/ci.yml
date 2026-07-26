@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The hygiene gate compares the newest CHANGELOG release against the tags,
+          # so it needs them; the default checkout is shallow and tagless.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal ./migrations)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on: $unformatted"
+            exit 1
+          fi
+
+      # Ken is pure Go (its SQLite is a WASM build), so CGO stays off everywhere.
+      - name: vet
+        run: go vet ./...
+        env: { CGO_ENABLED: "0" }
+
+      - name: build
+        run: go build ./...
+        env: { CGO_ENABLED: "0" }
+
+      - name: test
+        run: go test ./...
+        env: { CGO_ENABLED: "0" }
+
+      - name: public hygiene gate
+        run: sh scripts/check-public-hygiene.sh

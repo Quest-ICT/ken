@@ -1,0 +1,167 @@
+{{define "title"}}{{with .Data.Entry}}{{.Title}}{{end}}{{end}}
+{{define "content"}}
+<a class="quiet-link" href="/browse" style="margin-bottom:var(--sp-4)"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{.T "entry.back"}}</a>
+
+{{with .Data.Entry}}
+<div class="entry-head">
+  <div class="meta-row">
+    <span class="badge badge--plain">{{$.Enum "kind" .Kind}}</span>
+    <span class="badge badge--plain">{{$.Enum "lifecycle" .Lifecycle}}</span>
+    <span class="badge badge--plain">{{$.Enum "staleness" .Staleness}}</span>
+    <span class="slug" style="margin-inline-start:auto">{{.Slug}}</span>
+  </div>
+  <h1 class="h1">{{.Title}}</h1>
+  <p class="entry-summary">{{.Summary}}</p>
+</div>
+
+{{if .HasProvisional}}
+<div class="pending-callout">
+  <span class="badge badge--accent">{{$.T "entry.pending_badge"}}</span>
+  <div class="txt"><b>{{$.T "entry.pending_body"}}</b></div>
+  <a class="btn btn--primary" href="#review">{{$.T "entry.review_proposal"}}</a>
+</div>
+{{end}}
+
+<div class="grid-2">
+  <article class="entry-body">
+    {{with .Head}}
+    <div class="entry-section">
+      <h3><span class="eyebrow">{{$.T "entry.problem"}}</span></h3>
+      <div class="body">{{.Problem}}</div>
+    </div>
+    <div class="entry-section">
+      <h3><span class="eyebrow">{{$.T "entry.solution"}}</span></h3>
+      <div class="body">{{.Solution}}</div>
+    </div>
+    <div class="entry-section">
+      <h3><span class="eyebrow">{{$.T "entry.rationale"}}</span></h3>
+      <div class="body">{{.Rationale}}</div>
+    </div>
+    {{if .Caveats}}
+    <div class="entry-section">
+      <h3><span class="eyebrow">{{$.T "entry.caveats"}}</span></h3>
+      <div class="body">{{.Caveats}}</div>
+    </div>
+    {{end}}
+    {{range $i, $c := .Code}}
+    <div class="codeblock">
+      <div class="codeblock__head">
+        <span class="codeblock__lang">{{$.T "entry.code"}}</span>
+        <button class="copyrow__btn" type="button" data-action="copy" data-copy-target="#code-{{$i}}" style="border:0;background:none">
+          <span class="idle"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M5 15V6a2 2 0 0 1 2-2h9" stroke="currentColor" stroke-width="1.8"/></svg> {{$.T "entry.copy"}}</span>
+          <span class="done"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{$.T "entry.copied"}}</span>
+        </button>
+      </div>
+      <pre><code id="code-{{$i}}">{{$c.Snippet}}</code></pre>
+    </div>
+    {{end}}
+    {{else}}
+    <p class="muted">{{$.T "entry.no_content"}}</p>
+    {{end}}
+  </article>
+
+  <aside class="toc-aside">
+    <div class="card">
+      <div class="card__head"><h3 class="h3">{{$.T "entry.about_heading"}}</h3></div>
+      <ul style="list-style:none;padding:0;display:grid;gap:var(--sp-2);font-size:.9rem">
+        <li style="display:flex;gap:var(--sp-3)"><span class="muted">{{$.T "entry.kind_label"}}</span><span class="mono" style="margin-inline-start:auto">{{$.Enum "kind" .Kind}}</span></li>
+        <li style="display:flex;gap:var(--sp-3)"><span class="muted">{{$.T "entry.lifecycle_label"}}</span><span class="mono" style="margin-inline-start:auto">{{$.Enum "lifecycle" .Lifecycle}}</span></li>
+        <li style="display:flex;gap:var(--sp-3)"><span class="muted">{{$.T "entry.staleness_label"}}</span><span class="mono" style="margin-inline-start:auto">{{$.Enum "staleness" .Staleness}}</span></li>
+        <li style="display:flex;gap:var(--sp-3)"><span class="muted">{{$.T "entry.curated_head_label"}}</span><span class="mono" style="margin-inline-start:auto">{{.CuratedRev}}</span></li>
+        <li style="display:flex;gap:var(--sp-3)"><span class="muted">{{$.T "entry.uses_label"}}</span><span class="mono" style="margin-inline-start:auto">{{.UseCount}}</span></li>
+      </ul>
+    </div>
+    {{if .Tags}}
+    <div class="card">
+      <div class="card__head"><h3 class="h3">{{$.T "entry.signals_heading"}}</h3></div>
+      <div class="chip-row"><span class="chip-label">{{$.T "entry.tags_label"}}</span>{{range .Tags}}<span class="chip">{{.}}</span> {{end}}</div>
+    </div>
+    {{end}}
+  </aside>
+</div>
+{{end}}
+
+{{with .Data.Review}}
+<section id="review" style="margin-top:var(--sp-8)">
+  <div class="section-head">
+    <h2 style="font-size:1.35rem">{{$.T "entry.review_heading"}}</h2>
+    <span class="badge badge--accent">rev {{.ProposalRev}} · {{$.Enum "state" .ProposalState}}</span>
+  </div>
+  <p class="muted" style="max-width:70ch;margin-bottom:var(--sp-5)">{{$.T "entry.review_lede"}}</p>
+
+  {{if .ChangeNote}}<p><strong>{{$.T "entry.change_note_label"}}</strong> {{.ChangeNote}}</p>{{end}}
+
+  <div class="review__col review__col--proposed proposed-full">
+    <div class="review__banner review__banner--proposed"><span class="badge badge--accent badge--sm">rev {{.ProposalRev}}</span> <span style="text-transform:none;letter-spacing:0">{{$.Enum "state" .ProposalState}}</span></div>
+    <div class="review__content">
+      {{if .HasCurated}}
+      <p class="muted">{{$.T "entry.curated_shown_above" .CuratedRev}}</p>
+      {{with .Proposal}}
+      <div class="entry-section">
+        <h3><span class="eyebrow">{{$.T "entry.problem"}}</span></h3>
+        <div class="body">{{.Problem}}</div>
+      </div>
+      <div class="entry-section">
+        <h3><span class="eyebrow">{{$.T "entry.solution"}}</span></h3>
+        <div class="body">{{.Solution}}</div>
+      </div>
+      <div class="entry-section">
+        <h3><span class="eyebrow">{{$.T "entry.rationale"}}</span></h3>
+        <div class="body">{{.Rationale}}</div>
+      </div>
+      {{if .Caveats}}
+      <div class="entry-section">
+        <h3><span class="eyebrow">{{$.T "entry.caveats"}}</span></h3>
+        <div class="body">{{.Caveats}}</div>
+      </div>
+      {{end}}
+      {{range .Code}}<pre><code>{{.Snippet}}</code></pre>{{end}}
+      {{end}}
+      {{else}}
+      <p class="muted">{{$.T "entry.brand_new"}}</p>
+      {{end}}
+    </div>
+    {{if eq .ProposalState "proposed"}}
+    <div class="review__actions">
+      <form class="inline" method="post" action="/proposals/{{.ProposalVID}}/promote"{{if and .HasCurated (lt .ProposalRev .CuratedRev)}} data-confirm="{{$.T "entry.promote_older_confirm" .ProposalRev .CuratedRev}}"{{end}}>
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="slug" value="{{.Slug}}">
+        <button class="btn btn--primary" type="submit" title="{{$.T "entry.promote_title"}}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg> {{$.T "entry.promote"}}</button>
+      </form>
+      <form class="inline" method="post" action="/proposals/{{.ProposalVID}}/reject" data-confirm="{{$.T "entry.reject_confirm"}}">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}"><input type="hidden" name="slug" value="{{.Slug}}">
+        <button class="btn btn--danger" type="submit" title="{{$.T "entry.reject_title"}}">{{$.T "entry.reject"}}</button>
+      </form>
+    </div>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+<section id="history" style="margin-top:var(--sp-8)">
+  <div class="section-head"><h2 style="font-size:1.35rem">{{.T "entry.history_heading"}}</h2><span class="muted mono" style="font-size:.82rem">{{.T "entry.append_only"}}</span></div>
+  <div class="card">
+    <ol class="rail">
+      {{range .Data.History}}
+      <li class="rail__item" data-node="{{.State}}"{{if eq .State "curated"}} data-head="true"{{end}}>
+        <span class="rail__node" aria-hidden="true">{{if eq .State "curated"}}<svg viewBox="0 0 24 24" fill="none"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{else if eq .State "rejected"}}<svg viewBox="0 0 24 24" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>{{end}}</span>
+        <div class="rail__body">
+          <div class="rail__row"><span class="revno">rev {{.RevNo}}</span> <span class="badge badge--sm{{if eq .State "proposed"}} badge--accent{{else if eq .State "curated"}} badge--success{{else if eq .State "rejected"}} badge--danger badge--strike{{end}}">{{$.Enum "state" .State}}</span> <span class="rail__title">{{.ChangeNote}}</span></div>
+          <div class="rail__meta">{{$.T "entry.by"}} <span class="mono">{{.AuthorKind}}</span> <span class="dot">·</span> {{shortdate .CreatedAt}}</div>
+          <div class="rail__actions">
+            {{if eq .State "proposed"}}<a class="btn btn--primary btn--sm" href="#review">{{$.T "entry.review"}}</a>{{end}}
+            {{if or (eq .State "superseded") (eq .State "rejected") (eq .State "withdrawn")}}
+            <form class="inline" method="post" action="/entry/{{$.Data.Entry.Slug}}/revert/{{.VersionID}}" data-confirm="{{if and $.Data.Entry.Head (lt .RevNo $.Data.Entry.Head.RevNo)}}{{$.T "entry.revert_confirm_older" .RevNo $.Data.Entry.Head.RevNo}}{{else}}{{$.T "entry.revert_confirm" .RevNo}}{{end}}">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <button class="quiet-link" type="submit" title="{{$.T "entry.revert_title"}}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 8M20 4v4h-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> {{$.T "entry.revert"}}</button>
+            </form>
+            {{end}}
+          </div>
+        </div>
+      </li>
+      {{end}}
+    </ol>
+  </div>
+</section>
+
+<p style="margin-top:var(--sp-6)"><a class="quiet-link" href="/proposals">{{.T "entry.proposal_queue_link"}}</a> · <a class="quiet-link" href="/">{{.T "entry.search_link"}}</a></p>
+{{end}}

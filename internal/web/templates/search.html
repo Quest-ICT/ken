@@ -1,0 +1,51 @@
+{{define "title"}}{{.T "search.tab"}}{{end}}
+{{define "content"}}
+<div class="page-head">
+  <p class="eyebrow">{{.T "search.eyebrow"}}</p>
+  <h1 class="h1">{{.T "search.heading"}}</h1>
+</div>
+
+<form class="searchbar" action="/search" method="get" role="search">
+  <div class="input-affix">
+    <span class="search-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+    <label class="visually-hidden" for="q">{{.T "search.query_label"}}</label>
+    <input class="input" id="q" name="q" type="search" value="{{.Data.Query}}" placeholder="{{.T "search.query_placeholder"}}" autocomplete="off" autofocus>
+  </div>
+  <label class="visually-hidden" for="scope">{{.T "search.scope_label"}}</label>
+  <select class="select" id="scope" name="scope" aria-label="{{.T "search.scope_label"}}">
+    <option value="all"{{if eq .Data.Scope "all"}} selected{{end}}>{{.T "search.scope_all"}}</option>
+    <option value="curated"{{if eq .Data.Scope "curated"}} selected{{end}}>{{.T "search.scope_curated"}}</option>
+    <option value="proposals"{{if eq .Data.Scope "proposals"}} selected{{end}}>{{.T "search.scope_proposals"}}</option>
+    <option value="history"{{if eq .Data.Scope "history"}} selected{{end}}>{{.T "search.scope_history"}}</option>
+  </select>
+  <button class="btn btn--primary" type="submit">{{.T "search.submit"}}</button>
+</form>
+
+<p class="muted" style="margin-top:var(--sp-3)">{{.T "search.model_note"}}</p>
+
+{{if .Data.Query}}
+{{if not .Data.Results}}
+<div class="empty" style="margin-top:var(--sp-6)">
+  <span class="empty__icon"><svg viewBox="0 0 24 24" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+  <h3>{{.T "search.no_matches_heading"}}</h3>
+  <p>{{.T "search.no_matches_body"}} “<span class="mono">{{.Data.Query}}</span>” · <b>{{.Data.Scope}}</b></p>
+</div>
+{{else}}
+<p class="result-count">{{.T "search.results_lede"}} “<b>{{.Data.Query}}</b>” · {{.Data.Scope}}</p>
+<ul class="result-list">
+{{range .Data.Results}}
+  <li class="result">
+    <div class="result__top">
+      <h3><a href="/entry/{{.Slug}}">{{.Title}}</a></h3>
+      <span class="badge badge--plain badge--sm">{{$.Enum "kind" .Kind}}</span>
+      {{if ne .Staleness "fresh"}}<span class="badge badge--warn badge--sm">{{$.Enum "staleness" .Staleness}}</span>{{end}}
+      {{if .HasProvisional}}<span class="badge badge--accent badge--sm">{{$.T "search.pending_proposal"}}</span>{{end}}
+    </div>
+    <p class="result__sum">{{.Summary}}</p>
+    <div class="result__meta"><span class="slug">{{.Slug}}</span><span>{{$.T "search.maturity_label"}} · {{.Maturity}}</span><span class="score">{{$.T "search.score_label"}} <span class="score__bar"><span class="score__fill" style="width:calc({{printf "%.3f" .Score}} * 100%)"></span></span> {{printf "%.3f" .Score}}</span></div>
+  </li>
+{{end}}
+</ul>
+{{end}}
+{{end}}
+{{end}}

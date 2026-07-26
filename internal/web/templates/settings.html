@@ -1,0 +1,65 @@
+{{define "title"}}{{.T "settings.tab"}}{{end}}
+{{define "content"}}
+<div class="page-head">
+  <p class="eyebrow">{{.T "settings.eyebrow"}}</p>
+  <h1 class="h1">{{.T "settings.heading"}}</h1>
+  <p class="lede">{{.T "settings.lede"}}</p>
+</div>
+
+{{if .Data.Errors}}
+<div class="flasharea" aria-live="polite">
+  <div class="flash flash--danger" role="alert">
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    <div class="flash__body">
+      <strong>{{.T "settings.errors_heading"}}</strong>
+      <ul>{{range .Data.Errors}}<li>{{.}}</li>{{end}}</ul>
+    </div>
+  </div>
+</div>
+{{end}}
+
+<nav class="settings-nav" aria-label="{{.T "settings.sections_label"}}">
+  {{range $i, $g := .Data.Groups}}<a href="#group-{{$i}}">{{$g.Name}}</a>{{end}}
+</nav>
+
+<form action="/settings" method="post">
+  <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+  {{range $i, $g := .Data.Groups}}
+  <div class="card settings-group" id="group-{{$i}}">
+    <div class="settings-group__head"><h2 class="h3">{{$g.Name}}</h2></div>
+    <div class="field-grid">
+      {{range $g.Fields}}
+        {{if eq .Type "bool"}}
+        <label class="check">
+          <input type="checkbox" name="{{.Key}}" {{if .Checked}}checked{{end}}>
+          <span class="check__text">
+            <b>{{.Label}}</b>
+            {{if .Help}}<span>{{.Help}}</span>{{end}}
+            {{if and (not .Live) (not .ReadOnly)}}<span>· {{$.T "settings.restart_to_apply"}}</span>{{end}}
+          </span>
+        </label>
+        {{else}}
+        <div class="field">
+          <label>{{.Label}}</label>
+          {{if .ReadOnly}}
+            <div><code class="mono">{{if .Value}}{{.Value}}{{else}}—{{end}}</code> <span class="muted">· {{$.T "settings.restart_to_change"}}</span></div>
+          {{else if eq .Type "int"}}
+            <input class="input mono" type="number" name="{{.Key}}" value="{{.Value}}" style="max-width:12rem">
+          {{else}}
+            <input class="input mono" type="text" name="{{.Key}}" value="{{.Value}}">
+          {{end}}
+          {{if .Help}}<span class="help">{{.Help}}</span>{{end}}
+          {{if and (not .Live) (not .ReadOnly)}}<span class="help">· {{$.T "settings.restart_to_apply"}}</span>{{end}}
+        </div>
+        {{end}}
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
+  <div class="save-bar">
+    <button class="btn btn--ghost" type="reset">{{.T "settings.discard"}}</button>
+    <button class="btn btn--primary" type="submit">{{.T "settings.save"}}</button>
+  </div>
+</form>
+{{end}}

@@ -1,0 +1,63 @@
+{{define "title"}}{{.T "consent.tab"}}{{end}}
+{{define "content"}}
+<div class="auth-card" style="max-width:520px">
+  <div class="auth-head">
+    <span class="brand__mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9.25" stroke="currentColor" stroke-width="1.5"/><path d="M12 2.4v1.9M12 19.7v1.9M2.4 12h1.9M19.7 12h1.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 4.6 14.3 12 12 12Z" fill="currentColor"/><path d="M9.7 12 12 4.6 12 12Z" fill="currentColor" opacity=".5"/><path d="M12 19.4 14.3 12 9.7 12Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="12" cy="12" r="1.15" fill="currentColor"/></svg></span>
+    <h1>{{.T "consent.heading"}}</h1>
+    <p>{{.T "consent.lede"}}</p>
+  </div>
+
+  {{if .Data.Error}}
+  <div class="card" style="border-color:color-mix(in oklab, var(--danger) 45%, var(--line))">
+    <div class="flash flash--danger" role="alert" style="border:0;background:transparent;padding:0;margin-bottom:var(--sp-3)">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5 21 19H3L12 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 10v4M12 16.5v.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <div class="flash__body"><strong>{{.T "consent.error_lead"}}</strong> {{.Data.Error}}</div>
+    </div>
+    <div class="btn-row" style="margin-top:var(--sp-4)"><a class="btn btn--ghost" href="/">{{.T "consent.back"}}</a></div>
+  </div>
+  {{else}}
+  <form class="card card--pad-lg" action="/oauth/authorize" method="post">
+    <input type="hidden" name="csrf" value="{{.Data.CSRF}}">
+    <input type="hidden" name="client_id" value="{{.Data.P.ClientID}}">
+    <input type="hidden" name="redirect_uri" value="{{.Data.P.RedirectURI}}">
+    <input type="hidden" name="response_type" value="{{.Data.P.ResponseType}}">
+    <input type="hidden" name="code_challenge" value="{{.Data.P.CodeChallenge}}">
+    <input type="hidden" name="code_challenge_method" value="{{.Data.P.CodeChallengeMethod}}">
+    <input type="hidden" name="state" value="{{.Data.P.State}}">
+    <input type="hidden" name="scope" value="{{.Data.P.Scope}}">
+    <input type="hidden" name="resource" value="{{.Data.P.Resource}}">
+
+    <div class="oauth-app">
+      <span class="oauth-app__logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="4" stroke="currentColor" stroke-width="1.7"/><path d="M9 15l3-6 3 6M10 13h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <div>
+        <b>{{.Data.ClientName}}</b>
+        <div class="self-reported">{{.T "consent.self_reported"}}</div>
+      </div>
+    </div>
+
+    <div class="oauth-host">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div>
+        <span class="host-label">{{.T "consent.redirect_label"}}</span>
+        <span class="host">{{.Data.RedirectHost}}</span>
+      </div>
+    </div>
+    <p class="muted" style="font-size:.85rem;margin-top:calc(var(--sp-4) * -1 + var(--sp-2))">{{.T "consent.redirect_note"}} {{.T "consent.full_redirect"}} <span class="mono" style="word-break:break-all">{{.Data.RedirectURI}}</span></p>
+
+    <h2 class="h3" style="margin:var(--sp-5) 0 var(--sp-3)">{{.T "consent.can_heading"}}</h2>
+    <ul class="perm-list">
+      <li class="perm-yes"><svg viewBox="0 0 24 24" fill="none"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>{{.T "consent.perm_read_lead"}}</b> {{.T "consent.perm_read_rest"}}</span></li>
+      <li class="perm-yes"><svg viewBox="0 0 24 24" fill="none"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>{{.T "consent.perm_create_lead"}}</b> {{.T "consent.perm_create_rest"}}</span></li>
+      <li class="perm-no"><svg viewBox="0 0 24 24" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span><b>{{.T "consent.perm_never_lead"}}</b> {{.T "consent.perm_never_rest"}}</span></li>
+    </ul>
+
+    <div class="btn-row" style="margin-top:var(--sp-5)">
+      <button class="btn btn--primary btn--lg" type="submit" name="decision" value="approve" title="{{.T "consent.approve_title"}}" style="flex:1">{{.T "consent.approve"}}</button>
+      <button class="btn btn--ghost btn--lg" type="submit" name="decision" value="deny" title="{{.T "consent.deny_title"}}" style="flex:1">{{.T "consent.deny"}}</button>
+    </div>
+  </form>
+
+  <p class="auth-foot">{{.T "consent.revoke_pre"}} <a href="/tokens">{{.T "consent.tokens_link"}}</a></p>
+  {{end}}
+</div>
+{{end}}

@@ -1,0 +1,43 @@
+[Unit]
+Description=Ken knowledge base
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ken
+Group=ken
+Environment=KEN_HOME=/opt/ken
+Environment=KEN_DB=/opt/ken/data/ken.db
+Environment=KEN_ADDR=:8080
+# HTTPS (recommended): terminate TLS in-process with Let's Encrypt. Needs a public
+# DNS name resolving here and ports 80+443 reachable; also change KEN_ADDR to :443.
+#   Environment=KEN_TLS=acme
+#   Environment=KEN_TLS_DOMAINS=kb.example.com
+#   Environment=KEN_TLS_EMAIL=you@example.com
+#   Environment=KEN_ADDR=:443
+# Or serve your own certificate:
+#   Environment=KEN_TLS=file
+#   Environment=KEN_TLS_CERT=/etc/ken/tls/fullchain.pem
+#   Environment=KEN_TLS_KEY=/etc/ken/tls/privkey.pem
+# Leave KEN_TLS unset ONLY when a reverse proxy in front of Ken terminates TLS.
+# Secrets via systemd credentials (tmpfs, invisible to `ps`). Wire KEN_DEDUP_SECRET
+# and any embedding API key through LoadCredential rather than plain Environment=.
+# LoadCredential=dedup:/etc/ken/dedup.key
+ExecStart=/opt/ken/scripts/ken.sh -f
+Restart=on-failure
+RestartSec=5
+# Clean SIGTERM shutdown exits 143 (128+15); don't treat as failure.
+SuccessExitStatus=143
+# Let the unprivileged service bind :80/:443 for in-process TLS + the ACME HTTP-01
+# challenge / HTTP->HTTPS redirect (KEN_TLS=acme|file). Harmless when TLS is off.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/ken/data /opt/ken/logs /opt/ken/backups
+
+[Install]
+WantedBy=multi-user.target

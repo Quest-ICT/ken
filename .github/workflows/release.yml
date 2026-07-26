@@ -1,0 +1,68 @@
+name: Release
+
+# The tag is the ONLY trigger. Releasing used to be several manual steps and was
+# missed for 8 of the first 16 releases; making the tag do everything removes the
+# step that actually got forgotten.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write        # create the release, upload assets
+  id-token: write        # build provenance attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: version from tag
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Gate 1: never publish from a tree that would leak.
+      - name: public hygiene gate
+        run: sh scripts/check-public-hygiene.sh
+
+      - name: test
+        run: go test ./...
+        env: { CGO_ENABLED: "0" }
+
+      - name: build release artifacts
+        run: scripts/build-release.sh --version "${{ steps.v.outputs.version }}"
+
+      # Gate 2: the artifacts are a second publication channel — verify them too.
+      - name: verify artifacts
+        run: scripts/verify-artifact.sh --version "${{ steps.v.outputs.version }}" --ref "$GITHUB_REF_NAME"
+
+      # Provenance: SHA256SUMS is served from the same place as what it vouches for,
+      # while INSTALL.md tells readers to curl|sudo. An attestation is independent
+      # of that channel and needs no key management.
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            dist/ken-${{ steps.v.outputs.version }}-linux-*.bin
+            dist/ken-${{ steps.v.outputs.version }}-linux-*.tar.gz
+
+      - name: publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          # A version with a pre-release suffix (1.1.0-rc.1) is marked prerelease, so
+          # /releases/latest/download/ keeps resolving to the newest STABLE release —
+          # which is what scripts/ken-upgrade fetches by default.
+          prerelease: ${{ contains(steps.v.outputs.version, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/ken-${{ steps.v.outputs.version }}-linux-*.bin
+            dist/ken-${{ steps.v.outputs.version }}-linux-*.tar.gz
+            dist/ken-latest-linux-*.bin
+            dist/ken-latest-linux-*.tar.gz
+            dist/SHA256SUMS

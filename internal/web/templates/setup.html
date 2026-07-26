@@ -1,0 +1,68 @@
+{{define "title"}}{{.T "setup.tab"}}{{end}}
+{{define "content"}}
+<div class="auth-card" style="max-width:520px">
+  <div class="auth-head">
+    <span class="brand__mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9.25" stroke="currentColor" stroke-width="1.5"/><path d="M12 2.4v1.9M12 19.7v1.9M2.4 12h1.9M19.7 12h1.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 4.6 14.3 12 12 12Z" fill="currentColor"/><path d="M9.7 12 12 4.6 12 12Z" fill="currentColor" opacity=".5"/><path d="M12 19.4 14.3 12 9.7 12Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="12" cy="12" r="1.15" fill="currentColor"/></svg></span>
+    <h1>{{.T "setup.heading"}}</h1>
+    {{if .Data.Authorized}}
+    <p>{{.T "setup.lede"}}</p>
+    {{else}}
+    <p>{{.T "setup.gate_lede"}}</p>
+    {{end}}
+  </div>
+
+  {{if .Data.Authorized}}
+  <div class="stepper" aria-hidden="true">
+    <span class="step on"><b>1</b> {{.T "setup.step_token"}}</span>
+    <span class="sep">—</span>
+    <span class="step on"><b>2</b> {{.T "setup.step_admin"}}</span>
+    <span class="sep">—</span>
+    <span class="step"><b>3</b> {{.T "setup.step_done"}}</span>
+  </div>
+
+  <form class="card" method="post" action="/setup" novalidate>
+    <input type="hidden" name="scsrf" value="{{.Data.SCSRF}}">
+    <input type="hidden" name="token" value="{{.Data.Token}}">
+    <div class="field">
+      <label for="sname">{{.T "setup.field_name"}}</label>
+      <input class="input" id="sname" name="name" type="text" autocomplete="username" autofocus required>
+    </div>
+    <hr>
+    <div class="field">
+      <label for="spw">{{.T "setup.field_password"}}</label>
+      <div class="input-affix">
+        <input class="input" id="spw" name="password" type="password" autocomplete="new-password" required>
+        <button class="input-affix__btn" type="button" data-action="toggle-pw" data-pw-target="#spw" data-label-show="{{.T "action.show_password"}}" data-label-hide="{{.T "action.hide_password"}}" aria-pressed="false" aria-label="{{.T "action.show_password"}}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg></button>
+      </div>
+      <span class="help">{{.T "setup.field_password_help"}}</span>
+    </div>
+    <div class="field">
+      <label for="spw2">{{.T "setup.field_password2"}}</label>
+      <input class="input" id="spw2" name="password2" type="password" autocomplete="new-password" required>
+    </div>
+    <button class="btn btn--primary btn--lg" type="submit" style="width:100%;margin-top:var(--sp-2)">{{.T "setup.submit"}}</button>
+  </form>
+  {{else}}
+  <div class="stepper" aria-hidden="true">
+    <span class="step on"><b>1</b> {{.T "setup.step_token"}}</span>
+    <span class="sep">—</span>
+    <span class="step"><b>2</b> {{.T "setup.step_admin"}}</span>
+    <span class="sep">—</span>
+    <span class="step"><b>3</b> {{.T "setup.step_done"}}</span>
+  </div>
+
+  <div class="flasharea">
+    <div class="flash flash--info" role="status">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 11v5M12 8v.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <div class="flash__body">{{.T "setup.gate_how"}} <span class="mono">/setup?token=…</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <p class="help">{{.T "setup.gate_marker_pre"}} <strong>SETUP TOKEN</strong>{{.T "setup.gate_marker_post"}}</p>
+  </div>
+  {{end}}
+
+  <p class="auth-foot"><span class="mono">Ken v{{.Version}}</span> · {{.T "setup.foot"}} · <a class="quiet-link" href="{{.SourceURL}}" rel="noopener" target="_blank">{{.T "footer.source"}}</a></p>
+</div>
+{{end}}

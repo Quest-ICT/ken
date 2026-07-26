@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="{{.Lang}}" dir="ltr" class="no-js"{{if .Theme}} data-theme="{{.Theme}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}Ken{{end}} · Ken</title>
+<meta name="description" content="{{.T "meta.description"}}">
+<link rel="icon" href="/static/ken-logo.svg?v={{.Version}}" type="image/svg+xml">
+<link rel="icon" href="/static/favicon-32.png?v={{.Version}}" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/static/favicon-180.png?v={{.Version}}">
+<link rel="stylesheet" href="/static/app.css?v={{.Version}}">
+<script src="/static/app.js?v={{.Version}}"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">{{.T "action.skip"}}</a>
+
+<header class="topbar{{if ne .Chrome "app"}} topbar--public{{end}}" id="top">
+  <div class="topbar__bar container">
+    <a class="brand" href="/" aria-label="{{.T "brand.home_label"}}"><span class="brand__mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9.25" stroke="currentColor" stroke-width="1.5"/><path d="M12 2.4v1.9M12 19.7v1.9M2.4 12h1.9M19.7 12h1.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 4.6 14.3 12 12 12Z" fill="currentColor"/><path d="M9.7 12 12 4.6 12 12Z" fill="currentColor" opacity=".5"/><path d="M12 19.4 14.3 12 9.7 12Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="12" cy="12" r="1.15" fill="currentColor"/></svg></span> <span>Ken</span></a>
+
+    {{if eq .Chrome "app"}}
+    <input type="checkbox" id="navtoggle" class="navtoggle">
+    <label for="navtoggle" class="navtoggle__btn" aria-label="{{.T "action.open_menu"}}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></label>
+    <nav class="mainnav" aria-label="{{.T "nav.primary_label"}}">
+      <a href="/search"><span class="navlabel">{{.T "nav.search"}}</span></a>
+      <a href="/browse"><span class="navlabel">{{.T "nav.browse"}}</span></a>
+      <a href="/proposals"><span class="navlabel">{{.T "nav.proposals"}}</span>{{if .PropCount}} <span class="badge badge--accent badge--sm badge--plain" aria-label="{{.TN "nav.proposals_pending" .PropCount}}">{{.PropCount}}</span>{{end}}</a>
+      <a href="/tokens"><span class="navlabel">{{.T "nav.tokens"}}</span></a>
+      <a href="/settings"><span class="navlabel">{{.T "nav.settings"}}</span></a>
+    </nav>
+    <div class="topbar__tools">
+      {{template "langselect" .}}
+      {{template "themetoggle" .}}
+      <form class="inline" method="post" action="/logout"><input type="hidden" name="csrf" value="{{.Session.CSRF}}"><button class="quiet-link" type="submit" title="{{.Session.ActorName}}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> {{.T "nav.logout"}}</button></form>
+    </div>
+    {{else}}
+    <div class="public-tools">
+      {{template "langselect" .}}
+      {{template "themetoggle" .}}
+    </div>
+    {{end}}
+  </div>
+</header>
+
+<main class="main{{if ne .Chrome "app"}} auth-main{{end}}" id="main">
+  <div class="container">
+    {{if eq .Chrome "app"}}
+    <div class="flasharea" aria-live="polite">
+      {{if .Flash}}<div class="flash flash--info" role="status"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.7"/><path d="M12 11v5M12 8v.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><div class="flash__body">{{.Flash}}</div><button class="flash__close" type="button" data-action="dismiss-flash" aria-label="{{.T "action.dismiss"}}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>{{end}}
+    </div>
+    {{end}}
+    {{block "content" .}}{{end}}
+  </div>
+</main>
+
+{{if eq .Chrome "app"}}
+<footer class="footer">
+  <div class="container">
+    <span class="ver">Ken v{{.Version}}</span>
+    <span aria-hidden="true">·</span>
+    <span class="muted">{{.T "footer.tagline"}}</span>
+    <span aria-hidden="true">·</span>
+    <a class="quiet-link" href="{{.SourceURL}}" rel="noopener" target="_blank">{{.T "footer.source"}}</a>
+  </div>
+</footer>
+<a class="backtotop" href="#top" data-backtotop aria-label="{{.T "action.top"}}"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V6M6 11l6-6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+{{end}}
+<div class="visually-hidden" id="copy-live" aria-live="polite"></div>
+</body>
+</html>
+
+{{define "themetoggle"}}<button class="iconbtn" type="button" data-action="toggle-theme" aria-label="{{.T "action.toggle_theme"}}"><svg class="sun" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="4.2" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.2M12 19.3v2.2M4.4 4.4l1.6 1.6M18 18l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.4 19.6 6 18M18 6l1.6-1.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 7 7 0 1 0 20 14.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>{{end}}
+
+{{define "langselect"}}<form class="lang" method="get" action="/lang"><input type="hidden" name="next" value="{{.Path}}"><span class="visually-hidden">{{.T "lang.label"}}</span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15.5 0 18M12 3c-2.5 2.5-2.5 15.5 0 18" stroke="currentColor" stroke-width="1.6"/></svg><select class="select" name="lang" data-action="lang" aria-label="{{.T "lang.label"}}">{{range .Langs}}<option value="{{.Code}}"{{if eq .Code $.Lang}} selected{{end}}>{{.Name}}</option>{{end}}</select><button class="btn btn--sm lang__go" type="submit">{{.T "lang.go"}}</button></form>{{end}}

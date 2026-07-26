@@ -1,0 +1,72 @@
+{{define "title"}}{{.T "browse.tab"}}{{end}}
+{{define "content"}}
+<div class="page-head">
+  <p class="eyebrow">{{.T "browse.eyebrow"}}</p>
+  <h1 class="h1">{{.T "browse.heading"}}</h1>
+</div>
+
+<form class="filterbar" method="get" action="/browse">
+  <div class="field"><label for="f-kind">{{.T "browse.filter_kind"}}</label><select class="select" id="f-kind" name="kind">
+    <option value="">{{.T "browse.filter_any"}}</option>
+    {{range .Data.Kinds}}<option value="{{.}}"{{if eq . $.Data.F.Kind}} selected{{end}}>{{$.Enum "kind" .}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="f-cat">{{.T "browse.filter_category"}}</label><select class="select" id="f-cat" name="category">
+    <option value="">{{.T "browse.filter_any"}}</option>
+    {{range .Data.Categories}}<option value="{{.}}"{{if eq . $.Data.F.Category}} selected{{end}}>{{.}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="f-stale">{{.T "browse.filter_staleness"}}</label><select class="select" id="f-stale" name="staleness">
+    <option value="">{{.T "browse.filter_any"}}</option>
+    {{range .Data.Stalenesses}}<option value="{{.}}"{{if eq . $.Data.F.Staleness}} selected{{end}}>{{$.Enum "staleness" .}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="f-life">{{.T "browse.filter_lifecycle"}}</label><select class="select" id="f-life" name="lifecycle">
+    <option value="">{{.T "browse.filter_any"}}</option>
+    {{range .Data.Lifecycles}}<option value="{{.}}"{{if eq . $.Data.F.Lifecycle}} selected{{end}}>{{$.Enum "lifecycle" .}}</option>{{end}}
+  </select></div>
+  <div class="field"><label for="f-sort">{{.T "browse.filter_sort"}}</label><select class="select" id="f-sort" name="sort">
+    {{range .Data.Sorts}}<option value="{{.}}"{{if eq . $.Data.F.Sort}} selected{{end}}>{{$.Enum "sort" .}}</option>{{end}}
+  </select></div>
+  <button class="btn btn--primary" type="submit">{{.T "browse.filter_submit"}}</button>
+  <a class="quiet-link clear" href="/browse" title="{{.T "browse.clear_title"}}">{{.T "browse.clear"}}</a>
+</form>
+
+{{if not .Data.Rows}}
+<div class="empty">
+  <span class="empty__icon"><svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M5 12h14M5 17h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="17" cy="17" r="2.4" stroke="currentColor" stroke-width="1.8"/></svg></span>
+  <h3>{{.T "browse.empty_heading"}}</h3>
+  <p>{{.T "browse.empty_body"}} <a href="/browse">{{.T "browse.empty_clear"}}</a></p>
+</div>
+{{else}}
+<div class="table-wrap">
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr><th>{{.T "browse.col_title"}}</th><th>{{.T "browse.col_kind"}}</th><th>{{.T "browse.col_category"}}</th><th>{{.T "browse.col_status"}}</th><th class="num">{{.T "browse.col_rev"}}</th><th class="num">{{.T "browse.col_uses"}}</th><th>{{.T "browse.col_updated"}}</th></tr>
+      </thead>
+      <tbody>
+      {{range .Data.Rows}}
+        <tr>
+          <td class="cell-title"><a href="/entry/{{.Slug}}">{{.Title}}</a><span class="cell-sum">{{.Summary}}</span><span class="slug">{{.Slug}}</span></td>
+          <td><span class="badge badge--plain badge--sm">{{$.Enum "kind" .Kind}}</span></td>
+          <td class="mono muted" style="font-size:.82rem">{{if .Category}}{{.Category}}{{else}}—{{end}}</td>
+          <td class="cell-badges">
+            {{if ne .Staleness "fresh"}}<span class="badge badge--warn badge--sm">{{$.Enum "staleness" .Staleness}}</span>{{end}}
+            {{if ne .Lifecycle "active"}}<span class="badge badge--sm">{{$.Enum "lifecycle" .Lifecycle}}</span>{{end}}
+            {{if .HasProvisional}}<span class="badge badge--accent badge--sm">{{$.T "browse.status_pending"}}</span>{{end}}
+          </td>
+          <td class="num mono">{{.CuratedRev}}</td>
+          <td class="num mono">{{.UseCount}}</td>
+          <td class="mono muted" style="font-size:.82rem">{{shortdate .UpdatedAt}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<nav class="pagination" aria-label="{{.T "browse.pagination_label"}}">
+  {{if .Data.PrevURL}}<a href="{{.Data.PrevURL}}">{{.T "browse.prev"}}</a>{{else}}<span class="disabled">{{.T "browse.prev"}}</span>{{end}}
+  <span class="gap">{{.T "browse.page" .Data.PageNum}}</span>
+  {{if .Data.NextURL}}<a href="{{.Data.NextURL}}">{{.T "browse.next"}}</a>{{else}}<span class="disabled">{{.T "browse.next"}}</span>{{end}}
+</nav>
+{{end}}
+{{end}}

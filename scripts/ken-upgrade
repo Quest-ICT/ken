@@ -1,0 +1,96 @@
+#!/bin/bash
+#
+# ken-upgrade — fetch, checksum-verify, and run a Ken installer on this host.
+#
+# Deployed to /usr/local/sbin/ken-upgrade and run as root through ONE narrowly
+# scoped sudoers rule (see deploy/ken-upgrade.sudoers), so an operator with only
+# unprivileged shell access (e.g. a dedicated unprivileged deploy account over SSH) can upgrade Ken
+# to the latest published release — and nothing else.
+#
+# SECURITY MODEL — this script IS the privilege boundary, so:
+#   * It must stay root-owned and root-only-writable (install 0755 root:root).
+#     If the caller could edit it, the sudoers rule would be full root.
+#   * The caller supplies NO binary: the installer is fetched from the repo and
+#     verified against the release's SHA256SUMS before it is run.
+#   * Every argument is validated against a strict allowlist; caller input is
+#     never passed through unchecked. File-path / prefix / user flags that would
+#     let the caller write root-owned files to an arbitrary location are refused.
+#   * Releases are fetched from the PUBLIC GitHub Releases over HTTPS — no download
+#     credential is needed; integrity is guaranteed by the SHA256SUMS check below.
+#
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+REPO='https://github.com/Quest-ICT/ken'   # public GitHub Releases; no download token needed
+
+die() { echo "ken-upgrade: $*" >&2; exit 1; }
+ok()  { [[ "$1" =~ $2 ]] || die "invalid ${3:-value}: '$1'"; }   # $2 is an unquoted regex
+
+case "$(uname -m)" in
+  x86_64)        ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *) die "unsupported architecture $(uname -m)" ;;
+esac
+
+VERSION=latest
+inst=()   # validated flags forwarded to the installer
+
+# --- argument allowlist (anything not listed here is refused) ---
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version)
+      # X.Y.Z with an optional semver prerelease/build suffix (e.g. 1.0.0-rc.1). The
+      # charset stays strict (digits, dots, hyphen, alnum) so nothing can be injected.
+      ok "${2:-}" '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.]+)?$' version; VERSION="$2"; shift 2 ;;
+    --dry-run)
+      inst+=(--dry-run); shift ;;
+    --tls)
+      case "${2:-}" in
+        acme|off) inst+=(--tls "$2") ;;
+        file)     die "--tls file needs --cert/--key, which are not permitted remotely; run the installer locally" ;;
+        *)        die "invalid --tls: '${2:-}' (allowed: acme, off)" ;;
+      esac
+      shift 2 ;;
+    --domain)
+      ok "${2:-}" '^[A-Za-z0-9][A-Za-z0-9.,-]{0,253}[A-Za-z0-9]$' domain; inst+=(--domain "$2"); shift 2 ;;
+    --email)
+      ok "${2:-}" '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' email; inst+=(--email "$2"); shift 2 ;;
+    --port)
+      ok "${2:-}" '^[0-9]{1,5}$' port
+      [ "$2" -ge 1 ] && [ "$2" -le 65535 ] || die "port out of range: $2"
+      inst+=(--port "$2"); shift 2 ;;
+    --open-firewall) inst+=(--open-firewall); shift ;;
+    --no-firewall)   inst+=(--no-firewall);   shift ;;
+    *) die "flag not permitted: '$1'  (allowed: --version --tls acme|off --domain --email --port --open-firewall --no-firewall --dry-run)" ;;
+  esac
+done
+
+# --- pick the artifact: the stable "latest" alias, or a pinned version's name ---
+if [ "$VERSION" = latest ]; then
+  # GitHub resolves /releases/latest/download/<stable-name> to the newest
+  # (non-prerelease) release's asset — so a prerelease-only repo has no "latest".
+  BIN="ken-latest-linux-${ARCH}.bin"; DL="$REPO/releases/latest/download"
+else
+  BIN="ken-${VERSION}-linux-${ARCH}.bin"; DL="$REPO/releases/download/v${VERSION}"
+fi
+
+work="$(mktemp -d /root/ken-upgrade.XXXXXX)"   # under /root so unprivileged users can't read or swap the download
+trap 'rm -rf "$work"' EXIT
+cd "$work"
+
+echo "ken-upgrade: current  -> $(readlink -f /opt/ken/current 2>/dev/null || echo none)"
+echo "ken-upgrade: target   -> ${VERSION} (${BIN})"
+echo "ken-upgrade: flags    -> ${inst[*]:-<none, plain upgrade>}"
+
+curl -fsSL -o "$BIN"     "$DL/$BIN"
+curl -fsSL -o SHA256SUMS "$DL/SHA256SUMS"
+
+want="$(awk -v f="$BIN" '$2 == f {print $1}' SHA256SUMS)"
+got="$(sha256sum "$BIN" | awk '{print $1}')"
+[ -n "$want" ] && [ "$want" = "$got" ] || die "CHECKSUM MISMATCH (want=${want:-none} got=$got) — aborting"
+echo "ken-upgrade: checksum OK ($got)"
+
+chmod 0700 "$BIN"
+echo "ken-upgrade: running installer (unattended)…"
+"./$BIN" -y ${inst[@]+"${inst[@]}"}
+echo "ken-upgrade: done -> $(readlink -f /opt/ken/current)"
