@@ -296,13 +296,19 @@ type ProposalRow struct {
 	LatestConfidence float64
 	LatestChangeNote string
 	LatestLang       string // detected content language of the latest proposal ("" ⇒ undetected/legacy)
+	// LatestViaComm marks the latest proposal as possibly SECOND-HAND: the token
+	// that authored it had recently received an inter-session message
+	// (docs/COMM.md §7). False means "no signal", never "known first-hand" — it is
+	// a prompt to ask for a citation, not a verdict.
+	LatestViaComm bool
 }
 
 // ListProposals returns entries with at least one proposed version, newest first.
 func (s *Store) ListProposals(ctx context.Context) ([]ProposalRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT e.slug, e.title, e.kind, COUNT(ev.id) AS n,
-       lv.rev_no, lv.id, COALESCE(lv.confidence,0), COALESCE(lv.change_note,''), COALESCE(lv.content_lang,'')
+       lv.rev_no, lv.id, COALESCE(lv.confidence,0), COALESCE(lv.change_note,''), COALESCE(lv.content_lang,''),
+       COALESCE(lv.via_comm,0)
 FROM entry e
 JOIN entry_version ev ON ev.entry_id=e.id AND ev.state='proposed'
 JOIN entry_version lv ON lv.id=(SELECT id FROM entry_version WHERE entry_id=e.id AND state='proposed' ORDER BY rev_no DESC LIMIT 1)
@@ -315,7 +321,7 @@ ORDER BY MAX(ev.created_at) DESC`)
 	var out []ProposalRow
 	for rows.Next() {
 		var r ProposalRow
-		if err := rows.Scan(&r.Slug, &r.Title, &r.Kind, &r.NProposals, &r.LatestRev, &r.LatestVersionID, &r.LatestConfidence, &r.LatestChangeNote, &r.LatestLang); err != nil {
+		if err := rows.Scan(&r.Slug, &r.Title, &r.Kind, &r.NProposals, &r.LatestRev, &r.LatestVersionID, &r.LatestConfidence, &r.LatestChangeNote, &r.LatestLang, &r.LatestViaComm); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

@@ -43,6 +43,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/ncruces/go-sqlite3/driver"
 	"github.com/ncruces/go-sqlite3/ext/fts5"
@@ -122,7 +123,13 @@ type Store struct {
 	W *sql.DB // single-writer pool (MaxOpenConns == 1)
 	R *sql.DB // reader pool
 
-	limits Limits
+	// limits is swapped atomically because the operator edits these live from the
+	// settings page while requests are in flight. A plain field would be a data
+	// race — one that the race detector catches only if a test happens to write
+	// and read concurrently, which is exactly the kind of bug that ships.
+	limits atomic.Pointer[Limits]
+
+	path string // the file this store was opened from (logging only)
 }
 
 // commonPragmas mirrors internal/store: busy timeout and journal mode first.
@@ -151,7 +158,9 @@ func Open(path string, limits Limits) (*Store, error) {
 	r.SetMaxOpenConns(4)
 	r.SetMaxIdleConns(4)
 
-	return &Store{W: w, R: r, limits: limits}, nil
+	st := &Store{W: w, R: r, path: path}
+	st.limits.Store(&limits)
+	return st, nil
 }
 
 // Close closes both pools.
@@ -163,13 +172,21 @@ func (s *Store) Close() error {
 	return e1
 }
 
-// Limits returns the bounds this store enforces.
-func (s *Store) Limits() Limits { return s.limits }
+// Limits returns the bounds this store currently enforces.
+func (s *Store) Limits() Limits { return *s.limits.Load() }
 
-// SetLimits replaces the enforced bounds. Safe to call while serving only in the
-// sense that Go's memory model permits it under the caller's own synchronization;
-// the intended caller is the settings-change listener at startup or on apply.
-func (s *Store) SetLimits(l Limits) { s.limits = l }
+// SetLimits replaces the enforced bounds. Safe to call at any time, including
+// while requests are in flight: the settings page applies changes live, so an
+// operator can tighten a limit during a runaway rather than after a restart.
+//
+// An operation that already read the old limits completes under them; there is no
+// attempt to make a single request see a consistent snapshot across several reads,
+// because every enforcement point reads once.
+func (s *Store) SetLimits(l Limits) { s.limits.Store(&l) }
+
+// lim reads the current limits. Every enforcement point goes through this rather
+// than touching the field, so a live swap is picked up on the next operation.
+func (s *Store) lim() Limits { return *s.limits.Load() }
 
 // Migrate applies embedded COMM migrations in lexical order, skipping versions
 // already recorded. Idempotent, forward-only, and independent of the knowledge
@@ -296,3 +313,6 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
 	}
 	return t.Commit()
 }
+
+// Path reports the database file this store was opened from (startup logging).
+func (s *Store) Path() string { return s.path }

@@ -978,7 +978,10 @@ func settingsGroupKey(group string) string {
 }
 
 func buildSettingsGroups(v settings.Values, tr *i18n.Manager, lang string) []settingsGroup {
-	order := []string{"Rate limiting", "Login", "Session", "Network", "TLS", "Curation"}
+	// A group missing from this slice renders NOTHING — buildSettingsGroups iterates
+	// `order`, not the registry — so adding a Field with a new Group means adding it
+	// here too. Silent, and easy to miss.
+	order := []string{"Rate limiting", "Login", "Session", "Network", "TLS", "Curation", "Inter-session comms"}
 	byGroup := map[string][]settingsField{}
 	for _, f := range settings.Fields {
 		val := f.Get(v)

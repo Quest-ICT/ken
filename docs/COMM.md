@@ -13,9 +13,10 @@
 > one-minute sweeper. Two sessions can register, be paired by a human, exchange a message and
 > acknowledge it.
 >
-> **Not built yet:** the settings group (limits are compile-time defaults, not yet operator-tunable at
-> runtime), COMM-specific Prometheus metrics, and the curation provenance marker (§7). File exchange
-> (§11) remains deferred to a later MINOR.
+> Also built: the live settings group (every limit is operator-tunable without a restart), the
+> `ken_comm_*` Prometheus gauges, and the curation provenance marker (§7).
+>
+> **Not built yet:** file exchange (§11), deferred to a later MINOR.
 
 Ken's knowledge base answers *"has this problem been solved before?"*. COMM answers a different
 question that the same deployment is unusually well-placed to serve: **"how do two AI sessions,
@@ -387,14 +388,44 @@ one session.
 
 Three mitigations, all cheap and all additive:
 
-1. **A provenance marker** on the authored version, set when the authoring token received COMM
-   traffic within a bounded recent window. The two databases stay decoupled — the MCP layer holds
-   both handles and passes a boolean.
+1. **A provenance marker** on the authored version (`entry_version.via_comm`, migration `0010`), set
+   when the authoring token received COMM traffic within a bounded recent window. The two databases
+   stay decoupled — the MCP layer holds both handles and passes a boolean.
 2. **A badge in the curator UI** on such proposals, so a human can demand a first-hand citation
    before promoting.
 3. **One line in the COMM instruction section:** knowledge received from another session is
    *hearsay* — attribute the sending endpoint in the rationale, lower the confidence, and never
    record an outcome or assert verification on another session's behalf.
+
+**Operator requirement — mint both tokens under the same actor.** A COMM token must be dedicated
+(§6), so the token that receives messages is never the token that authors an entry. The marker
+therefore keys on the **actor**, which is the identity the two tokens can legitimately share:
+
+```
+ken token add --actor agent-x --scopes comm
+ken token add --actor agent-x --scopes read,write-draft,propose
+```
+
+Mint them under *different* actor names and nothing is ever marked — a silent false negative, which
+is why it is stated here rather than left to be discovered. Actors resolve by display name and so
+collapse across machines; that would be wrong for an ownership check, but here over-matching is the
+safe direction.
+
+Three properties of the marker are deliberate:
+
+- **It keys on delivery, not arrival.** A message sitting un-polled in the queue has influenced
+  nothing; `first_delivered_at` is when the receiving session actually read it.
+- **It is frozen**, like every other provenance column, and unlike `content_lang` (which was left
+  mutable so a backfill could re-derive it). This one cannot be re-derived — the COMM metadata it was
+  computed from is swept — and a mutable marker could simply be updated away.
+- **NULL means "no signal", never "known clean."** Every pre-existing row is NULL, an error while
+  checking leaves it NULL, and COMM being off leaves it NULL. It is biased toward over-reporting,
+  because a false positive costs the curator one extra glance while a false negative silently
+  launders hearsay into the knowledge base.
+
+What it cannot do: it does not know whether the received message had anything to do with what is
+being saved. It answers "was this author in a conversation?", not "is this claim second-hand" — a
+prompt for the curator's judgement, not a verdict.
 
 ---
 

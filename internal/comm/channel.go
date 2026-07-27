@@ -43,7 +43,7 @@ func (s *Store) MintPairingCode(ctx context.Context, spaceID, humanActorID int64
 INSERT INTO pairing_code(code_sha256, space_id, human_actor_id, label, expires_at)
 VALUES(?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
 		sha256Hex(code), spaceID, humanActorID, nullStr(label),
-		nowExpr(s.limits.PairingCodeTTLSeconds))
+		nowExpr(s.lim().PairingCodeTTLSeconds))
 	if err != nil {
 		return "", err
 	}

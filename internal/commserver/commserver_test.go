@@ -120,7 +120,7 @@ func TestAuthRejectsRevokedAndMalformedTokens(t *testing.T) {
 
 // A wait that ties or exceeds the client's tool timeout turns a successful empty
 // poll into a tool ERROR, so the ceiling is clamped server-side no matter what an
-// operator configures.
+// operator configures — including when they change it live from the settings page.
 func TestPollWaitIsClampedServerSide(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -133,11 +133,14 @@ func TestPollWaitIsClampedServerSide(t *testing.T) {
 		{"requested over the max is capped", 20, 999, 20 * time.Second},
 		{"operator max above the hard ceiling is capped", 3600, 999, hardMaxPollWait * time.Second},
 		{"operator max above the hard ceiling caps a modest request too", 3600, 120, hardMaxPollWait * time.Second},
+		{"a live update takes effect", 10, 0, 10 * time.Second},
 		{"negative means do not park", 20, -1, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := Deps{MaxPollWaitSeconds: c.configMax}.pollWait(c.requested)
+			h := &Handler{w: newWaiters()}
+			h.SetMaxPollWait(c.configMax)
+			got := h.pollWait(c.requested)
 			if got != c.want {
 				t.Fatalf("pollWait(%d) with max %d = %v, want %v", c.requested, c.configMax, got, c.want)
 			}

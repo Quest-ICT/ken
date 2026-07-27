@@ -48,7 +48,7 @@ scrape_configs:
 | `ken_memory_heap_bytes` | gauge | | Heap memory in use (bytes) |
 | `ken_http_requests_total` | counter | `surface`, `outcome` | Web requests by outcome class |
 | `ken_http_request_duration_seconds` | summary | `surface` | Request duration (`_sum` / `_count`) |
-| `ken_mcp_tool_calls_total` | counter | `tool`, `outcome` | MCP `kb_*` calls (success/error) |
+| `ken_mcp_tool_calls_total` | counter | `tool`, `outcome` | MCP `kb_*` (and `comm_*`) calls (success/error) |
 | `ken_auth_failures_total` | counter | `surface` | Rejected authentications (e.g. bad token) |
 | `ken_ratelimit_rejected_total` | counter | | 429 throttles |
 | `ken_ratelimit_blocked_total` | counter | | 403s from auto-blocked IPs |
@@ -59,8 +59,17 @@ scrape_configs:
 | `ken_kb_embeddable_versions` | gauge | | Total versions (embedding denominator) |
 | `ken_users` | gauge | | Human users |
 | `ken_tokens_active` | gauge | | Active (non-revoked) agent tokens |
+| `ken_comm_endpoints` | gauge | | Registered inter-session endpoints (sessions) — COMM only |
+| `ken_comm_channels_open` | gauge | | Open inter-session channels — COMM only |
+| `ken_comm_messages_unacked` | gauge | | Messages delivered/queued but not acknowledged — COMM only |
+| `ken_comm_message_bytes` | gauge | | Bytes of retained message bodies — COMM only |
+| `ken_comm_poll_waiters` | gauge | | Long-poll receive calls currently parked — COMM only |
 | `ken_db_connections_open` / `ken_db_connections_in_use` | gauge | `pool` | DB pool (reader/writer) |
 | `ken_db_wait_total` | counter | `pool` | DB pool waits |
+
+The `ken_comm_*` gauges appear **only when `KEN_COMM_ENABLED=1`** — absent series, not zeros,
+on a default install. COMM is deliberately absent from `/health` (which marks the whole service
+DOWN on any component failure), so these gauges are the only place a runaway channel shows up.
 
 Naming follows Prometheus conventions: counters end in `_total`; gauges carry no reserved
 suffix (a gauge named `_total`/`_info`/`_count` is silently renamed or dropped at exposition).

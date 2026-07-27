@@ -18,7 +18,7 @@
         <tr>
           <td class="cell-title"><a href="/entry/{{.Slug}}">{{.Title}}</a><span class="slug">{{.Slug}}</span></td>
           <td><span class="badge badge--plain badge--sm">{{$.Enum "kind" .Kind}}</span></td>
-          <td>{{if .LatestLang}}<span class="badge badge--sm {{if .Foreign}}badge--warn{{else}}badge--plain{{end}}"{{if .Foreign}} title="{{$.T "proposals.foreign_hint"}}"{{end}}>{{.LatestLang}}</span>{{end}}</td>
+          <td>{{if .LatestLang}}<span class="badge badge--sm {{if .Foreign}}badge--warn{{else}}badge--plain{{end}}"{{if .Foreign}} title="{{$.T "proposals.foreign_hint"}}"{{end}}>{{.LatestLang}}</span>{{end}}{{if .LatestViaComm}} <span class="badge badge--warn badge--sm" title="{{$.T "proposals.via_comm_hint"}}">{{$.T "proposals.via_comm"}}</span>{{end}}</td>
           <td class="num mono">{{.NProposals}}</td>
           <td class="num mono">{{.LatestRev}}</td>
           <td><span class="score">{{printf "%.2f" .LatestConfidence}} <span class="score__bar"><span class="score__fill" style="width:calc({{.LatestConfidence}} * 100%)"></span></span></span></td>

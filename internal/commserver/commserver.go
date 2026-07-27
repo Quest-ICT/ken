@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -67,13 +68,17 @@ const defaultPollWait = 15
 type Handler struct {
 	http.Handler
 	w *waiters
+	// maxWait is read per poll so the operator's settings edit applies live rather
+	// than at the next restart — the point of a live settings page.
+	maxWait atomic.Int64
 }
 
 // NewHTTPHandler builds the comm endpoint: a streamable-HTTP MCP server wrapped in
 // comm-only bearer auth.
 func NewHTTPHandler(d Deps) *Handler {
 	h := &Handler{w: newWaiters()}
-	srv := newServer(d, h.w)
+	h.SetMaxPollWait(d.MaxPollWaitSeconds)
+	srv := newServer(d, h)
 	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
 	h.Handler = authMiddleware(d.Store, d.TokenLimiter, d.Metrics, inner)
 	return h
@@ -83,6 +88,36 @@ func NewHTTPHandler(d Deps) *Handler {
 // shutdown so a restart is invisible to connected agents rather than producing a
 // burst of severed connections.
 func (h *Handler) Drain() { h.w.drain() }
+
+// SetMaxPollWait updates the long-poll ceiling live. The value is clamped to
+// hardMaxPollWait no matter what an operator configures: a wait that ties or
+// exceeds the client's own tool timeout converts a successful empty poll into a
+// tool ERROR, and reverse proxies commonly read-timeout at 60s.
+func (h *Handler) SetMaxPollWait(seconds int) {
+	if seconds <= 0 {
+		seconds = defaultPollWait
+	}
+	if seconds > hardMaxPollWait {
+		seconds = hardMaxPollWait
+	}
+	h.maxWait.Store(int64(seconds))
+}
+
+// pollWait clamps a caller's requested wait against the live ceiling. Zero means
+// do not park.
+func (h *Handler) pollWait(requested int) time.Duration {
+	max := int(h.maxWait.Load())
+	if max <= 0 || max > hardMaxPollWait {
+		max = defaultPollWait
+	}
+	if requested < 0 {
+		return 0
+	}
+	if requested == 0 || requested > max {
+		requested = max
+	}
+	return time.Duration(requested) * time.Second
+}
 
 // ParkedWaiters reports how many long polls are currently parked (metrics/tests).
 func (h *Handler) ParkedWaiters() int { return h.w.parked() }
@@ -109,7 +144,8 @@ Handling rules:
 - A backpressure error means stop and wait. Do not retry in a loop.`
 
 // newServer registers the comm tools.
-func newServer(d Deps, w *waiters) *mcp.Server {
+func newServer(d Deps, h *Handler) *mcp.Server {
+	w := h.w
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-comm", Version: "1"},
 		&mcp.ServerOptions{Instructions: instructions})
 
@@ -208,7 +244,7 @@ func newServer(d Deps, w *waiters) *mcp.Server {
 		}
 		waited := false
 		if len(msgs) == 0 {
-			if wait := d.pollWait(in.WaitSeconds); wait > 0 {
+			if wait := h.pollWait(in.WaitSeconds); wait > 0 {
 				waited = true
 				w.wait(ctx, ep.ID, wait)
 				// Re-read regardless of how the wait ended: the wakeup is an
@@ -257,25 +293,6 @@ func newServer(d Deps, w *waiters) *mcp.Server {
 	})
 
 	return s
-}
-
-// pollWait clamps a requested wait to the operator ceiling and then to the hard
-// ceiling. Zero means do not park.
-func (d Deps) pollWait(requested int) time.Duration {
-	max := d.MaxPollWaitSeconds
-	if max <= 0 {
-		max = defaultPollWait
-	}
-	if max > hardMaxPollWait {
-		max = hardMaxPollWait
-	}
-	if requested < 0 {
-		return 0
-	}
-	if requested == 0 || requested > max {
-		requested = max
-	}
-	return time.Duration(requested) * time.Second
 }
 
 // auth resolves the endpoint identity carried in every tool call and confirms it

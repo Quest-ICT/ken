@@ -46,6 +46,11 @@ type SaveInput struct {
 	AuthorKind    string
 	SessionID     string
 	Links         []LinkInput
+	// ViaComm marks the version as possibly second-hand: the authoring token had
+	// recently RECEIVED an inter-session message (docs/COMM.md §7). It is a prompt
+	// for the curator's judgement, not a verdict — false means "no signal", never
+	// "known first-hand".
+	ViaComm bool
 }
 
 // LinkInput is a [[wikilink]] to create from the new entry.
@@ -120,7 +125,7 @@ VALUES(?,?,?,?,?,?,?,'draft','fresh',?)`,
 
 	vid, revNo, err := insertVersion(ctx, tx, entryID, 1, "proposed", 0, in.Content,
 		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, "initial capture",
-		s.detectLang(in.Content.prose()...))
+		s.detectLang(in.Content.prose()...), in.ViaComm)
 	if err != nil {
 		return SaveResult{}, err
 	}
@@ -163,6 +168,8 @@ type ProposeInput struct {
 	AuthorKind    string
 	SessionID     string
 	Patch         Patch
+	// ViaComm — see SaveInput.ViaComm.
+	ViaComm bool
 }
 
 // ProposeResult reports the appended version and any rebase warning.
@@ -242,7 +249,7 @@ FROM entry WHERE slug=?`, in.Slug).Scan(&entryID, &curatedVID, &maxRev)
 
 	newRev := maxRev + 1
 	vid, _, err := insertVersion(ctx, tx, entryID, newRev, "proposed", baseVID, merged,
-		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, in.ChangeNote, contentLang)
+		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, in.ChangeNote, contentLang, in.ViaComm)
 	if err != nil {
 		return ProposeResult{}, err
 	}
@@ -300,17 +307,30 @@ func (s *Store) FlagStale(ctx context.Context, slug, reason string, actorID int6
 
 // --- shared write helpers ---
 
+// viaCommVal maps the hearsay flag to its column value: 1 when set, SQL NULL
+// otherwise. NULL rather than 0 on purpose — the column means "no signal", not
+// "known first-hand", so an unmarked row is indistinguishable from every row that
+// predates the feature, and the partial index stays small.
+func viaCommVal(b bool) any {
+	if b {
+		return 1
+	}
+	return nil
+}
+
 func insertVersion(ctx context.Context, tx *sql.Tx, entryID int64, revNo int, state string, parentVID int64,
-	c Content, actorID int64, authorKind, sessionID string, confidence float64, changeNote, contentLang string) (int64, int, error) {
+	c Content, actorID int64, authorKind, sessionID string, confidence float64, changeNote, contentLang string,
+	viaComm bool) (int64, int, error) {
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO entry_version(entry_id,rev_no,state,parent_version_id,title,summary,problem,solution,rationale,caveats,
                           code,tags,triggers,applies_to,verified_against,
-                          author_actor_id,author_kind,session_id,confidence,change_note,content_lang)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                          author_actor_id,author_kind,session_id,confidence,change_note,content_lang,via_comm)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		entryID, revNo, state, nullVID(parentVID),
 		c.Title, c.Summary, nullStr(c.Problem), nullStr(c.Solution), nullStr(c.Rationale), nullStr(c.Caveats),
 		jsonCode(c.Code), jsonArr(c.Tags), jsonArr(c.Triggers), jsonArr(c.AppliesTo), jsonVerified(c.VerifiedAgainst),
-		nullActor(actorID), nullStr(authorKind), nullStr(sessionID), confidence, nullStr(changeNote), nullStr(contentLang))
+		nullActor(actorID), nullStr(authorKind), nullStr(sessionID), confidence, nullStr(changeNote), nullStr(contentLang),
+		viaCommVal(viaComm))
 	if err != nil {
 		return 0, 0, err
 	}

@@ -33,6 +33,19 @@ type Deps struct {
 	// instructions so agents author in a language the curator can promote. Refresh
 	// live via (*Handler).SetCurationLangs.
 	CurationLangs []string
+	// CommProvenance, when non-nil, reports whether the calling ACTOR has recently
+	// RECEIVED an inter-session message. Versions authored by such a token are
+	// marked as possible hearsay so the curator can ask for a first-hand citation
+	// before promoting (docs/COMM.md §7).
+	//
+	// A FUNCTION rather than a *comm.Store on purpose: this package must not import
+	// the optional subsystem — the knowledge base's hot path stays free of it, and
+	// the two databases stay decoupled behind a boolean. Nil (COMM off) means no
+	// marking, which reads as "no signal", never "known first-hand".
+	// Keyed on the actor rather than the token because a COMM token must be
+	// dedicated — the token that receives messages is never the one that authors an
+	// entry, so a token-keyed check could never fire.
+	CommProvenance func(ctx context.Context, actorID int64) bool
 
 	// ResourceMetadataURL, when set (OAuth enabled), builds the RFC 9728
 	// protected-resource-metadata URL advertised in the 401 WWW-Authenticate
@@ -57,6 +70,20 @@ func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
 		}
 	}
 	mcp.AddTool(s, t, handler)
+}
+
+// viaComm reports whether the caller should have its authored version marked as
+// possible hearsay. Errors and a disabled subsystem both yield false — the marker
+// is advisory, and a failed check must never block a save.
+func (d Deps) viaComm(ctx context.Context) bool {
+	if d.CommProvenance == nil {
+		return false
+	}
+	id := actorID(ctx)
+	if id == 0 {
+		return false
+	}
+	return d.CommProvenance(ctx, id)
 }
 
 func actorID(ctx context.Context) int64 {
@@ -362,7 +389,8 @@ func NewServer(d Deps) *mcp.Server {
 				Tags: in.Tags, Triggers: in.Triggers, AppliesTo: in.AppliesTo, VerifiedAgainst: in.VerifiedAgainst,
 			},
 			Confidence: in.Confidence, AuthorActorID: actorID(ctx), AuthorKind: "ai", SessionID: in.SessionID,
-			Links: toLinkInputs(in.Links),
+			ViaComm: d.viaComm(ctx),
+			Links:   toLinkInputs(in.Links),
 		})
 		if err != nil {
 			return nil, saveOut{}, mcpError(err)
@@ -383,6 +411,7 @@ func NewServer(d Deps) *mcp.Server {
 		r, err := d.Store.ProposeEnhancement(ctx, store.ProposeInput{
 			Slug: in.Slug, BasedOnRev: in.BasedOnRev, ChangeNote: in.ChangeNote,
 			Confidence: in.Confidence, AuthorActorID: actorID(ctx), AuthorKind: "ai", SessionID: in.SessionID,
+			ViaComm: d.viaComm(ctx),
 			Patch: store.Patch{
 				Title: in.Patch.Title, Summary: in.Patch.Summary, Problem: in.Patch.Problem,
 				Solution: in.Patch.Solution, Rationale: in.Patch.Rationale, Caveats: in.Patch.Caveats,

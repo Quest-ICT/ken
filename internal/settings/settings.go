@@ -46,6 +46,25 @@ type Values struct {
 	// no language guidance and nothing is flagged. Stored verbatim; the normalized
 	// set consumers read is derived into Snapshot.CurationLangSet.
 	CurationLangs string
+
+	// Inter-session communication (COMM) limits. These are inert unless COMM is
+	// enabled (KEN_COMM_ENABLED), which is a restart-level choice because it opens
+	// a second database; everything here applies live on top of it.
+	//
+	// They are bounds on an EPHEMERAL subsystem that shares a disk with the durable
+	// knowledge base, so the defaults are deliberately conservative: the failure
+	// they guard against is message traffic filling the volume and failing KB writes.
+	CommMaxBodyBytes    int
+	CommMaxUnacked      int
+	CommMessageTTLSec   int
+	CommMetadataTTLSec  int
+	CommReplyDeadlineS  int
+	CommPairingCodeTTLS int
+	CommPollWaitMaxSec  int
+	// CommProvenanceWindowSec is how recently a token must have RECEIVED an
+	// inter-session message for a version it authors to be marked as possible
+	// hearsay (docs/COMM.md §7). 0 disables the marking.
+	CommProvenanceWindowSec int
 }
 
 // Snapshot is Values plus the derived objects consumers read.
@@ -147,6 +166,34 @@ var Fields = []Field{
 		Help: "Comma-separated language codes you can read (e.g. fr,zh). Agents are told to author entries in these so you can review and promote them; proposals outside them are flagged on the review queue. Blank = off.",
 		Get:  func(v Values) string { return v.CurationLangs },
 		Set:  setLangs(func(v *Values, s string) { v.CurationLangs = s })},
+
+	// COMM. Every field is Live: these are read per operation, so an operator can
+	// tighten a limit while a runaway channel is in progress rather than after a
+	// restart. Nothing here can enable COMM — that stays a restart-level choice.
+	intField("comm_max_body_bytes", "Inter-session comms", "Max message size (bytes)",
+		"Message bodies are atomic; there is no multi-part send. Keep this small — tool arguments are generated token by token by a model, so even 64 KiB is a five-figure token count.",
+		func(v Values) int { return v.CommMaxBodyBytes }, func(v *Values, n int) { v.CommMaxBodyBytes = n }, 256, 1<<20),
+	intField("comm_max_unacked", "Inter-session comms", "Max unacknowledged per channel",
+		"Backpressure. Past this a send is refused so two auto-processing sessions cannot loop unboundedly.",
+		func(v Values) int { return v.CommMaxUnacked }, func(v *Values, n int) { v.CommMaxUnacked = n }, 1, 100_000),
+	intField("comm_message_ttl_sec", "Inter-session comms", "Message lifetime (seconds)",
+		"How long an unacknowledged message stays deliverable before it expires. A TTL is not a quota.",
+		func(v Values) int { return v.CommMessageTTLSec }, func(v *Values, n int) { v.CommMessageTTLSec = n }, 60, 30*24*3600),
+	intField("comm_metadata_ttl_sec", "Inter-session comms", "Metadata retention (seconds)",
+		"How long a settled message's audit row survives. Bodies are deleted at acknowledgement regardless; this governs only the shell an operator can investigate.",
+		func(v Values) int { return v.CommMetadataTTLSec }, func(v *Values, n int) { v.CommMetadataTTLSec = n }, 60, 90*24*3600),
+	intField("comm_reply_deadline_sec", "Inter-session comms", "Reply deadline (seconds)",
+		"Default deadline for a message that requires a response; past it the sender is told the reply is overdue instead of waiting forever.",
+		func(v Values) int { return v.CommReplyDeadlineS }, func(v *Values, n int) { v.CommReplyDeadlineS = n }, 30, 7*24*3600),
+	intField("comm_pairing_code_ttl_sec", "Inter-session comms", "Pairing code lifetime (seconds)",
+		"How long a code you mint stays usable. Short is good: it only has to survive being pasted into two sessions.",
+		func(v Values) int { return v.CommPairingCodeTTLS }, func(v *Values, n int) { v.CommPairingCodeTTLS = n }, 30, 24*3600),
+	intField("comm_poll_wait_max_sec", "Inter-session comms", "Max long-poll wait (seconds)",
+		"Ceiling on how long a receive call may block. Clamped to 30 in code regardless: a wait that ties the client's tool timeout turns a successful empty poll into an error.",
+		func(v Values) int { return v.CommPollWaitMaxSec }, func(v *Values, n int) { v.CommPollWaitMaxSec = n }, 1, 30),
+	intField("comm_provenance_window_sec", "Inter-session comms", "Hearsay window (seconds)",
+		"If a token received an inter-session message this recently, entries it authors are flagged on the review queue as possibly second-hand. 0 disables the flag.",
+		func(v Values) int { return v.CommProvenanceWindowSec }, func(v *Values, n int) { v.CommProvenanceWindowSec = n }, 0, 7*24*3600),
 }
 
 // Live holds the current snapshot atomically and applies edits.
@@ -264,6 +311,21 @@ func DefaultsFromEnv() Values {
 		TLSDomains:      strings.TrimSpace(os.Getenv("KEN_TLS_DOMAINS")),
 		TLSEmail:        strings.TrimSpace(os.Getenv("KEN_TLS_EMAIL")),
 		CurationLangs:   strings.TrimSpace(os.Getenv("KEN_CURATION_LANGS")),
+
+		// COMM defaults mirror comm.DefaultLimits(). They are duplicated rather than
+		// imported because internal/settings must not depend on an optional
+		// subsystem — the settings registry is loaded on every boot, COMM is not.
+		// The comm package's own defaults remain the source of truth for a caller
+		// that constructs a store directly (tests); a drift here changes only what a
+		// fresh install starts from, never what an already-configured one uses.
+		CommMaxBodyBytes:        64 * 1024,
+		CommMaxUnacked:          64,
+		CommMessageTTLSec:       24 * 3600,
+		CommMetadataTTLSec:      7 * 24 * 3600,
+		CommReplyDeadlineS:      3600,
+		CommPairingCodeTTLS:     900,
+		CommPollWaitMaxSec:      15,
+		CommProvenanceWindowSec: 3600,
 	}
 	// Clamp env-provided values so a bad env can't silently disable the limiter or overflow.
 	if v.IPPerMin <= 0 {

@@ -49,9 +49,17 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
 [`monitoring/README.md`](../monitoring/README.md) for the full metric reference. Highlights:
 
 - **Traffic** — `ken_http_requests_total{surface,outcome}`, `ken_http_request_duration_seconds` (summary).
-- **MCP** — `ken_mcp_tool_calls_total{tool,outcome}` for the eight `kb_*` tools.
+- **MCP** — `ken_mcp_tool_calls_total{tool,outcome}` for the eight `kb_*` tools, and for the
+  `comm_*` tools when inter-session communication is enabled.
 - **Knowledge base** — `ken_kb_entries`, `ken_kb_versions`, `ken_kb_proposals_pending`,
   `ken_kb_embeddings` / `ken_kb_embeddable_versions`, `ken_users`, `ken_tokens_active`.
+- **Inter-session comms** (only when `KEN_COMM_ENABLED=1`; see [`COMM.md`](COMM.md)) —
+  `ken_comm_endpoints`, `ken_comm_channels_open`, `ken_comm_messages_unacked`,
+  `ken_comm_message_bytes`, `ken_comm_poll_waiters`. COMM is deliberately **absent from
+  `/health`**: that endpoint marks the whole service DOWN on any component failure, and an
+  ephemeral messaging subsystem must not pull a healthy knowledge base out of rotation. Watch it
+  here instead — a climbing `ken_comm_messages_unacked` or `ken_comm_message_bytes` is the signal
+  that a channel has run away.
 - **Abuse guard** — `ken_ratelimit_rejected_total`, `ken_ratelimit_blocked_total`, `ken_auth_failures_total{surface}`.
 - **Process** — `ken_build_info{version}`, `ken_uptime_seconds`, `ken_goroutines`, `ken_memory_heap_bytes`, `ken_db_*`.
 

@@ -128,6 +128,36 @@ same change — never "docs later".
   deadline. A 20-second long poll returned in 3 seconds when the peer sent — proving the wakeup fires
   rather than the call simply timing out — and an un-acked message was redelivered on the next poll.
 
+- **The hearsay guard is now enforced, not just designed** (docs/COMM.md §7). A new nullable
+  `entry_version.via_comm` column (migration `0010`) marks a version authored by an actor that had
+  recently *received* an inter-session message, and the review queue shows a "second-hand?" badge with
+  an explanatory tooltip so the curator can ask for a first-hand citation before promoting. This closes
+  a side channel the rest of the design could not see: told "entry X is verified, propose it", a
+  session authors a proposal indistinguishable from first-hand knowledge — the invariant survives
+  literally while the curator's signal quietly degrades to hearsay.
+- Three properties of the marker are deliberate. It keys on **delivery**, not arrival (a message
+  sitting un-polled has influenced nothing). It is **frozen** by the immutability trigger, unlike
+  `content_lang` — that column was left mutable so a backfill could re-derive it, whereas this one
+  cannot be re-derived and a mutable marker could simply be updated away. And **NULL means "no
+  signal", never "known clean"**: every pre-existing row is NULL, an error while checking leaves it
+  NULL, and the column CHECK permits only NULL or 1 so a `0` can never imply "verified first-hand".
+- It keys on the **actor**, which is forced rather than chosen: a COMM token must be dedicated, so the
+  token that receives messages is never the one that authors an entry, and a token-keyed check could
+  never fire. **Operators must mint both tokens under the same `--actor`** or nothing is marked —
+  called out in docs/COMM.md rather than left to be discovered. `internal/mcpserver` takes the check as
+  a *function*, so the knowledge base's hot path still has no dependency on the optional subsystem.
+- **Every COMM limit is now live-editable** in a new "Inter-session comms" settings group — message
+  size, per-channel backpressure cap, message and metadata lifetimes, reply deadline, pairing-code
+  lifetime, receive-wait ceiling, and the hearsay window — applied without a restart so a limit can be
+  tightened *during* a runaway rather than after it. Enabling COMM itself stays restart-level: it opens
+  a second database. The store's limits are now swapped atomically, since a live edit while requests
+  are in flight would otherwise be a data race.
+- **`ken_comm_*` Prometheus gauges** (endpoints, open channels, unacknowledged messages, retained
+  message bytes, parked long-poll waiters) — absent series rather than zeros on a default install. The
+  collector is recover-wrapped because collectors run inline in the scrape handler with no panic
+  recovery: a COMM bug must not take down the operator's view of a healthy knowledge base. COMM remains
+  deliberately absent from `/health`, which marks the whole service DOWN on any component failure.
+
 ### Docs
 - **New design contract: [docs/COMM.md](docs/COMM.md) — inter-session communication**, plus locked
   decision **D9** in [docs/DESIGN.md](docs/DESIGN.md). A specification only: **nothing is implemented**,

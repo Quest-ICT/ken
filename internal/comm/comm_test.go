@@ -593,3 +593,84 @@ func TestPairingCodeIsSpaceScoped(t *testing.T) {
 		t.Fatalf("cross-space join: want ErrDenied, got %v", err)
 	}
 }
+
+// The hearsay guard keys on DELIVERY, not arrival: a message sitting un-polled in
+// the queue has influenced nothing, so it must not mark an authored version.
+func TestReceivedSinceKeysOnDelivery(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+	a, b, channelID := pair(t, st)
+
+	// Both endpoints belong to actor 7 (see owner()); actor 99 is a stranger.
+	got, err := st.ReceivedSince(ctx, 7, 3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got {
+		t.Fatal("reported comm traffic before anything was sent")
+	}
+
+	if _, err := st.Send(ctx, a, channelID, "hearsay", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.ReceivedSince(ctx, 7, 3600); got {
+		t.Fatal("a queued but never-polled message marked the recipient — it has influenced nothing")
+	}
+
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.ReceivedSince(ctx, 7, 3600); !got {
+		t.Fatal("a delivered message did not mark the recipient")
+	}
+
+	// An unrelated actor is never marked.
+	if got, _ := st.ReceivedSince(ctx, 99, 3600); got {
+		t.Fatal("an unrelated actor was marked as having received comm traffic")
+	}
+}
+
+// The mark survives acknowledgement: bodies are deleted on ack, metadata is not,
+// and a session that read and acted on a message is exactly the case to flag.
+func TestReceivedSinceSurvivesAck(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+	a, b, channelID := pair(t, st)
+
+	m, err := st.Send(ctx, a, channelID, "x", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Ack(ctx, b, m.MessageID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.ReceivedSince(ctx, 7, 3600); !got {
+		t.Fatal("acking cleared the provenance signal")
+	}
+}
+
+// Outside the window, and for unknown or empty tokens, the answer is false.
+func TestReceivedSinceWindowAndUnknownActors(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+	a, b, channelID := pair(t, st)
+	if _, err := st.Send(ctx, a, channelID, "x", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := st.ReceivedSince(ctx, 7, -1); got {
+		t.Fatal("a non-positive window must report false")
+	}
+	if got, _ := st.ReceivedSince(ctx, 0, 3600); got {
+		t.Fatal("a zero actor id must report false")
+	}
+	if got, _ := st.ReceivedSince(ctx, 12345, 3600); got {
+		t.Fatal("an unknown actor must report false")
+	}
+}

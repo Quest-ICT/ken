@@ -283,10 +283,55 @@ func runServe(args []string) {
 		log.Print("OAuth: authorization server ENABLED — discovery, dynamic client registration, and token endpoints are live (claude.ai custom connectors can authenticate).")
 	}
 
+	// Inter-session communication (docs/COMM.md) — OFF unless KEN_COMM_ENABLED.
+	// A default install stays exactly the curated knowledge base it advertises:
+	// with COMM off, no second database is created, no tools are registered, and
+	// no instruction section reaches any agent.
+	//
+	// Opened BEFORE the MCP deps are built because the knowledge base's write path
+	// needs the hearsay check (docs/COMM.md §7), which reads this store.
+	var commStore *comm.Store
+	if os.Getenv("KEN_COMM_ENABLED") == "1" {
+		commPath := envOr("KEN_COMM_DB", filepath.Join(filepath.Dir(*dbPath), "comm", "comm.db"))
+		if err := os.MkdirAll(filepath.Dir(commPath), 0o700); err != nil {
+			log.Fatalf("comm: create data dir: %v", err)
+		}
+		cs, err := comm.Open(commPath, commLimits(live.Current()))
+		if err != nil {
+			log.Fatalf("comm: open: %v", err)
+		}
+		defer cs.Close()
+		if err := cs.Migrate(); err != nil {
+			log.Fatalf("comm: migrate: %v", err)
+		}
+		commStore = cs
+	}
+
 	mux := http.NewServeMux()
 	mcpDeps := mcpserver.Deps{
 		Store: st, DedupSecret: dedupSecret, Embedder: emb, TokenLimiter: rlToken, Metrics: reg,
 		CurationLangs: live.Current().CurationLangSet,
+	}
+	if commStore != nil {
+		// Mark versions authored by an actor that recently RECEIVED an inter-session
+		// message, so the curator can ask for a first-hand citation (docs/COMM.md §7).
+		// Actor-keyed, not token-keyed: a COMM token is dedicated, so the receiving
+		// token is never the authoring one.
+		// A closure keeps internal/mcpserver free of any dependency on the optional
+		// subsystem. An error yields false — the marker is advisory and must never
+		// block a save.
+		mcpDeps.CommProvenance = func(ctx context.Context, actorID int64) bool {
+			win := live.Current().CommProvenanceWindowSec
+			if win <= 0 {
+				return false
+			}
+			got, err := commStore.ReceivedSince(ctx, actorID, win)
+			if err != nil {
+				log.Printf("comm: provenance check: %v", err)
+				return false
+			}
+			return got
+		}
 	}
 	if oauthSrv != nil {
 		mcpDeps.ResourceMetadataURL = oauthSrv.ResourceMetadataURL // 401 → discovery challenge
@@ -311,31 +356,38 @@ func runServe(args []string) {
 	// service DOWN on any component failure and /health then returns 503, so a
 	// wedged COMM sweeper would pull a healthy knowledge base out of rotation.
 	// COMM may fail; the KB stays UP.
+	// Mount the COMM endpoint and apply its limits live.
+	//
+	// Deliberately NOT registered with the health checker: that marks the whole
+	// service DOWN on any component failure and /health then returns 503, so a
+	// wedged COMM sweeper would pull a healthy knowledge base out of rotation.
+	// COMM may fail; the KB stays UP.
 	var commHandler *commserver.Handler
-	var commStore *comm.Store
-	if os.Getenv("KEN_COMM_ENABLED") == "1" {
-		commPath := envOr("KEN_COMM_DB", filepath.Join(filepath.Dir(*dbPath), "comm", "comm.db"))
-		if err := os.MkdirAll(filepath.Dir(commPath), 0o700); err != nil {
-			log.Fatalf("comm: create data dir: %v", err)
-		}
-		cs, err := comm.Open(commPath, comm.DefaultLimits())
-		if err != nil {
-			log.Fatalf("comm: open: %v", err)
-		}
-		defer cs.Close()
-		if err := cs.Migrate(); err != nil {
-			log.Fatalf("comm: migrate: %v", err)
-		}
+	if commStore != nil {
 		commHandler = commserver.NewHTTPHandler(commserver.Deps{
-			Comm: cs, Store: st, TokenLimiter: rlToken, Metrics: reg,
+			Comm: commStore, Store: st, TokenLimiter: rlToken, Metrics: reg,
+			MaxPollWaitSeconds: live.Current().CommPollWaitMaxSec,
 		})
 		// The MCP endpoint is /comm/mcp, not /comm: the human console lives at /comm
 		// (served by the web handler mounted on "/"), and a top-level exact "/comm"
 		// route here would shadow it. It also reads better — /mcp and /comm/mcp are
 		// the two machine surfaces, everything else is human.
 		mux.Handle("/comm/mcp", commHandler)
-		commStore = cs
-		log.Printf("COMM: inter-session communication ENABLED (experimental) at /comm/mcp (db=%s) — requires a dedicated token with the 'comm' scope", commPath)
+
+		// Apply COMM limit edits live, and only when a COMM field actually changed —
+		// same guard as the rate limiter, so an unrelated settings edit does not churn
+		// the subsystem. Enabling COMM itself is NOT live: it opens a second database,
+		// which is a restart-level act.
+		lastComm := commRelevant(live.Current().Values)
+		live.OnChange(func(sn *settings.Snapshot) {
+			if k := commRelevant(sn.Values); k != lastComm {
+				lastComm = k
+				commStore.SetLimits(commLimits(sn))
+				commHandler.SetMaxPollWait(sn.CommPollWaitMaxSec)
+			}
+		})
+		registerCommCollectors(reg, commStore, commHandler)
+		log.Printf("COMM: inter-session communication ENABLED (experimental) at /comm/mcp + console at /comm (db=%s) — requires a dedicated token with the 'comm' scope", commStore.Path())
 	}
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -710,4 +762,59 @@ func must(err error) {
 func die(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
 	os.Exit(2)
+}
+
+// commLimits maps the live settings snapshot onto the COMM store's bounds.
+//
+// The settings registry is the source of truth at runtime; comm.DefaultLimits()
+// only seeds a store constructed directly (tests, or a future CLI verb).
+func commLimits(s *settings.Snapshot) comm.Limits {
+	return comm.Limits{
+		MaxBodyBytes:          s.CommMaxBodyBytes,
+		MaxUnackedPerChannel:  s.CommMaxUnacked,
+		MessageTTLSeconds:     s.CommMessageTTLSec,
+		MetadataTTLSeconds:    s.CommMetadataTTLSec,
+		ReplyDeadlineSeconds:  s.CommReplyDeadlineS,
+		PairingCodeTTLSeconds: s.CommPairingCodeTTLS,
+	}
+}
+
+// commRelevant is the changed-subset key for COMM settings: a settings edit
+// rebuilds the subsystem's limits only when one of these actually moved.
+func commRelevant(v settings.Values) string {
+	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d",
+		v.CommMaxBodyBytes, v.CommMaxUnacked, v.CommMessageTTLSec, v.CommMetadataTTLSec,
+		v.CommReplyDeadlineS, v.CommPairingCodeTTLS, v.CommPollWaitMaxSec, v.CommProvenanceWindowSec)
+}
+
+// registerCommCollectors exposes COMM gauges on the existing /metrics endpoint.
+//
+// Wrapped in recover for the same reason the sweeper is: collectors run inline in
+// the scrape handler with no panic recovery of their own, so a COMM bug would take
+// down /metrics — and with it the operator's view of a perfectly healthy knowledge
+// base. On any failure it emits nothing, which reads as a gap in the series rather
+// than a false zero.
+//
+// COMM stays out of /healthz for the related reason (a component failure there
+// marks the WHOLE service DOWN); metrics are where an ephemeral subsystem belongs.
+func registerCommCollectors(reg *metrics.Registry, cs *comm.Store, h *commserver.Handler) {
+	reg.AddCollector(func(ctx context.Context) (fam []metrics.Family) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("comm: metrics collector panic recovered: %v", r)
+				fam = nil
+			}
+		}()
+		add := func(name, help string, v float64) { fam = append(fam, metrics.Gauge(name, help, v)) }
+		if s, err := cs.StatsFor(ctx, 1); err == nil {
+			add("ken_comm_endpoints", "Registered inter-session endpoints (sessions).", float64(s.Endpoints))
+			add("ken_comm_channels_open", "Open inter-session channels.", float64(s.OpenChannels))
+			add("ken_comm_messages_unacked", "Messages delivered or queued but not yet acknowledged.", float64(s.Unacked))
+			add("ken_comm_message_bytes", "Bytes of retained message bodies (deleted at acknowledgement).", float64(s.BodyBytes))
+		}
+		if h != nil {
+			add("ken_comm_poll_waiters", "Long-poll receive calls currently parked.", float64(h.ParkedWaiters()))
+		}
+		return fam
+	})
 }

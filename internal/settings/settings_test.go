@@ -10,10 +10,18 @@ import (
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
+// testDefaults must be a VALID configuration for every registered field, because
+// Apply validates the whole registry on each save: a field left at its zero value
+// here fails its own bounds check and fails every test in this file, not just the
+// one exercising it. Keep it in step with settings.Fields.
 var testDefaults = settings.Values{
 	RLEnabled: true, IPPerMin: 120, IPBurst: 120, TokenPerMin: 120, TokenBurst: 60,
 	BlockAfter: 100, LockoutSec: 900, LoginMaxFails: 5, LoginLockoutSec: 300,
 	SessionTTLHours: 12, TLSMode: "off",
+	CommMaxBodyBytes: 64 * 1024, CommMaxUnacked: 64,
+	CommMessageTTLSec: 24 * 3600, CommMetadataTTLSec: 7 * 24 * 3600,
+	CommReplyDeadlineS: 3600, CommPairingCodeTTLS: 900,
+	CommPollWaitMaxSec: 15, CommProvenanceWindowSec: 3600,
 }
 
 func testStore(t *testing.T) *store.Store {

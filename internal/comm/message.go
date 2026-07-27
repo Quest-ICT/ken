@@ -62,7 +62,7 @@ type SendOpts struct {
 // that bucket fails OPEN when saturated — correct for keys an attacker cannot mint
 // cheaply, wrong for identifiers a caller creates in a loop.
 func (s *Store) Send(ctx context.Context, ep *Endpoint, channelID, body string, opts SendOpts) (*Message, error) {
-	if len(body) > s.limits.MaxBodyBytes {
+	if len(body) > s.lim().MaxBodyBytes {
 		return nil, ErrTooLarge
 	}
 	ch, peer, err := s.ChannelFor(ctx, ep, channelID)
@@ -72,7 +72,7 @@ func (s *Store) Send(ctx context.Context, ep *Endpoint, channelID, body string, 
 
 	ttl := opts.TTLSeconds
 	if ttl <= 0 {
-		ttl = s.limits.MessageTTLSeconds
+		ttl = s.lim().MessageTTLSeconds
 	}
 
 	var out *Message
@@ -102,7 +102,7 @@ SELECT COUNT(*) FROM message WHERE channel_id=? AND state IN ('queued','delivere
 			Scan(&unacked); err != nil {
 			return err
 		}
-		if unacked >= s.limits.MaxUnackedPerChannel {
+		if unacked >= s.lim().MaxUnackedPerChannel {
 			return ErrBackpressure
 		}
 
@@ -140,7 +140,7 @@ SELECT COALESCE(MAX(seq),0)+1 FROM message WHERE channel_id=? AND sender_endpoin
 
 		var deadline any
 		if opts.RequiresResponse {
-			deadline = nowExpr(s.limits.ReplyDeadlineSeconds)
+			deadline = nowExpr(s.lim().ReplyDeadlineSeconds)
 		}
 
 		// Every placeholder is a plain `?`: mixing `?` with explicit `?N` in one
@@ -365,7 +365,7 @@ WHERE state='acked' AND body IS NOT NULL AND replied_by IS NULL
 		res, err = t.ExecContext(ctx, `
 DELETE FROM message
 WHERE state IN ('acked','expired')
-  AND created_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`, nowExpr(-s.limits.MetadataTTLSeconds))
+  AND created_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`, nowExpr(-s.lim().MetadataTTLSeconds))
 		if err != nil {
 			return err
 		}
