@@ -138,7 +138,7 @@ Rate limiting (env; on by default — loopback + KEN_RATELIMIT_ALLOW_CIDRS + /he
   KEN_RATELIMIT_ALLOW_CIDRS  extra always-allowed CIDRs (comma-separated)
 
 Inter-session communication (EXPERIMENTAL; OFF unless enabled — see docs/COMM.md):
-  KEN_COMM_ENABLED  1 = expose the comm MCP endpoint at /comm (default off)
+  KEN_COMM_ENABLED  1 = expose the comm MCP endpoint at /comm/mcp + console at /comm (default off)
   KEN_COMM_DB       message database path (default <db dir>/comm/comm.db; NOT backed up — it is expendable)
                     needs a DEDICATED token:  ken token add --actor comm-dev --scopes comm
                     a token may hold comm scopes or knowledge-base scopes, never both
@@ -329,9 +329,13 @@ func runServe(args []string) {
 		commHandler = commserver.NewHTTPHandler(commserver.Deps{
 			Comm: cs, Store: st, TokenLimiter: rlToken, Metrics: reg,
 		})
-		mux.Handle("/comm", commHandler)
+		// The MCP endpoint is /comm/mcp, not /comm: the human console lives at /comm
+		// (served by the web handler mounted on "/"), and a top-level exact "/comm"
+		// route here would shadow it. It also reads better — /mcp and /comm/mcp are
+		// the two machine surfaces, everything else is human.
+		mux.Handle("/comm/mcp", commHandler)
 		commStore = cs
-		log.Printf("COMM: inter-session communication ENABLED (experimental) at /comm (db=%s) — requires a dedicated token with the 'comm' scope", commPath)
+		log.Printf("COMM: inter-session communication ENABLED (experimental) at /comm/mcp (db=%s) — requires a dedicated token with the 'comm' scope", commPath)
 	}
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +381,7 @@ func runServe(args []string) {
 	mux.Handle("/", reg.Counting("web", web.Handler(web.Deps{
 		Store: st, SecureCookies: secure, SetupToken: os.Getenv("KEN_SETUP_TOKEN"),
 		TrustedProxies: os.Getenv("KEN_TRUSTED_PROXIES"), Settings: live, OAuthEnabled: oauthEnabled,
-		I18n: i18n.New(i18nDir),
+		I18n: i18n.New(i18nDir), Comm: commStore,
 	})))
 
 	// The per-IP abuse guard is the outermost handler — ahead of web routing and MCP auth.

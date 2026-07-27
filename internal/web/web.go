@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/i18n"
 	"github.com/Quest-ICT/ken/internal/settings"
 	"github.com/Quest-ICT/ken/internal/store"
@@ -38,6 +39,12 @@ type Deps struct {
 	// I18n provides the reloadable UI translations. If nil, a Manager with the
 	// embedded English + Spanish defaults (no external override dir) is used.
 	I18n *i18n.Manager
+	// Comm, when set, mounts the inter-session communication console (/comm) —
+	// where a human mints the pairing codes that are the ONLY way a channel comes
+	// into existence, and revokes channels or endpoints. Nil (the default) hides
+	// the page and its nav entry entirely. Mirrors KEN_COMM_ENABLED; the comm MCP
+	// endpoint is mounted separately in main.go.
+	Comm *comm.Store
 }
 
 // Handler returns the web UI mux. When no admin exists yet it logs the one-time

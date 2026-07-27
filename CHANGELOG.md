@@ -37,7 +37,8 @@ same change — never "docs later".
   sessions on the same or different machines (`internal/comm` + `internal/commserver`, decision **D9**,
   contract in [docs/COMM.md](docs/COMM.md)). **Experimental and off by default**, which places it
   outside the compatibility contract for at least one MINOR. Text-only in this release; file exchange
-  is deferred. Not yet usable end to end — see the MCP-layer entry below for what is still missing.
+  is deferred. Verified end to end against the running binary; runtime limits are not yet
+  operator-tunable and COMM-specific metrics are not yet exposed.
 - Its own SQLite file with its own forward-only migrations, versioned **independently** of `ken.db` so
   a COMM schema change never touches the knowledge base. Ownership columns (`actor_id`, `space_id`,
   `token_id`) name rows in `ken.db` and are deliberately **not** foreign keys — SQLite FKs cannot span
@@ -74,13 +75,12 @@ same change — never "docs later".
 - 21 tests, including three whose failure modes were verified by deliberately breaking the invariant
   they guard.
 - **The COMM MCP layer** (`internal/commserver`): six `comm_*` tools — register, join, channels, send,
-  poll, ack — served from a **separate `/comm` endpoint**, wired into `ken serve` behind
-  `KEN_COMM_ENABLED` (off by default). Still **not usable end to end**: minting a pairing code has no
-  human-facing UI yet, and a channel cannot open without one.
+  poll, ack — served from a **separate `/comm/mcp` endpoint**, wired into `ken serve` behind
+  `KEN_COMM_ENABLED` (off by default).
 - **A separate endpoint is a security property, not packaging taste.** A client registers Ken twice: a
   knowledge-base token cannot send messages, a comm token cannot write knowledge, each surface gets
   independent rate accounting so a poll loop cannot starve `kb_*` calls, and revocation is per-surface.
-  It also lets `/comm` refuse the permissive CORS `/mcp` needs for a browser-based connector, since
+  It also lets `/comm/mcp` refuse the permissive CORS `/mcp` needs for a browser-based connector, since
   nothing here has a browser client.
 - **COMM authentication deliberately does not reuse the knowledge base's, and the duplication is the
   point.** That path accepts three token shapes; this one accepts exactly one — a `ken_` API token
@@ -111,6 +111,22 @@ same change — never "docs later".
 - 18 further tests covering the auth narrowing, wait clamping, and waiter concurrency (race-clean);
   the scope check and the shutdown drain were verified by deliberately breaking each and confirming
   the failure.
+- **The human console at `/comm`** — mint a pairing code (shown once; only its hash is stored), see
+  registered sessions and channels with their pending-message counts, and revoke either. This page is
+  load-bearing rather than a convenience: COMM's security model rests on a human deciding which
+  sessions may talk, so without it the gate could not be exercised and there was no brake to pull.
+  Message *contents* are deliberately not shown — bodies are deleted on ack and are not the operator's
+  business; what an operator needs is to spot a runaway channel. English and Spanish translations land
+  with it, as every user-facing string must.
+- The console lives at `/comm` and the MCP endpoint moved to **`/comm/mcp`**, because a top-level
+  `/comm` route would have shadowed the human page. It also reads better: `/mcp` and `/comm/mcp` are
+  the two machine surfaces, everything else is human. Safe to change because the surface is
+  experimental and has never shipped in a tagged release.
+- **Verified end to end against the running binary**, not just in unit tests: two MCP sessions
+  registered, a human minted a pairing code in the web UI, both sessions joined it, one sent a message
+  with `requires_response`, the other polled and received it with correct sender attribution and reply
+  deadline. A 20-second long poll returned in 3 seconds when the peer sent — proving the wakeup fires
+  rather than the call simply timing out — and an un-acked message was redelivered on the next poll.
 
 ### Docs
 - **New design contract: [docs/COMM.md](docs/COMM.md) — inter-session communication**, plus locked

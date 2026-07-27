@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Quest-ICT/ken/internal/clientip"
+	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/i18n"
 	"github.com/Quest-ICT/ken/internal/model"
 	"github.com/Quest-ICT/ken/internal/passwd"
@@ -54,6 +55,7 @@ type app struct {
 	provisioned  atomic.Bool                // flips true once a human user exists (wizard done)
 	oauthEnabled bool                       // mounts the OAuth consent flow + Connectors UI
 	i18n         *i18n.Manager              // reloadable UI translations
+	comm         *comm.Store                // inter-session comms; nil = feature off, console + nav hidden
 }
 
 func newApp(d Deps) *app {
@@ -75,6 +77,7 @@ func newApp(d Deps) *app {
 		settings:     d.Settings,
 		oauthEnabled: d.OAuthEnabled,
 		i18n:         d.I18n,
+		comm:         d.Comm,
 	}
 	if a.i18n == nil {
 		a.i18n = i18n.New("") // embedded en+es defaults, no external override dir
@@ -89,7 +92,7 @@ func newApp(d Deps) *app {
 func parsePages() map[string]*template.Template {
 	m := map[string]*template.Template{}
 	funcs := template.FuncMap{"shortdate": shortDate}
-	for _, p := range []string{"login", "setup", "dashboard", "search", "browse", "entry", "proposals", "tokens", "settings", "consent"} {
+	for _, p := range []string{"login", "setup", "dashboard", "search", "browse", "entry", "proposals", "tokens", "settings", "consent", "comm"} {
 		m[p] = template.Must(template.New("base.html").Funcs(funcs).
 			ParseFS(tplFS, "templates/base.html", "templates/"+p+".html"))
 	}
@@ -130,6 +133,12 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /tokens/{id}/revoke", a.requireAuth(a.handleTokenRevoke))
 	mux.HandleFunc("GET /settings", a.requireAuth(a.handleSettings))
 	mux.HandleFunc("POST /settings", a.requireAuth(a.handleSettingsSave))
+	if a.comm != nil {
+		mux.HandleFunc("GET /comm", a.requireAuth(a.handleComm))
+		mux.HandleFunc("POST /comm/pair", a.requireAuth(a.handleCommPair))
+		mux.HandleFunc("POST /comm/channels/{id}/revoke", a.requireAuth(a.handleCommRevokeChannel))
+		mux.HandleFunc("POST /comm/endpoints/{id}/revoke", a.requireAuth(a.handleCommRevokeEndpoint))
+	}
 	mux.HandleFunc("GET /setup", a.handleSetupForm)
 	mux.HandleFunc("POST /setup", a.handleSetupSubmit)
 	if a.oauthEnabled {
@@ -245,11 +254,14 @@ type view struct {
 	Version   string
 	SourceURL string // AGPL-3.0 §13: link to the Corresponding Source, shown in the footer
 	Data      any
-	Lang      string        // resolved UI language for this request
-	Path      string        // current request URI, for the language selector's return link
-	Chrome    string        // "app" (full nav) or "auth" (centered public pages: login/setup/consent)
-	Theme     string        // "light"|"dark" from the ken_theme cookie, else "" (media query decides)
-	tr        *i18n.Manager // translator (unexported; reached via .T / .TN / .Langs)
+	Lang      string // resolved UI language for this request
+	Path      string // current request URI, for the language selector's return link
+	Chrome    string // "app" (full nav) or "auth" (centered public pages: login/setup/consent)
+	Theme     string // "light"|"dark" from the ken_theme cookie, else "" (media query decides)
+	// CommEnabled gates the inter-session communication nav entry. The page 404s
+	// when the feature is off, so the link must not be shown then.
+	CommEnabled bool
+	tr          *i18n.Manager // translator (unexported; reached via .T / .TN / .Langs)
 }
 
 // T translates a message key for the current request language (templates: {{.T "key"}};
@@ -334,7 +346,7 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 		theme = c.Value
 	}
 	v := view{Session: sess, Flash: flash, PropCount: pc, Version: version.Version, SourceURL: version.SourceURL(), Data: data,
-		Lang: lang, Path: r.URL.RequestURI(), Chrome: chrome, Theme: theme, tr: a.i18n}
+		Lang: lang, Path: r.URL.RequestURI(), Chrome: chrome, Theme: theme, CommEnabled: a.commEnabled(), tr: a.i18n}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.pages[page].ExecuteTemplate(w, "base.html", v); err != nil {
 		log.Printf("web: render %s: %v", page, err)

@@ -1,0 +1,167 @@
+{{define "title"}}{{.T "comm.tab"}}{{end}}
+{{define "content"}}
+<div class="page-head">
+  <p class="eyebrow">{{.T "comm.eyebrow"}}</p>
+  <h1 class="h1">{{.T "comm.heading"}}</h1>
+  <p class="lede">{{.T "comm.lede"}}</p>
+</div>
+
+<div class="card" style="margin-bottom:var(--sp-5)">
+  <div class="card__body">
+    <p><b>{{.T "comm.experimental"}}</b> {{.T "comm.experimental_note"}}</p>
+  </div>
+</div>
+
+<div class="grid-2">
+  <!-- mint a pairing code: the human act the design depends on -->
+  <section>
+    <div class="card">
+      <div class="card__head"><h2 class="h3">{{.T "comm.pair_heading"}}</h2></div>
+      <div class="card__body">
+        <p class="help">{{.T "comm.pair_help"}}</p>
+        <form method="post" action="/comm/pair">
+          <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+          <div class="field">
+            <label for="c-label">{{.T "comm.pair_label"}}</label>
+            <input class="input" id="c-label" name="label" type="text" placeholder="dev &lt;-&gt; test" title="{{.T "comm.pair_label_help"}}">
+            <span class="help">{{.T "comm.pair_label_help"}}</span>
+          </div>
+          <button class="btn btn--primary" type="submit" title="{{.T "comm.pair_submit_help"}}">{{.T "comm.pair_submit"}}</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- one-time code reveal -->
+  <section>
+    {{if .Data.NewCode}}
+    <div class="card card--accent">
+      <div class="card__head"><h2 class="h3">{{.T "comm.new_code_heading"}}</h2></div>
+      <div class="card__body">
+        <p class="help">{{.T "comm.new_code_help"}}</p>
+        <p><code class="mono" style="font-size:1.3rem;letter-spacing:.08em">{{.Data.NewCode}}</code></p>
+        <p class="help">{{.T "comm.new_code_endpoint"}}</p>
+        <p><code class="mono">{{.Data.CommURL}}</code></p>
+      </div>
+    </div>
+    {{else}}
+    <div class="card">
+      <div class="card__head"><h2 class="h3">{{.T "comm.stats_heading"}}</h2></div>
+      <div class="card__body">
+        <ul class="plain">
+          <li>{{.T "comm.stat_endpoints"}}: <b>{{.Data.Stats.Endpoints}}</b></li>
+          <li>{{.T "comm.stat_open_channels"}}: <b>{{.Data.Stats.OpenChannels}}</b></li>
+          <li>{{.T "comm.stat_unacked"}}: <b>{{.Data.Stats.Unacked}}</b></li>
+          <li>{{.T "comm.stat_bytes"}}: <b>{{.Data.Stats.BodyBytes}}</b></li>
+        </ul>
+      </div>
+    </div>
+    {{end}}
+  </section>
+</div>
+
+<!-- codes awaiting redemption -->
+{{if .Data.Codes}}
+<section style="margin-top:var(--sp-5)">
+  <div class="card">
+    <div class="card__head"><h2 class="h3">{{.T "comm.pending_heading"}}</h2></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr>
+          <th>{{.T "comm.col_label"}}</th><th>{{.T "comm.col_status"}}</th>
+          <th>{{.T "comm.col_expires"}}</th><th>{{.T "comm.col_created"}}</th>
+        </tr></thead>
+        <tbody>
+        {{range .Data.Codes}}
+          <tr>
+            <td>{{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}</td>
+            <td>{{if .Joined}}<span class="badge badge--accent badge--sm">{{$.T "comm.status_awaiting_second"}}</span>{{else}}<span class="badge badge--sm">{{$.T "comm.status_unused"}}</span>{{end}}</td>
+            <td class="mono">{{shortdate .ExpiresAt}}</td>
+            <td class="mono">{{shortdate .CreatedAt}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{{end}}
+
+<!-- channels -->
+<section style="margin-top:var(--sp-5)">
+  <div class="card">
+    <div class="card__head"><h2 class="h3">{{.T "comm.channels_heading"}}</h2></div>
+    {{if .Data.Channels}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr>
+          <th>{{.T "comm.col_channel"}}</th><th>{{.T "comm.col_parties"}}</th>
+          <th>{{.T "comm.col_state"}}</th><th>{{.T "comm.col_pending"}}</th>
+          <th>{{.T "comm.col_created"}}</th><th></th>
+        </tr></thead>
+        <tbody>
+        {{range .Data.Channels}}
+          <tr>
+            <td class="mono">{{.ChannelID}}</td>
+            <td>
+              {{if .LabelA}}{{.LabelA}}{{else}}<span class="mono">{{.EndpointA}}</span>{{end}}
+              {{if .EndpointB}} &harr; {{if .LabelB}}{{.LabelB}}{{else}}<span class="mono">{{.EndpointB}}</span>{{end}}
+              {{else}} &harr; <span class="muted">{{$.T "comm.awaiting_peer"}}</span>{{end}}
+            </td>
+            <td><span class="badge badge--sm">{{.State}}</span></td>
+            <td>{{.Unacked}}</td>
+            <td class="mono">{{shortdate .CreatedAt}}</td>
+            <td>
+              {{if ne .State "revoked"}}
+              <form class="inline" method="post" action="/comm/channels/{{.ChannelID}}/revoke" data-confirm="{{$.T "comm.revoke_channel_confirm"}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <button class="btn btn--danger btn--sm" type="submit" title="{{$.T "comm.revoke_channel_help"}}">{{$.T "comm.revoke"}}</button>
+              </form>
+              {{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="card__body"><p class="muted">{{.T "comm.no_channels"}}</p></div>
+    {{end}}
+  </div>
+</section>
+
+<!-- endpoints -->
+<section style="margin-top:var(--sp-5)">
+  <div class="card">
+    <div class="card__head"><h2 class="h3">{{.T "comm.endpoints_heading"}}</h2></div>
+    {{if .Data.Endpoints}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr>
+          <th>{{.T "comm.col_endpoint"}}</th><th>{{.T "comm.col_label"}}</th>
+          <th>{{.T "comm.col_last_seen"}}</th><th>{{.T "comm.col_created"}}</th><th></th>
+        </tr></thead>
+        <tbody>
+        {{range .Data.Endpoints}}
+          <tr>
+            <td class="mono">{{.EndpointID}}</td>
+            <td>{{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}</td>
+            <td class="mono">{{shortdate .LastSeenAt}}</td>
+            <td class="mono">{{shortdate .CreatedAt}}</td>
+            <td>
+              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{$.T "comm.revoke_endpoint_confirm"}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <button class="btn btn--danger btn--sm" type="submit" title="{{$.T "comm.revoke_endpoint_help"}}">{{$.T "comm.revoke"}}</button>
+              </form>
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="card__body"><p class="muted">{{.T "comm.no_endpoints"}}</p></div>
+    {{end}}
+  </div>
+</section>
+{{end}}

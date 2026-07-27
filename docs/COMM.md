@@ -1,22 +1,21 @@
 # Ken — inter-session communication (COMM)
 
-> **Status: PARTIALLY IMPLEMENTED — the storage layer only.** This document is the design contract
-> for a feature targeted at **1.2.0**. It is **experimental** and **off by default**, which places it
-> outside the SemVer contract (see [COMPATIBILITY.md](../COMPATIBILITY.md)) for at least one MINOR
-> release.
+> **Status: EXPERIMENTAL, off by default, feature-complete for text messaging.** This document is the
+> design contract for a feature targeted at **1.2.0**. Being experimental and optional-and-off-by-default
+> places it outside the SemVer contract (see [COMPATIBILITY.md](../COMPATIBILITY.md)) for at least one
+> MINOR release.
 >
-> **Built:** the schema and store layer (`internal/comm`) — endpoint registration and authentication,
-> human-minted pairing codes, two-sided channel join, send/poll/ack with at-least-once redelivery and
-> idempotency, request/response correlation with reply deadlines, backpressure, and the TTL sweeper.
-> The MCP layer (`internal/commserver`) — the six `comm_*` tools on their own `/comm` endpoint, the
-> `comm` scope with dedicated-token enforcement, long-poll wakeups with shutdown drain, and the
-> instruction section. Wired into `ken serve` behind `KEN_COMM_ENABLED`, with a one-minute sweeper.
-> 39 tests.
+> **Built and verified end to end:** the schema and store layer (`internal/comm`), the six `comm_*`
+> tools on their own `/comm/mcp` endpoint (`internal/commserver`) with the `comm` scope and
+> dedicated-token enforcement, long-poll wakeups with a shutdown drain, the instruction section, the
+> human console at `/comm` (mint a pairing code, see endpoints and channels with pending counts, revoke
+> either), English + Spanish translations, and the `ken serve` wiring behind `KEN_COMM_ENABLED` with a
+> one-minute sweeper. Two sessions can register, be paired by a human, exchange a message and
+> acknowledge it.
 >
 > **Not built yet:** the settings group (limits are compile-time defaults, not yet operator-tunable at
-> runtime), the web console — including **minting a pairing code, which currently has no human-facing
-> UI**, so the feature is not yet usable end to end — COMM-specific metrics, and the curation
-> provenance marker (§7). File exchange (§11) remains deferred to a later MINOR.
+> runtime), COMM-specific Prometheus metrics, and the curation provenance marker (§7). File exchange
+> (§11) remains deferred to a later MINOR.
 
 Ken's knowledge base answers *"has this problem been solved before?"*. COMM answers a different
 question that the same deployment is unusually well-placed to serve: **"how do two AI sessions,
@@ -327,7 +326,7 @@ disk, the process, or the readiness signal. These are enforced rules, each with 
 
 ## 6. Tool surface (sketch)
 
-Six tools, all `comm_*`, all requiring the `comm` scope, served from `/comm`
+Six tools, all `comm_*`, all requiring the `comm` scope, served from `/comm/mcp`
 (`internal/commserver`). Every tool except `comm_register` carries `endpoint_id` + `endpoint_secret`:
 the bearer token identifies a *machine*, so the endpoint pair is what identifies the *session* within
 it.
