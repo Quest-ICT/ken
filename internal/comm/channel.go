@@ -69,12 +69,13 @@ func (s *Store) JoinChannel(ctx context.Context, ep *Endpoint, code string) (*Ch
 			humanID  int64
 			chanID   sql.NullInt64
 			consumed sql.NullString
+			pcLabel  sql.NullString
 		)
 		err := t.QueryRowContext(ctx, `
-SELECT id, space_id, human_actor_id, channel_id, consumed_at
+SELECT id, space_id, human_actor_id, channel_id, consumed_at, label
 FROM pairing_code
 WHERE code_sha256=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-			sha256Hex(code)).Scan(&pcID, &spaceID, &humanID, &chanID, &consumed)
+			sha256Hex(code)).Scan(&pcID, &spaceID, &humanID, &chanID, &consumed, &pcLabel)
 		if errors.Is(err, sql.ErrNoRows) {
 			// Expired and unknown are indistinguishable on purpose: a caller must
 			// not be able to probe which codes exist or existed.
@@ -98,8 +99,8 @@ WHERE code_sha256=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 				return err
 			}
 			res, err := t.ExecContext(ctx, `
-INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, state)
-VALUES(?,?,?,?, 'pending')`, channelID, spaceID, humanID, ep.ID)
+INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, state, label)
+VALUES(?,?,?,?, 'pending', ?)`, channelID, spaceID, humanID, ep.ID, nullStr(pcLabel.String))
 			if err != nil {
 				return err
 			}

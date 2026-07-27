@@ -10,7 +10,11 @@ import "context"
 // and is anything piling up". A security model whose enforcement point is the human
 // needs the human to be able to see, and stop, what is happening.
 type AdminChannel struct {
-	ChannelID    string
+	ChannelID string
+	// Label is the human name the operator gave when minting the pairing code
+	// (e.g. "Ken dev <-> prod"); empty when the code had no label. This is the
+	// identifier a human recognizes — the opaque ChannelID is for machines.
+	Label        string
 	State        string
 	SpaceID      int64
 	OwnerActorID int64
@@ -30,7 +34,7 @@ type AdminChannel struct {
 // a second human exists, and narrowing it later would be a behavioural break.
 func (s *Store) ListChannelsForSpace(ctx context.Context, spaceID int64) ([]AdminChannel, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT c.channel_id, c.state, c.space_id, c.owner_actor_id,
+SELECT c.channel_id, COALESCE(c.label,''), c.state, c.space_id, c.owner_actor_id,
        ea.endpoint_id, COALESCE(ea.label,''),
        COALESCE(eb.endpoint_id,''), COALESCE(eb.label,''),
        (SELECT COUNT(*) FROM message m
@@ -48,7 +52,7 @@ ORDER BY c.created_at DESC`, spaceID)
 	var out []AdminChannel
 	for rows.Next() {
 		var c AdminChannel
-		if err := rows.Scan(&c.ChannelID, &c.State, &c.SpaceID, &c.OwnerActorID,
+		if err := rows.Scan(&c.ChannelID, &c.Label, &c.State, &c.SpaceID, &c.OwnerActorID,
 			&c.EndpointA, &c.LabelA, &c.EndpointB, &c.LabelB,
 			&c.Unacked, &c.CreatedAt, &c.OpenedAt); err != nil {
 			return nil, err

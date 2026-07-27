@@ -15,6 +15,30 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+- **The inter-session communication console is easier to find and its channels are easier to
+  recognize** — from production feedback.
+  - The nav entry for the console was labelled **"Sessions"**, which reads as login sessions and was
+    missed entirely; it is now **"Comm"**, matching how the feature is named everywhere else (`/comm`,
+    `comm_*`, `KEN_COMM_ENABLED`). The link itself was always present — it was just unrecognizable.
+  - **A channel now shows the human name you gave it.** The pairing code's optional label
+    (e.g. "Ken dev &lt;-&gt; prod") is carried onto the channel at creation (comm migration
+    `0004_channel_label.sql`, nullable/additive) and the console leads with it, demoting the opaque
+    channel id to a secondary line — mirroring how entries show a title over a slug. Once channels
+    accumulate, "Ken dev ↔ prod" is what an operator recognizes; the opaque id and the drifting
+    endpoint labels are not. The create-code form now says plainly that the label names the channel.
+    An unlabelled code falls back to the endpoint labels, unchanged.
+
+### Docs
+- **Scoped the open COMM observability thread** (docs/COMM.md §13). The 1.2.0 shakedown surfaced two
+  live-instance observations — gauges that read zero for racing quantities (`ken_comm_endpoints`
+  during the sweep bug, `ken_comm_poll_waiters` during an active poll), and tool-level failures that
+  register in no counter or log — which together define one coherent increment for a later
+  experimental MINOR: per-tool error counters, a janitor that announces non-trivial deletions, an
+  explicit per-gauge decision (document-as-instantaneous vs pair-with-a-counter, never a reflexive
+  moving average), and the two §5.5 abuse-safety gaps folded in. Its acceptance bar: an operator
+  watching only `/metrics` could have seen the 1.2.0 failure without reproducing it by hand.
+
 ## [1.2.1] — 2026-07-27
 
 ### Fixed

@@ -104,7 +104,10 @@
         <tbody>
         {{range .Data.Channels}}
           <tr>
-            <td class="mono">{{.ChannelID}}</td>
+            <td class="cell-title">
+              {{if .Label}}{{.Label}}{{else}}<span class="muted">{{$.T "comm.unlabelled"}}</span>{{end}}
+              <span class="slug mono">{{.ChannelID}}</span>
+            </td>
             <td>
               {{if .LabelA}}{{.LabelA}}{{else}}<span class="mono">{{.EndpointA}}</span>{{end}}
               {{if .EndpointB}} &harr; {{if .LabelB}}{{.LabelB}}{{else}}<span class="mono">{{.EndpointB}}</span>{{end}}

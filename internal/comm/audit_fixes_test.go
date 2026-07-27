@@ -474,3 +474,78 @@ func TestEndpointSweepFailsSafeOnZeroWindow(t *testing.T) {
 		t.Fatalf("a zero idle-window swept a fresh endpoint (%d remain) — the sweep did not fail safe", len(eps))
 	}
 }
+
+// The pairing-code label must travel onto the channel so the console can lead
+// with the human name the operator chose, not the opaque id or the drifting
+// endpoint labels.
+func TestChannelCarriesPairingLabel(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "public-dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "ken-prod-ops", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.MintPairingCode(ctx, 1, 42, "Ken dev <-> prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, b, code); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := st.ListChannelsForSpace(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 channel, got %d", len(rows))
+	}
+	if rows[0].Label != "Ken dev <-> prod" {
+		t.Fatalf("channel label = %q, want the pairing-code label", rows[0].Label)
+	}
+}
+
+// A code with no label leaves the channel label empty (the console falls back to
+// the endpoint labels), not broken.
+func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+	a, b, channelID := pair(t, st) // pair() mints a code with a label, so re-do plainly
+	_ = channelID
+	c, _, err := st.RegisterEndpoint(ctx, owner("tok-c"), "x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _, err := st.RegisterEndpoint(ctx, owner("tok-d"), "y", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.MintPairingCode(ctx, 1, 42, "") // no label
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, c, code); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, d, code); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.ListChannelsForSpace(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		// the unlabelled channel (between x and y) must have an empty label, not a crash
+		if r.LabelA == "x" && r.Label != "" {
+			t.Fatalf("unlabelled channel got label %q", r.Label)
+		}
+	}
+	_, _ = a, b
+}

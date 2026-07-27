@@ -586,3 +586,67 @@ Enforced properties of the relay:
 - **Reaching an idle session.** COMM cannot wake a session that is not polling. Whether Ken should
   ship a CLI verb usable from a harness hook or background loop — surfacing arrivals into a session
   that would otherwise never look — is a real question and deliberately out of scope for 1.2.
+
+---
+
+## 13. Scoped increment — failure visibility and honest gauges
+
+The most expensive property of the 1.2.0 endpoint-sweep bug was not the deletion; it was that an
+operator watching logs and metrics saw a perfectly healthy service while the feature was completely
+non-functional. Two live-instance observations from the production shakedown sharpen the point, and
+together they define one coherent increment. Nothing here is a defect in the shipped code — it is
+about making COMM's failures *legible*, which for a background subsystem is as important as being
+correct.
+
+**The two observations.**
+
+1. **The gauges are scrape-instant snapshots of racing quantities.** `ken_comm_endpoints` read `0`
+   while an endpoint existed — a symptom of the sweep deleting it between an operator's tool call and
+   the scrape (fixed in 1.2.1). `ken_comm_poll_waiters` read `0` while a 180 s poll was actively
+   blocking — because the waiter registers a hair *after* the poll's initial database read, so a
+   scrape dispatched with the poll samples before it parks. Both are the same shape: a gauge that
+   reports the value at the instant of scrape, of a quantity that changes on a sub-second timescale.
+   Neither is wrong; both are *misleading* to a human who reads a single value as "the state".
+2. **A tool-level failure does not register anywhere.** A `not found` from a vanished endpoint (or any
+   store-level COMM error surfaced as a tool result) is not a transport auth failure, so it correctly
+   does **not** increment `ken_auth_failures_total{surface="comm"}`. There is no counter that does
+   move. So a burst of failing tool calls is invisible in metrics, and — because those errors are tool
+   results, not HTTP errors or log lines — invisible in logs too.
+
+**The increment (a single, coherent unit; target: a later experimental MINOR).**
+
+- **Counters, not just gauges, for the things that fail.** Add monotonic counters that a rate query
+  can see even when the instantaneous gauge is zero: `ken_comm_tool_errors_total{tool,reason}` (every
+  `comm_*` tool result that is an error, bucketed by a small reason vocabulary — `not_found`,
+  `denied`, `backpressure`, `too_large`, `channel_closed`, `quota`), and `ken_comm_endpoints_swept_total`
+  / `ken_comm_messages_expired_total` (the janitor's own actions, so a sweep that deletes anything is
+  observable rather than silent). Counters are the right instrument for "did failures happen recently",
+  which is the question an operator actually has; the existing gauges answer "what exists now", which
+  is a different question and fine as-is once paired.
+- **Make the janitor announce non-trivial work.** The sweep already logs when it expires or purges
+  rows; extend that to endpoint and channel removal (currently silent) with a rate-limited line, so a
+  mass deletion — the shape of a misconfiguration like the one 1.2.1 fixed — leaves a trail. One line
+  per sweep that changed something, never per row.
+- **Decide the gauge question explicitly, do not just smooth reflexively.** Two honest options, and
+  the increment should pick per gauge rather than blanket-apply: (a) leave a racing gauge as an
+  instantaneous snapshot but *document* it as such in `monitoring/README.md` (the cheapest fix, and
+  correct for `poll_waiters`, which is inherently a right-now quantity); or (b) pair it with a
+  counter/high-water companion where "did this ever climb" is the real question (`endpoints` is better
+  served by the tool-error counter above than by smoothing). Resist a moving-average on a gauge — it
+  hides exactly the spikes an operator needs to see.
+- **Close the two §5.5 gaps in the same increment, because they are the same theme.** COMM requests
+  still feed the shared per-IP strike counter (a pathological poll loop can auto-block a machine's KB
+  access), and poll results do not advertise a minimum interval. Both are "COMM should fail *safely and
+  visibly* under abuse" — the natural companions to the telemetry above.
+
+**Explicitly deferred within this increment.** No per-message tracing, no content-level audit surface
+(the metadata audit row already exists for incident response), and no alerting rules shipped in the
+bundle — the Grafana/Prometheus bundle stays structurally neutral (no pinned instance selector), so
+alert thresholds remain the operator's to set. The deliverable is *signals an operator can build an
+alert on*, not the alerts themselves.
+
+**Acceptance test of the increment.** Re-run the 1.2.0 failure with the fix reverted behind a flag:
+an operator watching only `/metrics` should be able to see that something is wrong — a climbing
+`ken_comm_tool_errors_total{reason="not_found"}` and a janitor log line — without reproducing the
+tool calls by hand. That is the bar this increment has to clear, and the bar the 1.2.0 experience
+failed.
