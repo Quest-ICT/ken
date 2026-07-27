@@ -40,6 +40,18 @@ var (
 	ErrBadName = errors.New("invalid attachment name")
 )
 
+// clampTTL resolves a caller-supplied lifetime against the operator's configured
+// one. A caller may ask for LESS, never more: an unclamped ttl_seconds would let a
+// session mint effectively immortal messages and attachments that no sweep could
+// settle, silently defeating the operator's live TTL settings and — for files —
+// pinning the storage budget forever.
+func clampTTL(requested, configured int) int {
+	if requested <= 0 || requested > configured {
+		return configured
+	}
+	return requested
+}
+
 // maxConcurrentUploads bounds in-flight uploads per sender endpoint. This covers
 // the accounting hole between "grant minted" and "bytes counted": an attacker
 // cannot hold the budget hostage with many never-completed uploads.
@@ -162,9 +174,15 @@ func (s *Store) EnsureFilesDir() error { return os.MkdirAll(s.filesDir(), 0o700)
 // offer-time check bounds grants, this bounds bytes.
 func (s *Store) CheckFileQuota(ctx context.Context, incoming int64) error {
 	l := s.lim()
+	// Count the DECLARED size of in-flight uploads, not just bytes already on disk:
+	// an 'offered' attachment has stored_bytes=0 until its PUT completes, so summing
+	// stored_bytes alone made every concurrent upload invisible to the budget and let
+	// N simultaneous PUTs each pass the check and collectively overshoot it. Reserving
+	// the declared size at offer time is what actually closes that window.
 	var held int64
 	if err := s.R.QueryRowContext(ctx, `
-SELECT COALESCE(SUM(stored_bytes),0) FROM attachment WHERE state IN ('offered','ready')`).Scan(&held); err != nil {
+SELECT COALESCE(SUM(CASE WHEN state='offered' THEN size_bytes ELSE stored_bytes END),0)
+FROM attachment WHERE state IN ('offered','ready')`).Scan(&held); err != nil {
 		return err
 	}
 	if held+incoming > l.FileBudgetBytes {
@@ -218,10 +236,7 @@ func (s *Store) OfferFile(ctx context.Context, ep *Endpoint, channelID string, i
 	if err != nil {
 		return nil, err
 	}
-	ttl := in.TTLSeconds
-	if ttl <= 0 {
-		ttl = l.FileTTLSeconds
-	}
+	ttl := clampTTL(in.TTLSeconds, l.FileTTLSeconds)
 
 	out := &OfferResult{RecipientRow: peer}
 	err = s.tx(ctx, func(t *sql.Tx) error {
@@ -238,12 +253,36 @@ SELECT attachment_id FROM attachment WHERE channel_id=? AND sender_endpoint=? AN
 					return err
 				}
 				out.Attachment = att
-				if att.Transfer == "upload" && att.State == "offered" {
+				switch {
+				case att.Transfer != "upload":
+					// A path offer has nothing to re-arm.
+				case att.State == "offered":
 					g, err := mintGrant(ctx, t, att.rowID, ep.ID, "upload", l.GrantTTLSeconds)
 					if err != nil {
 						return err
 					}
 					out.UploadGrant = g
+				case att.State == "failed":
+					// Revive a failed attachment rather than returning it inert. The relay's
+					// own errors tell the sender to "re-offer to retry"; without this the
+					// idempotency key became a poison pill — the re-offer returned the
+					// original attachment with no grant and no error, so the prescribed
+					// recovery path was a silent dead end.
+					if _, err := t.ExecContext(ctx, `
+UPDATE attachment SET state='offered', stored_bytes=0,
+       expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now',?) WHERE id=? AND state='failed'`,
+						nowExpr(ttl), att.rowID); err != nil {
+						return err
+					}
+					g, err := mintGrant(ctx, t, att.rowID, ep.ID, "upload", l.GrantTTLSeconds)
+					if err != nil {
+						return err
+					}
+					out.UploadGrant = g
+					if att, err = attachmentByID(ctx, t, existing); err != nil {
+						return err
+					}
+					out.Attachment = att
 				}
 				return nil
 			}
@@ -338,6 +377,21 @@ func (s *Store) GrantDownload(ctx context.Context, ep *Endpoint, attachmentID st
 		}
 		if a.Transfer != "upload" || a.State != "ready" {
 			return errors.New("attachment has no downloadable bytes")
+		}
+		// Revocation must stop BYTES, not just new messages. Without this re-check a
+		// recipient could keep minting fresh download grants for an already-offered
+		// file until its TTL, on a channel the human has already killed.
+		var chState string
+		var epRevoked sql.NullString
+		if err := t.QueryRowContext(ctx, `
+SELECT c.state, e.revoked_at FROM attachment a
+JOIN channel c ON c.id = a.channel_id
+JOIN endpoint e ON e.id = a.recipient_endpoint
+WHERE a.id=?`, a.rowID).Scan(&chState, &epRevoked); err != nil {
+			return err
+		}
+		if chState != "open" || epRevoked.Valid {
+			return ErrChannelClosed
 		}
 		g, err := mintGrant(ctx, t, a.rowID, ep.ID, "download", s.lim().GrantTTLSeconds)
 		if err != nil {
@@ -494,8 +548,10 @@ WHERE a.attachment_id=?`, attachmentID).
 }
 
 // sweepFiles is the attachment half of Sweep: expiry, done-marking, byte
-// deletion, and grant purging. Returns file paths to unlink AFTER the
-// transaction commits — filesystem calls stay out of the write transaction.
+// deletion, and grant purging. Returns the attachment IDs whose bytes should be
+// unlinked AFTER the transaction commits — filesystem calls stay out of the write
+// transaction, and the caller clears each row's accounting only once its file is
+// actually gone.
 func (s *Store) sweepFiles(ctx context.Context, t *sql.Tx) (unlink []string, err error) {
 	// Expire attachments past their TTL in any pre-terminal state.
 	if _, err := t.ExecContext(ctx, `
@@ -529,24 +585,20 @@ WHERE state IN ('done','failed','expired') AND transfer='upload' AND stored_byte
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, id := range ids {
-		unlink = append(unlink, s.FilePath(id))
-	}
-	if len(ids) > 0 {
-		// stored_bytes drops now so the budget frees immediately; a failed unlink
-		// leaves an orphan file that the .part/orphan pass below cannot see, but the
-		// next sweep's remove is idempotent and ENOENT is ignored either way.
-		if _, err := t.ExecContext(ctx, `
-UPDATE attachment SET stored_bytes=0
-WHERE state IN ('done','failed','expired') AND stored_bytes > 0`); err != nil {
-			return nil, err
-		}
-	}
+	unlink = append(unlink, ids...)
+	// stored_bytes is deliberately NOT zeroed here. The collect query above selects
+	// on stored_bytes > 0, so zeroing before the unlink actually happens would, on a
+	// failed unlink, leak the file permanently AND remove it from the budget forever
+	// — the row would never be selected again. The caller zeroes each row only after
+	// its file is gone (ClearStoredBytes), so a failed unlink is simply retried by
+	// the next sweep.
 	// Purge settled attachment rows past the metadata retention window, and spent
 	// or expired grants.
+	// Never purge a row that still owns bytes: the row is the only record of which
+	// file to unlink, so deleting it first would orphan the file beyond any sweep.
 	if _, err := t.ExecContext(ctx, `
 DELETE FROM attachment
-WHERE state IN ('done','failed','expired')
+WHERE state IN ('done','failed','expired') AND stored_bytes = 0
   AND created_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`, nowExpr(-s.lim().MetadataTTLSeconds)); err != nil {
 		return nil, err
 	}
@@ -556,6 +608,15 @@ WHERE consumed_at IS NOT NULL OR expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','no
 		return nil, err
 	}
 	return unlink, nil
+}
+
+// ClearStoredBytes zeroes a settled attachment's byte accounting after its file
+// has actually been removed. Separate from the sweep transaction on purpose: the
+// budget must free only for bytes that are really gone.
+func (s *Store) ClearStoredBytes(ctx context.Context, attachmentID string) error {
+	_, err := s.W.ExecContext(ctx,
+		`UPDATE attachment SET stored_bytes=0 WHERE attachment_id=?`, attachmentID)
+	return err
 }
 
 // sweepPartFiles removes abandoned .part uploads (a crashed or aborted PUT). Age

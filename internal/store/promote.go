@@ -370,10 +370,15 @@ type ReviewData struct {
 	ProposalRev   int
 	ProposalState string
 	ChangeNote    string
-	Proposal      Content
-	HasCurated    bool
-	CuratedRev    int
-	Curated       Content
+	// ViaComm marks this proposal as possibly second-hand (docs/COMM.md §7). It
+	// belongs here, not only on the review-queue listing, because THIS is the view
+	// that carries the Promote button — a hearsay warning that never reaches the
+	// moment of promotion is not a mitigation.
+	ViaComm    bool
+	Proposal   Content
+	HasCurated bool
+	CuratedRev int
+	Curated    Content
 }
 
 // ProvisionalReview returns the review material for an entry's pending proposal
@@ -398,9 +403,11 @@ func (s *Store) ProposalReview(ctx context.Context, versionID int64) (*ReviewDat
 	var d ReviewData
 	var curatedVID sql.NullInt64
 	err := s.R.QueryRowContext(ctx, `
-SELECT e.slug, e.title, e.curated_version_id, ev.rev_no, ev.state, COALESCE(ev.change_note,'')
+SELECT e.slug, e.title, e.curated_version_id, ev.rev_no, ev.state, COALESCE(ev.change_note,''),
+       COALESCE(ev.via_comm,0)
 FROM entry_version ev JOIN entry e ON e.id=ev.entry_id
-WHERE ev.id=?`, versionID).Scan(&d.Slug, &d.EntryTitle, &curatedVID, &d.ProposalRev, &d.ProposalState, &d.ChangeNote)
+WHERE ev.id=?`, versionID).Scan(&d.Slug, &d.EntryTitle, &curatedVID, &d.ProposalRev, &d.ProposalState, &d.ChangeNote,
+		&d.ViaComm)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -98,6 +98,7 @@ type messageView struct {
 	CreatedAt        string    `json:"created_at"`
 	ReplyDeadlineAt  string    `json:"reply_deadline_at,omitempty"`
 	File             *fileView `json:"file,omitempty" jsonschema:"present when this message carries a file offer"`
+	Kind             string    `json:"kind" jsonschema:"'message' = your peer wrote it; 'status' = Ken wrote it about an earlier message of YOURS, e.g. {\"status\":\"reply_overdue\"} or {\"status\":\"expired\"}. A peer cannot forge a status message"`
 }
 
 type pollOut struct {

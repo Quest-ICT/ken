@@ -13,9 +13,13 @@ import "context"
 // the authored version lets the curator ask for a first-hand citation before
 // promoting. See docs/COMM.md §7.
 //
-// It keys on delivery, not on arrival: `first_delivered_at` is when the receiving
-// session actually polled the message and could have been influenced by it, whereas
-// a message sitting un-polled in the queue has influenced nothing.
+// It keys on delivery, not on arrival: a message sitting un-polled in the queue
+// has influenced nothing. It considers the LAST delivery, not the first: under
+// at-least-once semantics a message is redelivered until acked, so keying on
+// first_delivered_at alone produced a systematic false negative — a message first
+// delivered before the window but re-read inside it left no mark, in the system's
+// normal operating mode. Acked messages fall back to their acknowledgement time,
+// which is when the receiver acted on them.
 //
 // It keys on the ACTOR, not the token, and that is forced rather than chosen: a COMM
 // token must be DEDICATED (it may not also carry knowledge-base scopes), so the token
@@ -51,7 +55,7 @@ SELECT EXISTS(
   JOIN endpoint e ON e.id = m.recipient_endpoint
   WHERE e.actor_id = ?
     AND m.first_delivered_at IS NOT NULL
-    AND m.first_delivered_at > strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
+    AND COALESCE(m.acked_at, m.first_delivered_at) > strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
 		actorID, nowExpr(-windowSeconds)).Scan(&found)
 	return found == 1, err
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -110,9 +111,12 @@ func (f *FileHandler) upload(w http.ResponseWriter, r *http.Request, p *principa
 	part := f.d.Comm.PartPath(gi.AttachmentID)
 	dst, err := os.OpenFile(part, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		// A live .part means another PUT with a concurrently-minted grant is in
-		// flight; refuse rather than interleave.
-		f.failUpload(ctx, gi, w, http.StatusConflict, "an upload for this attachment is already in progress")
+		// A live .part means another PUT for this attachment is already streaming.
+		// Refuse THIS request, and deliberately do NOT fail the attachment: the
+		// other upload is the winner and may be nearly complete, so marking the
+		// attachment failed here would destroy a good transfer because a duplicate
+		// arrived. The loser just retries with a fresh grant.
+		httpError(w, http.StatusConflict, "an upload for this attachment is already in progress")
 		return
 	}
 
@@ -142,11 +146,20 @@ func (f *FileHandler) upload(w http.ResponseWriter, r *http.Request, p *principa
 		f.failUpload(ctx, gi, w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	msg, recipient, err := f.d.Comm.CompleteUpload(ctx, gi.AttachmentRow, n)
+	msg, recipient, err := f.d.Comm.CompleteUpload(context.Background(), gi.AttachmentRow, n)
 	if err != nil {
+		// The bytes are on disk and verified; only the envelope failed. Keep them:
+		// the attachment stays 'offered' and its TTL still governs, so the sender can
+		// retry completion rather than re-uploading a large file because the peer's
+		// channel was momentarily full. Discarding verified bytes here was the
+		// original behaviour and it made backpressure destructive.
 		log.Printf("comm: complete upload: %v", err)
-		_ = os.Remove(f.d.Comm.FilePath(gi.AttachmentID))
-		f.failUpload(ctx, gi, w, http.StatusInternalServerError, "internal error")
+		code, text := http.StatusInternalServerError, "internal error"
+		if errors.Is(err, comm.ErrBackpressure) {
+			code, text = http.StatusConflict,
+				"the peer has too many unacknowledged messages — the uploaded bytes are kept; retry the offer once they catch up"
+		}
+		httpError(w, code, text)
 		return
 	}
 	f.notify(recipient)

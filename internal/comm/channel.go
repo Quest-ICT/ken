@@ -128,10 +128,25 @@ VALUES(?,?,?,?, 'pending')`, channelID, spaceID, humanID, ep.ID)
 			// able to join, and a consumed code must not create a second channel.
 			return ErrDenied
 		}
-		if _, err := t.ExecContext(ctx, `
+		// Only a PENDING channel may be opened. Without this, a human who revokes a
+		// half-formed pairing has their brake silently undone: the code stays valid
+		// for its TTL, and the second session's join would flip the revoked row back
+		// to 'open'. ErrNotFound rather than ErrChannelClosed, so a dead code stays
+		// indistinguishable from an unknown one.
+		if cur.State != "pending" {
+			return ErrNotFound
+		}
+		// The state guard is repeated in the WHERE clause because the SELECT above and
+		// this UPDATE are separate statements: a concurrent RevokeChannel runs on
+		// another connection and could land between them.
+		res, err := t.ExecContext(ctx, `
 UPDATE channel SET endpoint_b=?, state='open', opened_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE id=? AND endpoint_b IS NULL`, ep.ID, cur.ID); err != nil {
+WHERE id=? AND endpoint_b IS NULL AND state='pending'`, ep.ID, cur.ID)
+		if err != nil {
 			return err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return ErrNotFound
 		}
 		if _, err := t.ExecContext(ctx, `
 UPDATE pairing_code SET consumed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, pcID); err != nil {

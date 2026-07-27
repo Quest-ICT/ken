@@ -1,6 +1,13 @@
 # Ken — backup & restore
 
 Ken's data lives in one SQLite file (`data/ken.db` + its `-wal`/`-shm` sidecars).
+
+> **Inter-session communication (COMM) state is deliberately NOT backed up.** When COMM is enabled it
+> keeps its own database and relayed files under `data/comm/`, and neither tier above covers them:
+> Litestream replicates one explicitly named path, and the snapshot script copies only the knowledge
+> base. That is the design, not an oversight — message traffic is expendable, and losing it costs an
+> in-flight conversation rather than knowledge. Do not add `data/comm/` to either tier; if you back up
+> the whole volume for other reasons, it is harmless but pointless.
 Because there is **no git mirror** (design decision D5), backup is the only
 durability path — so it is treated as non-negotiable, in three tiers.
 

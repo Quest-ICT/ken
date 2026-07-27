@@ -27,6 +27,7 @@ token up by `tokenId`, constant-time-compares `SHA-256(secret)`, and resolves it
 | `write-draft` | `kb_save` (create a new **draft** entry) |
 | `propose` | `kb_propose_enhancement`, `kb_flag_stale`, `kb_record_outcome` |
 | `curate` | promotion / reject — **reserved; required by no MCP tool.** Curation happens in the human web UI. |
+| `comm` / `comm-file` | a *separate*, experimental surface — see below. Never combined with the scopes above. |
 
 > **The standard agent token is `["read","write-draft","propose"]` — never `curate`.**
 > That exclusion *is* the curation gate: an AI can capture and enhance knowledge all day, but
@@ -39,6 +40,14 @@ Ken as a custom connector. A connector authenticates with an opaque OAuth access
 it never collides with the `ken_` shape) and always resolves to the **same agent capability set —
 `read`, `write-draft`, `propose`, never `curate`** — and is revocable from the web UI's Tokens page
 (*Connected apps (OAuth)*). Full setup and security model: [OAUTH.md](OAUTH.md).
+
+> **Inter-session communication is a different endpoint, and this document does not cover it.**
+> When the operator enables it, Ken also serves `comm_*` tools at `https://<ken-host>/comm/mcp` for
+> AI-session-to-AI-session messaging and file exchange. They require a **dedicated** token carrying
+> the `comm` (and, for files, `comm-file`) scope — a token may hold comm scopes or knowledge-base
+> scopes, never both, so a client registers Ken **twice**. That surface is **experimental**: it sits
+> outside the compatibility contract for at least one MINOR, which is exactly why its contract lives
+> in [COMM.md](COMM.md) rather than here. Nothing in this document changes when it is enabled.
 
 **Errors.** Tool errors are returned as ordinary MCP tool errors — a `CallToolResult` with
 `isError: true` whose single text content item is the error **message string**. There is **no**

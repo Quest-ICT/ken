@@ -137,11 +137,11 @@ and drop-in:** adding a language or fixing a string must not require a rebuild o
 single-binary deployment. **Scope:** human UI only — the AI/MCP surface and logs stay English (a machine
 contract, not end-user copy). Full reference: [`I18N.md`](I18N.md).
 
-### D9 — Inter-session communication: in-process, opt-in, ephemeral  *(chosen: embed; specified, not yet built)*
+### D9 — Inter-session communication: in-process, opt-in, ephemeral  *(chosen: embed)*
 A second service on the same deployment: authenticated **session-to-session messaging** between AI
 sessions (same machine or not), as `internal/comm` inside the same binary, with its **own** SQLite file,
 its **own** MCP endpoint, its **own** `comm` scope, and **off by default**. Specified for 1.2.0 and
-**not implemented**; full contract in [`COMM.md`](COMM.md).
+**experimental and off by default**; full contract in [`COMM.md`](COMM.md).
 - **Why it belongs in Ken at all:** the deployment already offers the two things such a service needs and
   are expensive to stand up twice — an authenticated endpoint every session already reaches, and a host
   with spare capacity. The alternative is a second daemon whose only novel asset is a token table.
@@ -417,14 +417,15 @@ runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); deci
 
 **Resolved:** MCP tool prefix = `kb_*`; project renamed to `ken`; `git init` done; `Migrate()` applies all migrations (embeddings table always present, empty when unused).
 
-**In progress — inter-session communication** (decision **D9**), targeted at 1.2.0, text-only in the
-first release. **Built:** the schema and store layer (`internal/comm` + its own migrations) —
-endpoint identity, human-minted pairing codes, two-sided channel join, send/poll/ack with
-at-least-once redelivery and idempotency, request/response correlation with reply deadlines,
-backpressure, and the TTL sweeper (21 tests). **Not yet built:** the `comm_*` tools and their dedicated
-endpoint, the `comm` scope, long-poll wakeups, settings, web console, metrics, and the `cmd/ken`
-wiring — so the package is compiled but **not mounted**, and the feature does not run. Full contract,
-including the isolation rules that make the in-process choice honest and the curation-provenance
-decision that could not be deferred: [`COMM.md`](COMM.md).
+**Built — inter-session communication** (decision **D9**), shipping in 1.2.0 as **experimental and
+off by default**: authenticated session-to-session messaging between AI sessions on the same or
+different machines. `internal/comm` (own SQLite file, own migrations) + `internal/commserver` (eight
+`comm_*` tools on their own `/comm/mcp` endpoint, the `comm` and `comm-file` scopes, long-poll wakeups
+with a shutdown drain), a human console at `/comm` where the operator mints the pairing codes that are
+the only way a channel comes into existence, a live settings group, `ken_comm_*` metrics, and file
+exchange (same-host rendezvous plus a one-time-grant HTTP relay). Curation is protected by the
+`via_comm` hearsay marker (§7 of the contract), which surfaces on both the review queue and the
+promote view. Full contract, including the isolation rules that make the in-process choice honest:
+[`COMM.md`](COMM.md).
 
-**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish · COMM file exchange (COMM.md §11) and reaching an idle session (COMM.md §12). *(All §1 security-priority items are now implemented.)*
+**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5). *(All §1 security-priority items are now implemented.)*

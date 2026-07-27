@@ -188,7 +188,85 @@ same change — never "docs later".
   with no file. Fixed, and the store→view copy is now a named, tested function (`viewOf`) so a field
   added on one side can no longer silently vanish on the other.
 
+### Fixed
+- **Pre-release audit of the whole 1.2 line.** A multi-agent audit (seven dimensions, each finding then
+  handed to an adversarial verifier) surfaced defects across COMM that the feature's own tests did not
+  cover. Everything below was confirmed by tracing the concrete failure, and each fix carries a
+  regression test.
+- **A revoked pairing could be silently un-revoked.** `JoinChannel`'s second-redeem path never checked
+  the channel's state, so if a human revoked a half-formed pairing while the code was still valid, the
+  second session's join flipped the revoked channel back to `open` — an agent action undoing the
+  operator's brake. The state is now checked, and repeated in the UPDATE's `WHERE` because the read and
+  the write are separate statements and a concurrent revoke can land between them.
+- **A corrupt or unwritable COMM database took the whole service down.** Boot called `log.Fatal` on
+  open/migrate failure, making "COMM may fail; the KB stays UP" false at the first failure an operator
+  would actually hit. COMM now degrades: it logs, disables itself, and the knowledge base serves.
+- **Client-supplied TTLs were unbounded**, so a session could mint effectively immortal messages and
+  attachments that no sweep could settle, silently defeating the operator's live settings and pinning
+  the file budget. A caller may now ask for a *shorter* lifetime, never a longer one.
+- **Sequence numbers reset after the metadata sweep.** They were derived as `MAX(seq)+1` over surviving
+  rows, so purging a direction's history restarted numbering at 1 — breaking the strictly-ascending
+  promise and, the real damage, letting a retried cumulative acknowledgement computed against the old
+  numbering settle brand-new messages. The high-water mark now lives in its own table (`channel_seq`,
+  comm migration `0003`) and cannot go backwards.
+- **The sender was never told when a message died.** The contract promised a status notice when a
+  message expires unread or a required reply misses its deadline — the entire reason reply deadlines
+  exist — and nothing implemented it, so a session whose peer died waited forever. The sweeper now
+  delivers a server-authored `kind: "status"` message through the ordinary poll path
+  (`{"status":"reply_overdue"|"expired","message_id":"…"}`), exactly once, deliberately bypassing the
+  backpressure cap because a full channel is when a failure signal matters most. A peer cannot forge
+  one: every peer send is `kind: "message"`.
+- **Channel revocation did not stop bytes.** `GrantDownload` never re-checked that the channel was still
+  open, so a recipient could keep minting download URLs for an already-offered file after the human
+  revoked the channel.
+- **A duplicate upload destroyed the winning one.** A second PUT hitting the `.part` lock marked the
+  attachment failed while the first upload was still streaming. It now refuses only itself.
+- **A verified upload could be thrown away.** If the peer's channel was momentarily at its backpressure
+  cap, `CompleteUpload` failed and the handler deleted bytes that had already been fully streamed and
+  checksum-verified. The bytes are kept and the sender retries the offer.
+- **The documented recovery path was a dead end.** After a failed upload, re-offering with the same
+  idempotency key returned the original attachment with no grant and no error — while the relay's own
+  errors say "re-offer to retry". A failed attachment is now revived with a fresh grant.
+- **Concurrent uploads could overshoot the storage budget.** The quota summed only bytes already on
+  disk, so every in-flight upload was invisible to it; the declared size is now reserved at offer time.
+- **A failed unlink leaked a file *and* its budget forever.** The sweep zeroed byte accounting inside
+  the transaction but unlinked afterwards, and the collect query keys on non-zero accounting — so a
+  file that could not be removed was never selected again. Accounting is now cleared only for bytes
+  actually gone, and a row that still owns bytes is never purged.
+- **Endpoints and settled channels grew without bound** under entirely normal use (sessions register
+  once and never unregister). Idle endpoints with no traffic and no live attachment are now swept, and
+  their channels cascade.
+- **An answered request kept its body for days.** A request acked *before* its reply arrived retained
+  its body (deliberately, so a recovered responder can re-read it) but nothing dropped it when the
+  reply landed. It is dropped now.
+- **The hearsay marker had a systematic blind spot.** It keyed on first delivery only, so under
+  at-least-once semantics a message first delivered before the window but re-read and acted on inside
+  it left no mark — a false negative in the system's normal operating mode. It now considers when the
+  receiver actually acted.
+- **The hearsay badge was missing from the only view that can promote.** It rendered on the review-queue
+  listing but not on the entry page's review panel, where the Promote button lives — a warning that
+  never reaches the moment of promotion is not a mitigation.
+- `deploy/ken.service` gains `TasksMax`, `LimitNOFILE` and `MemoryMax`. Nothing inside the process
+  bounds these: the HTTP server deliberately sets no write timeout, and COMM parks long polls and
+  streams uploads.
+
 ### Docs
+- **Corrected several claims that were aspirational rather than true.** COMM.md described a per-response
+  random delimiter around message bodies (never implemented — the honest boundary is the structured
+  field, and the doc now says so, along with what Ken genuinely cannot promise about a harness that
+  flattens results into a prompt); claimed comm polls were exempt from the per-IP strike counter and
+  that poll results advertised a minimum interval (neither is true — both are now named as open gaps);
+  described the global byte cap as covering all COMM storage when it covers relayed files, with
+  messages bounded by different means; and asserted a per-owner quota row that does not exist.
+- **Removed stale "not yet implemented" framing** from README, DESIGN.md (D9 and §10), the CHANGELOG's
+  own Unreleased section, and a comment in `internal/commserver/auth.go` — all written while COMM was
+  a specification and left behind as it shipped.
+- **COMM is now discoverable from where an integrator actually looks.** MCP-TOOLS.md notes the separate
+  `/comm/mcp` endpoint and dedicated-token rule; AI-INTEGRATION.md gains a section covering the second
+  registration, the same-actor requirement that makes hearsay marking work, and the two things an agent
+  must know before using it. BACKUP.md now states explicitly that COMM state is deliberately
+  unreplicated — a commitment COMM.md had made "in the same change" and that had not been kept.
+
 - **New design contract: [docs/COMM.md](docs/COMM.md) — inter-session communication**, plus locked
   decision **D9** in [docs/DESIGN.md](docs/DESIGN.md). A specification only: **nothing is implemented**,
   and when it lands it will be **experimental and off by default** (so it sits inside

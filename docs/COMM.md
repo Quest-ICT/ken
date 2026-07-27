@@ -261,9 +261,12 @@ chatter and is idempotent by construction.
 
 A message with `requires_response` carries a server-computed reply deadline. Its body survives
 acknowledgement until it is answered or the deadline passes — a responder that crashed and recovered
-plausibly needs to re-read what it owes. When a deadline passes unanswered, the server delivers a
-synthetic status message to the **requester** through the ordinary poll path, so a dead peer surfaces
-as a normal arrival rather than an indefinite wait. Full-duplex removes turn deadlock; reply
+plausibly needs to re-read what it owes. When a deadline passes unanswered, the sweeper delivers a
+**status message** to the requester through the ordinary poll path — `kind: "status"`, body
+`{"status":"reply_overdue","message_id":"…"}` — so a dead peer surfaces as a normal arrival rather
+than an indefinite wait. A message that expires unread notifies its sender the same way
+(`{"status":"expired",…}`). Notices are delivered exactly once, and deliberately bypass the
+backpressure cap: a full channel is precisely when a failure signal matters most. Full-duplex removes turn deadlock; reply
 deadlines are what keep the *requester* from hanging in its place.
 
 ### 4.4 Backpressure
@@ -287,10 +290,15 @@ reply loop that grows the database without bound.
 A separate database file isolates the KB's WAL and its backup stream. It does **not** isolate the
 disk, the process, or the readiness signal. These are enforced rules, each with a failure it prevents.
 
-1. **Disk budget.** A global byte cap on COMM storage, plus a free-space floor checked *before*
-   accepting anything. Without both, ephemeral traffic can fill the volume and start failing KB
-   writes — search, save, promotion, and the nightly snapshot all die because of chat. This is the
-   coupling C1 must not have.
+1. **Disk budget.** A global byte cap on relayed FILE storage, plus a free-space floor, both checked
+   before accepting bytes and again as they arrive. Without them, ephemeral traffic can fill the
+   volume and start failing KB writes — search, save, promotion, and the nightly snapshot all die
+   because of chat. This is the coupling C1 must not have.
+   Message *bodies* are bounded differently and deliberately: a per-message size cap, a per-channel
+   un-acked depth cap, and TTL sweeping, rather than a global byte budget — the product of those caps
+   is small and self-limiting, whereas files are large and arbitrary. There is no aggregate byte cap
+   on messages; if that ever proves insufficient, it is the same fail-closed SQL check as the file
+   budget.
 2. **Quotas fail closed.** COMM quotas are enforced in SQL inside the insert transaction, never by
    keying the shared rate-limiter bucket. That bucket deliberately *fails open* when full, which is
    right for IP and token keys — an attacker cannot mint those cheaply — and wrong for identifiers a
@@ -304,21 +312,24 @@ disk, the process, or the readiness signal. These are enforced rules, each with 
    perfectly healthy knowledge base out of load-balancer rotation — and, with `Restart=on-failure`,
    potentially loop it. COMM reports through metrics only. **The rule: COMM may fail; the KB stays
    UP.**
-5. **Its own rate accounting.** COMM gets its own bucket, and polls rejected for rate must not feed
-   the per-IP strike counter. The default operating convention is one token per machine, so every
-   session on a box shares one bucket that *also* fronts all `kb_*` traffic; a naive poll loop could
-   otherwise starve a machine's knowledge-base access and then trip the auto-block, locking that
-   machine out entirely. Long-poll is the primary defense — a parked call costs one unit regardless
-   of how long it waits — and results carry a server-advertised minimum interval.
+5. **Its own rate accounting.** COMM gets its own per-token bucket, separate from the knowledge
+   base's, so a poll loop cannot exhaust the budget that fronts `kb_*` calls. The default operating
+   convention is one token per machine, so every session on a box shares one bucket. Long-poll is the
+   primary defense: a parked call costs one unit regardless of how long it waits, which is why the
+   tool descriptions push a long wait over frequent short polls.
+   **Not yet done, and honestly a gap:** COMM requests still feed the shared per-IP strike counter, so
+   a pathological poll loop can still trip the machine-wide auto-block; and poll results do not carry
+   a server-advertised minimum interval. Both are on the list for the next COMM increment.
 6. **Drain on shutdown.** The graceful-shutdown budget is shorter than a long poll, so parked waiters
    are woken with an empty success before shutdown begins. Otherwise every deploy produces a burst of
    agent-visible transport errors.
 7. **Bounded waiters.** Concurrent parked polls are capped per endpoint and globally; past the cap a
    poll returns immediately and empty. The HTTP server deliberately sets no write timeout (the MCP
    transport holds long-lived responses) and the unit file sets no task or memory limits, so nothing
-   outside the process bounds this. Adding `TasksMax`, `LimitNOFILE` and `MemoryMax` to the unit
-   belongs in the same change.
-8. **Backups exclude it by construction — keep it that way.** Litestream replicates one explicitly
+   outside the process bounds this. `TasksMax`, `LimitNOFILE` and `MemoryMax` are now set in
+   [`deploy/ken.service`](../deploy/ken.service).
+8. **Backups exclude it by construction — keep it that way.** ([BACKUP.md](BACKUP.md) now says so
+   explicitly.) Litestream replicates one explicitly
    named path, and the snapshot script copies only the KB database, so `data/comm/` is already
    outside both tiers. Two traps to avoid: the snapshot retention prune matches `ken-*.db*` in the
    backup directory, so nothing COMM-related may ever be written there under that shape; and
@@ -446,8 +457,12 @@ the capability. COMM must be equally honest about where it does and does not hav
 - A channel exists only because a human minted a pairing code and both sessions used it (C7).
 - Sender identity is stamped server-side into every delivered envelope; a message cannot claim to be
   from another endpoint.
-- Message bodies are returned in a dedicated field wrapped in a per-response random delimiter, so
-  message content cannot forge an end-of-data marker and impersonate the instruction block.
+- Message bodies are returned in a dedicated structured field, never spliced into prose, so content
+  cannot position itself as though it were part of Ken's own instructions. (There is deliberately no
+  claim here about defeating a determined in-band forgery: the transport is JSON, the boundary is the
+  field, and a receiving harness that flattens structured results into a prompt is beyond Ken's reach.)
+- Server-authored **status** messages carry `kind: "status"` and are the only messages Ken itself
+  writes; every peer send is `kind: "message"`, so a peer cannot forge a notice about its own conduct.
 - Path strings in the file-exchange flow are validated server-side against the exchange-root rule
   (C9), even though Ken cannot see the filesystem in question.
 - Metadata audit rows survive acknowledgement, so an incident has something to investigate.
@@ -476,9 +491,10 @@ authenticated sender identity, so a client-side policy has something trustworthy
 Minimal, but not absent: a security model whose enforcement point is the human needs the human to
 have an instrument panel and a brake.
 
-**Settings** (a new group, live where possible): enable/disable · maximum message size · poll wait
-ceiling · message and metadata TTLs · reply-deadline default · per-channel unacknowledged cap · global
-storage budget · per-owner quotas.
+**Settings** (a new group, all live): maximum message size · poll-wait ceiling · message and metadata
+TTLs · reply-deadline default · pairing-code TTL · per-channel unacknowledged cap · hearsay window ·
+file exchange on/off · file size cap · relay storage budget · free-space floor · file TTL · transfer
+grant TTL. (Per-owner quotas are **not** implemented — there is one owner; see §10.)
 
 **A Comm page** in the web UI: mint a pairing code; list endpoints (label, owner, last seen) and
 channels (state, counters, queue depth); revoke a channel or an endpoint; disable the subsystem live.
@@ -500,8 +516,7 @@ The seams are built now; the machinery is not (matching [DESIGN.md](DESIGN.md) �
 `space_id` plus the authorizing human — deliberately **not** on the actor alone, because actors are
 resolved by display name and therefore collapse across machines and humans: every token minted with
 the same actor name is *one* actor row, so an actor-keyed check would reject nothing it was meant to
-reject. Establishment is two-sided from day 1; every listing is scoped to the owner from day 1; a
-quota row exists from day 1 with an unlimited value.
+reject. Establishment is two-sided from day 1; and every listing is scoped to the owner from day 1.
 
 **Deferred:** invitation flows between different humans, per-user quotas with real values, cross-space
 policy. All additive on top of the above — which is the entire point of settling ownership keying and

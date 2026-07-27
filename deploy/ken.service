@@ -39,5 +39,14 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/opt/ken/data /opt/ken/logs /opt/ken/backups
 
+# Resource ceilings. Nothing inside the process bounds these: the HTTP server
+# deliberately sets no write timeout (the MCP streamable transport holds
+# long-lived responses), and inter-session communication parks long polls and
+# streams file uploads. Generous enough to be invisible in normal operation,
+# low enough that a runaway cannot take the box down with it.
+TasksMax=512
+LimitNOFILE=8192
+MemoryMax=768M
+
 [Install]
 WantedBy=multi-user.target

@@ -117,6 +117,11 @@ type Limits struct {
 	// GrantTTLSeconds bounds a transfer grant. Short on purpose: it only has to
 	// survive being handed to curl.
 	GrantTTLSeconds int
+	// EndpointIdleTTLSeconds is how long an endpoint with no traffic and no live
+	// attachment survives before the sweeper removes it (its channels cascade).
+	// Sessions register once and never unregister, so without this the row set
+	// grows forever under ordinary use.
+	EndpointIdleTTLSeconds int
 }
 
 // DefaultLimits are deliberately conservative: COMM shares a disk with the
@@ -137,6 +142,8 @@ func DefaultLimits() Limits {
 		FileBudgetBytes:  256 << 20,
 		FileMinFreeBytes: 512 << 20,
 		GrantTTLSeconds:  300,
+
+		EndpointIdleTTLSeconds: 7 * 24 * 3600,
 	}
 }
 

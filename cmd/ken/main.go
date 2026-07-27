@@ -294,19 +294,18 @@ func runServe(args []string) {
 	// needs the hearsay check (docs/COMM.md §7), which reads this store.
 	var commStore *comm.Store
 	if os.Getenv("KEN_COMM_ENABLED") == "1" {
+		// Every failure here DEGRADES rather than aborting: an unwritable directory
+		// or a corrupt comm.db must not take the durable knowledge base down with an
+		// expendable one. That is the whole point of "COMM may fail; the KB stays UP"
+		// (docs/COMM.md §5) — a log.Fatal here would make the isolation claim false
+		// at the very first failure an operator is likely to hit.
 		commPath := envOr("KEN_COMM_DB", filepath.Join(filepath.Dir(*dbPath), "comm", "comm.db"))
-		if err := os.MkdirAll(filepath.Dir(commPath), 0o700); err != nil {
-			log.Fatalf("comm: create data dir: %v", err)
+		if cs, err := openComm(commPath, commLimits(live.Current())); err != nil {
+			log.Printf("COMM: DISABLED — %v. The knowledge base is unaffected; fix the comm database or unset KEN_COMM_ENABLED.", err)
+		} else {
+			defer cs.Close()
+			commStore = cs
 		}
-		cs, err := comm.Open(commPath, commLimits(live.Current()))
-		if err != nil {
-			log.Fatalf("comm: open: %v", err)
-		}
-		defer cs.Close()
-		if err := cs.Migrate(); err != nil {
-			log.Fatalf("comm: migrate: %v", err)
-		}
-		commStore = cs
 	}
 
 	mux := http.NewServeMux()
@@ -835,4 +834,22 @@ func registerCommCollectors(reg *metrics.Registry, cs *comm.Store, h *commserver
 		}
 		return fam
 	})
+}
+
+// openComm opens and migrates the COMM database, returning an error rather than
+// exiting so the caller can run without it. Closes the store on a migration
+// failure so a half-opened database does not leak its pools.
+func openComm(path string, limits comm.Limits) (*comm.Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create data dir: %w", err)
+	}
+	cs, err := comm.Open(path, limits)
+	if err != nil {
+		return nil, fmt.Errorf("open: %w", err)
+	}
+	if err := cs.Migrate(); err != nil {
+		_ = cs.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	return cs, nil
 }
