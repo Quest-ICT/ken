@@ -417,10 +417,14 @@ runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); deci
 
 **Resolved:** MCP tool prefix = `kb_*`; project renamed to `ken`; `git init` done; `Migrate()` applies all migrations (embeddings table always present, empty when unused).
 
-**Specified, not yet built:** **inter-session communication** (decision **D9**) — authenticated
-session-to-session messaging as an opt-in, off-by-default `internal/comm` subsystem with its own SQLite
-file, MCP endpoint and `comm` scope; targeted at 1.2.0, text-only in the first release, file exchange
-deferred to a later MINOR. Full contract, including the isolation rules that make the in-process choice
-honest and the curation-provenance decision that could not be deferred: [`COMM.md`](COMM.md).
+**In progress — inter-session communication** (decision **D9**), targeted at 1.2.0, text-only in the
+first release. **Built:** the schema and store layer (`internal/comm` + its own migrations) —
+endpoint identity, human-minted pairing codes, two-sided channel join, send/poll/ack with
+at-least-once redelivery and idempotency, request/response correlation with reply deadlines,
+backpressure, and the TTL sweeper (21 tests). **Not yet built:** the `comm_*` tools and their dedicated
+endpoint, the `comm` scope, long-poll wakeups, settings, web console, metrics, and the `cmd/ken`
+wiring — so the package is compiled but **not mounted**, and the feature does not run. Full contract,
+including the isolation rules that make the in-process choice honest and the curation-provenance
+decision that could not be deferred: [`COMM.md`](COMM.md).
 
 **Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish · COMM file exchange (COMM.md §11) and reaching an idle session (COMM.md §12). *(All §1 security-priority items are now implemented.)*

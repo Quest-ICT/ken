@@ -1,9 +1,19 @@
 # Ken — inter-session communication (COMM)
 
-> **Status: SPECIFICATION — not yet implemented.** This document is the design contract for a
-> feature targeted at **1.2.0**. Nothing described here exists in the shipped binary yet. When it
-> lands it will be **experimental** and **off by default**, which places it outside the SemVer
-> contract (see [COMPATIBILITY.md](../COMPATIBILITY.md)) for at least one MINOR release.
+> **Status: PARTIALLY IMPLEMENTED — the storage layer only.** This document is the design contract
+> for a feature targeted at **1.2.0**. It is **experimental** and **off by default**, which places it
+> outside the SemVer contract (see [COMPATIBILITY.md](../COMPATIBILITY.md)) for at least one MINOR
+> release.
+>
+> **Built:** the schema (`internal/comm/migrations/0001_init.sql`) and the store layer
+> (`internal/comm`) — endpoint registration and authentication, human-minted pairing codes, two-sided
+> channel join, send/poll/ack with at-least-once redelivery and idempotency, request/response
+> correlation with reply deadlines, backpressure, and the TTL sweeper. 21 tests.
+>
+> **Not built yet:** the `comm_*` MCP tools and their dedicated endpoint, the `comm` token scope, the
+> instruction section, long-poll waiter wakeups, the settings group, the web console, metrics, and the
+> wiring in `cmd/ken`. **Nothing in this package runs in the shipped binary** — it is compiled but not
+> mounted. File exchange (§11) remains deferred to a later MINOR.
 
 Ken's knowledge base answers *"has this problem been solved before?"*. COMM answers a different
 question that the same deployment is unusually well-placed to serve: **"how do two AI sessions,

@@ -15,6 +15,47 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+- **Inter-session communication (COMM) — schema and store layer** (`internal/comm`, decision **D9**,
+  contract in [docs/COMM.md](docs/COMM.md)). Compiled but **not mounted**: there are no MCP tools, no
+  `comm` scope and no `cmd/ken` wiring yet, so the feature does **not** run in this build. Experimental
+  and off by default when it does ship.
+- Its own SQLite file with its own forward-only migrations, versioned **independently** of `ken.db` so
+  a COMM schema change never touches the knowledge base. Ownership columns (`actor_id`, `space_id`,
+  `token_id`) name rows in `ken.db` and are deliberately **not** foreign keys — SQLite FKs cannot span
+  database files, so the caller that holds both handles validates them. The schema says so in place,
+  because the tempting "fix" is to move the tables into `ken.db`, which would undo the separation the
+  whole design rests on.
+- **The content/metadata split is enforced, and it is load-bearing rather than an optimization.**
+  Acking deletes the message *body*; the metadata row survives. Deleting the whole record — the
+  intuitive storage win — is mutually exclusive with request/response: with two requests outstanding
+  and both acked, a later reply would reference a row that no longer exists, and the server could
+  neither validate it, route it, nor report which request was answered. A regression test pins it.
+- **Ack means *processed*, not received, and delivery is at-least-once.** Polling never hides a message
+  from the next poll; only acking advances state, and every message carries a delivery count so a
+  receiver can spot a redelivery. This makes a lost poll response harmless — the ordinary failure on
+  this transport — and means a turn truncated mid-processing gets its message back rather than losing
+  it. Sends are idempotent per client-supplied key; acks succeed on unknown or already-acked ids.
+- **Channel establishment is human-gated and two-sided.** An agent cannot conjure a channel: a human
+  mints a pairing code and *both* endpoints redeem it. This is the same move that makes the curation
+  gate trustworthy — withhold the capability rather than instruct the model not to use it. Re-redeeming
+  from a member is idempotent, a third endpoint is refused, and an expired code is indistinguishable
+  from an unknown one so codes cannot be probed.
+- Per-endpoint secrets, because the operating convention is one token per *machine*: without them two
+  sessions sharing a token could poll and ack each other's messages, most likely by accident when both
+  register the same label. Registration therefore never reuses an endpoint. Sequence numbers are per
+  channel *and direction*, which is the only ordering COMM promises.
+- Quotas (body cap, per-channel un-acked depth, TTLs) are enforced **in SQL inside the writing
+  transaction**, never by keying the shared rate-limiter bucket — that bucket fails *open* when
+  saturated, which is right for IP and token keys an attacker cannot mint cheaply and wrong for
+  identifiers a caller creates in a loop. A fail-open quota is a disk-full outage; a refused message is
+  a retry.
+- The sweeper expires **delivered-but-never-acked** messages as well as queued ones (a message polled
+  by a session that then died must not live forever), drops the retained body of a request whose reply
+  deadline passed, and purges settled metadata past its retention window.
+- 21 tests, including three whose failure modes were verified by deliberately breaking the invariant
+  they guard.
+
 ### Docs
 - **New design contract: [docs/COMM.md](docs/COMM.md) — inter-session communication**, plus locked
   decision **D9** in [docs/DESIGN.md](docs/DESIGN.md). A specification only: **nothing is implemented**,
