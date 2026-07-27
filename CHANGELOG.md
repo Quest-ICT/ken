@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-07-27
+
 ### Security
 - **`dedup_check_token` is now bound to the token holder that ran the search.** It was signed over its
   expiry alone, which made it a *transferable bearer capability*: any holder could satisfy `kb_save`,
@@ -780,5 +782,6 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.1.0
