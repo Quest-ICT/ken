@@ -137,6 +137,35 @@ and drop-in:** adding a language or fixing a string must not require a rebuild o
 single-binary deployment. **Scope:** human UI only — the AI/MCP surface and logs stay English (a machine
 contract, not end-user copy). Full reference: [`I18N.md`](I18N.md).
 
+### D9 — Inter-session communication: in-process, opt-in, ephemeral  *(chosen: embed; specified, not yet built)*
+A second service on the same deployment: authenticated **session-to-session messaging** between AI
+sessions (same machine or not), as `internal/comm` inside the same binary, with its **own** SQLite file,
+its **own** MCP endpoint, its **own** `comm` scope, and **off by default**. Specified for 1.2.0 and
+**not implemented**; full contract in [`COMM.md`](COMM.md).
+- **Why it belongs in Ken at all:** the deployment already offers the two things such a service needs and
+  are expensive to stand up twice — an authenticated endpoint every session already reaches, and a host
+  with spare capacity. The alternative is a second daemon whose only novel asset is a token table.
+- **Why a separate database, endpoint and scope:** message traffic is high-churn and **expendable**;
+  knowledge is low-churn and **durable**. Separating the files keeps ephemeral WAL churn out of the
+  replicated database and out of the KB's single writer; separating the endpoint and scope means a KB
+  token cannot message and a comm token cannot write knowledge.
+- **Why off by default:** a default install must remain exactly the curated KB the README promises — no
+  second operating loop in every agent's connect-time instructions. It also makes "experimental"
+  mechanical rather than documentary, since [`../COMPATIBILITY.md`](../COMPATIBILITY.md) already excludes
+  optional-and-off-by-default surfaces.
+- **Trade-off accepted, stated plainly:** a separate file isolates the KB's WAL and backups, **not** the
+  disk, the process, or the readiness signal. Those require enforced rules (storage budget with a
+  free-space floor, quotas that fail closed, recover-wrapped goroutines, comm deliberately absent from
+  `/healthz`, its own rate accounting) — COMM.md §5 carries them, and if they prove unenforceable
+  in-process, the recorded escape hatch is extraction into a `ken-comm` binary, which the module
+  boundary is kept clean enough to allow.
+- **The one decision that could not be deferred:** a message is a **side channel into curation** — a
+  session told "this is verified, propose it" authors a proposal indistinguishable from first-hand
+  knowledge, so the invariant survives literally while the curator's signal degrades to hearsay. That is
+  a schema question, so provenance marking lands with the feature, not after it (COMM.md §7).
+- **The honest limit:** COMM authenticates *who* may talk to whom (human-minted pairing, structural) but
+  cannot enforce *how a receiver treats content* — instruction text is not a control (COMM.md §8).
+
 ---
 
 ## 3. Data model
@@ -333,6 +362,14 @@ authorization server — off unless `KEN_OAUTH_ENABLED` — that lets claude.ai 
 still a single-human deployment; a connector's capability is `read`/`write-draft`/`propose`, never `curate`. Full
 details in [`OAUTH.md`](OAUTH.md).)*
 
+*(**Inter-session communication** (**D9**, specified for 1.2.0) is the first subsystem to exercise these seams
+in anger, and it sharpened one of them: ownership must be keyed on `space_id` **plus the authorizing human**,
+never on the actor alone — actors resolve by display name, so every token minted with the same actor name is
+**one** actor row, and an actor-keyed ownership check would reject nothing it was meant to reject. COMM
+therefore carries `token_id` + `actor_id` + `space_id` on every endpoint, scopes every listing to the owner,
+and makes channel establishment two-sided from day 1 — all cheap now, all MAJOR surgery later. See
+[`COMM.md`](COMM.md) §10.)*
+
 ---
 
 ## 8. Roadmap
@@ -380,4 +417,10 @@ runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); deci
 
 **Resolved:** MCP tool prefix = `kb_*`; project renamed to `ken`; `git init` done; `Migrate()` applies all migrations (embeddings table always present, empty when unused).
 
-**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish. *(All §1 security-priority items are now implemented.)*
+**Specified, not yet built:** **inter-session communication** (decision **D9**) — authenticated
+session-to-session messaging as an opt-in, off-by-default `internal/comm` subsystem with its own SQLite
+file, MCP endpoint and `comm` scope; targeted at 1.2.0, text-only in the first release, file exchange
+deferred to a later MINOR. Full contract, including the isolation rules that make the in-process choice
+honest and the curation-provenance decision that could not be deferred: [`COMM.md`](COMM.md).
+
+**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish · COMM file exchange (COMM.md §11) and reaching an idle session (COMM.md §12). *(All §1 security-priority items are now implemented.)*

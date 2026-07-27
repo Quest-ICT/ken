@@ -62,6 +62,7 @@ installers are built and tested.
 - [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) — the AI-facing MCP tool contracts.
 - [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md) — how to make your AI use Ken (token strategy + the operating loop).
 - [docs/OAUTH.md](docs/OAUTH.md) — connect claude.ai as a custom connector (the optional OAuth server).
+- [docs/COMM.md](docs/COMM.md) — inter-session communication: the design contract for session-to-session messaging (**specification only — not yet implemented**).
 - [docs/I18N.md](docs/I18N.md) — the multilingual UI: add a language or override any string at runtime (drop-in `.properties`).
 - [docs/INSTALL.md](docs/INSTALL.md) — install / deploy (self-extracting `.bin`, systemd, TLS posture).
 - [docs/MONITORING.md](docs/MONITORING.md) — health, metrics, and the Grafana/Prometheus bundle.

@@ -15,6 +15,54 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Docs
+- **New design contract: [docs/COMM.md](docs/COMM.md) — inter-session communication**, plus locked
+  decision **D9** in [docs/DESIGN.md](docs/DESIGN.md). A specification only: **nothing is implemented**,
+  and when it lands it will be **experimental and off by default** (so it sits inside
+  [COMPATIBILITY.md](COMPATIBILITY.md)'s optional-and-off-by-default exclusion rather than the stable
+  contract). Targeted at 1.2.0 as an additive MINOR — new tools, new scope, new settings, additive
+  migrations, nothing removed or retyped.
+- The feature: authenticated **session-to-session messaging** between AI sessions on the same or
+  different machines, as an opt-in `internal/comm` subsystem with its **own** SQLite file, MCP endpoint
+  and `comm` scope. Why it belongs in Ken: the deployment already provides the two things such a service
+  needs and that are expensive to stand up twice — an authenticated endpoint every session reaches, and
+  a host with spare capacity. Why it is walled off: message traffic is high-churn and **expendable**,
+  knowledge is low-churn and **durable**, so separate files keep ephemeral WAL churn out of the
+  replicated database and out of the KB's single writer.
+- **Four decisions are recorded against the alternatives that were tried and rejected**, because each
+  rejection is the useful part: (1) *pull with long-poll, not push* — the transport supports
+  server-initiated messages, but a harness only surfaces results of tool calls the model made, so push
+  would be correct plumbing that never reaches the model; (2) *full-duplex with per-message correlation,
+  not half-duplex turn-taking* — channel-level turn state wedges when a session dies mid-turn; (3)
+  *delete the body on acknowledge but retain slim metadata* — deleting the whole record is mutually
+  exclusive with request/response, since a later reply would reference a record that no longer exists;
+  (4) *prove a shared filesystem by rendezvous, not by comparing a self-reported machine fingerprint* —
+  a fingerprint is spoofable, compares **equal** across cloned VM images and **unequal** across a bind
+  mount, and, because it would gate reading a path, a forged one turns "read this file" into a
+  remote-driven read of an arbitrary local file.
+- **No tool-call chunking, by design.** Tool arguments are generated token by token by a model, so
+  chunked binary transfer is an economics problem wearing a protocol's clothes: base64 expands a payload
+  by 4/3 and tokenizes poorly, so one mebibyte costs on the order of 350–470 thousand output tokens at
+  model cost, with corruption detectable only after the tokens are spent. Text messages are atomic; file exchange is deferred to a later MINOR and will prefer
+  a same-host filesystem handoff, then a one-time expiring HTTP transfer the agent drives with a shell.
+- **Two things the spec settles now because they would be breaking changes later:** message traffic is a
+  **side channel into curation** (a session told "this is verified, propose it" authors a proposal
+  indistinguishable from first-hand knowledge — the invariant survives literally while the curator's
+  signal degrades to hearsay), so provenance marking is a schema decision that lands *with* the feature;
+  and channel ownership is keyed on `space_id` **plus the authorizing human**, never the actor alone,
+  because actors resolve by display name and collapse across machines and humans.
+- **The isolation claim is stated with its limits.** A separate database file isolates the KB's WAL and
+  its backup stream; it does **not** isolate the disk, the process, or the readiness signal. COMM.md §5
+  turns those into enforced rules — storage budget with a free-space floor, quotas that fail closed
+  rather than reusing the fail-open rate bucket, recover-wrapped goroutines, comm deliberately absent
+  from `/healthz` (which marks the whole service DOWN on any component failure), its own rate accounting
+  so a poll loop cannot starve `kb_*` on a shared per-machine token — and records extraction into a
+  separate binary as the escape hatch if that discipline proves leaky.
+- **Honest about what it cannot enforce:** COMM gates *who may talk to whom* structurally (a channel
+  exists only because a human minted a pairing code and both sessions used it), but it cannot enforce
+  *how a receiver treats content*. Instruction text is not a control, and the docs say so rather than
+  implying otherwise.
+
 ## [1.1.0] — 2026-07-23
 
 First public release.
