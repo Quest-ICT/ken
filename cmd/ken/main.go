@@ -789,17 +789,19 @@ func commLimits(s *settings.Snapshot) comm.Limits {
 		FileMinFreeBytes: int64(s.CommFileMinFreeMB) << 20,
 		FileTTLSeconds:   s.CommFileTTLSec,
 		GrantTTLSeconds:  s.CommGrantTTLSec,
+
+		EndpointIdleTTLSeconds: s.CommEndpointIdleTTLSec,
 	}
 }
 
 // commRelevant is the changed-subset key for COMM settings: a settings edit
 // rebuilds the subsystem's limits only when one of these actually moved.
 func commRelevant(v settings.Values) string {
-	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%t|%d|%d|%d|%d|%d",
+	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%t|%d|%d|%d|%d|%d|%d",
 		v.CommMaxBodyBytes, v.CommMaxUnacked, v.CommMessageTTLSec, v.CommMetadataTTLSec,
 		v.CommReplyDeadlineS, v.CommPairingCodeTTLS, v.CommPollWaitMaxSec, v.CommProvenanceWindowSec,
 		v.CommFilesEnabled, v.CommFileMaxMB, v.CommFileBudgetMB, v.CommFileMinFreeMB,
-		v.CommFileTTLSec, v.CommGrantTTLSec)
+		v.CommFileTTLSec, v.CommGrantTTLSec, v.CommEndpointIdleTTLSec)
 }
 
 // registerCommCollectors exposes COMM gauges on the existing /metrics endpoint.

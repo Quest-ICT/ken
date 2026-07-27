@@ -15,6 +15,45 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-07-27
+
+### Fixed
+- **COMM was unusable wherever it was enabled: freshly-registered session endpoints were deleted
+  within a minute, so a channel could never carry its first message.** Caught by dogfooding 1.2.0 —
+  the first real inter-session connection failed with `not found` on the first poll.
+  Root cause: the idle-endpoint sweep added in 1.2.0 reads `EndpointIdleTTLSeconds` from
+  `comm.Limits`, but the production path that builds those limits from live settings
+  (`commLimits()` in `cmd/ken`) never mapped that field. It was therefore the zero value, and the
+  sweep computed its cutoff as *now minus zero* — matching **every** endpoint that had no message
+  traffic yet, which the once-a-minute sweeper then deleted. The store's own `DefaultLimits()` had
+  the right value (7 days), which is why every test passed: none exercised the settings→limits
+  mapping. Same class as the `viewOf` bug — a hand-written cross-layer copy that silently dropped a
+  field.
+- Three-part fix. (1) **The sweep now fails safe:** a non-positive idle window *disables* endpoint
+  cleanup instead of meaning "sweep everything now" — a retention threshold of zero must never be
+  read as "delete immediately". (2) The mapping is completed, backed by a new live setting
+  **`comm_endpoint_idle_sec`** (Settings → Inter-session comms; default 7 days, minimum 5 minutes) so
+  the window is operator-tunable like every other COMM limit. (3) A reflection-based regression test
+  asserts `commLimits()` maps **every** `comm.Limits` field to a non-zero value, so the next dropped
+  mapping fails a test rather than production; verified by confirming it fails when the new mapping is
+  removed. Plus a store-level test that a zero window leaves a fresh endpoint intact.
+- Note: an actively polling session was never at risk in principle (a poll refreshes the endpoint's
+  last-seen), but the *handshake* window — register, join, wait for the peer — has no traffic yet, so
+  the sweep destroyed endpoints before they could be used. That is the window every connection starts
+  in, which is why the feature was effectively broken.
+- The `ken_comm_endpoints` gauge reading zero while endpoints existed (reported from production) was a
+  *symptom* of the same bug, not a separate one: endpoints were being deleted between an operator's
+  `comm_channels` call and the next `/metrics` scrape. With endpoints no longer vanishing, the gauge
+  reflects reality — verified: two registered endpoints read `ken_comm_endpoints 2`.
+- **Installer: the automatic pre-upgrade snapshot now `chmod 0600` immediately after it is written**
+  (`scripts/install.sh`), mirroring `scripts/ken-snapshot.sh`. Unrelated to COMM; found and
+  re-confirmed by the production session during the 1.2.0 upgrade. `ken backup snapshot` writes at
+  root's umask (`0644`), and the installer's later `chown -R` fixed *ownership* but never *mode*, so
+  every upgrade left one world-readable full copy of the database in the backups directory. The
+  containing directory (`0750`) blocks traversal on the box, so this was a defense-in-depth gap rather
+  than a live exposure — but a file mode travels with copies, so an off-box backup of that directory
+  carried the loose mode with it. The nightly path already did this correctly; the two paths now agree.
+
 ## [1.2.0] — 2026-07-27
 
 ### Security
@@ -782,6 +821,7 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.1
 [1.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.1.0

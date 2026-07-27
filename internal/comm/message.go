@@ -499,13 +499,23 @@ WHERE consumed_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		//    forever — the operator console and comm.db grow without bound, and an
 		//    agent loop could add rows freely. An endpoint unseen for the retention
 		//    window has no live session behind it; its channels cascade.
-		if _, err := t.ExecContext(ctx, `
+		//
+		//    The guard is load-bearing: a threshold of 0 would make "idle for 0
+		//    seconds" = "idle now" and delete EVERY endpoint with no message traffic
+		//    yet — including one that just registered and is mid-handshake. A retention
+		//    sweep must fail SAFE (do nothing) on a non-positive window, never sweep
+		//    everything. This is exactly the failure a dropped settings mapping caused
+		//    in 1.2.0, so the sweep now refuses to run without a positive window
+		//    regardless of how the window was configured.
+		if idle := s.lim().EndpointIdleTTLSeconds; idle > 0 {
+			if _, err := t.ExecContext(ctx, `
 DELETE FROM endpoint
 WHERE last_seen_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
   AND id NOT IN (SELECT sender_endpoint FROM message UNION SELECT recipient_endpoint FROM message)
   AND id NOT IN (SELECT sender_endpoint FROM attachment WHERE stored_bytes > 0)`,
-			nowExpr(-s.lim().EndpointIdleTTLSeconds)); err != nil {
-			return err
+				nowExpr(-idle)); err != nil {
+				return err
+			}
 		}
 		// Revoked channels with nothing left referencing them.
 		if _, err := t.ExecContext(ctx, `

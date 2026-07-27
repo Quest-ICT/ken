@@ -375,13 +375,18 @@ func TestSweepKeepsAccountingWhenBytesRemain(t *testing.T) {
 func TestSweepRemovesIdleEndpoints(t *testing.T) {
 	ctx := context.Background()
 	l := DefaultLimits()
-	l.EndpointIdleTTLSeconds = -1 // every endpoint counts as idle
+	l.EndpointIdleTTLSeconds = 60 // a real, positive idle window
 	st := newStore(t, l)
-	if _, _, err := st.RegisterEndpoint(ctx, owner("tok"), "ghost", ""); err != nil {
+	ep, _, err := st.RegisterEndpoint(ctx, owner("tok"), "ghost", "")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if eps, _ := st.ListEndpoints(ctx, 1); len(eps) != 1 {
 		t.Fatalf("setup: %d endpoints", len(eps))
+	}
+	// Backdate last_seen well past the window — this is what makes it "idle".
+	if _, err := st.W.Exec(`UPDATE endpoint SET last_seen_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day') WHERE endpoint_id=?`, ep.EndpointID); err != nil {
+		t.Fatal(err)
 	}
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
@@ -443,5 +448,29 @@ func TestProvenanceSeesRedelivery(t *testing.T) {
 	}
 	if got, _ := st.ReceivedSince(ctx, 7, 3600); !got {
 		t.Fatal("a message acted upon inside the window did not mark the actor")
+	}
+}
+
+// A retention sweep keyed on a threshold must fail SAFE on a non-positive window:
+// a zero window (the shape a dropped settings mapping produces) must DISABLE the
+// endpoint sweep, never delete every idle endpoint. This is the 1.2.0 regression
+// that made COMM unusable — a freshly registered endpoint was swept mid-handshake.
+func TestEndpointSweepFailsSafeOnZeroWindow(t *testing.T) {
+	ctx := context.Background()
+	l := DefaultLimits()
+	l.EndpointIdleTTLSeconds = 0 // the dropped-mapping shape
+	st := newStore(t, l)
+	if _, _, err := st.RegisterEndpoint(ctx, owner("tok"), "fresh", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eps, err := st.ListEndpoints(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eps) != 1 {
+		t.Fatalf("a zero idle-window swept a fresh endpoint (%d remain) — the sweep did not fail safe", len(eps))
 	}
 }

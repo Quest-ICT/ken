@@ -75,6 +75,12 @@ type Values struct {
 	CommFileMinFreeMB int
 	CommFileTTLSec    int
 	CommGrantTTLSec   int
+	// CommEndpointIdleTTLSec is how long a session endpoint with no traffic and no
+	// live attachment survives before the sweeper removes it (its channels cascade).
+	// Sessions register once and never unregister, so without a positive value the
+	// row set grows forever — but a non-positive value must DISABLE the sweep, never
+	// mean "sweep everything now" (see the sweep guard in internal/comm).
+	CommEndpointIdleTTLSec int
 }
 
 // Snapshot is Values plus the derived objects consumers read.
@@ -226,6 +232,9 @@ var Fields = []Field{
 	intField("comm_grant_ttl_sec", "Inter-session comms", "Transfer grant lifetime (seconds)",
 		"How long a one-time upload/download URL stays valid. Short is right: it only has to survive being handed to curl.",
 		func(v Values) int { return v.CommGrantTTLSec }, func(v *Values, n int) { v.CommGrantTTLSec = n }, 60, 3600),
+	intField("comm_endpoint_idle_sec", "Inter-session comms", "Idle session cleanup (seconds)",
+		"How long a registered session with no message traffic survives before it is removed. An actively polling session refreshes its last-seen and is never removed; this only reaps sessions that registered and went away. Keep it comfortably longer than a working session's idle gaps.",
+		func(v Values) int { return v.CommEndpointIdleTTLSec }, func(v *Values, n int) { v.CommEndpointIdleTTLSec = n }, 300, 90*24*3600),
 }
 
 // Live holds the current snapshot atomically and applies edits.
@@ -365,6 +374,8 @@ func DefaultsFromEnv() Values {
 		CommFileMinFreeMB: 512,
 		CommFileTTLSec:    24 * 3600,
 		CommGrantTTLSec:   300,
+
+		CommEndpointIdleTTLSec: 7 * 24 * 3600,
 	}
 	// Clamp env-provided values so a bad env can't silently disable the limiter or overflow.
 	if v.IPPerMin <= 0 {

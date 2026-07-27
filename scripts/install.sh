@@ -566,8 +566,19 @@ fi
 if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then
     _presnap="$BACKUPS/pre-upgrade-$(date +%Y%m%d-%H%M%S).db"
     log "pre-upgrade snapshot -> $_presnap"
-    run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap" \
-        || warn "pre-upgrade snapshot failed — continuing; your live DB is untouched"
+    if run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap"; then
+        # Lock the mode down IMMEDIATELY, mirroring scripts/ken-snapshot.sh. The
+        # snapshot is a full copy of the database — more sensitive than the live
+        # ken.db — but `ken backup snapshot` writes it at root's umask (0644). The
+        # chown -R later fixes ownership, never mode, so without this the file keeps
+        # world-read. The containing dir (0750) blocks traversal on the box, but a
+        # file mode travels with COPIES: an off-box backup of $BACKUPS lands a
+        # world-readable database wherever it goes. Do it here, before the symlink
+        # flip, so a snapshot is never briefly loose.
+        run chmod 0600 "$_presnap"
+    else
+        warn "pre-upgrade snapshot failed — continuing; your live DB is untouched"
+    fi
 fi
 
 # ----------------------------------------------------------------------------
