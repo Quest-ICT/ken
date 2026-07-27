@@ -15,6 +15,17 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+- **French translation of the human web UI** (`messages_fr.properties`, embedded alongside English and
+  Spanish). The language selector now offers **Français**; a French reader gets a French curator UI,
+  with the AI/MCP surface and logs staying English-only by design. **AI-translated from the English
+  source, community corrections welcome** — the strings were machine-generated against a supplied
+  French glossary (so the product UI and the marketing site use the same terms) and review-weighted
+  toward the high-risk strings: destructive-action confirmations, action buttons, and error/flash
+  text, where a mistranslation is a usability or data-loss problem rather than a matter of style.
+  Partial by construction is safe: any key not present falls back to English, so nothing breaks. Key
+  parity with the English source is exact and enforced by the same tooling as Spanish.
+
 ## [1.2.2] — 2026-07-27
 
 ### Changed

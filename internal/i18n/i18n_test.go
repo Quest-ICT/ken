@@ -72,13 +72,16 @@ func TestExternalOverrideAndReload(t *testing.T) {
 		t.Fatalf("pre-override = %q", got)
 	}
 
-	// Drop an external override that (a) overrides English and (b) adds a new language.
+	// Drop an external override that (a) overrides English and (b) adds a NEW
+	// language. Use German here — a code NOT shipped embedded (en/es/fr are) — so
+	// this exercises a genuinely new drop-in language and its English fallback,
+	// rather than colliding with a bundle Ken already ships.
 	if err := os.WriteFile(filepath.Join(dir, "messages.properties"),
 		[]byte("nav.search = Find\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "messages_fr.properties"),
-		[]byte("lang.self_name = Français\nnav.search = Rechercher\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "messages_de.properties"),
+		[]byte("lang.self_name = Deutsch\nnav.search = Suchen\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Force the throttle to elapse, then reload.
@@ -90,22 +93,22 @@ func TestExternalOverrideAndReload(t *testing.T) {
 	if got := m.T("en", "nav.search"); got != "Find" {
 		t.Fatalf("override not applied: %q", got)
 	}
-	if !m.Has("fr") || m.T("fr", "nav.search") != "Rechercher" {
-		t.Fatalf("new language fr not picked up")
+	if !m.Has("de") || m.T("de", "nav.search") != "Suchen" {
+		t.Fatalf("new language de not picked up")
 	}
-	// fr inherits English fallback for keys it didn't define.
-	if got := m.T("fr", "login.submit"); got != "Sign in" {
-		t.Fatalf("fr fallback = %q", got)
+	// de inherits English fallback for keys it didn't define.
+	if got := m.T("de", "login.submit"); got != "Sign in" {
+		t.Fatalf("de fallback = %q", got)
 	}
 	// The new language shows in the selector with its endonym.
 	found := false
 	for _, l := range m.Languages() {
-		if l.Code == "fr" && l.Name == "Français" {
+		if l.Code == "de" && l.Name == "Deutsch" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatal("fr missing from Languages()")
+		t.Fatal("de missing from Languages()")
 	}
 }
 
