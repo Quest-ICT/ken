@@ -55,7 +55,7 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
   `ken_kb_embeddings` / `ken_kb_embeddable_versions`, `ken_users`, `ken_tokens_active`.
 - **Inter-session comms** (only when `KEN_COMM_ENABLED=1`; see [`COMM.md`](COMM.md)) —
   `ken_comm_endpoints`, `ken_comm_channels_open`, `ken_comm_messages_unacked`,
-  `ken_comm_message_bytes`, `ken_comm_poll_waiters`. COMM is deliberately **absent from
+  `ken_comm_message_bytes`, `ken_comm_poll_waiters`, `ken_comm_files`, `ken_comm_file_bytes`. COMM is deliberately **absent from
   `/health`**: that endpoint marks the whole service DOWN on any component failure, and an
   ephemeral messaging subsystem must not pull a healthy knowledge base out of rotation. Watch it
   here instead — a climbing `ken_comm_messages_unacked` or `ken_comm_message_bytes` is the signal

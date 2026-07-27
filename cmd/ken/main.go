@@ -141,7 +141,9 @@ Inter-session communication (EXPERIMENTAL; OFF unless enabled — see docs/COMM.
   KEN_COMM_ENABLED  1 = expose the comm MCP endpoint at /comm/mcp + console at /comm (default off)
   KEN_COMM_DB       message database path (default <db dir>/comm/comm.db; NOT backed up — it is expendable)
                     needs a DEDICATED token:  ken token add --actor comm-dev --scopes comm
+                    (add comm-file to that token for file exchange: --scopes comm,comm-file)
                     a token may hold comm scopes or knowledge-base scopes, never both
+                    file exchange is a separate live setting (Settings -> Inter-session comms)
 
 Observability (health always on; metrics on by default, loopback-only):
   /healthz          liveness (public, plain "ok")
@@ -364,10 +366,15 @@ func runServe(args []string) {
 	// COMM may fail; the KB stays UP.
 	var commHandler *commserver.Handler
 	if commStore != nil {
-		commHandler = commserver.NewHTTPHandler(commserver.Deps{
+		commDeps := commserver.Deps{
 			Comm: commStore, Store: st, TokenLimiter: rlToken, Metrics: reg,
 			MaxPollWaitSeconds: live.Current().CommPollWaitMaxSec,
-		})
+		}
+		commHandler = commserver.NewHTTPHandler(commDeps)
+		// The byte relay: one-time-grant PUT/GET, gated on the comm-file scope and
+		// the live comm_files_enabled switch. Mounted as a prefix because the grant
+		// travels in the path.
+		mux.Handle("/comm/files/", commserver.NewFileHandler(commDeps, commHandler))
 		// The MCP endpoint is /comm/mcp, not /comm: the human console lives at /comm
 		// (served by the web handler mounted on "/"), and a top-level exact "/comm"
 		// route here would shadow it. It also reads better — /mcp and /comm/mcp are
@@ -776,15 +783,24 @@ func commLimits(s *settings.Snapshot) comm.Limits {
 		MetadataTTLSeconds:    s.CommMetadataTTLSec,
 		ReplyDeadlineSeconds:  s.CommReplyDeadlineS,
 		PairingCodeTTLSeconds: s.CommPairingCodeTTLS,
+
+		FilesEnabled:     s.CommFilesEnabled,
+		FileMaxBytes:     int64(s.CommFileMaxMB) << 20,
+		FileBudgetBytes:  int64(s.CommFileBudgetMB) << 20,
+		FileMinFreeBytes: int64(s.CommFileMinFreeMB) << 20,
+		FileTTLSeconds:   s.CommFileTTLSec,
+		GrantTTLSeconds:  s.CommGrantTTLSec,
 	}
 }
 
 // commRelevant is the changed-subset key for COMM settings: a settings edit
 // rebuilds the subsystem's limits only when one of these actually moved.
 func commRelevant(v settings.Values) string {
-	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d",
+	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%t|%d|%d|%d|%d|%d",
 		v.CommMaxBodyBytes, v.CommMaxUnacked, v.CommMessageTTLSec, v.CommMetadataTTLSec,
-		v.CommReplyDeadlineS, v.CommPairingCodeTTLS, v.CommPollWaitMaxSec, v.CommProvenanceWindowSec)
+		v.CommReplyDeadlineS, v.CommPairingCodeTTLS, v.CommPollWaitMaxSec, v.CommProvenanceWindowSec,
+		v.CommFilesEnabled, v.CommFileMaxMB, v.CommFileBudgetMB, v.CommFileMinFreeMB,
+		v.CommFileTTLSec, v.CommGrantTTLSec)
 }
 
 // registerCommCollectors exposes COMM gauges on the existing /metrics endpoint.
@@ -811,6 +827,8 @@ func registerCommCollectors(reg *metrics.Registry, cs *comm.Store, h *commserver
 			add("ken_comm_channels_open", "Open inter-session channels.", float64(s.OpenChannels))
 			add("ken_comm_messages_unacked", "Messages delivered or queued but not yet acknowledged.", float64(s.Unacked))
 			add("ken_comm_message_bytes", "Bytes of retained message bodies (deleted at acknowledgement).", float64(s.BodyBytes))
+			add("ken_comm_files", "Live file attachments (offered or awaiting delivery).", float64(s.Files))
+			add("ken_comm_file_bytes", "Relay bytes currently held on disk.", float64(s.FileBytes))
 		}
 		if h != nil {
 			add("ken_comm_poll_waiters", "Long-poll receive calls currently parked.", float64(h.ParkedWaiters()))

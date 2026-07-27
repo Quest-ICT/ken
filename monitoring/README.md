@@ -64,6 +64,8 @@ scrape_configs:
 | `ken_comm_messages_unacked` | gauge | | Messages delivered/queued but not acknowledged — COMM only |
 | `ken_comm_message_bytes` | gauge | | Bytes of retained message bodies — COMM only |
 | `ken_comm_poll_waiters` | gauge | | Long-poll receive calls currently parked — COMM only |
+| `ken_comm_files` | gauge | | Live file attachments (offered or awaiting delivery) — COMM only |
+| `ken_comm_file_bytes` | gauge | | Relay bytes currently held on disk — COMM only |
 | `ken_db_connections_open` / `ken_db_connections_in_use` | gauge | `pool` | DB pool (reader/writer) |
 | `ken_db_wait_total` | counter | `pool` | DB pool waits |
 

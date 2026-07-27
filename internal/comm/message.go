@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 )
 
 // Message is one atomic transfer over a channel.
@@ -25,6 +26,9 @@ type Message struct {
 	CreatedAt        string
 	ExpiresAt        string
 	ReplyDeadlineAt  string
+	// File is the attachment descriptor when this message carries a file offer
+	// (docs/COMM.md §11); nil for ordinary messages.
+	File *FileInfo
 }
 
 // Redelivered reports whether the receiver has seen this message before. At-least-
@@ -178,6 +182,46 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,
 		return nil, err
 	}
 	return out, nil
+}
+
+// enqueueLocked inserts one plain message inside an open write transaction:
+// backpressure, sequence assignment, insert, read-back. The FILE surface uses it
+// (offers and completed uploads become ordinary poll-able messages).
+//
+// Send does NOT call this, on purpose: its insert carries five more columns and
+// is wrapped in idempotency and reply-correlation logic, and a shared helper
+// with that many knobs would be harder to hold to account than these few
+// shared-shape lines. If the backpressure or sequencing RULES ever change, both
+// places change — they are the same rule stated twice, and each points here.
+func (s *Store) enqueueLocked(ctx context.Context, t *sql.Tx, chRow, sender, recipient int64, body string, ttlSec int) (*Message, error) {
+	var unacked int
+	if err := t.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM message WHERE channel_id=? AND state IN ('queued','delivered')`, chRow).
+		Scan(&unacked); err != nil {
+		return nil, err
+	}
+	if unacked >= s.lim().MaxUnackedPerChannel {
+		return nil, ErrBackpressure
+	}
+	var seq int64
+	if err := t.QueryRowContext(ctx, `
+SELECT COALESCE(MAX(seq),0)+1 FROM message WHERE channel_id=? AND sender_endpoint=?`,
+		chRow, sender).Scan(&seq); err != nil {
+		return nil, err
+	}
+	messageID, err := randBase62(22)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := t.ExecContext(ctx, `
+INSERT INTO message(message_id, channel_id, seq, sender_endpoint, recipient_endpoint,
+                    body, body_sha256, body_bytes, expires_at)
+VALUES(?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
+		messageID, chRow, seq, sender, recipient,
+		body, sha256Hex(body), len(body), nowExpr(ttlSec)); err != nil {
+		return nil, err
+	}
+	return messageByID(ctx, t, messageID)
 }
 
 // Poll returns this endpoint's un-acknowledged messages across all its channels,
@@ -338,6 +382,7 @@ type rowQuerier interface {
 // megabytes before an hourly sweep first runs, which is why a TTL is not a quota
 // and must not be mistaken for one.
 func (s *Store) Sweep(ctx context.Context) (expired, purged int64, err error) {
+	var unlink []string
 	err = s.tx(ctx, func(t *sql.Tx) error {
 		// 1. Expire un-acked messages past their TTL and drop their bodies. This
 		//    covers BOTH queued and delivered-but-never-acked: a message polled by a
@@ -372,11 +417,25 @@ WHERE state IN ('acked','expired')
 		purged, _ = res.RowsAffected()
 
 		// 4. Drop pairing codes that were never redeemed.
-		_, err = t.ExecContext(ctx, `
+		if _, err := t.ExecContext(ctx, `
 DELETE FROM pairing_code
-WHERE consumed_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+WHERE consumed_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`); err != nil {
+			return err
+		}
+
+		// 5. The file-exchange half: attachment expiry, done-marking, grant purge.
+		//    Byte deletion happens after commit — filesystem calls stay out of the
+		//    write transaction.
+		unlink, err = s.sweepFiles(ctx, t)
 		return err
 	})
+	if err == nil {
+		for _, p := range unlink {
+			// Idempotent: ENOENT just means an earlier sweep already got it.
+			_ = os.Remove(p)
+		}
+		s.sweepPartFiles()
+	}
 	return expired, purged, err
 }
 
@@ -389,16 +448,27 @@ func messageByID(ctx context.Context, q rowQuerier, messageID string) (*Message,
 		deadline sql.NullString
 		reqResp  int
 	)
+	var (
+		attID    sql.NullString
+		attName  sql.NullString
+		attSize  sql.NullInt64
+		attSHA   sql.NullString
+		attMode  sql.NullString
+		attNonce sql.NullString
+	)
 	err := q.QueryRowContext(ctx, `
 SELECT m.message_id, c.channel_id, m.seq, se.endpoint_id, m.body, m.requires_response,
        (SELECT r.message_id FROM message r WHERE r.id = m.reply_to),
-       m.state, m.delivery_count, m.body_bytes, m.created_at, m.expires_at, m.reply_deadline_at
+       m.state, m.delivery_count, m.body_bytes, m.created_at, m.expires_at, m.reply_deadline_at,
+       a.attachment_id, a.name, a.size_bytes, a.sha256, a.transfer, a.nonce_sha256
 FROM message m
 JOIN channel  c  ON c.id  = m.channel_id
 JOIN endpoint se ON se.id = m.sender_endpoint
+LEFT JOIN attachment a ON a.message_id = m.id
 WHERE m.message_id=?`, messageID).
 		Scan(&m.MessageID, &m.ChannelID, &m.Seq, &m.SenderEndpointID, &body, &reqResp,
-			&replyTo, &m.State, &m.DeliveryCount, &m.BodyBytes, &m.CreatedAt, &m.ExpiresAt, &deadline)
+			&replyTo, &m.State, &m.DeliveryCount, &m.BodyBytes, &m.CreatedAt, &m.ExpiresAt, &deadline,
+			&attID, &attName, &attSize, &attSHA, &attMode, &attNonce)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -409,6 +479,12 @@ WHERE m.message_id=?`, messageID).
 	m.RequiresResponse = reqResp == 1
 	m.ReplyToMessageID = replyTo.String
 	m.ReplyDeadlineAt = deadline.String
+	if attID.Valid {
+		m.File = &FileInfo{
+			AttachmentID: attID.String, Name: attName.String, SizeBytes: attSize.Int64,
+			SHA256: attSHA.String, Transfer: attMode.String, NonceSHA256: attNonce.String,
+		}
+	}
 	return &m, nil
 }
 

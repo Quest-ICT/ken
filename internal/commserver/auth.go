@@ -42,6 +42,10 @@ type principal struct {
 	ActorID int64
 	TokenID string
 	SpaceID int64
+	// Scopes carries the token's full comm-family scope set: the transport
+	// middleware requires `comm`, but the file tools additionally require
+	// `comm-file`, and that second check happens per tool against this set.
+	Scopes map[string]bool
 }
 
 type ctxKey struct{}
@@ -87,7 +91,7 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			authFail(w, reg, "missing bearer token")
 			return
 		}
-		p, err := authenticate(r.Context(), st, tok)
+		p, err := authenticate(r.Context(), st, tok, ScopeComm)
 		if err != nil {
 			authFail(w, reg, "invalid token")
 			return
@@ -112,8 +116,9 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 }
 
 // authenticate resolves a bearer to a comm principal, accepting only a
-// `ken_<id>_<secret>` API token carrying the `comm` scope.
-func authenticate(ctx context.Context, st *store.Store, tok string) (*principal, error) {
+// `ken_<id>_<secret>` API token carrying requiredScope (`comm` for the MCP
+// transport, `comm-file` for the byte-relay HTTP surface).
+func authenticate(ctx context.Context, st *store.Store, tok, requiredScope string) (*principal, error) {
 	if !strings.HasPrefix(tok, "ken_") {
 		return nil, errors.New("comm requires a dedicated ken_ API token")
 	}
@@ -148,14 +153,16 @@ WHERE t.token_id = ?`, tokenID).
 
 	var scopes []string
 	_ = json.Unmarshal([]byte(scopesJSON), &scopes)
-	for _, s := range scopes {
-		if s == ScopeComm {
-			return &principal{ActorID: actorID, TokenID: tokenID, SpaceID: spaceID}, nil
-		}
+	set := make(map[string]bool, len(scopes))
+	for _, sc := range scopes {
+		set[sc] = true
 	}
-	// Fails closed: a token without `comm` is refused at the transport, so the
-	// tools are unreachable rather than merely erroring per call.
-	return nil, errors.New("token is missing the 'comm' scope")
+	// Fails closed: a token without the required scope is refused at the
+	// transport, so the surface is unreachable rather than merely erroring per call.
+	if !set[requiredScope] {
+		return nil, errors.New("token is missing the '" + requiredScope + "' scope")
+	}
+	return &principal{ActorID: actorID, TokenID: tokenID, SpaceID: spaceID, Scopes: set}, nil
 }
 
 func bearerToken(r *http.Request) string {

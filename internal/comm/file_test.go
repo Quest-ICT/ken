@@ -1,0 +1,372 @@
+package comm
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+)
+
+func fileLimits() Limits {
+	l := DefaultLimits()
+	l.FilesEnabled = true
+	return l
+}
+
+func shaOf(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// The name contract is the C9 security boundary: a name that fails here could
+// steer a receiving session toward an arbitrary local path.
+func TestValidateAttachmentName(t *testing.T) {
+	ok := []string{"HANDOUT.md", "report-v2.tar.gz", "ARCHIVO Ñ.txt", ".env.example", "a"}
+	for _, n := range ok {
+		if err := ValidateAttachmentName(n); err != nil {
+			t.Errorf("valid name %q rejected: %v", n, err)
+		}
+	}
+	bad := []string{
+		"", ".", "..", "~", "~/.ssh/id_ed25519",
+		"/etc/passwd", "a/b", `a\b`, "..\\up",
+		"nul\x00byte", "tab\tname", "esc\x1b[0m", "del\x7f",
+		strings.Repeat("x", 256),
+	}
+	for _, n := range bad {
+		if err := ValidateAttachmentName(n); err == nil {
+			t.Errorf("dangerous name %q was accepted", n)
+		}
+	}
+}
+
+func TestOfferValidation(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, _, channelID := pair(t, st)
+	good := FileOffer{Name: "f.txt", SizeBytes: 5, SHA256: shaOf([]byte("hello")), Transfer: "upload"}
+
+	// Disabled ⇒ refused, regardless of anything else.
+	st.SetLimits(DefaultLimits())
+	if _, err := st.OfferFile(ctx, a, channelID, good); !errors.Is(err, ErrFilesDisabled) {
+		t.Fatalf("disabled: want ErrFilesDisabled, got %v", err)
+	}
+	st.SetLimits(fileLimits())
+
+	cases := []struct {
+		name string
+		mut  func(*FileOffer)
+	}{
+		{"bad name", func(o *FileOffer) { o.Name = "../../etc/passwd" }},
+		{"bad sha", func(o *FileOffer) { o.SHA256 = "nothex" }},
+		{"zero size", func(o *FileOffer) { o.SizeBytes = 0 }},
+		{"oversize", func(o *FileOffer) { o.SizeBytes = fileLimits().FileMaxBytes + 1 }},
+		{"bad transfer", func(o *FileOffer) { o.Transfer = "carrier-pigeon" }},
+		{"path without nonce", func(o *FileOffer) { o.Transfer = "path"; o.NonceSHA256 = "" }},
+	}
+	for _, c := range cases {
+		o := good
+		c.mut(&o)
+		if _, err := st.OfferFile(ctx, a, channelID, o); err == nil {
+			t.Errorf("%s: offer was accepted", c.name)
+		}
+	}
+}
+
+// A path offer delivers immediately: the peer polls a message whose File
+// descriptor carries the validated name and both hashes.
+func TestPathOfferDeliversFileDescriptor(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, b, channelID := pair(t, st)
+
+	nonce := shaOf([]byte("the-nonce"))
+	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "HANDOUT.md", SizeBytes: 9, SHA256: shaOf([]byte("the-bytes")),
+		Transfer: "path", NonceSHA256: nonce, Note: "read this and follow up",
+	})
+	if err != nil {
+		t.Fatalf("offer: %v", err)
+	}
+	if res.Message == nil {
+		t.Fatal("path offer did not enqueue a message")
+	}
+	if res.UploadGrant != "" {
+		t.Fatal("path offer minted an upload grant — no bytes should move through the server")
+	}
+
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].File == nil {
+		t.Fatalf("peer did not receive the file descriptor: %+v", got)
+	}
+	f := got[0].File
+	if f.Name != "HANDOUT.md" || f.Transfer != "path" || f.NonceSHA256 != nonce {
+		t.Fatalf("descriptor mismatch: %+v", f)
+	}
+	if got[0].Body != "read this and follow up" {
+		t.Fatalf("note lost: %q", got[0].Body)
+	}
+}
+
+// An upload offer enqueues NOTHING until the bytes arrive and verify: the
+// receiver never observes partial state.
+func TestUploadOfferDeliversOnlyAfterCompletion(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, b, channelID := pair(t, st)
+
+	content := []byte("file-content")
+	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "data.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content),
+		Transfer: "upload", Note: "here you go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UploadGrant == "" {
+		t.Fatal("upload offer returned no grant")
+	}
+	if res.Message != nil {
+		t.Fatal("upload offer enqueued a message before any bytes arrived")
+	}
+	if got, _ := st.Poll(ctx, b, 10); len(got) != 0 {
+		t.Fatalf("peer polled %d messages before upload completion", len(got))
+	}
+
+	gi, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+	if err != nil {
+		t.Fatalf("consume grant: %v", err)
+	}
+	if gi.EndpointToken != a.Owner.TokenID || gi.SHA256 != shaOf(content) {
+		t.Fatalf("grant info mismatch: %+v", gi)
+	}
+	msg, recipient, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if recipient != b.ID {
+		t.Fatalf("recipient = %d, want %d", recipient, b.ID)
+	}
+
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].MessageID != msg.MessageID || got[0].File == nil {
+		t.Fatalf("completed upload not delivered: %+v", got)
+	}
+	if got[0].File.Transfer != "upload" || got[0].Body != "here you go" {
+		t.Fatalf("descriptor/note mismatch: %+v body=%q", got[0].File, got[0].Body)
+	}
+}
+
+// Grants are single-use, kind-bound, and indistinguishable when dead.
+func TestGrantIsSingleUseAndKindBound(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, _, channelID := pair(t, st)
+
+	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "x", SizeBytes: 1, SHA256: shaOf([]byte("x")), Transfer: "upload",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Wrong kind first: must not consume.
+	if _, err := st.ConsumeGrant(ctx, res.UploadGrant, "download"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("wrong kind: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload"); err != nil {
+		t.Fatalf("first use: %v", err)
+	}
+	if _, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second use: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.ConsumeGrant(ctx, "nosuchgrant", "upload"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown grant: want ErrNotFound, got %v", err)
+	}
+}
+
+// Download grants belong to the recipient alone, and only once bytes exist.
+func TestGrantDownloadIsRecipientOnly(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, b, channelID := pair(t, st)
+
+	content := []byte("payload")
+	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "p.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attID := res.Attachment.AttachmentID
+
+	// Not ready yet — no bytes.
+	if _, _, err := st.GrantDownload(ctx, b, attID); err == nil {
+		t.Fatal("download granted before the upload completed")
+	}
+	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+
+	// The SENDER must not be able to mint a download for its own offer.
+	if _, _, err := st.GrantDownload(ctx, a, attID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("sender minted a download grant: %v", err)
+	}
+	g, att, err := st.GrantDownload(ctx, b, attID)
+	if err != nil || g == "" {
+		t.Fatalf("recipient grant failed: %v", err)
+	}
+	if att.Name != "p.bin" {
+		t.Fatalf("attachment mismatch: %+v", att)
+	}
+	// Repeatable: a failed curl needs a fresh grant.
+	if g2, _, err := st.GrantDownload(ctx, b, attID); err != nil || g2 == g {
+		t.Fatalf("second grant failed or was identical: %v", err)
+	}
+}
+
+// Idempotent re-offer returns the original attachment with a fresh grant.
+func TestOfferIsIdempotentPerKey(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, _, channelID := pair(t, st)
+
+	o := FileOffer{Name: "f", SizeBytes: 1, SHA256: shaOf([]byte("f")), Transfer: "upload", IdempotencyKey: "k1"}
+	r1, err := st.OfferFile(ctx, a, channelID, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := st.OfferFile(ctx, a, channelID, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.Attachment.AttachmentID != r2.Attachment.AttachmentID {
+		t.Fatal("re-offer minted a second attachment")
+	}
+	if r2.UploadGrant == "" || r2.UploadGrant == r1.UploadGrant {
+		t.Fatal("re-offer must mint a FRESH grant while the upload is pending")
+	}
+}
+
+// The global budget counts bytes actually held; offers beyond it are refused.
+func TestFileBudgetFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	l := fileLimits()
+	l.FileBudgetBytes = 10
+	l.FileMinFreeBytes = 0 // isolate the budget check from the machine's real disk
+	st := newStore(t, l)
+	a, _, channelID := pair(t, st)
+
+	content := []byte("12345678") // 8 bytes
+	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "a", SizeBytes: 8, SHA256: shaOf(content), Transfer: "upload",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, 8); err != nil {
+		t.Fatal(err)
+	}
+	// 8 of 10 bytes held: a 3-byte offer must be refused.
+	if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "b", SizeBytes: 3, SHA256: shaOf([]byte("abc")), Transfer: "upload",
+	}); !errors.Is(err, ErrQuota) {
+		t.Fatalf("over-budget offer: want ErrQuota, got %v", err)
+	}
+}
+
+// In-flight uploads are capped per sender so never-completed uploads cannot
+// hold the budget hostage.
+func TestConcurrentUploadCap(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, _, channelID := pair(t, st)
+
+	for i := 0; i < maxConcurrentUploads; i++ {
+		if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+			Name: "f", SizeBytes: 1, SHA256: shaOf([]byte("f")), Transfer: "upload",
+		}); err != nil {
+			t.Fatalf("offer %d: %v", i, err)
+		}
+	}
+	if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "f", SizeBytes: 1, SHA256: shaOf([]byte("f")), Transfer: "upload",
+	}); !errors.Is(err, ErrBackpressure) {
+		t.Fatalf("over-cap offer: want ErrBackpressure, got %v", err)
+	}
+}
+
+// Acking the message settles the attachment and the sweeper deletes its bytes.
+func TestSweepDeletesDeliveredFileBytes(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	a, b, channelID := pair(t, st)
+
+	content := []byte("bytes-to-delete")
+	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "d.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+	if err := st.EnsureFilesDir(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.FilePath(gi.AttachmentID), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msg, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Ack(ctx, b, msg.MessageID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(st.FilePath(gi.AttachmentID)); !os.IsNotExist(err) {
+		t.Fatal("delivered attachment bytes survived the sweep")
+	}
+}
+
+// Expiry covers attachments that were never uploaded or never fetched.
+func TestSweepExpiresStaleAttachments(t *testing.T) {
+	ctx := context.Background()
+	l := fileLimits()
+	l.FileTTLSeconds = -1 // already expired at insert (a per-call TTL <= 0 is clamped to this default)
+	st := newStore(t, l)
+	a, _, channelID := pair(t, st)
+
+	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		Name: "stale", SizeBytes: 1, SHA256: shaOf([]byte("x")), Transfer: "upload",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The expired attachment no longer accepts a completion.
+	gi, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+	if err == nil {
+		if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, 1); err == nil {
+			t.Fatal("an expired attachment accepted an upload completion")
+		}
+	}
+}

@@ -36,9 +36,9 @@ same change — never "docs later".
 - **Inter-session communication (COMM)** — authenticated session-to-session messaging between AI
   sessions on the same or different machines (`internal/comm` + `internal/commserver`, decision **D9**,
   contract in [docs/COMM.md](docs/COMM.md)). **Experimental and off by default**, which places it
-  outside the compatibility contract for at least one MINOR. Text-only in this release; file exchange
-  is deferred. Verified end to end against the running binary; runtime limits are not yet
-  operator-tunable and COMM-specific metrics are not yet exposed.
+  outside the compatibility contract for at least one MINOR. Messaging, live-tunable limits, metrics,
+  the curator-side hearsay marking, and file exchange — each verified end to end against the running
+  binary (see the entries below).
 - Its own SQLite file with its own forward-only migrations, versioned **independently** of `ken.db` so
   a COMM schema change never touches the knowledge base. Ownership columns (`actor_id`, `space_id`,
   `token_id`) name rows in `ken.db` and are deliberately **not** foreign keys — SQLite FKs cannot span
@@ -92,7 +92,7 @@ same change — never "docs later".
 - **Comm tokens must be dedicated, enforced at mint time.** `ken token add` refuses to combine comm
   scopes with knowledge-base scopes. Without this the design's claim would be aspirational — and since
   API tokens have no expiry, only revocation, widening an existing token's scopes would retroactively
-  arm every already-copied instance of it. `comm-file` is reserved but required by nothing.
+  arm every already-copied instance of it. `comm-file` gates the file surface (below).
 - **Long-poll wakeups are an optimization, never the correctness mechanism**: a poll re-reads the
   database before returning either way, so a missed signal costs latency rather than a message. Waits
   are clamped server-side to 30s regardless of configuration, because a wait that ties the client's
@@ -157,6 +157,36 @@ same change — never "docs later".
   collector is recover-wrapped because collectors run inline in the scrape handler with no panic
   recovery: a COMM bug must not take down the operator's view of a healthy knowledge base. COMM remains
   deliberately absent from `/health`, which marks the whole service DOWN on any component failure.
+
+- **COMM file exchange** (docs/COMM.md §11) — the last designed-but-deferred piece; the COMM design is
+  now fully implemented. Three tiers, in the order the instructions teach: a **same-host filesystem
+  handoff** (`transfer='path'` — zero bytes through the server, zero model tokens on payload, with the
+  C9 nonce rendezvous as proof of the shared filesystem and server-validated bare basenames so an offer
+  can never steer a session toward an arbitrary local path), ordinary message bodies for genuinely
+  small text, and a **one-time-grant HTTP relay** for cross-host transfers driven with curl — because
+  tool arguments are model output, so payload bytes must never travel as tool-call tokens.
+- **Gated twice, off by default**: the `comm-file` scope (now real, not just reserved — enforced per
+  tool and at the relay) and a live `comm_files_enabled` setting that doubles as a mid-incident kill
+  switch. Two credentials on every byte-moving request: the bearer token must carry `comm-file` AND own
+  the endpoint the single-use, minutes-lived grant was minted for.
+- **Verification before visibility**: relayed bytes stream into a 0600 `.part` file and are renamed
+  into place only when size and sha256 match the offer; the message the receiver polls is enqueued only
+  at that point, so partial state is never observable. Quotas fail closed and are checked at offer time
+  and again as bytes arrive: per-file cap, global storage budget, free-space floor (so the knowledge
+  base's writer always has headroom), and a per-sender in-flight-upload cap that closes the accounting
+  window between "grant minted" and "bytes counted".
+- The sweeper deletes delivered and expired bytes and abandoned `.part` files; the attachment row
+  (name, size, sha256, endpoints, timestamps) survives as the audit record, on the same reasoning as
+  message metadata. New comm migration `0002_files.sql`; new gauges `ken_comm_files` and
+  `ken_comm_file_bytes`; six new live settings; en+es strings for all of it.
+- **Two tools** (`comm_file_offer`, `comm_file_grant`), 15 new tests including an HTTP-level round trip
+  against the real handler, three deliberately-broken-invariant checks (checksum verification, name
+  validation, scope narrowing — each confirmed to fail its test), and a full end-to-end run over the
+  running binary: 200 KB uploaded with curl, polled, downloaded, and verified byte-identical.
+- The end-to-end run caught a cross-layer bug unit tests could not: the store carried the file
+  descriptor but the poll tool's view-copy dropped it, so a completed upload was delivered as a message
+  with no file. Fixed, and the store→view copy is now a named, tested function (`viewOf`) so a field
+  added on one side can no longer silently vanish on the other.
 
 ### Docs
 - **New design contract: [docs/COMM.md](docs/COMM.md) — inter-session communication**, plus locked

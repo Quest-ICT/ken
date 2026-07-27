@@ -65,6 +65,16 @@ type Values struct {
 	// inter-session message for a version it authors to be marked as possible
 	// hearsay (docs/COMM.md §7). 0 disables the marking.
 	CommProvenanceWindowSec int
+
+	// File exchange (docs/COMM.md §11) — gated separately from COMM itself because
+	// the byte relay is the bulk of the subsystem's risk. Sizes are in MB in the
+	// form (an operator thinks in MB); converted to bytes where enforced.
+	CommFilesEnabled  bool
+	CommFileMaxMB     int
+	CommFileBudgetMB  int
+	CommFileMinFreeMB int
+	CommFileTTLSec    int
+	CommGrantTTLSec   int
 }
 
 // Snapshot is Values plus the derived objects consumers read.
@@ -194,6 +204,28 @@ var Fields = []Field{
 	intField("comm_provenance_window_sec", "Inter-session comms", "Hearsay window (seconds)",
 		"If a token received an inter-session message this recently, entries it authors are flagged on the review queue as possibly second-hand. 0 disables the flag.",
 		func(v Values) int { return v.CommProvenanceWindowSec }, func(v *Values, n int) { v.CommProvenanceWindowSec = n }, 0, 7*24*3600),
+
+	// File exchange. A live off-switch on purpose: turning it off mid-incident
+	// stops bytes immediately without a restart.
+	{Key: "comm_files_enabled", Group: "Inter-session comms", Label: "File exchange enabled", Type: "bool", Live: true,
+		Help: "Lets paired sessions exchange files (same-host handoff, or relayed through Ken). Off by default — the relay stores bytes on this server's disk.",
+		Get:  func(v Values) string { return boolStr(v.CommFilesEnabled) },
+		Set:  func(v *Values, s string) error { v.CommFilesEnabled = truthy(s); return nil }},
+	intField("comm_file_max_mb", "Inter-session comms", "Max file size (MB)",
+		"Cap on one relayed or offered file.",
+		func(v Values) int { return v.CommFileMaxMB }, func(v *Values, n int) { v.CommFileMaxMB = n }, 1, 1024),
+	intField("comm_file_budget_mb", "Inter-session comms", "Relay storage budget (MB)",
+		"Global cap on bytes held in the relay at once. The relay shares this server's disk with the knowledge base; filling it would fail durable writes over chat traffic.",
+		func(v Values) int { return v.CommFileBudgetMB }, func(v *Values, n int) { v.CommFileBudgetMB = n }, 1, 100_000),
+	intField("comm_file_min_free_mb", "Inter-session comms", "Free-space floor (MB)",
+		"Uploads are refused when the disk has less than this free, even under budget, so the knowledge base always has headroom. 0 disables the floor.",
+		func(v Values) int { return v.CommFileMinFreeMB }, func(v *Values, n int) { v.CommFileMinFreeMB = n }, 0, 1_000_000),
+	intField("comm_file_ttl_sec", "Inter-session comms", "File lifetime (seconds)",
+		"How long an offered or undelivered file survives before it expires and its bytes are deleted.",
+		func(v Values) int { return v.CommFileTTLSec }, func(v *Values, n int) { v.CommFileTTLSec = n }, 60, 30*24*3600),
+	intField("comm_grant_ttl_sec", "Inter-session comms", "Transfer grant lifetime (seconds)",
+		"How long a one-time upload/download URL stays valid. Short is right: it only has to survive being handed to curl.",
+		func(v Values) int { return v.CommGrantTTLSec }, func(v *Values, n int) { v.CommGrantTTLSec = n }, 60, 3600),
 }
 
 // Live holds the current snapshot atomically and applies edits.
@@ -326,6 +358,13 @@ func DefaultsFromEnv() Values {
 		CommPairingCodeTTLS:     900,
 		CommPollWaitMaxSec:      15,
 		CommProvenanceWindowSec: 3600,
+
+		CommFilesEnabled:  false,
+		CommFileMaxMB:     16,
+		CommFileBudgetMB:  256,
+		CommFileMinFreeMB: 512,
+		CommFileTTLSec:    24 * 3600,
+		CommGrantTTLSec:   300,
 	}
 	// Clamp env-provided values so a bad env can't silently disable the limiter or overflow.
 	if v.IPPerMin <= 0 {

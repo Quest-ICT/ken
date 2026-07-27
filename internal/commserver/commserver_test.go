@@ -49,7 +49,7 @@ func TestAuthRequiresACommScopedAPIToken(t *testing.T) {
 	commTok := mintToken(t, st, "comm-agent", "comm")
 	kbTok := mintToken(t, st, "kb-agent", "read", "write-draft", "propose")
 
-	p, err := authenticate(ctx, st, commTok)
+	p, err := authenticate(ctx, st, commTok, ScopeComm)
 	if err != nil {
 		t.Fatalf("a comm-scoped token must authenticate: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestAuthRequiresACommScopedAPIToken(t *testing.T) {
 		t.Fatalf("principal not fully resolved: %+v", p)
 	}
 
-	if _, err := authenticate(ctx, st, kbTok); err == nil {
+	if _, err := authenticate(ctx, st, kbTok, ScopeComm); err == nil {
 		t.Fatal("a knowledge-base token was accepted on the comm endpoint")
 	}
 }
@@ -70,10 +70,10 @@ func TestAuthRejectsOAuthShapedTokens(t *testing.T) {
 	st := newKB(t)
 
 	// OAuth access tokens are base62 with no underscore.
-	if _, err := authenticate(ctx, st, "abc123DEFopaqueoauthtokenvalue"); err == nil {
+	if _, err := authenticate(ctx, st, "abc123DEFopaqueoauthtokenvalue", ScopeComm); err == nil {
 		t.Fatal("an OAuth-shaped token was accepted on the comm endpoint")
 	}
-	if err := func() error { _, e := authenticate(ctx, st, "abc123DEFopaque"); return e }(); err == nil ||
+	if err := func() error { _, e := authenticate(ctx, st, "abc123DEFopaque", ScopeComm); return e }(); err == nil ||
 		!strings.Contains(err.Error(), "dedicated ken_ API token") {
 		t.Fatalf("want the dedicated-token message, got %v", err)
 	}
@@ -86,7 +86,7 @@ func TestAuthRejectsTheDevTokenBypass(t *testing.T) {
 	st := newKB(t)
 	t.Setenv("KEN_DEV_TOKEN", "dev-secret")
 
-	if _, err := authenticate(ctx, st, "dev-secret"); err == nil {
+	if _, err := authenticate(ctx, st, "dev-secret", ScopeComm); err == nil {
 		t.Fatal("KEN_DEV_TOKEN was accepted on the comm endpoint")
 	}
 }
@@ -100,12 +100,12 @@ func TestAuthRejectsRevokedAndMalformedTokens(t *testing.T) {
 	if err := st.RevokeToken(ctx, tokenID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := authenticate(ctx, st, tok); err == nil {
+	if _, err := authenticate(ctx, st, tok, ScopeComm); err == nil {
 		t.Fatal("a revoked token authenticated")
 	}
 
 	for _, bad := range []string{"", "ken_", "ken_only-two-parts", "ken_unknownid_secret"} {
-		if _, err := authenticate(ctx, st, bad); err == nil {
+		if _, err := authenticate(ctx, st, bad, ScopeComm); err == nil {
 			t.Fatalf("malformed token %q authenticated", bad)
 		}
 	}
@@ -113,7 +113,7 @@ func TestAuthRejectsRevokedAndMalformedTokens(t *testing.T) {
 	// A correct token id with the wrong secret must fail.
 	good := mintToken(t, st, "secret-agent", "comm")
 	parts := strings.SplitN(good, "_", 3)
-	if _, err := authenticate(ctx, st, "ken_"+parts[1]+"_wrongsecret"); err == nil {
+	if _, err := authenticate(ctx, st, "ken_"+parts[1]+"_wrongsecret", ScopeComm); err == nil {
 		t.Fatal("a wrong secret authenticated")
 	}
 }

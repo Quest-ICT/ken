@@ -96,6 +96,27 @@ type Limits struct {
 	ReplyDeadlineSeconds int
 	// PairingCodeTTLSeconds is how long a human-minted pairing code stays valid.
 	PairingCodeTTLSeconds int
+
+	// FilesEnabled gates file exchange INDEPENDENTLY of COMM itself, and defaults
+	// off: the relay is the bulk of the subsystem's risk (disk, quotas, orphan
+	// sweeping), so an operator opts into it separately. Live-togglable — checked
+	// per operation, so it doubles as a kill switch.
+	FilesEnabled bool
+	// FileMaxBytes caps one attachment.
+	FileMaxBytes int64
+	// FileTTLSeconds bounds how long an offered/undelivered attachment survives.
+	FileTTLSeconds int
+	// FileBudgetBytes is the GLOBAL cap on bytes held in the relay at once. This is
+	// the rule that makes C1's isolation honest: the relay shares a volume with the
+	// knowledge base, and filling it would fail durable KB writes over chat traffic.
+	FileBudgetBytes int64
+	// FileMinFreeBytes is the free-space floor: even under budget, an upload is
+	// refused when the volume has less than this left, so the KB writer always has
+	// headroom.
+	FileMinFreeBytes int64
+	// GrantTTLSeconds bounds a transfer grant. Short on purpose: it only has to
+	// survive being handed to curl.
+	GrantTTLSeconds int
 }
 
 // DefaultLimits are deliberately conservative: COMM shares a disk with the
@@ -109,6 +130,13 @@ func DefaultLimits() Limits {
 		MetadataTTLSeconds:    7 * 24 * 3600,
 		ReplyDeadlineSeconds:  3600,
 		PairingCodeTTLSeconds: 900,
+
+		FilesEnabled:     false,
+		FileMaxBytes:     16 << 20,
+		FileTTLSeconds:   24 * 3600,
+		FileBudgetBytes:  256 << 20,
+		FileMinFreeBytes: 512 << 20,
+		GrantTTLSeconds:  300,
 	}
 }
 

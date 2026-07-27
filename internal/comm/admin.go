@@ -101,6 +101,8 @@ type Stats struct {
 	OpenChannels int
 	Unacked      int
 	BodyBytes    int64 // retained message bodies; the thing that grows a disk
+	Files        int   // live attachments (offered or awaiting delivery)
+	FileBytes    int64 // relay bytes currently held on disk
 }
 
 // StatsFor reports counters for one space.
@@ -113,8 +115,12 @@ SELECT
   (SELECT COUNT(*) FROM message m JOIN channel c ON c.id=m.channel_id
      WHERE c.space_id=? AND m.state IN ('queued','delivered')),
   (SELECT COALESCE(SUM(LENGTH(m.body)),0) FROM message m JOIN channel c ON c.id=m.channel_id
-     WHERE c.space_id=? AND m.body IS NOT NULL)`,
-		spaceID, spaceID, spaceID, spaceID).
-		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.BodyBytes)
+     WHERE c.space_id=? AND m.body IS NOT NULL),
+  (SELECT COUNT(*) FROM attachment a JOIN channel c ON c.id=a.channel_id
+     WHERE c.space_id=? AND a.state IN ('offered','ready')),
+  (SELECT COALESCE(SUM(a.stored_bytes),0) FROM attachment a JOIN channel c ON c.id=a.channel_id
+     WHERE c.space_id=? AND a.state IN ('offered','ready'))`,
+		spaceID, spaceID, spaceID, spaceID, spaceID, spaceID).
+		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.BodyBytes, &st.Files, &st.FileBytes)
 	return st, err
 }

@@ -14,9 +14,10 @@
 > acknowledge it.
 >
 > Also built: the live settings group (every limit is operator-tunable without a restart), the
-> `ken_comm_*` Prometheus gauges, and the curation provenance marker (§7).
->
-> **Not built yet:** file exchange (§11), deferred to a later MINOR.
+> `ken_comm_*` Prometheus gauges, the curation provenance marker (§7), and **file exchange** (§11) —
+> same-host rendezvous offers, and a one-time-grant HTTP relay for cross-host transfers, gated behind
+> its own live setting (`comm_files_enabled`, default off) and the `comm-file` scope. Verified end to
+> end against the running binary. The whole COMM design is now implemented.
 
 Ken's knowledge base answers *"has this problem been solved before?"*. COMM answers a different
 question that the same deployment is unusually well-placed to serve: **"how do two AI sessions,
@@ -40,8 +41,9 @@ Naming the non-goals first, because several of them are the reason the design lo
   bodies are deleted once the receiver has processed them.
 - **Not a message broker.** No topics, no fan-out, no subscriptions, no durable log. A channel joins
   exactly two endpoints.
-- **Not a file server.** File exchange (deferred past the first release, §11) exists to move a
-  working document between two of the *same human's* sessions, not to host or distribute anything.
+- **Not a file server.** File exchange (§11) exists to move a working document between two of the
+  *same human's* sessions, not to host or distribute anything: bytes are deleted once delivered or
+  expired, grants are single-use, and nothing is ever served without authentication.
 - **Not a second knowledge base.** COMM state is expendable by design: it is not backed up, not
   replicated, and not curated. Losing it costs an in-flight conversation, never knowledge.
 - **Not a security boundary against a compromised session.** COMM authenticates *who* is sending and
@@ -327,7 +329,7 @@ disk, the process, or the readiness signal. These are enforced rules, each with 
 
 ## 6. Tool surface (sketch)
 
-Six tools, all `comm_*`, all requiring the `comm` scope, served from `/comm/mcp`
+Eight tools, all `comm_*`, all requiring the `comm` scope (the two file tools additionally require `comm-file`), served from `/comm/mcp`
 (`internal/commserver`). Every tool except `comm_register` carries `endpoint_id` + `endpoint_secret`:
 the bearer token identifies a *machine*, so the endpoint pair is what identifies the *session* within
 it.
@@ -348,6 +350,8 @@ ken token add --actor comm-dev --scopes comm
 | `comm_send` | Send one atomic message; optional `requires_response` / `reply_to` / idempotency key. |
 | `comm_poll` | Long-poll for unacknowledged messages across all of this endpoint's channels. |
 | `comm_ack` | Mark a message processed (or acknowledge cumulatively up to a sequence). |
+| `comm_file_offer` | Offer a file: a same-host rendezvous, or a one-time upload grant (`comm-file`). |
+| `comm_file_grant` | Mint a fresh single-use download URL for a file offered to you (`comm-file`). |
 
 Two surfaces exist alongside them:
 
@@ -362,8 +366,11 @@ Two surfaces exist alongside them:
 
 ### Scopes
 
-`comm` is a new token scope, and **`comm-file` is reserved now** for the deferred file surface —
-splitting a shipped scope later would be a MAJOR, merging two is free.
+`comm` is a new token scope; `comm-file` additionally gates the file tools (`comm_file_offer`,
+`comm_file_grant`) and the byte-relay HTTP surface at `/comm/files/{grant}`. They were reserved
+together from the first release because splitting a shipped scope later would be a MAJOR, merging two
+is free. A file-capable token is minted as `--scopes comm,comm-file` (both are comm-family, so the
+dedicated-token rule is satisfied).
 
 **COMM requires dedicated tokens.** It must not be added to the scope sets that are hard-coded rather
 than operator-chosen: the OAuth path grants a fixed agent set, and so does the development-token
@@ -502,27 +509,51 @@ two-sided establishment before the tools freeze, since both would otherwise be M
 
 ---
 
-## 11. Deferred to a later MINOR — file exchange
+## 11. File exchange
 
-The first release is **text-only**. File exchange carries most of the design's risk — disk exhaustion,
-orphan sweeping, global budgets, checksum bookkeeping, and the whole same-host protocol — and it is
-cleanly severable, so it lands once channel semantics have survived their experimental period.
+Built, and gated twice: the `comm-file` scope on the token, and the live `comm_files_enabled` setting
+(default **off** — the relay stores bytes on the server's disk, so the operator opts into it
+separately from COMM itself, and can kill it live mid-incident).
 
-The shape it will take, in preference order:
+Three tiers, in the preference order the instructions teach:
 
-1. **Same-host filesystem handoff** — the primary path for anything large, via the C9 rendezvous.
-   Costs zero model tokens.
-2. **Small inline payloads** — a single message, with the token cost documented in the tool
-   description so the expense is visible before it is incurred.
-3. **A one-time expiring HTTP transfer** for large cross-host payloads, minted by a tool and driven by
-   the agent with a shell tool. HTTP does resumable chunked transfer correctly; the model never emits
-   the bytes.
+1. **Same-host filesystem handoff** (`transfer: "path"`) — the primary path for anything large; zero
+   bytes move through the server and zero model tokens are spent on payload. The offer carries a
+   **server-validated bare basename** (no separators, no dot-dot, no control bytes — the C9 contract)
+   plus the file's sha256 and the sha256 of a rendezvous **nonce** the sender wrote into the shared
+   exchange directory. The receiver reads the nonce, echoes it back in a reply — proving the shared
+   filesystem — then reads the file and verifies its checksum. The attachment row exists purely as
+   audit and envelope.
+2. **Small inline payloads** — an ordinary message body, for genuinely small text. The tool
+   descriptions state the token cost so the expense is visible before it is incurred.
+3. **One-time-grant HTTP relay** (`transfer: "upload"`) — for cross-host transfers.
+   `comm_file_offer` mints a single-use, minutes-lived upload grant; the agent PUTs the bytes with a
+   shell tool (`curl -T FILE -H "Authorization: Bearer $TOKEN" <base>/comm/files/<grant>`). The
+   message referencing the attachment is enqueued **only when the upload completes and its sha256
+   matches the offer**, so the receiver never observes partial state. The receiver's poll carries the
+   file descriptor; `comm_file_grant` mints a fresh single-use download URL as often as needed.
 
-When it lands it needs: the `comm-file` scope (reserved now), off by default independently of COMM
-itself, a global byte budget and free-space precondition, per-owner concurrent-upload caps, idempotent
-chunk writes keyed by offset, a janitor sweeping abandoned uploads, checksum verification at finalize,
-`0700`/`0600` permissions with no execute bit, and no HTTP path that serves an attachment without
-authentication. Files live under `data/comm/` so an operator can exclude or separately mount one path.
+Enforced properties of the relay:
+
+- **Two credentials per byte-moving request**: the bearer token (must carry `comm-file` and must own
+  the endpoint the grant was minted for) and the grant itself. A leaked URL is useless without the
+  token; a leaked token cannot touch bytes it was never granted.
+- **Quotas fail closed, checked twice** (at offer and again as the bytes arrive): a per-file size cap,
+  a global storage budget, and a free-space floor so the knowledge base's writer always has headroom.
+  In-flight uploads are capped per sender, which closes the accounting window between "grant minted"
+  and "bytes counted".
+- **Grants are single-use and kind-bound**, consumed even when the transfer then fails; an unknown,
+  expired, consumed, or wrong-kind grant are all indistinguishable, so grants cannot be probed.
+- **Verification before visibility**: bytes stream into a `.part` file (0600, 0700 directory, never
+  executable) and are renamed into place only when size and checksum match the offer; a mismatch fails
+  the attachment and deletes the partial.
+- **Serving posture**: `application/octet-stream`, `nosniff`, `Content-Disposition: attachment` —
+  relayed bytes are downloads, never rendered.
+- **The sweeper deletes delivered and expired bytes** (an acked message settles its attachment) and
+  removes abandoned `.part` files; the attachment *row* — name, size, sha256, endpoints, timestamps —
+  survives as the audit record, on the same reasoning as message metadata.
+- Files live under `data/comm/files/` so an operator can exclude or separately mount exactly one path;
+  nothing under `data/comm/` is backed up.
 
 ---
 
