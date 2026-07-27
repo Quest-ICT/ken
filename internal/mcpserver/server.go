@@ -317,7 +317,7 @@ func NewServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, searchOut{}, mcpError(err)
 		}
-		out := searchOut{Results: res, HasMore: hasMore, DedupCheckToken: issueDedupToken(d.DedupSecret)}
+		out := searchOut{Results: res, HasMore: hasMore, DedupCheckToken: issueDedupToken(d.DedupSecret, dedupSubject(ctx))}
 		if hasMore {
 			out.NextOffset = in.Offset + len(res)
 		}
@@ -349,7 +349,7 @@ func NewServer(d Deps) *mcp.Server {
 		if err := requireScope(ctx, scopeWriteDraft); err != nil {
 			return nil, saveOut{}, err
 		}
-		if err := verifyDedupToken(d.DedupSecret, in.DedupCheckToken); err != nil {
+		if err := verifyDedupToken(d.DedupSecret, in.DedupCheckToken, dedupSubject(ctx)); err != nil {
 			return nil, saveOut{}, err
 		}
 		r, err := d.Store.Save(ctx, store.SaveInput{

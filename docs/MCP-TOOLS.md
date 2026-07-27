@@ -46,7 +46,7 @@ it never collides with the `ken_` shape) and always resolves to the **same agent
 vocabulary; match on the message text. Representative messages (verbatim from the code):
 
 - `forbidden: token is missing the 'write-draft' scope` — scope check failed.
-- `malformed dedup_check_token — call kb_search first` / `dedup_check_token expired — run kb_search again before saving` — the `kb_save` search-before-save gate.
+- `malformed dedup_check_token — call kb_search first` / `dedup_check_token expired — run kb_search again before saving` / `invalid dedup_check_token — run kb_search yourself before saving` — the `kb_save` search-before-save gate. The last one also covers a token issued to a *different* token holder (see below).
 - `an entry with that slug already exists` — slug conflict on `kb_save`.
 - `entry not found` · `version not found or not in a promotable state` · `invalid input` — store-level sentinels.
 - `internal error` — any unexpected/internal error; the real detail is logged server-side, never leaked.
@@ -96,6 +96,11 @@ which is what structurally forces search-before-save.
   "dedup_check_token": "dct_v1.<hmac>"   // pass to kb_save; proves a recent search (not query-bound), ~10 min TTL
 }
 ```
+
+> The token is **bound to the calling token holder**: it is only valid on `kb_save`
+> calls made with the same bearer token that ran the search. Passing one to another
+> session does not work, and is not a supported way to skip a search. The wire shape
+> is an opaque string either way — nothing to change on the client.
 
 **Notes** — `scope=curated` (default) searches only curated heads; `proposals` also surfaces
 un-curated `proposed` versions; `history` includes `superseded`/`rejected`/`withdrawn` (for "what did

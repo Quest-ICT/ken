@@ -15,6 +15,23 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Security
+- **`dedup_check_token` is now bound to the token holder that ran the search.** It was signed over its
+  expiry alone, which made it a *transferable bearer capability*: any holder could satisfy `kb_save`,
+  so handing the string to another session would have reduced the structural search-before-save gate
+  to a convention. That was inert while a token could only reach the session that minted it — and
+  stops being inert the moment sessions can exchange strings, which is exactly what COMM introduces.
+  Fixed before that becomes possible rather than after. The binding is the calling **token**, not the
+  actor: several sessions can share one actor, and actors collapse by display name, so the token is
+  the narrower handle.
+- The wire shape is unchanged — still an opaque `dct_v1.<exp>.<sig>` string — so no client changes
+  anything. Tokens minted by an older build stop verifying at upgrade, which the 10-minute TTL makes
+  cosmetic. New error message: `invalid dedup_check_token — run kb_search yourself before saving`,
+  which deliberately does not distinguish a tampered token from one issued to a different holder: the
+  remedy is identical, and separating them would confirm to a caller that a stolen token was otherwise
+  valid. Regression tests cover the cross-principal case, tampering, a wrong server secret, expiry, and
+  the empty-subject (dev-token) round trip.
+
 ### Added
 - **Inter-session communication (COMM) — schema and store layer** (`internal/comm`, decision **D9**,
   contract in [docs/COMM.md](docs/COMM.md)). Compiled but **not mounted**: there are no MCP tools, no
