@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -126,6 +127,7 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /entry/{slug}", a.requireAuth(a.handleEntry))
 	mux.HandleFunc("POST /entry/{slug}/revert/{vid}", a.requireAuth(a.handleRevert))
 	mux.HandleFunc("GET /proposals", a.requireAuth(a.handleProposals))
+	mux.HandleFunc("GET /proposals/count", a.requireAuth(a.handleProposalsCount))
 	mux.HandleFunc("POST /proposals/{vid}/promote", a.requireAuth(a.handlePromote))
 	mux.HandleFunc("POST /proposals/{vid}/reject", a.requireAuth(a.handleReject))
 	mux.HandleFunc("GET /tokens", a.requireAuth(a.handleTokens))
@@ -676,6 +678,20 @@ func (a *app) handleProposals(w http.ResponseWriter, r *http.Request, sess *stor
 		views[i] = proposalView{ProposalRow: p, Foreign: store.LangForeign(p.LatestLang, langs)}
 	}
 	a.render(w, r, sess, "proposals", map[string]any{"Proposals": views})
+}
+
+// handleProposalsCount answers the Proposals page poller with the current
+// pending-proposal count as JSON. Read-only and cheap (one COUNT); behind
+// requireAuth like the page itself, so it is not an unauthenticated info leak.
+func (a *app) handleProposalsCount(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+	n, err := a.store.CountProposals(r.Context())
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintf(w, `{"count":%d}`, n)
 }
 
 func (a *app) handlePromote(w http.ResponseWriter, r *http.Request, sess *store.Session) {

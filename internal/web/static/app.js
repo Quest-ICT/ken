@@ -102,9 +102,43 @@
   /* ---- Back-to-top visibility + close mobile nav on Escape --------------- */
   var btt = null;
   function onScroll() { if (btt) btt.classList.toggle("is-visible", (window.pageYOffset || 0) > 400); }
+
+  // Live count refresh (the Proposals page). A page carrying
+  // [data-live-proposals="<n>"] is polled: when the server's count diverges from
+  // the value the page was rendered with, the page is reloaded, so a curator who
+  // leaves the page open sees new proposals arrive (and stays in sync when one is
+  // promoted from another tab) without a manual refresh. Same-origin fetch, so it
+  // satisfies the strict default-src 'self' CSP; skipped while the tab is hidden,
+  // and checked immediately when the tab regains focus so returning to it is snappy.
+  function startLiveCount() {
+    var marker = document.querySelector("[data-live-proposals]");
+    if (!marker) return;
+    var shown = parseInt(marker.getAttribute("data-live-proposals"), 10);
+    if (isNaN(shown)) return;
+    var url = "/proposals/count";
+    var checking = false;
+    function check() {
+      if (document.hidden || checking) return;
+      checking = true;
+      fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          // Reload only on a real numeric change. A session that expired server-side
+          // redirects this fetch to the HTML login page, whose body is not JSON —
+          // r.json() throws, the catch swallows it, and no reload loop results.
+          if (d && typeof d.count === "number" && d.count !== shown) window.location.reload();
+        })
+        .catch(function () {})
+        .then(function () { checking = false; });
+    }
+    window.setInterval(check, 20000);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) check(); });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     btt = document.querySelector("[data-backtotop]");
     if (btt) { onScroll(); window.addEventListener("scroll", onScroll, { passive: true }); }
+    startLiveCount();
   });
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Escape") { var cb = document.getElementById("navtoggle"); if (cb && cb.checked) cb.checked = false; }

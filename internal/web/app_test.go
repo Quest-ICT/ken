@@ -428,3 +428,63 @@ func trunc(s string) string {
 	}
 	return s
 }
+
+// The Proposals page auto-refresh: /proposals/count must require auth, return the
+// live pending count as JSON, and the page must carry the marker the poller keys
+// on. Without these the curator's open Proposals tab would never notice new work.
+func TestProposalsCountEndpoint(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hash, _ := passwd.Hash("supersecret", passwd.Standard)
+	if _, err := st.CreateHumanUser(ctx, "admin", hash); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(Handler(Deps{Store: st}))
+	defer srv.Close()
+
+	// Unauthenticated: bounced to login, never the count.
+	noAuth := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noAuth.Get(srv.URL + "/proposals/count")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("unauthenticated count: HTTP %d, want a login redirect", resp.StatusCode)
+	}
+
+	jar, _ := cookiejar.New(nil)
+	cli := &http.Client{Jar: jar}
+	lcsrf := extract(t, cli, srv.URL+"/login", `name="lcsrf" value="([^"]+)"`)
+	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
+
+	// Zero pending, and the page marker agrees.
+	if got := get(t, cli, srv.URL+"/proposals/count"); strings.TrimSpace(got) != `{"count":0}` {
+		t.Fatalf("count with no proposals = %q, want {\"count\":0}", got)
+	}
+	page := get(t, cli, srv.URL+"/proposals")
+	if !strings.Contains(page, `data-live-proposals="0"`) {
+		t.Fatalf("proposals page missing the live marker: %s", trunc(page))
+	}
+
+	// One pending proposal moves the count, which is what the poller detects.
+	sr, err := st.Save(ctx, store.SaveInput{Kind: "reference", Content: store.Content{Title: "W", Summary: "s"}, AuthorKind: "ai"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sr
+	if got := get(t, cli, srv.URL+"/proposals/count"); strings.TrimSpace(got) != `{"count":1}` {
+		t.Fatalf("count after one save = %q, want {\"count\":1}", got)
+	}
+	if page := get(t, cli, srv.URL+"/proposals"); !strings.Contains(page, `data-live-proposals="1"`) {
+		t.Fatalf("proposals page marker did not update: %s", trunc(page))
+	}
+}

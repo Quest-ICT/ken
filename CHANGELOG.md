@@ -188,6 +188,16 @@ same change — never "docs later".
   with no file. Fixed, and the store→view copy is now a named, tested function (`viewOf`) so a field
   added on one side can no longer silently vanish on the other.
 
+### Added
+- **The Proposals page auto-refreshes.** A curator who keeps `/proposals` open now sees new proposals
+  appear without a manual reload: the page polls a lightweight `GET /proposals/count` endpoint (one
+  `COUNT`, behind the same auth as the page) every 20 seconds and reloads when the server's pending
+  count diverges from what the page was rendered with — which also keeps it in sync when a proposal is
+  promoted from another tab. Same-origin `fetch`, so it satisfies the strict `default-src 'self'` CSP;
+  the poll pauses while the tab is hidden and fires immediately when it regains focus, so returning to
+  a backgrounded tab is snappy. Fully progressive: with JavaScript disabled the page behaves exactly as
+  before.
+
 ### Fixed
 - **Pre-release audit of the whole 1.2 line.** A multi-agent audit (seven dimensions, each finding then
   handed to an adversarial verifier) surfaced defects across COMM that the feature's own tests did not

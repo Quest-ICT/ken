@@ -303,6 +303,18 @@ type ProposalRow struct {
 	LatestViaComm bool
 }
 
+// CountProposals returns how many entries have at least one proposed version —
+// the same population ListProposals returns, counted cheaply. It backs the
+// Proposals page's live auto-refresh: a curator who keeps that page open should
+// see a new proposal appear without a manual reload, and polling a bare count is
+// far lighter than re-running the full listing query on a timer.
+func (s *Store) CountProposals(ctx context.Context) (int, error) {
+	var n int
+	err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(DISTINCT entry_id) FROM entry_version WHERE state='proposed'`).Scan(&n)
+	return n, err
+}
+
 // ListProposals returns entries with at least one proposed version, newest first.
 func (s *Store) ListProposals(ctx context.Context) ([]ProposalRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
