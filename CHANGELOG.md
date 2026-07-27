@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-07-27
+
 ### Changed
 - **The inter-session communication console is easier to find and its channels are easier to
   recognize** — from production feedback.
@@ -845,7 +847,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.2
 [1.2.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.1
 [1.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.0
 [1.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.1.0
