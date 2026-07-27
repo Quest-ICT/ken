@@ -428,4 +428,20 @@ exchange (same-host rendezvous plus a one-time-grant HTTP relay). Curation is pr
 promote view. Full contract, including the isolation rules that make the in-process choice honest:
 [`COMM.md`](COMM.md).
 
-**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5). *(All §1 security-priority items are now implemented.)*
+**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5) · COMM console re-labelling + endpoint identity (COMM.md §12) · **client-side sortable listing tables** (below). *(All §1 security-priority items are now implemented.)*
+
+**Deferred UI enhancement — sortable listing tables (all web UI grids, not just COMM).** Every
+data-listing table in the web UI (the proposal queue, Browse, the tokens list, the COMM channels and
+endpoints panels, …) would be more useful with **click-to-sort column headers** — the immediate ask
+was the COMM "Channels" panel, but the value is uniform across grids, so it should be one mechanism
+applied everywhere rather than a per-table hack. Constraints that make this a real design item rather
+than a drop-in: it must stay within **D8** — one small same-origin `app.js`, delegated `data-*`
+handlers, **strict self-only CSP** (no inline scripts, no external library), and fully **progressive**
+(the server already renders a sensible default order, so with JS off the table is exactly as it is
+today). The Ken-native shape: a `data-sortable` opt-in on a `<table>`, headers annotated with a sort
+key and type (text vs numeric vs date, since a display string like "120 B" or a `yyyy-MM-dd` stamp
+must sort by its underlying value), and the sort done client-side on the already-rendered rows — no
+new server round-trip, no persistence in v1. **Explicitly NOT** the house "listing-tables" component
+(that assumes a JS framework and CSS toolkit Ken does not use); this is a from-scratch, dependency-free
+implementation in Ken's own idiom. Multi-column sort, column reorder/resize, and per-user persisted
+layout are a larger follow-on, out of scope for the first pass.

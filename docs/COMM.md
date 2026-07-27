@@ -587,6 +587,33 @@ Enforced properties of the relay:
   ship a CLI verb usable from a harness hook or background loop — surfacing arrivals into a session
   that would otherwise never look — is a real question and deliberately out of scope for 1.2.
 
+- **Re-labelling a channel.** A channel's human name is fixed at pairing time by the code's label
+  (§ the 1.2.2 change), so a channel named in haste, or one whose purpose drifts, is stuck with it —
+  and a channel paired before that change is stuck at "(no label)" permanently. A console edit action
+  that sets `channel.label` after creation is small and self-contained; the only question is whether
+  it belongs on its own or bundled with the endpoint work below.
+
+- **Endpoint identity in the console — the same disease the channel panel was cured of, without the
+  same remedy.** The "Registered sessions" panel labels endpoints from the string an *agent* passed to
+  `comm_register`. Two consequences the channel fix does not share: (1) the 1.2.2 cure sourced the
+  name from a **human-minted** pairing code, and that lever does not exist here — no human is in the
+  loop at registration, so the only label that exists is one the agent invented for itself; and (2)
+  endpoints accumulate **faster** than channels, because creating a channel is gated by a human
+  minting a code while registration is gated by nothing (an afternoon of two sessions testing already
+  left 4 endpoints against 2 open channels). The sharper concern: an **agent-supplied label is
+  untrusted input rendered as identity** on the one surface where a human decides what to trust and
+  what to revoke — nothing stops two endpoints claiming the same name. The blast radius is small
+  (pairing still requires a human code, so a label cannot get anyone into a channel), but the fix
+  should still put a **human-controlled** identifier in that column. Two increments, cheap-first:
+  - **Cheap, high-value:** show intrinsic metadata the agent cannot choose — first seen, last
+    activity, channel membership, host hint — so an unlabelled endpoint is still actionable ("last
+    active 3 weeks ago, member of no channels" is most of what the panel is for).
+  - **Fuller:** a human-set endpoint name that is authoritative and **visually distinct** from the
+    agent's label (which stays as a hint about what the thing claims to be, never silently
+    overwritten). This shares a shape with the channel re-labelling above; do them together.
+  *(Surfaced from the production shakedown; recorded here rather than built, pending a decision on
+  scope.)*
+
 ---
 
 ## 13. Scoped increment — failure visibility and honest gauges
