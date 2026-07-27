@@ -33,10 +33,11 @@ same change — never "docs later".
   the empty-subject (dev-token) round trip.
 
 ### Added
-- **Inter-session communication (COMM) — schema and store layer** (`internal/comm`, decision **D9**,
-  contract in [docs/COMM.md](docs/COMM.md)). Compiled but **not mounted**: there are no MCP tools, no
-  `comm` scope and no `cmd/ken` wiring yet, so the feature does **not** run in this build. Experimental
-  and off by default when it does ship.
+- **Inter-session communication (COMM)** — authenticated session-to-session messaging between AI
+  sessions on the same or different machines (`internal/comm` + `internal/commserver`, decision **D9**,
+  contract in [docs/COMM.md](docs/COMM.md)). **Experimental and off by default**, which places it
+  outside the compatibility contract for at least one MINOR. Text-only in this release; file exchange
+  is deferred. Not yet usable end to end — see the MCP-layer entry below for what is still missing.
 - Its own SQLite file with its own forward-only migrations, versioned **independently** of `ken.db` so
   a COMM schema change never touches the knowledge base. Ownership columns (`actor_id`, `space_id`,
   `token_id`) name rows in `ken.db` and are deliberately **not** foreign keys — SQLite FKs cannot span
@@ -72,6 +73,44 @@ same change — never "docs later".
   deadline passed, and purges settled metadata past its retention window.
 - 21 tests, including three whose failure modes were verified by deliberately breaking the invariant
   they guard.
+- **The COMM MCP layer** (`internal/commserver`): six `comm_*` tools — register, join, channels, send,
+  poll, ack — served from a **separate `/comm` endpoint**, wired into `ken serve` behind
+  `KEN_COMM_ENABLED` (off by default). Still **not usable end to end**: minting a pairing code has no
+  human-facing UI yet, and a channel cannot open without one.
+- **A separate endpoint is a security property, not packaging taste.** A client registers Ken twice: a
+  knowledge-base token cannot send messages, a comm token cannot write knowledge, each surface gets
+  independent rate accounting so a poll loop cannot starve `kb_*` calls, and revocation is per-surface.
+  It also lets `/comm` refuse the permissive CORS `/mcp` needs for a browser-based connector, since
+  nothing here has a browser client.
+- **COMM authentication deliberately does not reuse the knowledge base's, and the duplication is the
+  point.** That path accepts three token shapes; this one accepts exactly one — a `ken_` API token
+  carrying `comm`. The OAuth path is excluded because a cloud-hosted connector is the worst possible
+  holder of "reach into the sessions on my machines" *and* its scope set is hard-coded, so an operator
+  could not withhold comm from it; the dev-token bypass is excluded because its empty token id escapes
+  per-token rate accounting entirely. Sharing the other package's `authenticate()` would mean a future
+  token shape added there silently gains comm access.
+- **Comm tokens must be dedicated, enforced at mint time.** `ken token add` refuses to combine comm
+  scopes with knowledge-base scopes. Without this the design's claim would be aspirational — and since
+  API tokens have no expiry, only revocation, widening an existing token's scopes would retroactively
+  arm every already-copied instance of it. `comm-file` is reserved but required by nothing.
+- **Long-poll wakeups are an optimization, never the correctness mechanism**: a poll re-reads the
+  database before returning either way, so a missed signal costs latency rather than a message. Waits
+  are clamped server-side to 30s regardless of configuration, because a wait that ties the client's
+  tool timeout turns a successful empty poll into a tool *error*, which models handle badly — and
+  proxies commonly read-timeout at 60s. Waiters are capped per endpoint and globally, since nothing
+  outside the process bounds them (no write timeout by design, no task limit in the unit file).
+- **Parked polls are drained before HTTP shutdown.** The shutdown budget is shorter than a long poll,
+  so without this every deploy would sever parked connections mid-response and surface a burst of
+  transport errors in each connected agent.
+- The sweeper runs on its **own one-minute cadence**, not the hourly janitor (a TTL is not a quota),
+  and is wrapped in `recover`: COMM is the newest, highest-churn code in the process, and an
+  unrecovered panic there would take the mature knowledge base down with it. COMM is deliberately
+  **not** registered with the health checker, which marks the whole service DOWN on any component
+  failure — a wedged sweeper must not pull a healthy knowledge base out of load-balancer rotation.
+  **COMM may fail; the KB stays UP.**
+- 18 further tests covering the auth narrowing, wait clamping, and waiter concurrency (race-clean);
+  the scope check and the shutdown drain were verified by deliberately breaking each and confirming
+  the failure.
 
 ### Docs
 - **New design contract: [docs/COMM.md](docs/COMM.md) — inter-session communication**, plus locked

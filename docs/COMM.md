@@ -5,15 +5,18 @@
 > outside the SemVer contract (see [COMPATIBILITY.md](../COMPATIBILITY.md)) for at least one MINOR
 > release.
 >
-> **Built:** the schema (`internal/comm/migrations/0001_init.sql`) and the store layer
-> (`internal/comm`) — endpoint registration and authentication, human-minted pairing codes, two-sided
-> channel join, send/poll/ack with at-least-once redelivery and idempotency, request/response
-> correlation with reply deadlines, backpressure, and the TTL sweeper. 21 tests.
+> **Built:** the schema and store layer (`internal/comm`) — endpoint registration and authentication,
+> human-minted pairing codes, two-sided channel join, send/poll/ack with at-least-once redelivery and
+> idempotency, request/response correlation with reply deadlines, backpressure, and the TTL sweeper.
+> The MCP layer (`internal/commserver`) — the six `comm_*` tools on their own `/comm` endpoint, the
+> `comm` scope with dedicated-token enforcement, long-poll wakeups with shutdown drain, and the
+> instruction section. Wired into `ken serve` behind `KEN_COMM_ENABLED`, with a one-minute sweeper.
+> 39 tests.
 >
-> **Not built yet:** the `comm_*` MCP tools and their dedicated endpoint, the `comm` token scope, the
-> instruction section, long-poll waiter wakeups, the settings group, the web console, metrics, and the
-> wiring in `cmd/ken`. **Nothing in this package runs in the shipped binary** — it is compiled but not
-> mounted. File exchange (§11) remains deferred to a later MINOR.
+> **Not built yet:** the settings group (limits are compile-time defaults, not yet operator-tunable at
+> runtime), the web console — including **minting a pairing code, which currently has no human-facing
+> UI**, so the feature is not yet usable end to end — COMM-specific metrics, and the curation
+> provenance marker (§7). File exchange (§11) remains deferred to a later MINOR.
 
 Ken's knowledge base answers *"has this problem been solved before?"*. COMM answers a different
 question that the same deployment is unusually well-placed to serve: **"how do two AI sessions,
@@ -324,8 +327,18 @@ disk, the process, or the readiness signal. These are enforced rules, each with 
 
 ## 6. Tool surface (sketch)
 
-Six tools, all `comm_*`, all requiring the `comm` scope. Exact schemas are settled at implementation
-and documented in [MCP-TOOLS.md](MCP-TOOLS.md); this is the shape.
+Six tools, all `comm_*`, all requiring the `comm` scope, served from `/comm`
+(`internal/commserver`). Every tool except `comm_register` carries `endpoint_id` + `endpoint_secret`:
+the bearer token identifies a *machine*, so the endpoint pair is what identifies the *session* within
+it.
+
+Enable with `KEN_COMM_ENABLED=1`; the message database defaults to `<db dir>/comm/comm.db`
+(`KEN_COMM_DB`). Mint a **dedicated** token — a token may hold comm scopes or knowledge-base scopes,
+never both, enforced at mint time:
+
+```
+ken token add --actor comm-dev --scopes comm
+```
 
 | Tool | Purpose |
 |---|---|

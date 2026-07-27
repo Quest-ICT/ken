@@ -9,7 +9,39 @@ import (
 	"text/tabwriter"
 )
 
-var validScopes = map[string]bool{"read": true, "write-draft": true, "propose": true, "curate": true}
+var validScopes = map[string]bool{
+	"read": true, "write-draft": true, "propose": true, "curate": true,
+	// Inter-session communication (docs/COMM.md). `comm-file` is reserved and
+	// required by nothing yet — declared now because splitting a shipped `comm`
+	// into two scopes later would be a MAJOR, while merging two is free.
+	"comm": true, "comm-file": true,
+}
+
+// commScopes are the scopes that belong to the COMM endpoint.
+var commScopes = map[string]bool{"comm": true, "comm-file": true}
+
+// checkScopeMix enforces that a COMM token is a DEDICATED token: a token may hold
+// comm scopes or knowledge-base scopes, never both.
+//
+// This is what makes the design's claim true rather than aspirational — "a
+// knowledge-base token cannot send messages and a comm token cannot write
+// knowledge". Without it an operator could quietly widen their everyday agent
+// token, and since API tokens have no expiry (only revocation), every already-
+// copied instance of that token would gain the new capability retroactively.
+func checkScopeMix(scopes []string) error {
+	var comm, kb []string
+	for _, s := range scopes {
+		if commScopes[s] {
+			comm = append(comm, s)
+		} else {
+			kb = append(kb, s)
+		}
+	}
+	if len(comm) > 0 && len(kb) > 0 {
+		return fmt.Errorf("a comm token must be dedicated: %v cannot be combined with %v — mint two tokens and register Ken twice", comm, kb)
+	}
+	return nil
+}
 
 func runToken(args []string) {
 	if len(args) == 0 {
@@ -24,7 +56,7 @@ func runToken(args []string) {
 		fs := flag.NewFlagSet("token add", flag.ExitOnError)
 		actor := fs.String("actor", "", "actor display name (created if absent)")
 		kind := fs.String("kind", "ai", "actor kind: ai|human")
-		scopesCSV := fs.String("scopes", "read,write-draft,propose", "comma-separated: read,write-draft,propose,curate")
+		scopesCSV := fs.String("scopes", "read,write-draft,propose", "comma-separated: read,write-draft,propose,curate | comm (dedicated; see docs/COMM.md)")
 		label := fs.String("label", "", "human-readable token label")
 		_ = fs.Parse(args[1:])
 		if *actor == "" {
@@ -41,6 +73,9 @@ func runToken(args []string) {
 			if !validScopes[s] {
 				die("unknown scope: " + s)
 			}
+		}
+		if err := checkScopeMix(scopes); err != nil {
+			die(err.Error())
 		}
 		actorID, err := st.FindOrCreateActor(ctx, *kind, *actor)
 		must(err)

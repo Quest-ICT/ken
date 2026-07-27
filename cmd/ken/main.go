@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/Quest-ICT/ken/internal/clientip"
+	"github.com/Quest-ICT/ken/internal/comm"
+	"github.com/Quest-ICT/ken/internal/commserver"
 	"github.com/Quest-ICT/ken/internal/embed"
 	"github.com/Quest-ICT/ken/internal/health"
 	"github.com/Quest-ICT/ken/internal/i18n"
@@ -134,6 +136,12 @@ Rate limiting (env; on by default — loopback + KEN_RATELIMIT_ALLOW_CIDRS + /he
   KEN_RATELIMIT_BLOCK_AFTER  over-limit rejections before an IP is auto-blocked (default 100)
   KEN_RATELIMIT_LOCKOUT_SEC  auto-block duration, seconds (default 900)
   KEN_RATELIMIT_ALLOW_CIDRS  extra always-allowed CIDRs (comma-separated)
+
+Inter-session communication (EXPERIMENTAL; OFF unless enabled — see docs/COMM.md):
+  KEN_COMM_ENABLED  1 = expose the comm MCP endpoint at /comm (default off)
+  KEN_COMM_DB       message database path (default <db dir>/comm/comm.db; NOT backed up — it is expendable)
+                    needs a DEDICATED token:  ken token add --actor comm-dev --scopes comm
+                    a token may hold comm scopes or knowledge-base scopes, never both
 
 Observability (health always on; metrics on by default, loopback-only):
   /healthz          liveness (public, plain "ok")
@@ -294,6 +302,38 @@ func runServe(args []string) {
 			mcpHandler.SetCurationLangs(s.CurationLangSet)
 		}
 	})
+	// Inter-session communication (docs/COMM.md) — OFF unless KEN_COMM_ENABLED.
+	// A default install stays exactly the curated knowledge base it advertises:
+	// with COMM off, no second database is created, no tools are registered, and
+	// no instruction section reaches any agent.
+	//
+	// Deliberately NOT registered with the health checker: that marks the whole
+	// service DOWN on any component failure and /health then returns 503, so a
+	// wedged COMM sweeper would pull a healthy knowledge base out of rotation.
+	// COMM may fail; the KB stays UP.
+	var commHandler *commserver.Handler
+	var commStore *comm.Store
+	if os.Getenv("KEN_COMM_ENABLED") == "1" {
+		commPath := envOr("KEN_COMM_DB", filepath.Join(filepath.Dir(*dbPath), "comm", "comm.db"))
+		if err := os.MkdirAll(filepath.Dir(commPath), 0o700); err != nil {
+			log.Fatalf("comm: create data dir: %v", err)
+		}
+		cs, err := comm.Open(commPath, comm.DefaultLimits())
+		if err != nil {
+			log.Fatalf("comm: open: %v", err)
+		}
+		defer cs.Close()
+		if err := cs.Migrate(); err != nil {
+			log.Fatalf("comm: migrate: %v", err)
+		}
+		commHandler = commserver.NewHTTPHandler(commserver.Deps{
+			Comm: cs, Store: st, TokenLimiter: rlToken, Metrics: reg,
+		})
+		mux.Handle("/comm", commHandler)
+		commStore = cs
+		log.Printf("COMM: inter-session communication ENABLED (experimental) at /comm (db=%s) — requires a dedicated token with the 'comm' scope", commPath)
+	}
+
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		rep := checker.Check(r.Context())
 		code := http.StatusOK
@@ -374,6 +414,40 @@ func runServe(args []string) {
 		}
 	}()
 
+	// COMM's sweeper runs on its own short cadence rather than joining the hourly
+	// janitor above: at a sustained send rate a single sender writes a great deal
+	// before an hourly sweep would first run, so a TTL is not a quota.
+	//
+	// The recover is load-bearing. COMM is the newest, highest-churn code in the
+	// process, and an unrecovered panic here would take the mature knowledge base
+	// down with it. It degrades instead — log and keep ticking — which is what
+	// makes "COMM may fail; the KB stays UP" true rather than aspirational.
+	if commStore != nil {
+		go func() {
+			t := time.NewTicker(time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-janitorCtx.Done():
+					return
+				case <-t.C:
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("comm: sweeper panic recovered (comm degraded, knowledge base unaffected): %v", r)
+							}
+						}()
+						if exp, purged, err := commStore.Sweep(janitorCtx); err != nil {
+							log.Printf("comm: sweep: %v", err)
+						} else if exp > 0 || purged > 0 {
+							log.Printf("comm: swept %d expired, purged %d settled", exp, purged)
+						}
+					}()
+				}
+			}
+		}()
+	}
+
 	// Report a serve failure through a channel so the normal return path runs
 	// (and `defer st.Close()` fires) — a log.Fatal in the goroutine would skip it.
 	serveErr := make(chan error, 1)
@@ -415,6 +489,13 @@ func runServe(args []string) {
 		log.Printf("serve error: %v", err)
 	case <-sig:
 		log.Print("shutting down…")
+	}
+	// Wake every parked COMM long poll BEFORE shutting the servers down. The
+	// shutdown budget is shorter than a long poll, so without this every deploy
+	// would sever parked connections mid-response and surface a burst of transport
+	// errors in each connected agent. Woken pollers return a normal empty result.
+	if commHandler != nil {
+		commHandler.Drain()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
