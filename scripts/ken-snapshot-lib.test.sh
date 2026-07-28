@@ -156,6 +156,8 @@ if [ -f "$UNIT" ]; then
     got="$(ken_recipient_from_unit_files "$UNIT")"
     [ -z "$got" ] && ok "shipped unit yields no recipient via the parser" \
         || no "template yields a recipient" "[$got] — the example must stay commented"
+    grep -qE '^UMask=0077' "$UNIT" && ok "unit sets UMask=0077 (snapshot born 0600)" \
+        || no "unit missing UMask=0077" "a dump would sit world-readable until the chmod"
     # Belt and braces: no placeholder may LOOK like a real age key (age1 + bech32 tail),
     # so a future naive parser cannot mistake it for one either.
     plausible="$(grep -hoE 'age1[a-z0-9]{8,}' "$UNIT" 2>/dev/null | head -1 || true)"

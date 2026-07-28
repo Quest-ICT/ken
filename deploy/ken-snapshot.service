@@ -20,6 +20,12 @@ Environment=KEN_DB=/opt/ken/data/ken.db
 # (Deliberately no realistic example VALUE: the installer reads the recipient from
 #  this unit's live environment, so a placeholder must never look like a real key.)
 ExecStart=/opt/ken/scripts/ken-snapshot.sh
+# A snapshot is a full copy of the database. Create it 0600 from the FIRST byte: the
+# securing step chmods it, but that lands only AFTER `VACUUM INTO` has written the whole
+# file, so under systemd's default 0022 umask a multi-GB dump would sit world-readable
+# for the length of the dump — and, in a setgid backups dir, already carrying the backup
+# group. An explicit chmod 0640 later still applies when KEN_BACKUP_GROUP is set.
+UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

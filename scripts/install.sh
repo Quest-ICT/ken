@@ -668,7 +668,10 @@ if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then
     _presnap="$BACKUPS/pre-upgrade-$(ken_snapshot_stamp).db"
     _recipient="$(_ken_unit_env KEN_AGE_RECIPIENT)"
     log "pre-upgrade snapshot -> $_presnap${_recipient:+ (age-encrypted)}"
-    if run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap"; then
+    # umask 077 for the same reason the snapshot unit sets UMask=0077: the securing step
+    # below only runs AFTER the whole file is written, so without this the dump sits at
+    # root's 0644 for its entire duration.
+    if (umask 077; run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap"); then
         # Best-effort, and FAIL CLOSED on encryption: if a recipient is set but the
         # encrypt cannot happen, ken_snapshot_secure removes the plaintext and returns
         # non-zero — we warn and proceed rather than leave a plaintext DB copy the

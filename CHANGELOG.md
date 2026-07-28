@@ -41,6 +41,13 @@ same change — never "docs later".
   production, where it was blocking the first off-box backup of a Ken instance.
 
 ### Fixed
+- **A snapshot was created world-readable for the length of the dump.** The securing step chmods a
+  snapshot to `0600`, but that lands only *after* `VACUUM INTO` has written the entire file — so under
+  systemd's default `0022` umask (and root's, for the pre-upgrade snapshot) a multi-gigabyte dump sat
+  at `0644` for as long as it took to write, and in a setgid backups directory it already carried the
+  backup group while doing so. The snapshot unit now sets `UMask=0077` and the installer wraps its dump
+  in `umask 077`, so a snapshot is `0600` from its first byte; the explicit `0640` still applies
+  afterwards when `KEN_BACKUP_GROUP` is set.
 - **`KEN_BACKUP_DIR` split the archive in half.** The nightly script honoured it; `install.sh`
   hardcoded `<prefix>/backups` and never read it. Setting it therefore moved the nightlies while the
   **pre-upgrade rollback snapshots stayed behind** — an archive silently living in two places, with the
