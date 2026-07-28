@@ -128,3 +128,28 @@ SELECT
 		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.BodyBytes, &st.Files, &st.FileBytes)
 	return st, err
 }
+
+// ConsoleFingerprint returns a single number that changes whenever the console's
+// view of a space would look different: an endpoint registered or revoked, a
+// channel created/opened/revoked, a pairing code minted or consumed, or messages
+// flowing. It backs the /comm page's live auto-refresh — the page reloads when
+// this diverges from the value it was rendered with, and updates its "last
+// checked" stamp on every poll.
+//
+// Distinct prime weights make an accidental collision (two offsetting changes
+// summing to the same number) unlikely; this is a change detector, not a checksum,
+// so unlikely is enough.
+func (s *Store) ConsoleFingerprint(ctx context.Context, spaceID int64) (int64, error) {
+	var n int64
+	err := s.R.QueryRowContext(ctx, `
+SELECT
+  (SELECT COUNT(*) FROM endpoint WHERE space_id=? AND revoked_at IS NULL) * 2
++ (SELECT COUNT(*) FROM channel  WHERE space_id=?) * 3
++ (SELECT COUNT(*) FROM channel  WHERE space_id=? AND state='open') * 5
++ (SELECT COUNT(*) FROM pairing_code WHERE space_id=? AND consumed_at IS NULL
+     AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')) * 7
++ (SELECT COUNT(*) FROM message m JOIN channel c ON c.id=m.channel_id
+     WHERE c.space_id=? AND m.state IN ('queued','delivered')) * 11`,
+		spaceID, spaceID, spaceID, spaceID, spaceID).Scan(&n)
+	return n, err
+}

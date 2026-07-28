@@ -498,6 +498,14 @@ grant TTL. (Per-owner quotas are **not** implemented — there is one owner; see
 
 **A Comm page** in the web UI: mint a pairing code; list endpoints (label, owner, last seen) and
 channels (state, counters, queue depth); revoke a channel or an endpoint; disable the subsystem live.
+The page **auto-refreshes** the way the Proposals page does — a small poller hits `GET /comm/count`
+(a cheap per-space "console fingerprint": counts of endpoints, channels, open channels, live pairing
+codes, and in-flight messages, prime-weighted so offsetting changes rarely collide) and reloads when
+the number diverges from the rendered one, so an operator watching for a peer to join, a channel to
+open, or a code to be consumed sees it without a manual refresh. A "last checked" stamp, re-written on
+every poll from the browser's own clock, makes the liveness visible rather than assumed; it is a
+change *detector*, not a checksum, and it is hidden without JavaScript, where the freshness it claims
+could only ever be stale.
 
 **Metrics** (never health, per §5.4): messages sent/delivered/acknowledged/expired, queue depth,
 parked waiters, storage bytes, sweeper lag.

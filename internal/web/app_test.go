@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/passwd"
 	"github.com/Quest-ICT/ken/internal/store"
 	"github.com/Quest-ICT/ken/internal/version"
@@ -471,8 +472,11 @@ func TestProposalsCountEndpoint(t *testing.T) {
 		t.Fatalf("count with no proposals = %q, want {\"count\":0}", got)
 	}
 	page := get(t, cli, srv.URL+"/proposals")
-	if !strings.Contains(page, `data-live-proposals="0"`) {
+	if !strings.Contains(page, `data-live-refresh="0"`) {
 		t.Fatalf("proposals page missing the live marker: %s", trunc(page))
+	}
+	if !strings.Contains(page, `data-live-checked`) {
+		t.Fatalf("proposals page missing the last-checked stamp: %s", trunc(page))
 	}
 
 	// One pending proposal moves the count, which is what the poller detects.
@@ -484,7 +488,76 @@ func TestProposalsCountEndpoint(t *testing.T) {
 	if got := get(t, cli, srv.URL+"/proposals/count"); strings.TrimSpace(got) != `{"count":1}` {
 		t.Fatalf("count after one save = %q, want {\"count\":1}", got)
 	}
-	if page := get(t, cli, srv.URL+"/proposals"); !strings.Contains(page, `data-live-proposals="1"`) {
+	if page := get(t, cli, srv.URL+"/proposals"); !strings.Contains(page, `data-live-refresh="1"`) {
 		t.Fatalf("proposals page marker did not update: %s", trunc(page))
+	}
+}
+
+// The Comm console's live auto-refresh mirrors the Proposals one: /comm/count must
+// require auth and return the console fingerprint as JSON under the "count" key (so
+// the single generic poller serves both pages), the page must carry the marker and
+// the "last checked" stamp, and a console-visible change must move the number the
+// poller compares. Only mounted when Comm is enabled.
+func TestCommCountEndpoint(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	if err := cs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hash, _ := passwd.Hash("supersecret", passwd.Standard)
+	if _, err := st.CreateHumanUser(ctx, "admin", hash); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
+	defer srv.Close()
+
+	// Unauthenticated: bounced to login, never the count.
+	noAuth := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noAuth.Get(srv.URL + "/comm/count")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("unauthenticated comm count: HTTP %d, want a login redirect", resp.StatusCode)
+	}
+
+	jar, _ := cookiejar.New(nil)
+	cli := &http.Client{Jar: jar}
+	lcsrf := extract(t, cli, srv.URL+"/login", `name="lcsrf" value="([^"]+)"`)
+	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
+
+	// Empty console: fingerprint 0, and the page carries the marker + stamp.
+	if got := get(t, cli, srv.URL+"/comm/count"); strings.TrimSpace(got) != `{"count":0}` {
+		t.Fatalf("comm count on empty console = %q, want {\"count\":0}", got)
+	}
+	page := get(t, cli, srv.URL+"/comm")
+	if !strings.Contains(page, `data-live-refresh="0"`) {
+		t.Fatalf("comm page missing the live marker: %s", trunc(page))
+	}
+	if !strings.Contains(page, `data-live-checked`) {
+		t.Fatalf("comm page missing the last-checked stamp: %s", trunc(page))
+	}
+
+	// A registered endpoint (space 1, the console's space) is a console-visible
+	// change: the number the poller compares must move off 0.
+	if _, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok", ActorID: 7, SpaceID: 1}, "solo", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := get(t, cli, srv.URL+"/comm/count"); strings.TrimSpace(got) == `{"count":0}` {
+		t.Fatalf("comm count did not move after an endpoint registered: %q", got)
 	}
 }

@@ -4,6 +4,13 @@
   <p class="eyebrow">{{.T "comm.eyebrow"}}</p>
   <h1 class="h1">{{.T "comm.heading"}}</h1>
   <p class="lede">{{.T "comm.lede"}}</p>
+  <!-- Live auto-refresh marker AND "last checked" stamp. app.js polls /comm/count
+       and reloads when the console fingerprint diverges from this rendered value
+       (data-live-refresh) — so the operator sees a peer session register, a channel
+       open, or a pairing code get consumed without a manual refresh — and re-stamps
+       the time on every poll so the page proves it is still checking. Hidden without
+       JS, where it would only ever be stale. -->
+  <p class="live-checked" data-live-refresh="{{.Data.Fingerprint}}">{{.T "status.last_checked"}} <time data-live-checked></time></p>
 </div>
 
 <div class="card" style="margin-bottom:var(--sp-5)">

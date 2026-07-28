@@ -103,19 +103,31 @@
   var btt = null;
   function onScroll() { if (btt) btt.classList.toggle("is-visible", (window.pageYOffset || 0) > 400); }
 
-  // Live count refresh (the Proposals page). A page carrying
-  // [data-live-proposals="<n>"] is polled: when the server's count diverges from
-  // the value the page was rendered with, the page is reloaded, so a curator who
-  // leaves the page open sees new proposals arrive (and stays in sync when one is
-  // promoted from another tab) without a manual refresh. Same-origin fetch, so it
-  // satisfies the strict default-src 'self' CSP; skipped while the tab is hidden,
-  // and checked immediately when the tab regains focus so returning to it is snappy.
-  function startLiveCount() {
-    var marker = document.querySelector("[data-live-proposals]");
+  // Stamp every [data-live-checked] element with the current local time. Called on
+  // load and after each successful poll, so the "last checked" line the user reads
+  // reflects the browser's own clock and timezone — not the server's.
+  function stampChecked() {
+    var t = new Date().toLocaleString();
+    var els = document.querySelectorAll("[data-live-checked]");
+    for (var i = 0; i < els.length; i++) { els[i].textContent = t; }
+  }
+
+  // Live refresh for a page that carries [data-live-refresh="<n>"] (Proposals and,
+  // when enabled, Comm). The page is polled at <path>/count — derived from the
+  // current path, so no per-page URL is hard-coded — and reloaded when the server's
+  // count diverges from the value the page was rendered with, so a curator who
+  // leaves the page open sees new proposals or a peer session connect without a
+  // manual refresh (and stays in sync when something is actioned in another tab).
+  // Every successful poll also re-stamps the "last checked" line, so the user can
+  // see the page is genuinely being re-checked even when nothing has changed.
+  // Same-origin fetch, so it satisfies the strict default-src 'self' CSP; skipped
+  // while the tab is hidden, and checked immediately when the tab regains focus.
+  function startLiveRefresh() {
+    var marker = document.querySelector("[data-live-refresh]");
     if (!marker) return;
-    var shown = parseInt(marker.getAttribute("data-live-proposals"), 10);
+    var shown = parseInt(marker.getAttribute("data-live-refresh"), 10);
     if (isNaN(shown)) return;
-    var url = "/proposals/count";
+    var url = window.location.pathname.replace(/\/+$/, "") + "/count";
     var checking = false;
     function check() {
       if (document.hidden || checking) return;
@@ -123,10 +135,15 @@
       fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (d) {
-          // Reload only on a real numeric change. A session that expired server-side
-          // redirects this fetch to the HTML login page, whose body is not JSON —
-          // r.json() throws, the catch swallows it, and no reload loop results.
-          if (d && typeof d.count === "number" && d.count !== shown) window.location.reload();
+          // A successful JSON response means the server was reached: re-stamp the
+          // "last checked" line whether or not anything changed. Reload only on a
+          // real numeric change. A session that expired server-side redirects this
+          // fetch to the HTML login page, whose body is not JSON — r.json() throws,
+          // the catch swallows it, no stamp update and no reload loop results.
+          if (d && typeof d.count === "number") {
+            stampChecked();
+            if (d.count !== shown) window.location.reload();
+          }
         })
         .catch(function () {})
         .then(function () { checking = false; });
@@ -138,7 +155,8 @@
   document.addEventListener("DOMContentLoaded", function () {
     btt = document.querySelector("[data-backtotop]");
     if (btt) { onScroll(); window.addEventListener("scroll", onScroll, { passive: true }); }
-    startLiveCount();
+    stampChecked();
+    startLiveRefresh();
   });
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Escape") { var cb = document.getElementById("navtoggle"); if (cb && cb.checked) cb.checked = false; }

@@ -36,6 +36,16 @@ same change — never "docs later".
   the poll-wait ceiling) is deliberately excluded — bucketing a 30-second parked wait would drown every
   other tool's real latency. The HTTP histogram covers the web surface only; the streaming MCP surface
   is measured per tool, as it was for the counters. A regression test pins the exclusion.
+- **A live "last checked" stamp on the Proposals and Comm pages, and auto-refresh for
+  the Comm console.** Both pages now show a "Last checked: <local time>" line that the
+  page's poller re-stamps on every check (every 20s, using the browser's own clock and
+  timezone) — so a curator who leaves the page open can see it is genuinely still
+  checking, not just sitting on stale data. The Comm console gains the same
+  reload-on-change auto-refresh the Proposals page already had: it reloads when a peer
+  session registers, a channel opens, or a pairing code is consumed, driven by a cheap
+  per-space "console fingerprint" endpoint (`GET /comm/count`). One generic poller in
+  `app.js` now serves both pages (the count URL is derived from the path), and the stamp
+  is hidden without JavaScript, where the freshness it claims could only ever be stale.
 
 ### Changed
 - `ken_http_request_duration_seconds` changed type from **summary** to **histogram**. The `_sum` and

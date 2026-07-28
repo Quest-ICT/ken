@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -64,11 +65,41 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// The value the live-refresh poller compares against: the page reloads when
+	// /comm/count later reports a different number. Rendered here so the marker and
+	// the poll answer come from the same source of truth.
+	fp, err := a.comm.ConsoleFingerprint(ctx, spaceForSession)
+	if err != nil {
+		log.Printf("web: comm fingerprint: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	a.render(w, r, sess, "comm", map[string]any{
 		"Endpoints": endpoints, "Channels": channels, "Codes": codes, "Stats": stats,
-		"NewCode": newCode, "CommURL": a.publicCommURL(r),
+		"NewCode": newCode, "CommURL": a.publicCommURL(r), "Fingerprint": fp,
 	})
+}
+
+// handleCommCount answers the Comm console's live-refresh poller with the current
+// console fingerprint as JSON. Read-only and cheap (a handful of COUNTs behind one
+// query); behind requireAuth like the page, so it is not an unauthenticated info
+// leak. The JSON key is "count" so the one generic poller in app.js serves both
+// this page and Proposals — the number is opaque here (a change detector, not a
+// meaningful tally), but the poller only ever compares it for equality.
+func (a *app) handleCommCount(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+	if a.comm == nil {
+		http.NotFound(w, r)
+		return
+	}
+	n, err := a.comm.ConsoleFingerprint(r.Context(), spaceForSession)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintf(w, `{"count":%d}`, n)
 }
 
 // handleCommPair mints a pairing code. This is the human act the whole design

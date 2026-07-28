@@ -4,13 +4,15 @@
   <p class="eyebrow">{{.T "proposals.eyebrow"}}</p>
   <h1 class="h1">{{.T "proposals.heading"}}</h1>
   <p class="lede">{{.T "proposals.lede"}}</p>
+  <!-- Live auto-refresh marker AND "last checked" stamp. app.js polls
+       /proposals/count and reloads when the server's pending count diverges from
+       this rendered value (data-live-refresh), so a curator who keeps this page
+       open sees a new proposal without a manual refresh — and re-stamps the time
+       on every poll, so the page visibly proves it is still checking. The count is
+       rendered in both the populated and empty states, so a 0 -> 1 transition is
+       caught. The line is hidden without JS, where it would only ever be stale. -->
+  <p class="live-checked" data-live-refresh="{{len .Data.Proposals}}">{{.T "status.last_checked"}} <time data-live-checked></time></p>
 </div>
-
-<!-- Live auto-refresh marker: app.js polls /proposals/count and reloads when the
-     server's pending count diverges from this rendered value, so a curator who
-     keeps this page open sees a new proposal without a manual refresh. Rendered
-     in both the populated and empty states, so a 0 -> 1 transition is caught. -->
-<div data-live-proposals="{{len .Data.Proposals}}" hidden></div>
 
 {{if .Data.Proposals}}
 <div class="table-wrap">

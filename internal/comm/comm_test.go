@@ -674,3 +674,44 @@ func TestReceivedSinceWindowAndUnknownActors(t *testing.T) {
 		t.Fatal("an unknown actor must report false")
 	}
 }
+
+// The console fingerprint backs the /comm page's live auto-refresh: the page
+// reloads when it diverges. So it must be 0 for an empty space, STABLE across
+// repeat reads (or the page would reload in a loop), MOVE on every console-visible
+// change, and stay isolated per space.
+func TestConsoleFingerprint(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	base, err := st.ConsoleFingerprint(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base != 0 {
+		t.Fatalf("empty space fingerprint = %d, want 0", base)
+	}
+	if again, _ := st.ConsoleFingerprint(ctx, 1); again != base {
+		t.Fatalf("fingerprint not stable across reads: %d != %d (would loop-reload)", again, base)
+	}
+
+	// Registering an endpoint is console-visible → the number must move.
+	if _, _, err := st.RegisterEndpoint(ctx, owner("tok-x"), "solo", ""); err != nil {
+		t.Fatal(err)
+	}
+	afterReg, _ := st.ConsoleFingerprint(ctx, 1)
+	if afterReg == base {
+		t.Fatal("registering an endpoint did not move the fingerprint")
+	}
+
+	// A full pairing (two more endpoints + an open channel) moves it again.
+	pair(t, st)
+	afterPair, _ := st.ConsoleFingerprint(ctx, 1)
+	if afterPair == afterReg {
+		t.Fatal("pairing did not move the fingerprint")
+	}
+
+	// Another space is untouched — the fingerprint is space-scoped, like the console.
+	if other, _ := st.ConsoleFingerprint(ctx, 2); other != 0 {
+		t.Fatalf("space 2 fingerprint = %d, want 0 (space isolation)", other)
+	}
+}
