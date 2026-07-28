@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The hygiene gate compares the newest CHANGELOG release against the tags,
           # so it needs them; the default checkout is shallow and tagless.
