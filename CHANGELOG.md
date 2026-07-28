@@ -27,6 +27,24 @@ same change — never "docs later".
   [COMPATIBILITY.md](COMPATIBILITY.md) already excludes), not because it is unstable — so it continues
   to evolve additively (the open channel-relabelling and endpoint-identity items can still land).
 
+### Changed
+- **The web UI now shows timestamps in the reader's own timezone, and deadlines as "in 8 minutes."**
+  Every human-facing timestamp was rendered by trimming the stored UTC string to `2026-07-20 17:53` —
+  which also **cut the trailing `Z`**, so the result no longer said which timezone it was and read as
+  local time. A curator six hours from UTC read a `17:53Z` deadline as late afternoon; it was 11:53
+  their time. (Same root cause as the snapshot-filename divergence fixed in 1.3.0, one surface over —
+  and reported by the same production instance, which had by then been caught by it twice in two days.)
+  The rule this settles: **machine-facing artifacts stay UTC and self-describing** (filenames, API
+  fields, logs — unchanged); **human-facing surfaces render in the reader's timezone.** The server now
+  emits `<time datetime="…Z">` and the browser converts it, so there is no timezone setting to
+  configure and it stays correct when two people in different timezones share one instance. Deadlines
+  and expiries render **relative** — a deadline is about how much time remains, so the absolute form
+  was a lossy encoding of what the reader wanted — with the exact local time on hover. Relative
+  wording and date formatting come from the browser in the page's language, so no new translations
+  were needed. Without JavaScript the server-side fallback still renders, now explicitly suffixed
+  **`UTC`** rather than passing as an unmarked local-looking time. Applies to `/comm`, `/dashboard`,
+  `/browse`, `/entry` and `/tokens`; the COMM API's own `…Z` fields are untouched.
+
 ### Fixed
 - **The backup docs said snapshots were encrypted; the shipped default is plaintext.** `BACKUP.md`
   asserted "Everything that leaves the box is age-encrypted" and titled tier 2 "Nightly **encrypted**

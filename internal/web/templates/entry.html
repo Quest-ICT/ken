@@ -146,7 +146,7 @@
         <span class="rail__node" aria-hidden="true">{{if eq .State "curated"}}<svg viewBox="0 0 24 24" fill="none"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>{{else if eq .State "rejected"}}<svg viewBox="0 0 24 24" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>{{end}}</span>
         <div class="rail__body">
           <div class="rail__row"><span class="revno">rev {{.RevNo}}</span> <span class="badge badge--sm{{if eq .State "proposed"}} badge--accent{{else if eq .State "curated"}} badge--success{{else if eq .State "rejected"}} badge--danger badge--strike{{end}}">{{$.Enum "state" .State}}</span> <span class="rail__title">{{.ChangeNote}}</span></div>
-          <div class="rail__meta">{{$.T "entry.by"}} <span class="mono">{{.AuthorKind}}</span> <span class="dot">·</span> {{shortdate .CreatedAt}}</div>
+          <div class="rail__meta">{{$.T "entry.by"}} <span class="mono">{{.AuthorKind}}</span> <span class="dot">·</span> {{localtime .CreatedAt}}</div>
           <div class="rail__actions">
             {{if eq .State "proposed"}}<a class="btn btn--primary btn--sm" href="#review">{{$.T "entry.review"}}</a>{{end}}
             {{if or (eq .State "superseded") (eq .State "rejected") (eq .State "withdrawn")}}

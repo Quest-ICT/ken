@@ -561,3 +561,35 @@ func TestCommCountEndpoint(t *testing.T) {
 		t.Fatalf("comm count did not move after an endpoint registered: %q", got)
 	}
 }
+
+// Human-facing timestamps must go out as a <time> element carrying the UTC value in
+// datetime (machine-readable, unambiguous) with a Z-marked fallback for no-JS readers —
+// app.js converts the text to the viewer's timezone. The bug this prevents: rendering a
+// bare "2026-07-20 17:53" that reads as local time and silently shifts by the reader's
+// offset (a curator misread a deadline by six hours that way).
+func TestTimeElRendersUTCWithLocalHook(t *testing.T) {
+	got := string(timeEl("2026-07-20T17:53:56.789Z", ""))
+	for _, want := range []string{
+		`<time datetime="2026-07-20T17:53:56.789Z"`, // the UTC fact travels verbatim
+		` data-localtime>`,                          // the hook app.js converts
+		`2026-07-20 17:53 UTC</time>`,               // no-JS fallback SAYS it is UTC
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("timeEl missing %q: %s", want, got)
+		}
+	}
+
+	// A deadline renders relative client-side; the server marks it for that treatment.
+	if d := string(timeEl("2026-07-20T17:53:56.789Z", "relative")); !strings.Contains(d, `data-localtime="relative"`) {
+		t.Errorf("deadline not marked relative: %s", d)
+	}
+
+	// Anything that is not a stored timestamp is escaped text, never markup — a helper
+	// that emits raw HTML must not assume its input.
+	if got := string(timeEl(`<script>alert(1)</script>`, "")); strings.Contains(got, "<script>") {
+		t.Errorf("timeEl must escape non-timestamp input: %s", got)
+	}
+	if got := string(timeEl("", "")); got != "" {
+		t.Errorf("empty timestamp should render empty, got %q", got)
+	}
+}

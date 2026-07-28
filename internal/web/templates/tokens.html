@@ -114,7 +114,7 @@
             <td class="cell-title"><b>{{.ClientName}}</b></td>
             <td class="mono muted" style="font-size:.85rem">{{.ApprovedBy}}</td>
             <td class="num mono">{{.ActiveTokens}}</td>
-            <td class="mono muted" style="font-size:.82rem">{{shortdate .CreatedAt}}</td>
+            <td class="mono muted" style="font-size:.82rem">{{localtime .CreatedAt}}</td>
             <td>
               <form class="inline" method="post" action="/connectors/{{.ID}}/revoke" data-confirm="{{$.T "tokens.connector_revoke_confirm"}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

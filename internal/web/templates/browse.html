@@ -55,7 +55,7 @@
           </td>
           <td class="num mono">{{.CuratedRev}}</td>
           <td class="num mono">{{.UseCount}}</td>
-          <td class="mono muted" style="font-size:.82rem">{{shortdate .UpdatedAt}}</td>
+          <td class="mono muted" style="font-size:.82rem">{{localtime .UpdatedAt}}</td>
         </tr>
       {{end}}
       </tbody>

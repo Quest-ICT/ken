@@ -103,11 +103,61 @@
   var btt = null;
   function onScroll() { if (btt) btt.classList.toggle("is-visible", (window.pageYOffset || 0) > 400); }
 
+  // The page's language, used for BOTH date formatting and relative-time wording, so
+  // the browser localizes them for free (no message keys of our own to keep in sync).
+  function pageLang() {
+    return document.documentElement.getAttribute("lang") || undefined;
+  }
+
+  // Render every <time data-localtime> the server emitted into the VIEWER's timezone.
+  //
+  // Timestamps are STORED and SENT as UTC (the datetime attribute keeps them that way,
+  // machine-readable and unambiguous); only what a human reads is converted. Getting
+  // this backwards is a real hazard: an unmarked UTC time reads as local and silently
+  // shifts a deadline by the reader's offset.
+  //
+  // data-localtime="relative" is for DEADLINES and expiries — "in 8 minutes" needs no
+  // timezone, no clock arithmetic, and cannot be misread; the exact local time stays
+  // available on hover.
+  function renderLocalTimes() {
+    var lang = pageLang();
+    var els = document.querySelectorAll("time[data-localtime]");
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var d = new Date(el.getAttribute("datetime"));
+      if (isNaN(d.getTime())) continue;              // leave the server fallback in place
+      var abs = d.toLocaleString(lang, { dateStyle: "short", timeStyle: "short" });
+      if (el.getAttribute("data-localtime") === "relative") {
+        el.textContent = relativeTime(d, lang) || abs;
+        el.title = abs;                               // exact local time on hover
+      } else {
+        el.textContent = abs;
+        el.title = el.getAttribute("datetime");       // the machine-facing UTC on hover
+      }
+    }
+  }
+
+  // "in 8 minutes" / "3 hours ago", localized by the browser. Returns "" when
+  // Intl.RelativeTimeFormat is unavailable so the caller falls back to absolute.
+  function relativeTime(d, lang) {
+    if (typeof Intl === "undefined" || !Intl.RelativeTimeFormat) return "";
+    var ms = d.getTime() - Date.now();
+    var abs = Math.abs(ms);
+    var units = [["day", 86400000], ["hour", 3600000], ["minute", 60000], ["second", 1000]];
+    var rtf = new Intl.RelativeTimeFormat(lang, { numeric: "auto" });
+    for (var i = 0; i < units.length; i++) {
+      if (abs >= units[i][1] || i === units.length - 1) {
+        return rtf.format(Math.round(ms / units[i][1]), units[i][0]);
+      }
+    }
+    return "";
+  }
+
   // Stamp every [data-live-checked] element with the current local time. Called on
   // load and after each successful poll, so the "last checked" line the user reads
   // reflects the browser's own clock and timezone — not the server's.
   function stampChecked() {
-    var t = new Date().toLocaleString();
+    var t = new Date().toLocaleString(pageLang(), { dateStyle: "short", timeStyle: "medium" });
     var els = document.querySelectorAll("[data-live-checked]");
     for (var i = 0; i < els.length; i++) { els[i].textContent = t; }
   }
@@ -155,6 +205,10 @@
   document.addEventListener("DOMContentLoaded", function () {
     btt = document.querySelector("[data-backtotop]");
     if (btt) { onScroll(); window.addEventListener("scroll", onScroll, { passive: true }); }
+    renderLocalTimes();
+    // Relative deadlines go stale as they sit; re-render them on a slow tick so an
+    // open page never shows "in 2 minutes" ten minutes later.
+    window.setInterval(renderLocalTimes, 30000);
     stampChecked();
     startLiveRefresh();
   });

@@ -62,7 +62,7 @@
       <span class="rail__node" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       <div class="rail__body">
         <div class="rail__row"><span class="event">{{$.Enum "event" .LastEvent}}</span> <span class="rail__title"><a href="/entry/{{.Slug}}">{{.Title}}</a></span></div>
-        <div class="rail__meta"><span class="slug">{{.Slug}}</span> <span class="dot">·</span> <span class="badge badge--plain badge--sm">{{$.Enum "kind" .Kind}}</span> <span class="dot">·</span> {{shortdate .LastAt}}</div>
+        <div class="rail__meta"><span class="slug">{{.Slug}}</span> <span class="dot">·</span> <span class="badge badge--plain badge--sm">{{$.Enum "kind" .Kind}}</span> <span class="dot">·</span> {{localtime .LastAt}}</div>
       </div>
     </li>
   {{end}}

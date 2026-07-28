@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,7 +93,11 @@ func newApp(d Deps) *app {
 
 func parsePages() map[string]*template.Template {
 	m := map[string]*template.Template{}
-	funcs := template.FuncMap{"shortdate": shortDate}
+	funcs := template.FuncMap{
+		"shortdate":     shortDate,
+		"localtime":     func(iso string) template.HTML { return timeEl(iso, "") },
+		"localdeadline": func(iso string) template.HTML { return timeEl(iso, "relative") },
+	}
 	for _, p := range []string{"login", "setup", "dashboard", "search", "browse", "entry", "proposals", "tokens", "settings", "consent", "comm"} {
 		m[p] = template.Must(template.New("base.html").Funcs(funcs).
 			ParseFS(tplFS, "templates/base.html", "templates/"+p+".html"))
@@ -101,12 +106,44 @@ func parsePages() map[string]*template.Template {
 }
 
 // shortDate trims a stored ISO-8601 timestamp ("2026-07-20T12:34:56.789Z") to a
-// compact "2026-07-20 12:34" for display; anything too short passes through as-is.
+// compact "2026-07-20 12:34". Note it drops the trailing Z, so the RESULT NO LONGER
+// SAYS WHICH TIMEZONE IT IS — only use it where "UTC" is appended (see timeEl) or
+// where the value is machine-facing. Anything too short passes through as-is.
 func shortDate(iso string) string {
 	if len(iso) >= 16 {
 		return strings.Replace(iso[:16], "T", " ", 1)
 	}
 	return iso
+}
+
+// isoStamp matches the timestamp shape Ken stores (SQLite writes UTC ISO-8601 with a
+// Z). Anything else is rendered as escaped text rather than markup — these values are
+// machine-generated, but a template helper that emits raw HTML must not assume it.
+var isoStamp = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T[\d:.]{4,15}Z?$`)
+
+// timeEl renders a stored UTC timestamp as a <time> element that app.js rewrites into
+// the VIEWER's timezone and locale (mode "" → an absolute local datetime; mode
+// "relative" → "in 8 minutes" / "3 hours ago", which is what a reader of a DEADLINE
+// actually wants — no timezone to supply, no arithmetic, and nothing to misread).
+//
+// Why client-side: the browser already knows the reader's timezone and locale, so this
+// needs no server setting and stays correct when two people in different timezones use
+// one instance. The stored value goes out verbatim in the datetime attribute, so the
+// machine-readable fact stays UTC and unambiguous — the split this whole class of bug
+// turns on: UTC for machines (filenames, API fields, logs), local for humans.
+//
+// Without JavaScript the element still renders its server-side fallback — and that
+// fallback is explicitly suffixed "UTC", because an unmarked timestamp in the wrong
+// frame is exactly what made a curator misread a deadline by six hours.
+func timeEl(iso, mode string) template.HTML {
+	if !isoStamp.MatchString(iso) {
+		return template.HTML(template.HTMLEscapeString(iso))
+	}
+	attr := " data-localtime"
+	if mode != "" {
+		attr += `="` + mode + `"`
+	}
+	return template.HTML(`<time datetime="` + iso + `"` + attr + `>` + shortDate(iso) + ` UTC</time>`)
 }
 
 func (a *app) routes() http.Handler {
