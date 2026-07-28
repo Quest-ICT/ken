@@ -269,6 +269,11 @@ nightlies (see below). It is best-effort — a snapshot failure never aborts the
 upgrade, and your live DB is untouched — and it is exempt from nightly retention,
 so it stays as a rollback point until you remove it.
 
+> **If you need that rollback database, and you encrypt:** `pre-upgrade-<stamp>.db.age` can only be
+> opened with your escrowed private key, which by design is **not on this box**. Rolling back the
+> *code* (the symlink flip above) needs nothing extra; restoring the *database* needs the key in hand
+> — so keep it reachable. See [BACKUP.md → Restore](BACKUP.md#restore).
+
 ---
 
 ## Uninstall
@@ -352,17 +357,25 @@ sudo ufw allow 8080/tcp                                                         
 
 Ken has no git mirror, so backups are non-negotiable — and are set up for you:
 
-- **Nightly encrypted snapshots** via `ken-snapshot.timer` (03:30) are **enabled
-  by default**. For *encrypted* snapshots, set an age recipient:
+- **Nightly snapshots** via `ken-snapshot.timer` (03:30) are **enabled by default — and are written
+  UNENCRYPTED at mode `0600`** until you configure an age recipient. Snapshots land in
+  `/opt/ken/backups` and are pruned to `KEN_BACKUP_KEEP` (default 14).
+
+  To encrypt them, follow **[docs/BACKUP.md → Encryption: turning it on](BACKUP.md#encryption-turning-it-on)**
+  — it covers what a snapshot contains and when encryption is warranted. Two things you must not get
+  wrong:
+
+  1. **Install `age` on this host *before* setting a recipient.** The snapshot step fails closed:
+     recipient set + `age` missing = the plaintext is deleted and **no snapshot is kept that run**.
+  2. **Generate the keypair off the box and escrow the private key.** Lose it and every encrypted
+     snapshot is permanently unrecoverable.
 
   ```sh
-  sudo systemctl edit ken-snapshot.service
+  sudo systemctl edit ken-snapshot.service   # a drop-in: survives upgrades, and the installer reads it
   # [Service]
   # Environment=KEN_AGE_RECIPIENT=age1yourpublickey...
+  sudo systemctl start ken-snapshot.service && ls -l /opt/ken/backups   # confirm a .db.age appeared
   ```
-
-  Without it, snapshots are written **unencrypted** with a warning. Snapshots
-  land in `/opt/ken/backups` and are pruned to `KEN_BACKUP_KEEP` (default 14).
 
 - **Litestream** (continuous ~1s-RPO replication to S3-compatible storage) is the
   recommended tier 1 — see [`configs/litestream.yml`](../configs/litestream.yml)

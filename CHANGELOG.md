@@ -27,6 +27,42 @@ same change — never "docs later".
   [COMPATIBILITY.md](COMPATIBILITY.md) already excludes), not because it is unstable — so it continues
   to evolve additively (the open channel-relabelling and endpoint-identity items can still land).
 
+### Fixed
+- **The backup docs said snapshots were encrypted; the shipped default is plaintext.** `BACKUP.md`
+  asserted "Everything that leaves the box is age-encrypted" and titled tier 2 "Nightly **encrypted**
+  snapshot"; `INSTALL.md` said "Nightly **encrypted** snapshots … enabled by default"; `DESIGN.md`
+  stated it as implemented policy. All false as shipped — encryption is **opt-in** and turns on only
+  when the operator sets `KEN_AGE_RECIPIENT`. A reader who skimmed concluded there was nothing to turn
+  on, which is exactly how an instance ends up with plaintext backups nobody chose. Every one of those
+  claims now states the real default.
+- **The fail-closed ordering trap is now documented where an operator will see it.** If
+  `KEN_AGE_RECIPIENT` is set but the `age` binary is missing, the snapshot step deletes the plaintext
+  and **keeps nothing for that run** — correct behaviour (never silently substitute plaintext for the
+  encryption you asked for), but previously written down only in a source comment. Setting the
+  recipient before installing `age` therefore did not downgrade you to plaintext backups; it silently
+  gave you *no* backups. Install-`age`-first, the journal lines that distinguish each outcome, and a
+  "prove it worked" step are now in `BACKUP.md`, `INSTALL.md`, the installer's post-install banner, and
+  the `ken-snapshot.service` comment.
+- **`BACKUP.md` now answers the question an operator actually has** — what a snapshot contains (a full
+  dump of the knowledge base plus the list of who can reach it), why mode `0600` protects the file on
+  the box but not any copy of it, and the deciding question ("do your backups ever leave this
+  machine?"). It also documents key **escrow**, a **decrypt drill** (a key you have never decrypted
+  with is not a backup), **recipient rotation**, and the sweep for plaintext `pre-upgrade-*.db` files
+  left by 1.2.x — which retention never prunes.
+- **The documented restore recipe was unsafe.** It decrypted straight onto the live `data/ken.db`, so
+  a wrong key or truncated transfer destroyed the very file being fallen back on; it ran as root while
+  the service runs as `ken`, leaving a root-owned database the service could not open; and it cleared
+  the stale WAL sidecars *after* verifying rather than before. It now restores via a scratch copy,
+  verifies before going live, keeps the outgoing file until the new one passes, and sets ownership.
+- **A failed snapshot run was invisible.** `MONITORING.md` covered the running server but never
+  mentioned backups, and the shipped units carry no `OnFailure=`. It now names the blind spot and gives
+  two ways to close it — the recommended one being a freshness check on the backups directory, which
+  catches every failure mode at once.
+- Documented that the recipient must be a real `Environment=` line **on `ken-snapshot.service`**: a
+  recipient supplied via `EnvironmentFile=`, or set on `ken.service`, still encrypts the nightlies but
+  leaves every **pre-upgrade** snapshot in plaintext, because the installer reads the unit's
+  `Environment=` and does not expand `EnvironmentFile=`.
+
 ### Removed
 - **Windows packaging is removed; support is now Linux-only, stated explicitly.** Ken was only ever
   built, tested, and released for **Linux** (`amd64`/`arm64`) — every release ships only Linux

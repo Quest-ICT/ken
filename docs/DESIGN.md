@@ -297,12 +297,16 @@ but it is no longer part of the guard — no CAS, no `rows_affected=0` reconcili
 
 **Backup (two tiers; no git fallback under D5, so verification is mandatory):**
 1. **Litestream → S3-compatible bucket** (B2 / R2 / MinIO), continuous WAL shipping, ~1 s RPO. Primary DR.
-2. **Nightly `VACUUM INTO 'snapshot.db'`**, age-encrypted, uploaded as a named restore point.
+2. **Nightly `VACUUM INTO 'snapshot.db'`** as a named restore point — age-encrypted **when the operator
+   sets `KEN_AGE_RECIPIENT`** (opt-in; the shipped default writes plaintext at `0600`).
 
 Never `cp` a live WAL DB (torn file). **Restore verification before "good":** `PRAGMA integrity_check`, FTS5
 self-check, `COUNT(vec)==COUNT(entries)` parity, a canary MATCH (+ KNN when vectors on), and count/`MAX(rev)`
-match against the last checkpoint. **Age-encrypt every backup unconditionally** — the biggest real exposure is
-copies leaving the box.
+match against the last checkpoint. **Intent: age-encrypt every backup** — the biggest real exposure is copies
+leaving the box, and a file mode does not travel with a copy. *Shipped as opt-in:* encryption turns on when the
+operator sets a recipient, because Ken cannot generate or escrow a private key on the operator's behalf, and a
+key it minted itself would sit on the box it protects. The docs therefore have to sell the decision rather than
+assume it — see [`BACKUP.md`](BACKUP.md).
 
 **At-rest encryption:** live file whole-file only (a field-encrypted body is opaque to FTS/vec — would silently
 break the product). MVP relies on provider volume encryption + encrypted backups; enable `ncruces` encrypted VFS

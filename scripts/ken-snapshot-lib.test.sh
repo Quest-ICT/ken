@@ -92,12 +92,22 @@ printf '# Environment=KEN_AGE_RECIPIENT=age1example...\nEnvironment=KEN_AGE_RECI
 eq "comment + real -> only the real" "$(ken_recipient_from_unit_files "$T/both.conf")" "age1real"
 eq "missing files -> empty" "$(ken_recipient_from_unit_files "$T/none1.conf" "$T/none2.conf")" ""
 
-echo "# template invariant — the shipped unit carries no harvestable recipient token"
+echo "# template invariant — the shipped unit must never yield a recipient"
 UNIT="$REPO/deploy/ken-snapshot.service"
 if [ -f "$UNIT" ]; then
-    harvest="$(grep -hoE 'KEN_AGE_RECIPIENT=[^[:space:]"]+' "$UNIT" 2>/dev/null | tail -n1 || true)"
-    [ -z "$harvest" ] && ok "deploy/ken-snapshot.service: nothing harvestable" \
-        || no "template harvestable" "[$harvest] — drop the example VALUE from the comment"
+    # The invariant that actually matters, asserted through the REAL parser: whatever
+    # the template says (it documents the drop-in shape, placeholder included), running
+    # our extractor over the shipped file must yield NOTHING. This is what stops the
+    # commented example being harvested as a live recipient — the defect that would make
+    # a default-config pre-upgrade snapshot fail closed and delete itself.
+    got="$(ken_recipient_from_unit_files "$UNIT")"
+    [ -z "$got" ] && ok "shipped unit yields no recipient via the parser" \
+        || no "template yields a recipient" "[$got] — the example must stay commented"
+    # Belt and braces: no placeholder may LOOK like a real age key (age1 + bech32 tail),
+    # so a future naive parser cannot mistake it for one either.
+    plausible="$(grep -hoE 'age1[a-z0-9]{8,}' "$UNIT" 2>/dev/null | head -1 || true)"
+    [ -z "$plausible" ] && ok "no realistic-looking age key in the template" \
+        || no "template carries a realistic key" "[$plausible] — use an obvious placeholder"
 else
     ok "deploy/ken-snapshot.service not present (skipped)"
 fi

@@ -739,12 +739,17 @@ Service
 
 Backups (design decision: backup is the only durability path)
 -------
-  The nightly snapshot timer (ken-snapshot.timer, 03:30) is enabled. For
-  ENCRYPTED snapshots, set an age recipient in ken-snapshot.service:
+  The nightly snapshot timer (ken-snapshot.timer, 03:30) is enabled. Snapshots are
+  written UNENCRYPTED at mode 0600 until you configure an age recipient.
 
-     systemctl edit ken-snapshot.service
-       [Service]
-       Environment=KEN_AGE_RECIPIENT=age1yourpublickey...
+  To encrypt them - read docs/BACKUP.md first; order matters:
+    1. install 'age' on this host   (recipient set + age missing = NO snapshot kept)
+    2. 'age-keygen -o age.key' on your workstation, NOT here; escrow age.key off-box
+       (lose it and every encrypted snapshot is unrecoverable)
+    3. systemctl edit ken-snapshot.service
+         [Service]
+         Environment=KEN_AGE_RECIPIENT=age1yourpublickey...
+    4. systemctl start ken-snapshot.service && ls -l $BACKUPS   # expect a .db.age
 
   Also consider Litestream (continuous ~1s-RPO replication) — see docs/BACKUP.md
   and configs/litestream.yml. Snapshots land in $BACKUPS.

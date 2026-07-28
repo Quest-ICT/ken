@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Nightly consistent, age-encrypted snapshot of the Ken database (backup tier 2).
+# Nightly consistent snapshot of the Ken database (backup tier 2), age-encrypted
+# when KEN_AGE_RECIPIENT is set — otherwise left plaintext at 0600, with a warning.
 # Litestream (tier 1) gives continuous ~1s-RPO replication; this gives named
-# point-in-time restore points. Everything that leaves the box is encrypted.
+# point-in-time restore points. Encryption is what makes an off-box copy safe: see
+# docs/BACKUP.md ("Encryption: turning it on") for the decision and the runbook.
 #
 # Env:
 #   KEN_HOME, KEN_BIN, KEN_DB        as in ken.sh

@@ -112,3 +112,32 @@ curl -s http://127.0.0.1:8080/health
 #   alerts:  monitoring/ken-prometheus-alerts.yml
 #   grafana: monitoring/ken-grafana-dashboard.json
 ```
+
+## The backup blind spot (watch systemd, not `/metrics`)
+
+Ken's metrics cover the **running server**; they say nothing about whether last night's **snapshot**
+happened. That gap matters because the snapshot step **fails closed** — if `KEN_AGE_RECIPIENT` is set
+but `age` is missing or the encrypt fails, the plaintext is deleted and **no snapshot is kept for that
+run** (see [BACKUP.md](BACKUP.md#encryption-turning-it-on)). The run exits non-zero and systemd marks
+`ken-snapshot.service` failed, but nothing pages you: the shipped units carry no `OnFailure=`.
+
+So watch it at the systemd layer:
+
+```sh
+systemctl is-failed ken-snapshot.service          # "failed" = a run kept nothing
+systemctl list-timers ken-snapshot.timer          # last run / next run
+journalctl -u ken-snapshot.service -n 20 --no-pager
+ls -lt /opt/ken/backups | head                    # newest snapshot: is it recent, and .db.age?
+```
+
+Two low-effort ways to make a failure loud, either is enough:
+
+- **A systemd failure handler** — add `OnFailure=<your-alert-unit>.service` to a drop-in on
+  `ken-snapshot.service` (`systemctl edit ken-snapshot.service`), pointing at whatever already
+  notifies you.
+- **A freshness check from your existing monitoring** — alert if the newest file in the backups
+  directory is older than ~26 hours. This catches every failure mode at once (timer stopped, disk
+  full, fail-closed encrypt, unit removed by an upgrade) and needs nothing from Ken.
+
+The second is the one to pick if you only do one: it asserts the property you actually care about — *a
+recent restorable snapshot exists* — rather than that a particular unit ran.
