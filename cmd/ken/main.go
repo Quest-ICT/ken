@@ -430,7 +430,7 @@ func runServe(args []string) {
 
 	// The web UI (its own mux, incl. /healthz) is counted as the "web" surface;
 	// the streaming MCP surface is tracked by per-tool counters instead.
-	// UI translations: built-in English + Spanish, overridable/extendable by
+	// UI translations: built-in English, Spanish + French, overridable/extendable by
 	// dropping messages_<lang>.properties into KEN_I18N_DIR (default <data>/i18n).
 	i18nDir := os.Getenv("KEN_I18N_DIR")
 	if i18nDir == "" {

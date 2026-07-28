@@ -50,8 +50,8 @@ instructions to connecting agents (no prompt-pasting needed). The web UI is
 complete: a home dashboard, search (with an `all` scope), a filterable **Browse**
 grid, entry + history, the proposal queue with promote/reject, agent-token and
 OAuth-connector management, first-run setup wizard, and live settings. It is a
-**themeable** (dark/light) and **multilingual** (English + Spanish, with drop-in
-translations) design system that makes **zero external requests**. An optional
+**themeable** (dark/light) and **multilingual** (English, Spanish + French, with
+drop-in translations) design system that makes **zero external requests**. An optional
 **OAuth 2.1 authorization server** lets claude.ai add Ken as a custom connector.
 Embeddings, health/metrics, in-process ACME TLS, and self-extracting release
 installers are built and tested.

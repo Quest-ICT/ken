@@ -9,7 +9,7 @@
 > tools on their own `/comm/mcp` endpoint (`internal/commserver`) with the `comm` scope and
 > dedicated-token enforcement, long-poll wakeups with a shutdown drain, the instruction section, the
 > human console at `/comm` (mint a pairing code, see endpoints and channels with pending counts, revoke
-> either), English + Spanish translations, and the `ken serve` wiring behind `KEN_COMM_ENABLED` with a
+> either), English, Spanish and French translations, and the `ken serve` wiring behind `KEN_COMM_ENABLED` with a
 > one-minute sweeper. Two sessions can register, be paired by a human, exchange a message and
 > acknowledge it.
 >

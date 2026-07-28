@@ -37,7 +37,7 @@ type Deps struct {
 	// stateless discovery/token endpoints are mounted separately in main.go.
 	OAuthEnabled bool
 	// I18n provides the reloadable UI translations. If nil, a Manager with the
-	// embedded English + Spanish defaults (no external override dir) is used.
+	// embedded English, Spanish + French defaults (no external override dir) is used.
 	I18n *i18n.Manager
 	// Comm, when set, mounts the inter-session communication console (/comm) —
 	// where a human mints the pairing codes that are the ONLY way a channel comes

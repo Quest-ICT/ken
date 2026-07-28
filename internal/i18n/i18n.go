@@ -92,7 +92,7 @@ func (m *Manager) T(lang, key string, args ...any) string {
 }
 
 // TN is T with a simple plural: it resolves key.one when n == 1, else key.other,
-// and makes {0} default to n (extra args fill {1}, {2}, …). en/es share the
+// and makes {0} default to n (extra args fill {1}, {2}, …). en/es/fr share the
 // one/other rule; languages needing richer plural forms use their own paired keys.
 func (m *Manager) TN(lang, key string, n int, args ...any) string {
 	suffix := ".other"

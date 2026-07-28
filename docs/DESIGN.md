@@ -130,7 +130,7 @@ Three constraints are locked, each earning its keep:
   there is **no first-paint flash**; the toggle also respects `prefers-color-scheme` when unset.
 
 **i18n (multilingual).** The UI translates through a **reloadable** `.properties` catalog (`internal/i18n`):
-English + Spanish embedded, operator drop-ins via `KEN_I18N_DIR` override/extend at runtime with a
+English, Spanish + French embedded, operator drop-ins via `KEN_I18N_DIR` override/extend at runtime with a
 `lang → English → key` fallback, a `ken_lang` cookie + `Accept-Language` selector, count-aware plurals
 (`.one`/`.other`), and translatable settings-field labels (registry English as fallback). **Why reloadable
 and drop-in:** adding a language or fixing a string must not require a rebuild or a restart of a
@@ -410,7 +410,7 @@ and makes channel establishment two-sided from day 1 — all cheap now, all MAJO
 ## 10. Implementation status & open items
 
 **Built (git `main`, tests green):** MVP (MCP `kb_search`/`kb_get` + write path + promotion) · token/user CLI · human web UI · backup + deploy · flat-memory importer · **semantic embeddings** · **first-run wizard** · **v1 tools** (`kb_diff`, `kb_record_outcome`, `kb_recent_context`) · **in-process TLS/ACME** (`internal/webtls`) · **per-IP/per-token rate limiting** (`internal/ratelimit`, `internal/clientip`) · **web token admin** (`/tokens`) + **live editable settings** (`/settings`, `internal/settings` — rate limits/login/session/trusted-proxies/ACME-domains applied without a restart via an atomically-swapped snapshot) · **home dashboard** (`/` — KB stats + review queue + recent activity) + dedicated **Browse page** (`/browse`) · **server-delivered MCP instructions** (the operating loop shipped to clients in the `initialize` response) · **optional OAuth 2.1 authorization server** (off unless `KEN_OAUTH_ENABLED`; discovery + DCR + consent + token endpoints, connectors revocable from `/tokens`; migration `0008_oauth.sql`; see [`OAUTH.md`](OAUTH.md)) · **themeable + multilingual web UI** (dark/light
-self-contained design system, zero external requests; reloadable i18n with English + Spanish embedded and
+self-contained design system, zero external requests; reloadable i18n with English, Spanish + French embedded and
 runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); decision **D8**). MCP surface = 8 tools.
 
 **Implementation note — embeddings (revises D3's mechanism, not its intent):** rather than `sqlite-vec`/`vec0`, Ken stores embeddings in a plain `entry_embedding` BLOB table ([`migrations/0002_embeddings.sql`](../migrations/0002_embeddings.sql)) and computes cosine KNN **brute-force in Go**, fused into the FTS RRF query via a Go-built `VALUES` CTE. This needs no SQLite extension and is fine at single-user scale (the design's "flat, never ANN" stance). The `internal/embed` SPI keeps a hosted OpenAI-compatible provider and an offline hash provider; `ken embed backfill` populates vectors; `KEN_EMBED_*` configures it (off by default).
