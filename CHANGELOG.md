@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-07-28
+
 ### Changed
 - **Inter-session communication (COMM) is no longer labelled "experimental."** It has been in use
   since 1.2.0, and the "experimental" wording undersold a feature that is stable in practice — it read
