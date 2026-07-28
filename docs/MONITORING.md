@@ -48,9 +48,12 @@ readiness probe never leaks the filesystem layout.
 Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
 [`monitoring/README.md`](../monitoring/README.md) for the full metric reference. Highlights:
 
-- **Traffic** — `ken_http_requests_total{surface,outcome}`, `ken_http_request_duration_seconds` (summary).
+- **Traffic** — `ken_http_requests_total{surface,outcome}`, `ken_http_request_duration_seconds`
+  (**histogram** — request latency for the web surface; use `histogram_quantile(0.95, …)` for p95).
 - **MCP** — `ken_mcp_tool_calls_total{tool,outcome}` for the eight `kb_*` tools, and for the
-  `comm_*` tools when inter-session communication is enabled.
+  `comm_*` tools when inter-session communication is enabled; `ken_mcp_tool_duration_seconds{tool}`
+  (**histogram**) is per-tool handler latency — the work time, so `comm_poll` (a long-poll) is
+  deliberately excluded, since a parked wait is not latency.
 - **Knowledge base** — `ken_kb_entries`, `ken_kb_versions`, `ken_kb_proposals_pending`,
   `ken_kb_embeddings` / `ken_kb_embeddable_versions`, `ken_users`, `ken_tokens_active`.
 - **Inter-session comms** (only when `KEN_COMM_ENABLED=1`; see [`COMM.md`](COMM.md)) —

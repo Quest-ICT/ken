@@ -25,6 +25,23 @@ same change — never "docs later".
   text, where a mistranslation is a usability or data-loss problem rather than a matter of style.
   Partial by construction is safe: any key not present falls back to English, so nothing breaks. Key
   parity with the English source is exact and enforced by the same tooling as Spanish.
+- **Request and tool latency histograms** (`ken_http_request_duration_seconds` is now a **histogram**;
+  new `ken_mcp_tool_duration_seconds{tool}`). Ken previously exposed only a duration *summary* — a mean
+  per surface, with no percentiles — so an operator could see how much Ken was used and how much memory
+  it took, but not how fast it *feels*. The histograms give real p50/p95/p99 via
+  `histogram_quantile(…)`, while `_sum`/`_count` still yield the mean, so this is a strict superset of
+  what the summary provided. Hand-rolled to match the metrics package (no `client_golang`).
+- **A blocking tool's wait is never counted as latency.** `ken_mcp_tool_duration_seconds` measures each
+  tool handler's *work* time, and the intentionally-blocking `comm_poll` (a long-poll that parks up to
+  the poll-wait ceiling) is deliberately excluded — bucketing a 30-second parked wait would drown every
+  other tool's real latency. The HTTP histogram covers the web surface only; the streaming MCP surface
+  is measured per tool, as it was for the counters. A regression test pins the exclusion.
+
+### Changed
+- `ken_http_request_duration_seconds` changed type from **summary** to **histogram**. The `_sum` and
+  `_count` series are unchanged (mean queries keep working); the addition is the `_bucket{le=…}` series
+  that make percentiles possible. Metric names and types are outside the compatibility contract
+  ([COMPATIBILITY.md](COMPATIBILITY.md)); no dashboard query over `_sum`/`_count` breaks.
 
 ## [1.2.2] — 2026-07-27
 

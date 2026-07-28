@@ -47,8 +47,9 @@ scrape_configs:
 | `ken_goroutines` | gauge | | Live goroutines |
 | `ken_memory_heap_bytes` | gauge | | Heap memory in use (bytes) |
 | `ken_http_requests_total` | counter | `surface`, `outcome` | Web requests by outcome class |
-| `ken_http_request_duration_seconds` | summary | `surface` | Request duration (`_sum` / `_count`) |
+| `ken_http_request_duration_seconds` | histogram | `surface` | Request latency, web surface (percentiles via `histogram_quantile`; `_sum`/`_count` give the mean) |
 | `ken_mcp_tool_calls_total` | counter | `tool`, `outcome` | MCP `kb_*` (and `comm_*`) calls (success/error) |
+| `ken_mcp_tool_duration_seconds` | histogram | `tool` | Per-tool handler latency (work time; the blocking `comm_poll` is excluded) |
 | `ken_auth_failures_total` | counter | `surface` | Rejected authentications (e.g. bad token) |
 | `ken_ratelimit_rejected_total` | counter | | 429 throttles |
 | `ken_ratelimit_blocked_total` | counter | | 403s from auto-blocked IPs |

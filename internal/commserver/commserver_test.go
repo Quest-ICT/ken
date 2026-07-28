@@ -284,3 +284,17 @@ func TestWaiterReleasesOnContextCancel(t *testing.T) {
 		t.Fatalf("waiter leaked after cancel: %d parked", w.parked())
 	}
 }
+
+// A parked long-poll is a wait, not latency: comm_poll must be excluded from the
+// tool-duration histogram, while every other comm_* tool is recorded. Bucketing a
+// 30s wait as "latency" would drown the real work time of every other tool.
+func TestPollExcludedFromDurationHistogram(t *testing.T) {
+	if recordsDuration("comm_poll") {
+		t.Fatal("comm_poll (a long-poll) must NOT be recorded in the latency histogram")
+	}
+	for _, tool := range []string{"comm_register", "comm_join", "comm_channels", "comm_send", "comm_ack", "comm_file_offer", "comm_file_grant"} {
+		if !recordsDuration(tool) {
+			t.Fatalf("%s should be recorded — it does not block", tool)
+		}
+	}
+}

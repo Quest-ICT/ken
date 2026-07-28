@@ -441,10 +441,23 @@ func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
 	if reg != nil {
 		name := t.Name
 		handler = func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+			start := time.Now()
 			res, out, err := h(ctx, req, in)
 			reg.RecordMCP(name, err == nil)
+			// Record handler latency ONLY for non-blocking tools. comm_poll parks for
+			// up to the poll-wait ceiling; that is a wait, not latency, and bucketing
+			// it would drown every real tool's work time. See recordsDuration.
+			if recordsDuration(name) {
+				reg.RecordMCPDuration(name, time.Since(start))
+			}
 			return res, out, err
 		}
 	}
 	mcp.AddTool(s, t, handler)
 }
+
+// recordsDuration reports whether a comm_* tool's handler latency is meaningful to
+// bucket. It is false for tools that intentionally BLOCK: comm_poll long-polls, so
+// its handler time is dominated by the wait, not by work. Kept as a named function
+// so the exclusion is explicit and testable rather than an inline string compare.
+func recordsDuration(tool string) bool { return tool != "comm_poll" }

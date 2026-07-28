@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -64,8 +65,12 @@ func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
 	if reg != nil {
 		name := t.Name
 		handler = func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+			start := time.Now()
 			res, out, err := h(ctx, req, in)
 			reg.RecordMCP(name, err == nil)
+			// Every kb_* tool is a bounded request/response, so the handler duration
+			// is clean work-time latency — none of them block.
+			reg.RecordMCPDuration(name, time.Since(start))
 			return res, out, err
 		}
 	}

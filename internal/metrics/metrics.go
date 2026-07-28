@@ -51,10 +51,11 @@ type Registry struct {
 	start   time.Time
 	version string
 
-	httpReq  *counterVec // labels: surface, outcome
-	httpDur  *summaryVec // labels: surface
-	mcpCalls *counterVec // labels: tool, outcome
-	authFail *counterVec // labels: surface
+	httpReq  *counterVec   // labels: surface, outcome
+	httpDur  *histogramVec // labels: surface — request latency (percentile-capable)
+	mcpCalls *counterVec   // labels: tool, outcome
+	mcpDur   *histogramVec // labels: tool — tool-handler latency (blocking tools excluded by the caller)
+	authFail *counterVec   // labels: surface
 	rlReject atomic.Int64
 	rlBlock  atomic.Int64
 
@@ -68,8 +69,9 @@ func New(version string) *Registry {
 		start:    time.Now(),
 		version:  version,
 		httpReq:  newCounterVec("surface", "outcome"),
-		httpDur:  newSummaryVec("surface"),
+		httpDur:  newHistogramVec(latencyBuckets, "surface"),
 		mcpCalls: newCounterVec("tool", "outcome"),
+		mcpDur:   newHistogramVec(latencyBuckets, "tool"),
 		authFail: newCounterVec("surface"),
 	}
 }
@@ -91,6 +93,13 @@ func (r *Registry) RecordHTTP(surface, outcome string, d time.Duration) {
 
 // RecordMCP records one MCP tool call and whether it succeeded.
 func (r *Registry) RecordMCP(tool string, ok bool) { r.mcpCalls.inc(tool, outcome(ok)) }
+
+// RecordMCPDuration records how long a tool's HANDLER ran — its work time, not
+// the SSE stream lifetime. The caller must NOT call this for a tool that
+// intentionally blocks (a long-poll): a parked wait is not latency, and bucketing
+// it would drown the real work time. See the addTool wrappers, which skip the
+// blocking tools.
+func (r *Registry) RecordMCPDuration(tool string, d time.Duration) { r.mcpDur.observe(d, tool) }
 
 // AuthFailure records a rejected authentication on a surface (e.g. a bad token).
 func (r *Registry) AuthFailure(surface string) { r.authFail.inc(surface) }
@@ -172,8 +181,9 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 func (r *Registry) WriteText(ctx context.Context, w io.Writer) {
 	var b strings.Builder
 	writeCounter(&b, "ken_http_requests_total", "HTTP requests by surface and outcome.", r.httpReq.snapshot())
-	writeSummary(&b, "ken_http_request_duration_seconds", "HTTP request duration by surface.", r.httpDur.snapshot())
+	writeHistogram(&b, "ken_http_request_duration_seconds", "HTTP request latency by surface (web surface only; the streaming MCP surface is measured per tool).", r.httpDur.snapshot())
 	writeCounter(&b, "ken_mcp_tool_calls_total", "MCP tool calls by tool and outcome.", r.mcpCalls.snapshot())
+	writeHistogram(&b, "ken_mcp_tool_duration_seconds", "MCP tool-handler latency by tool (work time; intentionally-blocking tools like comm_poll are excluded).", r.mcpDur.snapshot())
 	writeCounter(&b, "ken_auth_failures_total", "Authentication failures by surface.", r.authFail.snapshot())
 	writeFamily(&b, Family{Name: "ken_ratelimit_rejected_total", Type: "counter", Help: "Requests throttled (429) by the rate limiter.", Series: []Series{{Value: float64(r.rlReject.Load())}}})
 	writeFamily(&b, Family{Name: "ken_ratelimit_blocked_total", Type: "counter", Help: "Requests refused (403) from auto-blocked IPs.", Series: []Series{{Value: float64(r.rlBlock.Load())}}})
@@ -215,11 +225,21 @@ func writeFamily(b *strings.Builder, f Family) {
 	}
 }
 
-func writeSummary(b *strings.Builder, name, help string, series []summarySnapshot) {
-	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s summary\n", name, help, name)
+// writeHistogram renders a Prometheus histogram: cumulative le-labelled buckets,
+// a mandatory le="+Inf" bucket equal to _count, then _sum and _count. Buckets are
+// already cumulative from snapshot(). The le label is appended to any existing
+// series labels.
+func writeHistogram(b *strings.Builder, name, help string, series []histogramSnapshot) {
+	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s histogram\n", name, help, name)
 	for _, s := range series {
+		for i, ub := range s.Bounds {
+			le := append(append([]Label(nil), s.Labels...), Label{"le", fmtVal(ub)})
+			fmt.Fprintf(b, "%s_bucket%s %d\n", name, fmtLabels(le), s.Buckets[i])
+		}
+		inf := append(append([]Label(nil), s.Labels...), Label{"le", "+Inf"})
+		fmt.Fprintf(b, "%s_bucket%s %d\n", name, fmtLabels(inf), s.Count)
 		lbl := fmtLabels(s.Labels)
-		fmt.Fprintf(b, "%s_sum%s %s\n", name, lbl, fmtVal(s.SumSeconds))
+		fmt.Fprintf(b, "%s_sum%s %s\n", name, lbl, fmtVal(s.Sum))
 		fmt.Fprintf(b, "%s_count%s %d\n", name, lbl, s.Count)
 	}
 }
@@ -299,54 +319,90 @@ func (c *counterVec) snapshot() []Series {
 	return out
 }
 
-// --- summaryVec: sum (as nanoseconds) + count per label set ---
+// --- histogramVec: cumulative buckets + sum + count per label set ---
+//
+// Hand-rolled to match the rest of this package (no client_golang, see the file
+// header). Buckets are fixed upper bounds in seconds; a Prometheus histogram is
+// CUMULATIVE, so bucket i counts every observation <= bounds[i], and the implicit
+// +Inf bucket equals the total count. Percentiles come from histogram_quantile()
+// over the _bucket series; _sum/_count still give the mean, so this is a strict
+// superset of the summary it replaces.
 
-type summaryVec struct {
-	names []string
-	mu    sync.Mutex
-	m     map[string]*summarySeries
+// latencyBuckets are second-valued upper bounds tuned for request/tool latency —
+// the Prometheus default set, which spans sub-millisecond page renders to
+// multi-second slow paths without wasting cardinality.
+var latencyBuckets = []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
+
+type histogramVec struct {
+	names  []string
+	bounds []float64
+	mu     sync.Mutex
+	m      map[string]*histogramSeries
 }
 
-type summarySeries struct {
+type histogramSeries struct {
 	vals    []string
+	buckets []atomic.Int64 // one per bound; observation counted in every bound >= d
 	sumNano atomic.Int64
 	count   atomic.Int64
 }
 
-type summarySnapshot struct {
-	Labels     []Label
-	SumSeconds float64
-	Count      int64
+type histogramSnapshot struct {
+	Labels  []Label
+	Bounds  []float64
+	Buckets []int64 // CUMULATIVE counts, aligned with Bounds
+	Sum     float64
+	Count   int64
 }
 
-func newSummaryVec(names ...string) *summaryVec {
-	return &summaryVec{names: names, m: map[string]*summarySeries{}}
+func newHistogramVec(bounds []float64, names ...string) *histogramVec {
+	return &histogramVec{names: names, bounds: bounds, m: map[string]*histogramSeries{}}
 }
 
-func (s *summaryVec) observe(d time.Duration, vals ...string) {
+func (h *histogramVec) observe(d time.Duration, vals ...string) {
 	key := strings.Join(vals, "|")
-	s.mu.Lock()
-	ss := s.m[key]
-	if ss == nil {
-		ss = &summarySeries{vals: append([]string(nil), vals...)}
-		s.m[key] = ss
+	h.mu.Lock()
+	hs := h.m[key]
+	if hs == nil {
+		hs = &histogramSeries{vals: append([]string(nil), vals...), buckets: make([]atomic.Int64, len(h.bounds))}
+		h.m[key] = hs
 	}
-	s.mu.Unlock()
-	ss.sumNano.Add(int64(d))
-	ss.count.Add(1)
+	h.mu.Unlock()
+	sec := d.Seconds()
+	// Increment every bucket whose upper bound the observation falls within. Storing
+	// per-bound counts (not cumulative) keeps the hot path a handful of atomic adds;
+	// snapshot() accumulates. bounds is ascending, so break at the first that fits.
+	for i, ub := range h.bounds {
+		if sec <= ub {
+			hs.buckets[i].Add(1)
+			break
+		}
+	}
+	hs.sumNano.Add(int64(d))
+	hs.count.Add(1)
 }
 
-func (s *summaryVec) snapshot() []summarySnapshot {
-	s.mu.Lock()
-	out := make([]summarySnapshot, 0, len(s.m))
-	for _, ss := range s.m {
-		labels := make([]Label, len(s.names))
-		for i, n := range s.names {
-			labels[i] = Label{n, ss.vals[i]}
+func (h *histogramVec) snapshot() []histogramSnapshot {
+	h.mu.Lock()
+	out := make([]histogramSnapshot, 0, len(h.m))
+	for _, hs := range h.m {
+		labels := make([]Label, len(h.names))
+		for i, n := range h.names {
+			labels[i] = Label{n, hs.vals[i]}
 		}
-		out = append(out, summarySnapshot{Labels: labels, SumSeconds: float64(ss.sumNano.Load()) / 1e9, Count: ss.count.Load()})
+		// Accumulate per-bound counts into cumulative bucket counts.
+		cum := make([]int64, len(h.bounds))
+		var running int64
+		for i := range h.bounds {
+			running += hs.buckets[i].Load()
+			cum[i] = running
+		}
+		out = append(out, histogramSnapshot{
+			Labels: labels, Bounds: h.bounds, Buckets: cum,
+			Sum: float64(hs.sumNano.Load()) / 1e9, Count: hs.count.Load(),
+		})
 	}
-	s.mu.Unlock()
+	h.mu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return lessLabels(out[i].Labels, out[j].Labels) })
 	return out
 }
