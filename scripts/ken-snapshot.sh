@@ -10,6 +10,9 @@
 #   KEN_BACKUP_DIR                   where snapshots land (default $KEN_HOME/backups)
 #   KEN_AGE_RECIPIENT                age public key (age1...) — set it for ENCRYPTED snapshots
 #   KEN_BACKUP_KEEP                  snapshots to retain (default 14)
+#   KEN_BACKUP_GROUP                 group that may READ snapshots (0640 instead of
+#                                    0600) — lets an unprivileged off-box backup
+#                                    account pull them without root. Unset = 0600.
 set -euo pipefail
 
 SELF="$(readlink -f "$0")"
@@ -26,7 +29,12 @@ KEEP="${KEN_BACKUP_KEEP:-14}"
 case "$KEEP" in '' | *[!0-9]*) echo "[ken-snapshot] WARNING: invalid KEN_BACKUP_KEEP='$KEEP'; using 14" >&2; KEEP=14 ;; esac
 [ "$KEEP" -ge 1 ] 2>/dev/null || KEEP=14
 
-mkdir -p "$BACKUP_DIR"
+# Create the archive dir 0750 if it is ours to create; never re-chmod one that already
+# exists (the installer may have made it 2750 for the backup group — see docs/BACKUP.md).
+if [ ! -d "$BACKUP_DIR" ]; then
+  mkdir -p "$BACKUP_DIR"
+  chmod 0750 "$BACKUP_DIR"
+fi
 RAW="$BACKUP_DIR/ken-$(ken_snapshot_stamp).db"
 
 # Consistent copy + mandatory integrity check (fails loudly on corruption).
@@ -37,7 +45,7 @@ RAW="$BACKUP_DIR/ken-$(ken_snapshot_stamp).db"
 # INTENDED encryption did not happen (and it has already removed the plaintext),
 # which we turn into a non-zero exit below so systemd flags the run.
 FAILED=0
-if FINAL="$(ken_snapshot_secure "$RAW" "${KEN_AGE_RECIPIENT:-}")"; then
+if FINAL="$(ken_snapshot_secure "$RAW" "${KEN_AGE_RECIPIENT:-}" "${KEN_BACKUP_GROUP:-}")"; then
   [ -n "$FINAL" ] && echo "[ken-snapshot] wrote $FINAL"
 else
   FAILED=1

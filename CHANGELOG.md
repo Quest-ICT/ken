@@ -27,6 +27,30 @@ same change — never "docs later".
   [COMPATIBILITY.md](COMPATIBILITY.md) already excludes), not because it is unstable — so it continues
   to evolve additively (the open channel-relabelling and endpoint-identity items can still land).
 
+### Added
+- **`KEN_BACKUP_GROUP` (installer: `--backup-group`) — pull snapshots off the box without root.**
+  Snapshots are `0600` owned by the `ken` service account, which is `nologin`, inside a `0750`
+  directory: **only root could read one.** So the documented tier-3 off-box copy required either a
+  root-authorized SSH key on the Ken host or a root cron job staging copies elsewhere — both a worse
+  grant than the thing they enable, and POSIX ACLs are no way around it (`chmod 0600` zeroes the group
+  bits, setting the ACL mask to `---`). Naming a group now makes snapshots `0640` owned by it, with the
+  backups directory setgid so new snapshots inherit it, letting a dedicated unprivileged account be
+  pulled from by an archive host. **Unset, nothing changes** — the strict owner-only default is
+  byte-identical to prior releases — and it **fails safe**: a group that does not exist or cannot be
+  applied leaves `0600` with a warning, never a file readable by the wrong group. Reported from
+  production, where it was blocking the first off-box backup of a Ken instance.
+
+### Fixed
+- **`KEN_BACKUP_DIR` split the archive in half.** The nightly script honoured it; `install.sh`
+  hardcoded `<prefix>/backups` and never read it. Setting it therefore moved the nightlies while the
+  **pre-upgrade rollback snapshots stayed behind** — an archive silently living in two places, with the
+  rollback points in the half that moved nowhere. The installer now honours it too (`--backup-dir`),
+  writes it into `ken-snapshot.service` so both paths resolve the same directory, and points the
+  versioned `backups` symlink at it. This was the third instance of the same shape — the installer path
+  and the nightly path disagreeing about policy (after the file mode in 1.2.1 and the timestamp in
+  1.3.0) — so the settings are now **re-discovered from the installed unit on upgrade**: re-running the
+  installer without the flags never relocates an existing archive or drops a configured group.
+
 ### Changed
 - **The web UI now shows timestamps in the reader's own timezone, and deadlines as "in 8 minutes."**
   Every human-facing timestamp was rendered by trimming the stored UTC string to `2026-07-20 17:53` —

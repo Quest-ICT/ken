@@ -37,11 +37,12 @@ ken_snapshot_stamp() {
 # The caller has just written a plaintext snapshot at <raw_path> (via
 # `ken backup snapshot --out`). This function takes it from there:
 #
-#   * chmod 0600 the plaintext IMMEDIATELY — before any encryption step — so a full
-#     copy of the database is never even briefly world-readable. `ken backup snapshot`
-#     writes at the caller's umask (root's is 0644), and a mode travels with COPIES:
-#     an off-box backup of the backups dir would otherwise carry a world-readable DB
-#     wherever it lands.
+#   * Lock the mode down IMMEDIATELY — before any encryption step — so a full copy of
+#     the database is never even briefly world-readable. `ken backup snapshot` writes at
+#     the caller's umask (root's is 0644), and a mode travels with COPIES: an off-box
+#     backup of the backups dir would otherwise carry a world-readable DB wherever it
+#     lands. Default is 0600 (owner only). With a <group> (KEN_BACKUP_GROUP) it is 0640
+#     owned by that group instead — see ken_snapshot_lock below for why that exists.
 #   * No recipient  -> leave the plaintext (0600), warn that it is UNENCRYPTED, print
 #     its path on stdout, return 0. (A snapshot exists; the operator simply has not
 #     opted into encryption. Same stance the nightly always took.)
@@ -59,6 +60,7 @@ ken_snapshot_stamp() {
 ken_snapshot_secure() {
     _kss_raw="$1"
     _kss_recipient="${2:-}"
+    _kss_group="${3:-}"
     _kss_enc="$_kss_raw.age"
 
     if [ ! -f "$_kss_raw" ]; then
@@ -66,10 +68,16 @@ ken_snapshot_secure() {
         return 1
     fi
 
-    chmod 600 "$_kss_raw"
+    # ALWAYS 0600 first, with no group. A plaintext snapshot that is about to be
+    # encrypted is an INTERMEDIATE, and must never be widened to the backup group: doing
+    # so would expose the cleartext database to that group for the whole `age` run — and
+    # permanently if the encrypt is interrupted. Only the FINAL artifact gets the group.
+    ken_snapshot_lock "$_kss_raw" ""
 
     if [ -z "$_kss_recipient" ]; then
-        echo "snapshot: WARNING: KEN_AGE_RECIPIENT not set — snapshot left UNENCRYPTED (0600) at $_kss_raw" >&2
+        # No encryption: the plaintext IS the final artifact, so it takes the group.
+        ken_snapshot_lock "$_kss_raw" "$_kss_group"
+        echo "snapshot: WARNING: KEN_AGE_RECIPIENT not set — snapshot left UNENCRYPTED at $_kss_raw" >&2
         printf '%s\n' "$_kss_raw"
         return 0
     fi
@@ -81,7 +89,7 @@ ken_snapshot_secure() {
     fi
 
     if age -r "$_kss_recipient" -o "$_kss_enc" "$_kss_raw"; then
-        chmod 600 "$_kss_enc"
+        ken_snapshot_lock "$_kss_enc" "$_kss_group"
         rm -f "$_kss_raw"   # drop the plaintext ONLY after a confirmed encrypt
         printf '%s\n' "$_kss_enc"
         return 0
@@ -92,25 +100,76 @@ ken_snapshot_secure() {
     return 1
 }
 
-# ken_recipient_from_env <text> — pull KEN_AGE_RECIPIENT out of a `systemctl show
-# -p Environment` value. That output is `Environment=VAR1=v1 VAR2=v2 …`: the
-# `Environment=` prefix attaches to the FIRST var only, so match position-independently
-# (strip up to and including the key) rather than anchoring on it. Prints the value, or
-# nothing. systemd never surfaces #-commented lines here, so this is the trustworthy
-# source when systemctl is present.
-ken_recipient_from_env() {
-    printf '%s' "${1:-}" | tr ' ' '\n' | sed -n 's/.*KEN_AGE_RECIPIENT=//p' | tail -n1 || true
+# ken_snapshot_lock <path> [group] — apply the snapshot file-permission policy.
+#
+#   no group  -> 0600. Owner (the service account) and root only. The default, and
+#                unchanged from every prior release.
+#   group set -> 0640 owned by <group>, so a PURPOSE-MADE account in that group can
+#                read snapshots without being root.
+#
+# WHY the group mode exists. Ken's own backup design names an off-box copy as a tier,
+# but 0600 files owned by a `nologin` service account inside a 0750 directory can only
+# be read by root — so the only ways to pull a backup off the host were a root-authorized
+# SSH key or a root cron job staging copies elsewhere. Handing an archive host a root
+# key to move files that are (ideally) already encrypted is a poor trade; a dedicated
+# unprivileged group is the smaller grant. POSIX ACLs are NOT an alternative here:
+# `chmod 0600` zeroes the group bits, which sets the ACL mask to `---` and neuters any
+# named-user entry — so a re-chmod on every run defeats them by construction.
+#
+# Group assignment normally costs nothing at runtime: the installer makes the backups
+# directory setgid to that group, so files created in it inherit it. The chgrp below is
+# the fallback for hand-rolled layouts.
+#
+# FAILS SAFE, never open: if the group cannot be applied (it does not exist, or the
+# snapshot user is not a member and the directory is not setgid), the file keeps 0600 and
+# a warning says so. A snapshot is never left group-readable by the WRONG group.
+ken_snapshot_lock() {
+    _ksl_path="$1"
+    _ksl_group="${2:-}"
+
+    if [ -z "$_ksl_group" ]; then
+        chmod 600 "$_ksl_path"
+        return 0
+    fi
+
+    # Already in the target group (the setgid-directory path)? Nothing to change.
+    if [ "$(stat -c '%G' "$_ksl_path" 2>/dev/null || echo '?')" = "$_ksl_group" ] \
+       || chgrp "$_ksl_group" "$_ksl_path" 2>/dev/null; then
+        chmod 640 "$_ksl_path"
+        return 0
+    fi
+
+    chmod 600 "$_ksl_path"
+    echo "snapshot: WARNING: could not put $_ksl_path in group '$_ksl_group' — keeping 0600." >&2
+    echo "snapshot:          Off-box pulls by that group will not work until the group exists and" >&2
+    echo "snapshot:          the backups directory is setgid to it (see docs/BACKUP.md)." >&2
+    return 0
 }
 
-# ken_recipient_from_unit_files <file…> — pull KEN_AGE_RECIPIENT from REAL
-# `Environment=` assignment lines in the given unit files, used only on a non-systemd
-# host (no systemctl). The anchor `^[[:space:]]*Environment=` is what makes this safe:
-# it SKIPS a `#`-commented line, so the bundled unit's placeholder example
-# (`# Environment=KEN_AGE_RECIPIENT=…`) is never harvested as a bogus recipient — the
-# defect that would otherwise make a default-config pre-upgrade snapshot fail closed and
-# delete itself. Optional leading indent and quotes (as `systemctl edit` writes) are
-# tolerated. Prints the last value found, or nothing.
-ken_recipient_from_unit_files() {
-    sed -n 's/^[[:space:]]*Environment="\{0,1\}KEN_AGE_RECIPIENT=\([^[:space:]"]*\).*/\1/p' \
+# ken_env_value <text> <VAR> — pull VAR out of a `systemctl show -p Environment` value.
+# That output is `Environment=VAR1=v1 VAR2=v2 …`: the `Environment=` prefix attaches to
+# the FIRST var only, so match position-independently (strip up to and including the key)
+# rather than anchoring on it. Prints the value, or nothing. systemd never surfaces
+# #-commented lines here, so this is the trustworthy source when systemctl is present.
+ken_env_value() {
+    printf '%s' "${1:-}" | tr ' ' '\n' | sed -n "s/.*${2}=//p" | tail -n1 || true
+}
+
+# ken_env_value_from_unit_files <VAR> <file…> — pull VAR from REAL `Environment=`
+# assignment lines in the given unit files, used only on a non-systemd host (no
+# systemctl). The anchor `^[[:space:]]*Environment=` is what makes this safe: it SKIPS a
+# `#`-commented line, so the bundled unit's placeholder example
+# (`# Environment=KEN_AGE_RECIPIENT=…`) is never harvested as a bogus value — the defect
+# that would otherwise make a default-config pre-upgrade snapshot fail closed and delete
+# itself. Optional leading indent and quotes (as `systemctl edit` writes) are tolerated.
+# Prints the last value found, or nothing.
+ken_env_value_from_unit_files() {
+    _kev_var="$1"
+    shift
+    sed -n "s/^[[:space:]]*Environment=\"\{0,1\}${_kev_var}=\([^[:space:]\"]*\).*/\1/p" \
         "$@" 2>/dev/null | tail -n1 || true
 }
+
+# Back-compat wrappers for the recipient, the original callers of the above.
+ken_recipient_from_env()        { ken_env_value "${1:-}" KEN_AGE_RECIPIENT; }
+ken_recipient_from_unit_files() { ken_env_value_from_unit_files KEN_AGE_RECIPIENT "$@"; }

@@ -377,6 +377,14 @@ Ken has no git mirror, so backups are non-negotiable — and are set up for you:
   sudo systemctl start ken-snapshot.service && ls -l /opt/ken/backups   # confirm a .db.age appeared
   ```
 
+- **Pulling snapshots off the box without root.** Snapshots default to `0600` owned by the `nologin`
+  service account, so only root can read them. `--backup-group GRP` makes them `0640` owned by `GRP`
+  (and the backups dir setgid to it), so a dedicated unprivileged account can be pulled from by an
+  archive host with no root key anywhere. `--backup-dir DIR` relocates the archive — honoured by
+  **both** the nightly timer and the pre-upgrade snapshot, so it never splits in half. Both are written
+  into `ken-snapshot.service` and remembered across upgrades. Full runbook:
+  [docs/BACKUP.md → Pulling snapshots off the box](BACKUP.md#pulling-snapshots-off-the-box-tier-3-without-root).
+
 - **Litestream** (continuous ~1s-RPO replication to S3-compatible storage) is the
   recommended tier 1 — see [`configs/litestream.yml`](../configs/litestream.yml)
   and [`docs/BACKUP.md`](BACKUP.md).

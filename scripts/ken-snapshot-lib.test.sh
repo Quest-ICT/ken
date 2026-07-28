@@ -92,6 +92,59 @@ printf '# Environment=KEN_AGE_RECIPIENT=age1example...\nEnvironment=KEN_AGE_RECI
 eq "comment + real -> only the real" "$(ken_recipient_from_unit_files "$T/both.conf")" "age1real"
 eq "missing files -> empty" "$(ken_recipient_from_unit_files "$T/none1.conf" "$T/none2.conf")" ""
 
+echo "# ken_snapshot_lock — the file-permission policy (0600 default, 0640 + group opt-in)"
+# Default: no group -> 0600, exactly as every prior release.
+f="$T/g1.db"; echo d > "$f"; chmod 644 "$f"
+ken_snapshot_lock "$f" ""
+eq "no group -> 0600" "$(stat -c%a "$f")" "600"
+
+# A group the caller is genuinely in -> 0640 owned by it, so an off-box puller can read.
+mygrp="$(id -gn)"
+f="$T/g2.db"; echo d > "$f"; chmod 600 "$f"
+ken_snapshot_lock "$f" "$mygrp"
+eq "own group -> 0640" "$(stat -c%a "$f")" "640"
+eq "own group -> group applied" "$(stat -c%G "$f")" "$mygrp"
+
+# FAILS SAFE: an impossible group must never leave the file group-readable by the WRONG
+# group -- it keeps 0600 and warns, rather than half-applying the policy.
+f="$T/g3.db"; echo d > "$f"; chmod 600 "$f"
+ken_snapshot_lock "$f" "no-such-group-$$" 2>"$T/gerr"
+eq "unknown group -> stays 0600" "$(stat -c%a "$f")" "600"
+grep -q "could not put" "$T/gerr" && ok "unknown group warns" || no "unknown group warn" "$(cat "$T/gerr")"
+
+# The group flows through the real securing path too (plaintext and encrypted).
+f="$T/g4.db"; echo d > "$f"
+ken_snapshot_secure "$f" "" "$mygrp" >/dev/null 2>&1
+eq "secure(): plaintext honours group" "$(stat -c%a "$f")" "640"
+f="$T/g5.db"; echo d > "$f"
+PATH="$T/ok:$PATH" ken_snapshot_secure "$f" "age1x" "$mygrp" >/dev/null 2>&1
+eq "secure(): .age honours group" "$(stat -c%a "$f.age")" "640"
+
+# THE CRITICAL ONE: when a snapshot is going to be ENCRYPTED, the intermediate plaintext
+# must NEVER be widened to the backup group -- that would expose the cleartext database to
+# that group for the whole `age` run, and permanently if the encrypt were interrupted.
+f="$T/g6.db"; echo d > "$f"
+mkdir -p "$T/spy"
+cat > "$T/spy/age" <<SPY
+#!/usr/bin/env bash
+o=""; i=""; while [ \$# -gt 0 ]; do case "\$1" in -o) o="\$2"; shift 2;; -r) shift 2;; *) i="\$1"; shift;; esac; done
+stat -c%a "\$i" > "$T/plaintext_mode_during_encrypt"   # what the mode was WHILE encrypting
+cp "\$i" "\$o"
+SPY
+chmod +x "$T/spy/age"
+PATH="$T/spy:$PATH" ken_snapshot_secure "$f" "age1x" "$mygrp" >/dev/null 2>&1
+eq "plaintext stays 0600 during encryption" "$(cat "$T/plaintext_mode_during_encrypt" 2>/dev/null)" "600"
+eq "only the .age gets the group" "$(stat -c%a "$f.age")" "640"
+
+echo "# ken_env_value — generalized to any variable (KEN_BACKUP_DIR, KEN_BACKUP_GROUP)"
+eq "env: backup dir"   "$(ken_env_value 'Environment=KEN_HOME=/x KEN_BACKUP_DIR=/srv/snaps' KEN_BACKUP_DIR)" "/srv/snaps"
+eq "env: backup group" "$(ken_env_value 'Environment=KEN_BACKUP_GROUP=kenbackup KEN_HOME=/x' KEN_BACKUP_GROUP)" "kenbackup"
+eq "env: absent var"   "$(ken_env_value 'Environment=KEN_HOME=/x' KEN_BACKUP_GROUP)" ""
+printf 'Environment=KEN_BACKUP_DIR=/srv/snaps\n' > "$T/bd.conf"
+eq "unit file: backup dir" "$(ken_env_value_from_unit_files KEN_BACKUP_DIR "$T/bd.conf")" "/srv/snaps"
+printf '# Environment=KEN_BACKUP_GROUP=example\n' > "$T/bg.conf"
+eq "unit file: commented group ignored" "$(ken_env_value_from_unit_files KEN_BACKUP_GROUP "$T/bg.conf")" ""
+
 echo "# template invariant — the shipped unit must never yield a recipient"
 UNIT="$REPO/deploy/ken-snapshot.service"
 if [ -f "$UNIT" ]; then

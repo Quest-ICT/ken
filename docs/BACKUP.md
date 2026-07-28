@@ -220,6 +220,76 @@ If `age -d` says `no identity matched any of the recipients`, every snapshot you
 fix the recipient now and take a fresh one — the old ones are lost. Re-run this drill after any
 recipient change. **A key you have never decrypted with is not a backup.**
 
+## Pulling snapshots off the box (tier 3) without root
+
+Tier 3 above is an off-box copy — but by default snapshots are `0600`, owned by the `ken` service
+account (which is `nologin`), inside a `0750` directory. **Only root can read them.** That leaves an
+archive host needing a root-authorized SSH key, or a root cron job staging copies somewhere readable —
+both worse than the thing they enable. (POSIX ACLs are not a way around it: `chmod 0600` zeroes the
+group bits, which sets the ACL mask to `---` and neuters any named-user entry, and the snapshot step
+re-applies the mode on every run.)
+
+**`KEN_BACKUP_GROUP` is the smaller grant:** name a group that may *read* snapshots, and files become
+`0640` owned by it while the directory becomes setgid to it. A dedicated, unprivileged pull account in
+that group can then fetch backups over SSH with no root anywhere.
+
+```sh
+# 1. a group, and an account the archive host logs in AS
+sudo groupadd kenbackup
+sudo useradd --system --gid kenbackup --create-home --shell /bin/sh kenpull
+```
+
+> **The pull account needs a real shell** (`/bin/sh`), not `/usr/sbin/nologin`: `sshd` runs the
+> login shell to execute the forced command, so a `nologin` shell refuses the connection and the
+> pull can never run. Lock the account down with the **key** instead of the shell — a forced
+> command in `authorized_keys` is what makes it read-only:
+>
+> ```
+> # ~kenpull/.ssh/authorized_keys  (one line)
+> command="rrsync -ro /opt/ken/backups",restrict ssh-ed25519 AAAA…archive-host-key
+> ```
+>
+> `restrict` disables port/agent/X11 forwarding and PTY allocation; `rrsync -ro` confines the key
+> to *reading* that one directory. The account has a shell, but that key can do exactly one thing.
+> Set a password? No — leave it locked (`useradd` with no password does), so the key is the only way in.
+
+```sh
+# 2. tell Ken about it — this is all the installer needs
+sudo ./install.sh -y --backup-group kenbackup     # remembered on upgrade; no flag needed again
+
+# 3. verify: take a snapshot and check what the pull account can actually read
+sudo systemctl start ken-snapshot.service
+ls -l /opt/ken/backups          # snapshots 0640, group kenbackup; the dir drwxr-s--- ken:kenbackup
+sudo -u kenpull cat /opt/ken/backups/ken-*.db* > /dev/null && echo "pull account can read"
+```
+
+> Pass `-y` when re-running the installer for this (as above): without it, an installer run from a
+> terminal starts the interactive wizard and will re-prompt for TLS and everything else.
+
+> **Use the installer flag for this one — not a `systemctl edit` drop-in.** Unlike `KEN_AGE_RECIPIENT`
+> (which the snapshot script consumes on its own), the backup group also needs the **directory** made
+> setgid, and only the installer does that. Setting `KEN_BACKUP_GROUP` in a drop-in alone leaves the
+> directory `0750 ken:ken`, so new snapshots never inherit the group, the service account cannot
+> `chgrp` into a group it does not belong to, and every run falls back to `0600` with a warning —
+> half-configured, and silently so.
+
+**Initiate the transfer from the archive side** (the archive pulls; Ken never pushes). A compromised
+Ken host then cannot reach into the archive and destroy its own off-box copies — which is the property
+that makes tier 3 worth having at all.
+
+**It fails safe.** If the group does not exist, or cannot be applied, snapshots keep `0600` and the run
+warns — a snapshot is never left readable by the *wrong* group. And leaving `KEN_BACKUP_GROUP` unset
+keeps the strict owner-only default exactly as it has always been.
+
+> **This is a real widening, so weigh it:** anyone in that group can read every snapshot. Put nobody in
+> it but the pull account. It pairs naturally with encryption — with a recipient set, the group only
+> ever sees ciphertext, and the private key stays off the box entirely.
+
+**Where snapshots live** is `KEN_BACKUP_DIR` (installer: `--backup-dir`), honoured by **both** the
+nightly timer and the pre-upgrade snapshot — set it and the whole archive moves, rather than splitting.
+Both settings are written into `ken-snapshot.service` and re-discovered on upgrade, so re-running the
+installer never relocates an existing archive or drops the group.
+
 ### Rotating the recipient, and old snapshots
 
 A snapshot can only ever be opened with the key it was encrypted to, and nothing in the file says

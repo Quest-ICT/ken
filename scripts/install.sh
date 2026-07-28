@@ -47,6 +47,13 @@ set -euo pipefail
 # ----------------------------------------------------------------------------
 PREFIX="/opt/ken"
 APP="ken"
+# Where snapshots land, and who may read them. Both empty = the shipped behaviour:
+# <prefix>/backups, files 0600 (owner + root only). On an UPGRADE both are re-discovered
+# from the installed unit when not given, so re-running the installer never relocates an
+# existing archive or silently drops a configured group.
+BACKUP_DIR=""
+BACKUP_GROUP=""
+NO_BACKUP_GROUP="no"    # --no-backup-group: revoke a previously configured group
 SVC_USER="ken"
 SVC_GROUP="ken"
 PORT=""                 # empty = keep the unit's KEN_ADDR (:8080; forced to :443 when TLS on)
@@ -276,6 +283,14 @@ Options:
   --firewall-ports LIST Comma-separated TCP ports to open instead of the
                         auto-computed set (implies --open-firewall), e.g.
                         --firewall-ports 443,80.
+  --backup-dir DIR      Where snapshots live (default: <prefix>/backups). Honoured by
+                        BOTH the nightly timer and the pre-upgrade snapshot, and
+                        remembered across upgrades.
+  --backup-group GRP    Let members of GRP READ snapshots (dir setgid, files 0640
+                        instead of 0600) so an unprivileged account can pull backups
+                        off-box without root. The group must already exist.
+  --no-backup-group     Revoke a previously configured --backup-group: snapshots go
+                        back to 0600 (owner only).
   --no-firewall         Never touch the host firewall (also skips the wizard
                         prompt). Overrides --open-firewall / --firewall-ports
                         regardless of order — use when testing on a machine
@@ -316,6 +331,9 @@ while [ $# -gt 0 ]; do
         --key)             TLS_KEY="${2:?--key needs a value}"; shift 2 ;;
         --open-firewall)   OPEN_FIREWALL="yes"; shift ;;
         --firewall-ports)  FIREWALL_PORTS="${2:?--firewall-ports needs a value}"; OPEN_FIREWALL="yes"; shift 2 ;;
+        --backup-dir)      BACKUP_DIR="${2:?--backup-dir needs a value}"; shift 2 ;;
+        --backup-group)    BACKUP_GROUP="${2:?--backup-group needs a value}"; NO_BACKUP_GROUP="no"; shift 2 ;;
+        --no-backup-group) NO_BACKUP_GROUP="yes"; BACKUP_GROUP=""; shift ;;
         --no-firewall)     NO_FIREWALL="yes"; shift ;;
         --no-start)        DO_START="no"; shift ;;
         --no-enable)       DO_ENABLE="no"; shift ;;
@@ -362,26 +380,26 @@ BUNDLE="$(dirname "$SCRIPTS_DIR")"
 # shellcheck source=ken-snapshot-lib.sh
 . "$SCRIPTS_DIR/ken-snapshot-lib.sh"
 
-# _ken_age_recipient — the effective KEN_AGE_RECIPIENT the operator configured for
+# _ken_unit_env <VAR> — the effective value of VAR the operator configured for
 # the NIGHTLY snapshots, so the pre-upgrade snapshot honors the same intent ("encrypt
 # my backups") instead of dropping a plaintext DB next to encrypted ones. Read from
 # the just-installed unit's merged environment (main unit + any `systemctl edit`
 # drop-in), with a direct file grep as a fallback. Empty = the operator has not opted
 # into encryption; the snapshot is then left plaintext 0600, exactly as a nightly is.
-_ken_age_recipient() {
+_ken_unit_env() {
     if command -v systemctl >/dev/null 2>&1; then
         # AUTHORITATIVE when systemd is present (which it is on any install target).
         # `systemctl show -p Environment` gives the unit's MERGED environment — main unit
         # plus any `systemctl edit` drop-in — and never surfaces #-commented lines. Its
-        # answer stands even when EMPTY (the common no-recipient default): we must NOT
-        # fall through to reading unit files then, because the bundled template ships a
-        # commented example that a file read could harvest as a bogus recipient (which
-        # would make the pre-upgrade snapshot fail closed and delete itself every upgrade).
-        ken_recipient_from_env "$(systemctl show ken-snapshot.service -p Environment 2>/dev/null || true)"
+        # answer stands even when EMPTY (the common default): we must NOT fall through to
+        # reading unit files then, because the bundled template ships a commented example
+        # that a file read could harvest as a bogus value (which would make the
+        # pre-upgrade snapshot fail closed and delete itself every upgrade).
+        ken_env_value "$(systemctl show ken-snapshot.service -p Environment 2>/dev/null || true)" "$1"
         return 0
     fi
     # No systemd (non-systemd host): read the unit files, comment-safe (see the lib).
-    ken_recipient_from_unit_files \
+    ken_env_value_from_unit_files "$1" \
         /etc/systemd/system/ken-snapshot.service \
         /etc/systemd/system/ken-snapshot.service.d/*.conf
 }
@@ -401,8 +419,16 @@ recompute_paths() {
     LINK="$PREFIX/current"
     DATA="$PREFIX/data"
     LOGS="$PREFIX/logs"
-    BACKUPS="$PREFIX/backups"
+    BACKUPS="${BACKUP_DIR:-$PREFIX/backups}"
 }
+
+# On an UPGRADE, re-discover the snapshot settings from the installed unit whenever the
+# operator did not pass them. Without this, re-running the installer would silently
+# relocate an existing archive back to the default — splitting it in half, since the
+# nightlies follow the unit while the pre-upgrade snapshots follow the installer — and
+# would drop a configured backup group on every upgrade.
+if [ -z "$BACKUP_DIR" ];   then BACKUP_DIR="$(_ken_unit_env KEN_BACKUP_DIR)"; fi
+if [ -z "$BACKUP_GROUP" ] && [ "$NO_BACKUP_GROUP" != "yes" ]; then BACKUP_GROUP="$(_ken_unit_env KEN_BACKUP_GROUP)"; fi
 recompute_paths
 
 # ----------------------------------------------------------------------------
@@ -445,6 +471,24 @@ fi
 case "$PREFIX" in /*) ;; *) die "--prefix must be an absolute path (got '$PREFIX')" ;; esac
 case "$PREFIX" in *[!A-Za-z0-9._/-]*) die "unsafe characters in --prefix: '$PREFIX'" ;; esac
 case "$SVC_USER" in '' | *[!A-Za-z0-9._-]*) die "unsafe --user: '$SVC_USER'" ;; esac
+# --backup-dir reaches the same rm -rf / sed / systemd surfaces as --prefix, so it gets
+# the same treatment. A relative path would make the versioned `backups` symlink dangle;
+# a space or sed metacharacter would corrupt the unit and the value re-discovered from it.
+if [ -n "$BACKUP_DIR" ]; then
+    case "$BACKUP_DIR" in /*) ;; *) die "--backup-dir must be an absolute path (got '$BACKUP_DIR')" ;; esac
+    case "$BACKUP_DIR" in *[!A-Za-z0-9._/-]*) die "unsafe characters in --backup-dir: '$BACKUP_DIR'" ;; esac
+fi
+# Resolve the backup group HERE, before anything is written. A group that does not exist
+# must not reach the unit: the nightly would then fail safe to 0600 every run while the
+# unit claimed otherwise, and the bogus value would be re-discovered on every upgrade.
+if [ -n "$BACKUP_GROUP" ]; then
+    case "$BACKUP_GROUP" in *[!A-Za-z0-9._-]*) die "unsafe --backup-group: '$BACKUP_GROUP'" ;; esac
+    if ! getent group "$BACKUP_GROUP" >/dev/null 2>&1; then
+        warn "backup group '$BACKUP_GROUP' does not exist — ignoring it; snapshots stay 0600."
+        warn "  create it first:  groupadd $BACKUP_GROUP && usermod -aG $BACKUP_GROUP <pull-account>"
+        BACKUP_GROUP=""
+    fi
+fi
 case "$SVC_GROUP" in '' | *[!A-Za-z0-9._-]*) die "unsafe --group: '$SVC_GROUP'" ;; esac
 [ -z "$PORT" ] || case "$PORT" in *[!0-9]*) die "--port must be numeric: '$PORT'" ;; esac
 case "$TLS_MODE" in
@@ -526,7 +570,11 @@ run mkdir -p "$DATA" "$LOGS" "$BACKUPS"
 # KEN_HOME=$LINK resolves them and the code dir carries no state of its own.
 for d in data logs backups; do
     run rm -rf "$DEST/$d"
-    run ln -sfn "$PREFIX/$d" "$DEST/$d"
+    if [ "$d" = "backups" ]; then
+        run ln -sfn "$BACKUPS" "$DEST/$d"    # follows --backup-dir, not just $PREFIX
+    else
+        run ln -sfn "$PREFIX/$d" "$DEST/$d"
+    fi
 done
 
 # ----------------------------------------------------------------------------
@@ -576,6 +624,21 @@ if command -v systemctl >/dev/null 2>&1; then
         -e "s|^ReadWritePaths=.*|ReadWritePaths=$DATA $BACKUPS|" \
         "$SNAP_TMP"
 
+    # Put the snapshot settings in the unit so the nightly script and the installer's
+    # pre-upgrade snapshot resolve the SAME directory and group — the divergence that
+    # otherwise splits the archive in half. Injected after KEN_DB, like the TLS block.
+    SNAP_ENV=""
+    if [ -n "$BACKUP_DIR" ]; then
+        SNAP_ENV="Environment=KEN_BACKUP_DIR=$BACKUPS"
+    fi
+    if [ -n "$BACKUP_GROUP" ]; then
+        if [ -n "$SNAP_ENV" ]; then SNAP_ENV="$SNAP_ENV\n"; fi
+        SNAP_ENV="${SNAP_ENV}Environment=KEN_BACKUP_GROUP=$BACKUP_GROUP"
+    fi
+    if [ -n "$SNAP_ENV" ]; then
+        sed -i "/^Environment=KEN_DB=.*/a $SNAP_ENV" "$SNAP_TMP"
+    fi
+
     log "installing systemd units to /etc/systemd/system/"
     run install -o root -g root -m 0644 "$SVC_TMP"   /etc/systemd/system/ken.service
     run install -o root -g root -m 0644 "$SNAP_TMP"  /etc/systemd/system/ken-snapshot.service
@@ -599,11 +662,11 @@ if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then
     # UTC-Z stamp (self-describing, sorts in time order — not the old local, unmarked
     # stamp that read six hours off the nightlies), 0600 mode, and age-encryption when
     # the operator has configured a recipient for their backups. `ken_snapshot_stamp`
-    # and `_ken_age_recipient` are read-only, so they run outside `run`; the snapshot
+    # and `_ken_unit_env` are read-only, so they run outside `run`; the snapshot
     # write and `ken_snapshot_secure` (which touch the disk) go through it, so
     # --dry-run only prints them.
     _presnap="$BACKUPS/pre-upgrade-$(ken_snapshot_stamp).db"
-    _recipient="$(_ken_age_recipient)"
+    _recipient="$(_ken_unit_env KEN_AGE_RECIPIENT)"
     log "pre-upgrade snapshot -> $_presnap${_recipient:+ (age-encrypted)}"
     if run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap"; then
         # Best-effort, and FAIL CLOSED on encryption: if a recipient is set but the
@@ -611,7 +674,7 @@ if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then
         # non-zero — we warn and proceed rather than leave a plaintext DB copy the
         # operator asked to have encrypted. A missing rollback point never aborts an
         # upgrade; the live DB is untouched either way.
-        run ken_snapshot_secure "$_presnap" "$_recipient" \
+        run ken_snapshot_secure "$_presnap" "$_recipient" "$BACKUP_GROUP" \
             || warn "pre-upgrade snapshot could not be secured (see above) — continuing; your live DB is untouched"
     else
         warn "pre-upgrade snapshot failed — continuing; your live DB is untouched"
@@ -635,10 +698,43 @@ run chown -Rh root:root "$RELEASES"
 run chmod -R u=rwX,go=rX "$DEST"
 run chmod 0755 "$DEST/bin/ken" "$DEST/scripts/ken.sh" "$DEST/scripts/ken-snapshot.sh"
 
-run chown -R "$SVC_USER:$SVC_GROUP" "$DATA" "$LOGS" "$BACKUPS"
-run chmod 0750 "$DATA" "$LOGS" "$BACKUPS"
+run chown -R "$SVC_USER:$SVC_GROUP" "$DATA" "$LOGS"
+run chmod 0750 "$DATA" "$LOGS"
 # setgid on state dirs so files created at runtime inherit the group.
-run find "$DATA" "$LOGS" "$BACKUPS" -type d -exec chmod g+s {} +
+run find "$DATA" "$LOGS" -type d -exec chmod g+s {} +
+
+# The backups directory is handled separately and NON-recursively. With --backup-dir it
+# can be a location the operator already uses for other things, and a blanket `chown -R`
+# / `chmod` there would rewrite files that are not ours. Only the directory itself and
+# the snapshots we actually manage (ken-* / pre-upgrade-*) are touched.
+run chown "$SVC_USER:$SVC_GROUP" "$BACKUPS"
+run chmod 0750 "$BACKUPS"
+run find "$BACKUPS" -maxdepth 1 -type f \( -name 'ken-*' -o -name 'pre-upgrade-*' \) \
+    -exec chown "$SVC_USER:$SVC_GROUP" {} +
+
+# Off-box backup access (opt-in, --backup-group). The generic block above just set the
+# archive to ken:ken 0750/0600, which only root and the nologin service account can read
+# — so pulling a backup off the host required a root-authorized key or a root job staging
+# copies. Giving the archive a second, unprivileged group is the smaller grant: the dir
+# becomes setgid to it (so every new snapshot inherits the group with no runtime chgrp)
+# and snapshot files become 0640. Fails SAFE: an unknown group warns and changes nothing,
+# leaving the strict 0600 posture rather than a half-applied one.
+if [ -n "$BACKUP_GROUP" ]; then
+    # (Existence was verified in section 0b; an unknown group was cleared there.)
+    log "backup group: $BACKUP_GROUP may read snapshots (dir setgid, files 0640)"
+    run chgrp "$BACKUP_GROUP" "$BACKUPS"
+    run chmod 2750 "$BACKUPS"        # setgid: new snapshots inherit the group, no runtime chgrp
+    run find "$BACKUPS" -maxdepth 1 -type f \( -name 'ken-*' -o -name 'pre-upgrade-*' \) \
+        -exec chgrp "$BACKUP_GROUP" {} + -exec chmod 0640 {} +
+elif [ "$NO_BACKUP_GROUP" = "yes" ]; then
+    # Explicit revocation: put the archive back to owner-only. Without this there is no
+    # way back from a widening — a plain re-run would re-discover the group from the unit.
+    log "backup group: revoked — snapshots back to 0600, owner only"
+    run chgrp "$SVC_GROUP" "$BACKUPS"
+    run chmod 0750 "$BACKUPS"
+    run find "$BACKUPS" -maxdepth 1 -type f \( -name 'ken-*' -o -name 'pre-upgrade-*' \) \
+        -exec chgrp "$SVC_GROUP" {} + -exec chmod 0600 {} +
+fi
 [ -e "$DATA/dedup.key" ] && run chmod 0600 "$DATA/dedup.key"
 
 # ----------------------------------------------------------------------------
