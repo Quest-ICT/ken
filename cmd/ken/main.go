@@ -567,7 +567,18 @@ func runServe(args []string) {
 func mustOpenStore(dbPath string) *store.Store {
 	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
-			log.Fatalf("create data dir: %v", err)
+			// Name the CAUSE, not just the symptom. The overwhelmingly common way to
+			// reach this is running a subcommand without KEN_DB, so dbPath is the
+			// RELATIVE default and the failure is about the current directory — an
+			// error reading "mkdir data: permission denied" sends the reader to check
+			// permissions on a directory they never meant to use, instead of setting
+			// the variable. Only say so when the path really is the relative default.
+			if !filepath.IsAbs(dbPath) && os.Getenv("KEN_DB") == "" {
+				log.Fatalf("create data dir %q: %v\n"+
+					"KEN_DB is not set, so this fell back to the relative default %q — "+
+					"set KEN_DB to your database path, e.g. KEN_DB=/opt/ken/data/ken.db", dir, err, dbPath)
+			}
+			log.Fatalf("create data dir %q: %v", dir, err)
 		}
 	}
 	st, err := store.Open(dbPath)

@@ -15,6 +15,20 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+- **`ken backup snapshot`/`verify` now name the real cause when `KEN_DB` is unset.** The command fell
+  back to a *relative* `./data` and failed with `create data dir: mkdir data: permission denied` — which
+  sends the reader to check permissions on a directory they never meant to use, instead of setting the
+  variable. It now says which variable is missing and what it fell back to, and only when the path
+  really is the relative default (a genuine permission problem still reports plainly). The docs that
+  showed the command without `KEN_DB` are fixed too. Reported from production, which hit it running the
+  verification step from a handout.
+- **Documented that upgrading to 1.4.1 *defuses* an archive of older snapshots** — so do it in that
+  order. Pre-1.4.1 snapshots contain session cookies that were replayable against the live server;
+  migration `0011` clears the session table, which makes every one of those embedded cookies point at a
+  row that no longer exists. Re-encrypting or shipping an old archive off-box *before* upgrading means
+  carefully protecting a live credential. Found in production while preparing exactly that migration.
+
 ## [1.4.1] — 2026-07-28
 
 > **Upgrading logs every curator out once.** Session ids are now stored hashed, and existing rows

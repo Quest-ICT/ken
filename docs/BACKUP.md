@@ -52,7 +52,10 @@ one rather than a default you never noticed.
 ## Make / verify a snapshot manually
 
 ```sh
-ken backup snapshot --out /tmp/ken-$(date -u +%Y%m%dT%H%M%SZ).db   # consistent copy + integrity check
+KEN_DB=/opt/ken/data/ken.db \
+  ken backup snapshot --out /tmp/ken-$(date -u +%Y%m%dT%H%M%SZ).db   # consistent copy + integrity check
+                                                                     # (KEN_DB required: it otherwise
+                                                                     #  falls back to a relative ./data)
 ken backup verify   /tmp/ken-….db                                  # integrity_check + FK check + FTS5 integrity + MATCH canary + embedding parity + entry count
 ```
 
@@ -318,6 +321,14 @@ which one that is. So:
   `age -d -i age-2026.key -i age-2025.key -o … <file>.age`.
 - After rotating, take one snapshot immediately (`systemctl start ken-snapshot.service`) and run the
   drill above against it with the **new** key.
+
+> **Holding an archive of snapshots taken before 1.4.1? Upgrade FIRST, then handle them.** Until 1.4.1
+> session ids were stored in the clear, so a pre-1.4.1 snapshot contains cookies that were replayable
+> against the live server. Migration `0011` clears the session table — which means **upgrading makes
+> every cookie embedded in those old snapshots point at a row that no longer exists.** They become
+> inert. Do it in the other order — re-encrypting or shipping the archive off-box first, then upgrading
+> — and you spend effort carefully protecting a live credential. (Found in production while preparing
+> exactly that migration of an old archive.)
 
 **Upgrading from 1.2.x?** Before 1.3.0 the pre-upgrade snapshot was always written in plaintext (with
 a local, unmarked timestamp), even on hosts with encrypted nightlies. Those files are full copies of

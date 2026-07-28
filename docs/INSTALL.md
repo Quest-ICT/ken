@@ -392,7 +392,8 @@ Ken has no git mirror, so backups are non-negotiable — and are set up for you:
 Make/verify a snapshot by hand:
 
 ```sh
-sudo -u ken /opt/ken/current/bin/ken backup snapshot --out /tmp/ken-$(date -u +%Y%m%dT%H%M%SZ).db
+# KEN_DB is required: without it the command falls back to a RELATIVE ./data and fails.
+sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken backup snapshot --out /tmp/ken-$(date -u +%Y%m%dT%H%M%SZ).db
 sudo -u ken /opt/ken/current/bin/ken backup verify   /tmp/ken-….db
 ```
 
