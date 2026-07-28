@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -69,5 +71,31 @@ func TestVerifySnapshotEmbeddingParity(t *testing.T) {
 	}
 	if _, err := VerifySnapshot(ctx, bad); err == nil {
 		t.Fatal("expected VerifySnapshot to reject an inconsistent vector length")
+	}
+}
+
+// A snapshot is a byte-complete copy of the knowledge base, so its mode is part of
+// writing it correctly — not something the caller may forget. The bug this pins: the
+// mode used to come from the ambient umask (0644 under the usual 0022), so every
+// hand-run `ken backup snapshot --out /tmp/…` documented in the runbooks produced a
+// world-readable full dump in a 1777 directory.
+func TestSnapshotIsOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	st := newStore(t)
+
+	// A permissive umask must NOT be able to widen the result.
+	old := syscall.Umask(0o000)
+	defer syscall.Umask(old)
+
+	dest := filepath.Join(dir, "snap.db")
+	if err := st.Snapshot(context.Background(), dest); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("snapshot mode = %04o, want 0600 (a full copy of the KB must be owner-only)", got)
 	}
 }

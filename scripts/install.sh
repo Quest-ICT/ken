@@ -668,16 +668,16 @@ if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then
     _presnap="$BACKUPS/pre-upgrade-$(ken_snapshot_stamp).db"
     _recipient="$(_ken_unit_env KEN_AGE_RECIPIENT)"
     log "pre-upgrade snapshot -> $_presnap${_recipient:+ (age-encrypted)}"
-    # umask 077 for the same reason the snapshot unit sets UMask=0077: the securing step
-    # below only runs AFTER the whole file is written, so without this the dump sits at
-    # root's 0644 for its entire duration.
+    # umask 077 for the same reason the snapshot unit sets UMask=0077: a mode applied
+    # after the bytes are written leaves a window. It wraps the SECURING step as well as
+    # the dump, so the .age `age` produces is 0600 from creation too, not 0644-then-fixed.
     if (umask 077; run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap"); then
         # Best-effort, and FAIL CLOSED on encryption: if a recipient is set but the
         # encrypt cannot happen, ken_snapshot_secure removes the plaintext and returns
         # non-zero — we warn and proceed rather than leave a plaintext DB copy the
         # operator asked to have encrypted. A missing rollback point never aborts an
         # upgrade; the live DB is untouched either way.
-        run ken_snapshot_secure "$_presnap" "$_recipient" "$BACKUP_GROUP" \
+        (umask 077; run ken_snapshot_secure "$_presnap" "$_recipient" "$BACKUP_GROUP") \
             || warn "pre-upgrade snapshot could not be secured (see above) — continuing; your live DB is untouched"
     else
         warn "pre-upgrade snapshot failed — continuing; your live DB is untouched"

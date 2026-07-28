@@ -70,6 +70,11 @@ the nightlies; it is exempt from nightly retention and kept as a rollback point.
 
 ## Restore
 
+> **Staging plaintext:** `ken backup snapshot` and `ken backup verify` write `0600` themselves, so a
+> hand-run snapshot is owner-only wherever you put it. `age -d` does **not** — it creates its output at
+> your umask. When you decrypt to a scratch path below, run `umask 077` first (or decrypt into a `0700`
+> directory), so the decrypted knowledge base is not left world-readable in `/tmp`.
+
 **Before you start:** the restore host needs the `age` binary **and** your escrowed private key
 (`age.key`) — neither lives on the Ken server. A nightly is `ken-<stamp>.db.age`; the rollback point
 the installer takes before an upgrade is `pre-upgrade-<stamp>.db.age` (or `.db` if you have not
@@ -82,7 +87,8 @@ cd /opt/ken/data
 mv ken.db ken.db.pre-restore 2>/dev/null || true     # keep the outgoing file until the new one verifies
 rm -f ken.db-wal ken.db-shm                          # stale sidecars belong to the OLD db — drop them FIRST
 
-# encrypted snapshot:
+# encrypted snapshot (umask first: age creates its output at your umask):
+umask 077
 age -d -i /path/to/age.key -o /tmp/ken-restore.db /opt/ken/backups/ken-<stamp>.db.age
 # plaintext snapshot (the default if you never set a recipient):
 # cp /opt/ken/backups/ken-<stamp>.db /tmp/ken-restore.db
@@ -211,6 +217,7 @@ the machine that holds `age.key` — it needs `age` installed too:
 
 ```sh
 scp ken@host:/opt/ken/backups/ken-<stamp>.db.age .
+umask 077                                                # age honours the umask; ken's own writes do not need it
 age -d -i age.key -o /tmp/drill.db ken-<stamp>.db.age    # proves the KEY matches
 /opt/ken/current/bin/ken backup verify /tmp/drill.db     # proves the PLAINTEXT is a sound DB
 shred -u /tmp/drill.db

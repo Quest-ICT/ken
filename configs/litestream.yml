@@ -1,3 +1,9 @@
+# TEMPLATE — do NOT fill your S3 credentials in THIS copy.
+# It lives in the versioned release tree, which is world-readable and is REPLACED on
+# every upgrade: real keys here would be readable by any local account and silently
+# lost the next time you upgrade. Copy it somewhere private first, e.g.
+#   install -m 0600 -o root -g root this-file /etc/ken/litestream.yml
+# and point litestream at that copy.
 # Litestream — continuous replication of the ken SQLite database to S3-compatible
 # object storage (backup tier 1, ~1s RPO). Install litestream separately and run
 # it as its own service (`litestream replicate -config /etc/ken/litestream.yml`).

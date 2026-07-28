@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/ncruces/go-sqlite3/driver"
 	"github.com/ncruces/go-sqlite3/ext/fts5"
@@ -11,9 +12,24 @@ import (
 
 // Snapshot writes a consistent copy of the database to dest via VACUUM INTO —
 // safe on a live WAL database (no torn file). dest must not already exist.
+//
+// The result is chmod'd 0600 HERE, not left to the caller. A snapshot is a
+// byte-complete copy of the knowledge base — every entry, the full curation history,
+// curator accounts and token records — so its mode is part of writing it correctly,
+// not a courtesy the caller may forget. SQLite creates the file at the process umask
+// (0644 under the usual 0022), and callers that only *document* a safe umask leave
+// every hand-run `ken backup snapshot --out …` world-readable: the shell wrappers
+// cannot protect an operator following the runbook by hand.
+//
+// The umask is also narrowed for the duration of the write (see the CLI), so the file
+// is 0600 from creation rather than only once VACUUM INTO returns; this chmod is the
+// backstop that holds no matter which caller invoked us.
 func (s *Store) Snapshot(ctx context.Context, dest string) error {
 	if _, err := s.W.ExecContext(ctx, `VACUUM INTO ?`, dest); err != nil {
 		return fmt.Errorf("vacuum into %s: %w", dest, err)
+	}
+	if err := os.Chmod(dest, 0o600); err != nil {
+		return fmt.Errorf("securing snapshot %s: %w", dest, err)
 	}
 	return nil
 }

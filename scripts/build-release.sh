@@ -165,7 +165,7 @@ for arch in $ARCHES; do
     # Operator docs + optional Litestream template.
     [ -f "$REPO/docs/INSTALL.md" ] && install -m 0644 "$REPO/docs/INSTALL.md" "$stage/docs/INSTALL.md"
     [ -f "$REPO/docs/BACKUP.md" ]  && install -m 0644 "$REPO/docs/BACKUP.md"  "$stage/docs/BACKUP.md"
-    [ -f "$REPO/configs/litestream.yml" ] && install -m 0644 "$REPO/configs/litestream.yml" "$stage/configs/litestream.yml"
+    [ -f "$REPO/configs/litestream.yml" ] && install -m 0640 "$REPO/configs/litestream.yml" "$stage/configs/litestream.yml"
 
     # License + third-party notices (required for AGPL distribution).
     install -m 0644 "$REPO/LICENSE" "$stage/LICENSE"

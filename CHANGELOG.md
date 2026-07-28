@@ -15,6 +15,24 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+- **`ken backup snapshot` wrote a world-readable copy of the knowledge base.** The mode came from the
+  ambient umask (`0644` under the usual `0022`) and was only corrected by the two *shell* callers — so
+  an operator running the command by hand, exactly as `BACKUP.md` and `INSTALL.md` instruct, got a
+  byte-complete dump of every entry, curation history, curator account and token record at `0644` —
+  and both runbooks point at `/tmp`, which is world-writable and world-readable. `Snapshot` now chmods
+  `0600` itself and the `backup` subcommand narrows its umask, so the file is owner-only from creation
+  regardless of caller or umask; the shell guards become belt-and-braces. Found by auditing the
+  assumption that only `ken` and root ever read Ken's data — an assumption a backup group makes false.
+- **The live database was `0644`.** `ken.service` set no `UMask`, so `ken.db`, its WAL sidecars and the
+  COMM database were created group- and world-readable, contained only by the `0750` directory around
+  them. Nothing could reach them on-box, but the protection was the *directory*, not the file — and a
+  mode travels with a copy while a directory mode does not. The unit now sets `UMask=0077`.
+- The installer's `umask 077` now also covers the securing step, so an encrypted pre-upgrade snapshot
+  is `0600` from creation rather than `0644`-then-fixed; and the bundled `configs/litestream.yml`
+  template ships `0640` with a header warning **not** to fill credentials into that copy — it lives in
+  the world-readable release tree and is replaced on every upgrade.
+
 ### Changed
 - **Documented that enabling `KEN_BACKUP_GROUP` / `KEN_BACKUP_DIR` is a one-time root action**, and
   recorded in [`scripts/ken-upgrade`](scripts/ken-upgrade) why they are deliberately **not** in the
