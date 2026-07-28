@@ -150,9 +150,12 @@ for arch in $ARCHES; do
         go build -trimpath -ldflags "$LDFLAGS" -o "$stage/bin/ken" ./cmd/ken )
 
     # Runtime + installer scripts (NOT the packaging scripts).
-    install -m 0755 "$SCRIPTS_DIR/install.sh"       "$stage/scripts/install.sh"
-    install -m 0755 "$SCRIPTS_DIR/ken.sh"           "$stage/scripts/ken.sh"
-    install -m 0755 "$SCRIPTS_DIR/ken-snapshot.sh"  "$stage/scripts/ken-snapshot.sh"
+    install -m 0755 "$SCRIPTS_DIR/install.sh"          "$stage/scripts/install.sh"
+    install -m 0755 "$SCRIPTS_DIR/ken.sh"              "$stage/scripts/ken.sh"
+    install -m 0755 "$SCRIPTS_DIR/ken-snapshot.sh"     "$stage/scripts/ken-snapshot.sh"
+    # Sourced by ken-snapshot.sh AND install.sh (shared naming/securing policy); not
+    # executed, so 0644. Both the nightly and the pre-upgrade snapshot break without it.
+    install -m 0644 "$SCRIPTS_DIR/ken-snapshot-lib.sh" "$stage/scripts/ken-snapshot-lib.sh"
 
     # systemd unit templates.
     install -m 0644 "$REPO/deploy/ken.service"          "$stage/deploy/ken.service"

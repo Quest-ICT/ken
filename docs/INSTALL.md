@@ -261,6 +261,14 @@ sudo ln -sfn /opt/ken/releases/<old-version> /opt/ken/current
 sudo systemctl restart ken
 ```
 
+Before it flips the symlink, the installer takes a **pre-upgrade snapshot** of the
+live database into `backups/pre-upgrade-<UTC-Z>.db` — the same naming and securing
+policy as the nightly snapshot (`scripts/ken-snapshot-lib.sh`): mode `0600`, and
+**age-encrypted** (`.db.age`) whenever you have configured a recipient for the
+nightlies (see below). It is best-effort — a snapshot failure never aborts the
+upgrade, and your live DB is untouched — and it is exempt from nightly retention,
+so it stays as a rollback point until you remove it.
+
 ---
 
 ## Uninstall

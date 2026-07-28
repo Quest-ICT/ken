@@ -7,8 +7,13 @@ User=ken
 Group=ken
 Environment=KEN_HOME=/opt/ken
 Environment=KEN_DB=/opt/ken/data/ken.db
-# Recommended: an age recipient so the snapshot is encrypted non-interactively.
-# Environment=KEN_AGE_RECIPIENT=age1yourpublickey...
+# Recommended: set an age recipient so snapshots are encrypted non-interactively.
+# Add KEN_AGE_RECIPIENT (an age1… public key) as an UPGRADE-SAFE drop-in — the
+# installer rewrites this unit on every upgrade, but drop-ins survive:
+#     sudo systemctl edit ken-snapshot.service
+# (This comment deliberately carries no example VALUE: the installer reads the
+#  recipient from the unit's live environment, so a placeholder here must never
+#  look like a real key.)
 ExecStart=/opt/ken/scripts/ken-snapshot.sh
 NoNewPrivileges=true
 ProtectSystem=strict

@@ -12,6 +12,10 @@ set -euo pipefail
 
 SELF="$(readlink -f "$0")"
 SCRIPT_DIR="$(dirname "$SELF")"
+# Snapshot naming + securing policy is shared with the installer's pre-upgrade
+# snapshot, so the two can never drift on timezone, mode, or encryption again.
+# shellcheck source=ken-snapshot-lib.sh
+. "$SCRIPT_DIR/ken-snapshot-lib.sh"
 KEN_HOME="${KEN_HOME:-$(dirname "$SCRIPT_DIR")}"
 KEN_BIN="${KEN_BIN:-$KEN_HOME/bin/ken}"
 export KEN_DB="${KEN_DB:-$KEN_HOME/data/ken.db}"
@@ -21,33 +25,20 @@ case "$KEEP" in '' | *[!0-9]*) echo "[ken-snapshot] WARNING: invalid KEN_BACKUP_
 [ "$KEEP" -ge 1 ] 2>/dev/null || KEEP=14
 
 mkdir -p "$BACKUP_DIR"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-RAW="$BACKUP_DIR/ken-$STAMP.db"
-ENC="$RAW.age"
+RAW="$BACKUP_DIR/ken-$(ken_snapshot_stamp).db"
 
 # Consistent copy + mandatory integrity check (fails loudly on corruption).
 "$KEN_BIN" backup snapshot --out "$RAW"
-chmod 600 "$RAW"   # lock down the plaintext immediately, before any encryption step
 
+# Lock the mode down and (if a recipient is set) age-encrypt, leak-safe. The shared
+# helper is the single home for that policy; it returns non-zero only when an
+# INTENDED encryption did not happen (and it has already removed the plaintext),
+# which we turn into a non-zero exit below so systemd flags the run.
 FAILED=0
-if [ -n "${KEN_AGE_RECIPIENT:-}" ]; then
-  if command -v age >/dev/null 2>&1; then
-    if age -r "$KEN_AGE_RECIPIENT" -o "$ENC" "$RAW"; then
-      chmod 600 "$ENC"
-      rm -f "$RAW"   # remove the plaintext ONLY after a successful encrypt
-      echo "[ken-snapshot] wrote $ENC"
-    else
-      echo "[ken-snapshot] ERROR: age encryption failed — removing plaintext, no snapshot kept this run" >&2
-      rm -f "$RAW" "$ENC"
-      FAILED=1
-    fi
-  else
-    echo "[ken-snapshot] ERROR: KEN_AGE_RECIPIENT set but 'age' is not installed — removing plaintext" >&2
-    rm -f "$RAW"
-    FAILED=1
-  fi
+if FINAL="$(ken_snapshot_secure "$RAW" "${KEN_AGE_RECIPIENT:-}")"; then
+  [ -n "$FINAL" ] && echo "[ken-snapshot] wrote $FINAL"
 else
-  echo "[ken-snapshot] WARNING: KEN_AGE_RECIPIENT not set — snapshot left UNENCRYPTED (0600) at $RAW" >&2
+  FAILED=1
 fi
 
 # Retention: keep the newest $KEEP snapshots (KEEP validated >= 1 above).

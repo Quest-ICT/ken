@@ -53,6 +53,28 @@ same change — never "docs later".
   that make percentiles possible. Metric names and types are outside the compatibility contract
   ([COMPATIBILITY.md](COMPATIBILITY.md)); no dashboard query over `_sum`/`_count` breaks.
 
+### Fixed
+- **The installer's pre-upgrade snapshot now uses the same UTC, self-describing filenames as the
+  nightly snapshot — and is age-encrypted when the nightlies are.** The two snapshot paths had
+  drifted: the nightly stamped `ken-<UTC>T…Z.db`, while the installer's pre-upgrade snapshot stamped
+  `pre-upgrade-<LOCAL, unmarked>.db` and never encrypted. Two consequences, both reported from
+  production: (1) one `backups/` directory carried two time conventions six hours apart, which sent an
+  operator investigating a **non-existent clock fault** (the local, unmarked name read six hours off a
+  UTC one; both clocks were fine); and (2) the pre-upgrade snapshot — a full copy of the database taken
+  seconds before an upgrade — was written in **plaintext** even on hosts where the operator had
+  configured encrypted nightlies. Both are fixed: the pre-upgrade snapshot is now
+  `pre-upgrade-<UTC>T…Z.db`, and it is age-encrypted (`.db.age`) whenever a `KEN_AGE_RECIPIENT` is set
+  for the nightly timer. Everything sorts by mtime, so no retention or restore path changes. The
+  unmarked local stamp was also a latent portability hazard on DST hosts (names run backwards for an
+  hour each autumn); the UTC stamp removes it.
+- **The naming and securing policy now lives in one shared library** (`scripts/ken-snapshot-lib.sh`,
+  sourced by both `ken-snapshot.sh` and `install.sh`) instead of being re-implemented in each path.
+  This is the root-cause fix behind the two symptoms above and the `0600`-mode fix in 1.2.1 — all three
+  were the pre-upgrade path failing to do something the nightly path already did. The library
+  age-encrypts **fail-closed**: if a recipient is set but encryption cannot happen, the plaintext is
+  removed rather than left behind. The pre-upgrade snapshot stays best-effort — a failure never aborts
+  an upgrade.
+
 ## [1.2.2] — 2026-07-27
 
 ### Changed

@@ -36,6 +36,15 @@ ken backup verify   /tmp/ken-….db                                  # integrity
 it fails loudly on corruption. The nightly `ken-snapshot.sh` wraps this, age-encrypts
 the output, and prunes to `KEN_BACKUP_KEEP` (default 14).
 
+Naming and securing are shared, not duplicated. `scripts/ken-snapshot-lib.sh` is the one
+home for the snapshot **stamp** (UTC, `…T…Z` — self-describing and time-sortable) and the
+**secure** step (chmod `0600`, then age-encrypt when a recipient is set, removing the
+plaintext only after a confirmed encrypt). Both the nightly snapshot **and the installer's
+pre-upgrade snapshot** (`backups/pre-upgrade-<UTC-Z>.db`, taken before an upgrade flips the
+`current` symlink) go through it, so the two can never drift on timezone, mode, or
+encryption. The pre-upgrade snapshot is age-encrypted whenever you have set a recipient for
+the nightlies; it is exempt from nightly retention and kept as a rollback point.
+
 ## Restore
 
 **From a snapshot (tier 2/3):**

@@ -44,5 +44,10 @@ jobs:
         run: go test ./...
         env: { CGO_ENABLED: "0" }
 
+      # Shell: the shared snapshot library carries security-critical logic (leak-safe
+      # encryption, comment-safe recipient parsing) that Go tests don't reach.
+      - name: snapshot-lib tests
+        run: bash scripts/ken-snapshot-lib.test.sh
+
       - name: public hygiene gate
         run: sh scripts/check-public-hygiene.sh

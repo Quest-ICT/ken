@@ -354,6 +354,37 @@ SCRIPTS_DIR="$(dirname "$SELF")"
 BUNDLE="$(dirname "$SCRIPTS_DIR")"
 
 [ -x "$BUNDLE/bin/ken" ] || die "no ken binary at $BUNDLE/bin/ken — is this a complete bundle?"
+
+# The pre-upgrade snapshot (§5b) uses the SAME naming + securing policy as the
+# nightly snapshot — one shared library, so the two can never drift on timezone,
+# mode, or encryption. It ships in every bundle alongside ken-snapshot.sh.
+[ -f "$SCRIPTS_DIR/ken-snapshot-lib.sh" ] || die "missing $SCRIPTS_DIR/ken-snapshot-lib.sh — is this a complete bundle?"
+# shellcheck source=ken-snapshot-lib.sh
+. "$SCRIPTS_DIR/ken-snapshot-lib.sh"
+
+# _ken_age_recipient — the effective KEN_AGE_RECIPIENT the operator configured for
+# the NIGHTLY snapshots, so the pre-upgrade snapshot honors the same intent ("encrypt
+# my backups") instead of dropping a plaintext DB next to encrypted ones. Read from
+# the just-installed unit's merged environment (main unit + any `systemctl edit`
+# drop-in), with a direct file grep as a fallback. Empty = the operator has not opted
+# into encryption; the snapshot is then left plaintext 0600, exactly as a nightly is.
+_ken_age_recipient() {
+    if command -v systemctl >/dev/null 2>&1; then
+        # AUTHORITATIVE when systemd is present (which it is on any install target).
+        # `systemctl show -p Environment` gives the unit's MERGED environment — main unit
+        # plus any `systemctl edit` drop-in — and never surfaces #-commented lines. Its
+        # answer stands even when EMPTY (the common no-recipient default): we must NOT
+        # fall through to reading unit files then, because the bundled template ships a
+        # commented example that a file read could harvest as a bogus recipient (which
+        # would make the pre-upgrade snapshot fail closed and delete itself every upgrade).
+        ken_recipient_from_env "$(systemctl show ken-snapshot.service -p Environment 2>/dev/null || true)"
+        return 0
+    fi
+    # No systemd (non-systemd host): read the unit files, comment-safe (see the lib).
+    ken_recipient_from_unit_files \
+        /etc/systemd/system/ken-snapshot.service \
+        /etc/systemd/system/ken-snapshot.service.d/*.conf
+}
 if [ -f "$BUNDLE/VERSION" ]; then
     VERSION="$(head -n1 "$BUNDLE/VERSION" | tr -d '[:space:]')"
 fi
@@ -564,18 +595,24 @@ fi
 # DB is untouched. The chown -R below fixes ownership of the snapshot (and any WAL
 # sidecar files the read left behind). Skipped on a fresh install (no DB yet).
 if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then
-    _presnap="$BACKUPS/pre-upgrade-$(date +%Y%m%d-%H%M%S).db"
-    log "pre-upgrade snapshot -> $_presnap"
+    # Name and secure it through the SAME shared policy as the nightly snapshot: a
+    # UTC-Z stamp (self-describing, sorts in time order — not the old local, unmarked
+    # stamp that read six hours off the nightlies), 0600 mode, and age-encryption when
+    # the operator has configured a recipient for their backups. `ken_snapshot_stamp`
+    # and `_ken_age_recipient` are read-only, so they run outside `run`; the snapshot
+    # write and `ken_snapshot_secure` (which touch the disk) go through it, so
+    # --dry-run only prints them.
+    _presnap="$BACKUPS/pre-upgrade-$(ken_snapshot_stamp).db"
+    _recipient="$(_ken_age_recipient)"
+    log "pre-upgrade snapshot -> $_presnap${_recipient:+ (age-encrypted)}"
     if run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap"; then
-        # Lock the mode down IMMEDIATELY, mirroring scripts/ken-snapshot.sh. The
-        # snapshot is a full copy of the database — more sensitive than the live
-        # ken.db — but `ken backup snapshot` writes it at root's umask (0644). The
-        # chown -R later fixes ownership, never mode, so without this the file keeps
-        # world-read. The containing dir (0750) blocks traversal on the box, but a
-        # file mode travels with COPIES: an off-box backup of $BACKUPS lands a
-        # world-readable database wherever it goes. Do it here, before the symlink
-        # flip, so a snapshot is never briefly loose.
-        run chmod 0600 "$_presnap"
+        # Best-effort, and FAIL CLOSED on encryption: if a recipient is set but the
+        # encrypt cannot happen, ken_snapshot_secure removes the plaintext and returns
+        # non-zero — we warn and proceed rather than leave a plaintext DB copy the
+        # operator asked to have encrypted. A missing rollback point never aborts an
+        # upgrade; the live DB is untouched either way.
+        run ken_snapshot_secure "$_presnap" "$_recipient" \
+            || warn "pre-upgrade snapshot could not be secured (see above) — continuing; your live DB is untouched"
     else
         warn "pre-upgrade snapshot failed — continuing; your live DB is untouched"
     fi
