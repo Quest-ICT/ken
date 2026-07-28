@@ -597,7 +597,7 @@ if command -v systemctl >/dev/null 2>&1; then
         -e "s|^Environment=KEN_HOME=.*|Environment=KEN_HOME=$LINK|" \
         -e "s|^Environment=KEN_DB=.*|Environment=KEN_DB=$DATA/ken.db|" \
         -e "s|^ExecStart=.*|ExecStart=$LINK/scripts/ken.sh -f|" \
-        -e "s|^ReadWritePaths=.*|ReadWritePaths=$DATA $LOGS $BACKUPS|" \
+        -e "s|^ReadWritePaths=.*|ReadWritePaths=$DATA $LOGS|" \
         "$SVC_TMP"
     [ -n "$PORT" ] && sed -i -e "s|^Environment=KEN_ADDR=.*|Environment=KEN_ADDR=:$PORT|" "$SVC_TMP"
 

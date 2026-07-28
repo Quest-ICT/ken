@@ -5,16 +5,11 @@ Ken's data lives in one SQLite file (`data/ken.db` + its `-wal`/`-shm` sidecars)
 **What is in a snapshot.** A snapshot is a byte-complete copy of the knowledge base: every entry and
 every superseded revision (including proposals a human never promoted), the full curation history
 (`entry_version` + `curation_event`), embeddings, the human curator accounts, and the agent/MCP token
-records. Passwords are Argon2id hashes and API-token secrets are stored hashed, so a snapshot does not
-hand over a password or a reusable API token. **But live web-session cookies are stored as-is**, so a
-snapshot taken while a curator is logged in contains a value that can be replayed as that curator until
-the session expires. Treat one snapshot file as equivalent to a full dump of the running instance —
-the entire content of your knowledge base, the list of who has access to it, and any in-flight logins.
-
-> Consequence worth being explicit about: whoever can read a snapshot can act as a logged-in curator
-> for the remaining life of any session it captured. That is a reason to pair
-> [`KEN_BACKUP_GROUP`](#pulling-snapshots-off-the-box-tier-3-without-root) with encryption rather than
-> granting a group plaintext snapshots, and a reason to keep that group to the pull account alone.
+records. **No credential in it is replayable:** passwords are Argon2id hashes, API-token secrets are
+stored hashed, and web-session ids are stored as a SHA-256 of the cookie (so a captured session cannot
+be replayed either — fixed in 1.4.1; before that, a snapshot taken while a curator was logged in did
+carry a usable session). What a snapshot still *is*: the entire content of your knowledge base plus the
+list of who has access to it. Treat one snapshot file as equivalent to a full dump of the instance.
 
 > **Inter-session communication (COMM) state is deliberately NOT backed up.** When COMM is enabled it
 > keeps its own database and relayed files under `data/comm/`, and neither tier above covers them:

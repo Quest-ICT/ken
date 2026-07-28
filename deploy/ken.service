@@ -43,7 +43,11 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/ken/data /opt/ken/logs /opt/ken/backups
+# No code path in the server writes to the backups directory — snapshots are taken by
+# ken-snapshot.service and by the installer, each with its own unit/umask. Granting it
+# here was an unexercised write capability into a directory that KEN_BACKUP_GROUP may
+# read; least privilege says do not hold it.
+ReadWritePaths=/opt/ken/data /opt/ken/logs
 
 # Resource ceilings. Nothing inside the process bounds these: the HTTP server
 # deliberately sets no write timeout (the MCP streamable transport holds

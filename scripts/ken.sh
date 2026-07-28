@@ -43,6 +43,12 @@ fi
 if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   echo "[ken] already running (pid $(cat "$PID_FILE"))"; exit 1
 fi
+# The log carries the first-run /setup token — a credential whose reader can complete
+# setup and become the curator — so the log, and the PID file beside it, are created
+# owner-only rather than at the ambient umask. (Under systemd this path is unused: the
+# unit runs -f and output goes to the journal. It is the by-hand detached mode that
+# needs this.)
+umask 077
 mkdir -p "$LOG_DIR"
 nohup "$KEN_BIN" serve $KEN_OPTS "$@" >>"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"

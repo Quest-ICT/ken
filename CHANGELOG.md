@@ -15,6 +15,24 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Security
+- **Web-session ids are now stored hashed, so a database copy no longer contains replayable logins.**
+  `web_session.id` was the cookie value itself — the raw bearer credential, in the clear — while
+  `api_token` has always stored `secret_sha256`. Presenting that value *is* being logged in, and the
+  database is copied by design: every snapshot is a byte-complete copy, and `KEN_BACKUP_GROUP` (1.4.0)
+  deliberately lets an unprivileged account read snapshots. A snapshot taken while a curator was logged
+  in therefore handed its reader that curator's session for the remainder of its life. Ken now stores
+  the SHA-256 of the cookie and looks up by hash; the raw value never touches disk. Plain SHA-256 is
+  the right primitive here — the input is 32 bytes of CSPRNG output, so there is nothing to
+  brute-force. **Migration `0011` clears `web_session`, so every curator is logged out once** and signs
+  in again; existing rows cannot be converted, because the stored value *is* the credential.
+- **The first-run setup token no longer lands in a world-readable log.** `ken.sh`'s detached mode
+  created `logs/ken.out` at the ambient umask, and that log carries the one-time `/setup` token — a
+  credential whose reader can complete setup and become the curator. It now sets `umask 077` first.
+  (Unused under systemd, which logs to the journal.)
+- `ken.service` no longer holds a write grant on the backups directory: nothing in the server writes
+  there, and it is a directory `KEN_BACKUP_GROUP` may read.
+
 ### Fixed
 - **`ken backup snapshot` wrote a world-readable copy of the knowledge base.** The mode came from the
   ambient umask (`0644` under the usual `0022`) and was only corrected by the two *shell* callers — so
