@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-07-27
+
 ### Added
 - **French translation of the human web UI** (`messages_fr.properties`, embedded alongside English and
   Spanish). The language selector now offers **Français**; a French reader gets a French curator UI,
