@@ -27,6 +27,16 @@ same change — never "docs later".
   [COMPATIBILITY.md](COMPATIBILITY.md) already excludes), not because it is unstable — so it continues
   to evolve additively (the open channel-relabelling and endpoint-identity items can still land).
 
+### Removed
+- **Windows packaging is removed; support is now Linux-only, stated explicitly.** Ken was only ever
+  built, tested, and released for **Linux** (`amd64`/`arm64`) — every release ships only Linux
+  artifacts — but the repo carried a Windows `deploy/ken.nsi` (NSIS + WinSW) template and an
+  INSTALL.md Windows section that documented a path with **no published artifact behind it**,
+  overstating what is supported. Both are removed. [COMPATIBILITY.md](COMPATIBILITY.md) now states
+  the platform boundary outright (**Linux `amd64`/`arm64`; macOS and Windows not supported**) instead
+  of leaving it implicit in what gets released. The binary is pure Go (`CGO_ENABLED=0`) and may still
+  compile elsewhere, but that is not support. macOS was never documented or shipped.
+
 ## [1.3.0] — 2026-07-27
 
 ### Added

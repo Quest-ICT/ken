@@ -428,7 +428,7 @@ exchange (same-host rendezvous plus a one-time-grant HTTP relay). Curation is pr
 promote view. Full contract, including the isolation rules that make the in-process choice honest:
 [`COMM.md`](COMM.md).
 
-**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · Windows installer polish · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5) · COMM console re-labelling + endpoint identity (COMM.md §12) · **client-side sortable listing tables** (below). *(All §1 security-priority items are now implemented.)*
+**Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5) · COMM console re-labelling + endpoint identity (COMM.md §12) · **client-side sortable listing tables** (below). *(All §1 security-priority items are now implemented.)*
 
 **Deferred UI enhancement — sortable listing tables (all web UI grids, not just COMM).** Every
 data-listing table in the web UI (the proposal queue, Browse, the tokens list, the COMM channels and

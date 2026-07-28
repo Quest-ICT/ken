@@ -380,18 +380,6 @@ Never `cp` the live `.db` (WAL sidecars make it torn) — always use
 
 ---
 
-## Windows
-
-A Windows build is packaged with **NSIS** (`deploy/ken.nsi`) and runs `ken.exe`
-as a Windows service via **WinSW**. Build the installer with
-`makensis -DVERSION=<v> deploy/ken.nsi` after placing `ken.exe` (a
-`GOOS=windows` build) and `ken-service.exe` (WinSW) beside the `.nsi`. See the
-header comments in `deploy/ken.nsi` for the exact steps. The database/logs live
-under `%ProgramData%\ken` and survive uninstall/upgrade; complete setup exactly
-as on Linux (`ken.exe user add`, open the web UI, `ken.exe token add`).
-
----
-
 ## Building the release artifacts
 
 From a checkout with the Go toolchain available:

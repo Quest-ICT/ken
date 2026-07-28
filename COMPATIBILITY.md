@@ -5,6 +5,15 @@ Ken follows [Semantic Versioning](https://semver.org). This document states, as 
 one of them requires a new MAJOR version — and which are explicitly **not** part of
 the compatibility contract.
 
+## Supported platforms
+
+Ken is supported on **Linux** — `amd64` and `arm64`, the architectures it is built,
+tested, and released for. It is a single static Go binary with a pure-Go SQLite
+(`CGO_ENABLED=0`), so it may well compile and run on other operating systems, but none
+is built, released, or supported: **macOS and Windows are not supported.** If that ever
+changes, the honest order is a documented build/run path or a published artifact first,
+and then the claim — not the reverse.
+
 ## Stable (SemVer-governed at 1.0)
 
 - **The MCP tool contract** — the `kb_*` tool names, their input/output JSON schemas,
