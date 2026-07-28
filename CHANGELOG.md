@@ -15,6 +15,12 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-07-28
+
+> **Upgrading logs every curator out once.** Session ids are now stored hashed, and existing rows
+> cannot be converted (the stored value *was* the credential), so migration `0011` clears them. Sign in
+> again; nothing else is affected. Agent/MCP tokens are untouched.
+
 ### Security
 - **Web-session ids are now stored hashed, so a database copy no longer contains replayable logins.**
   `web_session.id` was the cookie value itself — the raw bearer credential, in the clear — while
