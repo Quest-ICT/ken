@@ -3,8 +3,10 @@ package commserver
 // Tool input/output shapes. Schemas are derived from these structs by reflection,
 // so the jsonschema tags ARE the agent-facing documentation.
 //
-// EXPERIMENTAL: these shapes are outside the compatibility contract for at least
-// one MINOR release (COMPATIBILITY.md). They may still change.
+// These shapes sit outside the byte-level compatibility contract because COMM is an
+// optional, off-by-default surface (COMPATIBILITY.md) — not because it is unstable.
+// Evolve them additively (keep old fields / old-arity behaviour), as with any
+// released surface.
 //
 // Every tool except comm_register carries endpoint_id + endpoint_secret. That is
 // not ceremony: the bearer token identifies a MACHINE (the operating convention is

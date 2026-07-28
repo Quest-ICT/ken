@@ -140,8 +140,8 @@ contract, not end-user copy). Full reference: [`I18N.md`](I18N.md).
 ### D9 — Inter-session communication: in-process, opt-in, ephemeral  *(chosen: embed)*
 A second service on the same deployment: authenticated **session-to-session messaging** between AI
 sessions (same machine or not), as `internal/comm` inside the same binary, with its **own** SQLite file,
-its **own** MCP endpoint, its **own** `comm` scope, and **off by default**. Specified for 1.2.0 and
-**experimental and off by default**; full contract in [`COMM.md`](COMM.md).
+its **own** MCP endpoint, its **own** `comm` scope, and **off by default**. Specified for 1.2.0;
+full contract in [`COMM.md`](COMM.md).
 - **Why it belongs in Ken at all:** the deployment already offers the two things such a service needs and
   are expensive to stand up twice — an authenticated endpoint every session already reaches, and a host
   with spare capacity. The alternative is a second daemon whose only novel asset is a token table.
@@ -150,7 +150,7 @@ its **own** MCP endpoint, its **own** `comm` scope, and **off by default**. Spec
   replicated database and out of the KB's single writer; separating the endpoint and scope means a KB
   token cannot message and a comm token cannot write knowledge.
 - **Why off by default:** a default install must remain exactly the curated KB the README promises — no
-  second operating loop in every agent's connect-time instructions. It also makes "experimental"
+  second operating loop in every agent's connect-time instructions. It also makes the contract exclusion
   mechanical rather than documentary, since [`../COMPATIBILITY.md`](../COMPATIBILITY.md) already excludes
   optional-and-off-by-default surfaces.
 - **Trade-off accepted, stated plainly:** a separate file isolates the KB's WAL and backups, **not** the
@@ -417,8 +417,8 @@ runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); deci
 
 **Resolved:** MCP tool prefix = `kb_*`; project renamed to `ken`; `git init` done; `Migrate()` applies all migrations (embeddings table always present, empty when unused).
 
-**Built — inter-session communication** (decision **D9**), shipping in 1.2.0 as **experimental and
-off by default**: authenticated session-to-session messaging between AI sessions on the same or
+**Built — inter-session communication** (decision **D9**), shipping in 1.2.0 **off by
+default**: authenticated session-to-session messaging between AI sessions on the same or
 different machines. `internal/comm` (own SQLite file, own migrations) + `internal/commserver` (eight
 `comm_*` tools on their own `/comm/mcp` endpoint, the `comm` and `comm-file` scopes, long-poll wakeups
 with a shutdown drain), a human console at `/comm` where the operator mints the pairing codes that are

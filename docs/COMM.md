@@ -1,9 +1,9 @@
 # Ken — inter-session communication (COMM)
 
-> **Status: EXPERIMENTAL, off by default, feature-complete for text messaging.** This document is the
-> design contract for a feature targeted at **1.2.0**. Being experimental and optional-and-off-by-default
-> places it outside the SemVer contract (see [COMPATIBILITY.md](../COMPATIBILITY.md)) for at least one
-> MINOR release.
+> **Status: supported, off by default; feature-complete for text messaging and file exchange.**
+> Shipped in **1.2.0**. This document is its contract. Because COMM is opt-in and off by default, its
+> interface sits outside the byte-level SemVer contract (see [COMPATIBILITY.md](../COMPATIBILITY.md))
+> and evolves **additively** — supported, but not preview-frozen.
 >
 > **Built and verified end to end:** the schema and store layer (`internal/comm`), the six `comm_*`
 > tools on their own `/comm/mcp` endpoint (`internal/commserver`) with the `comm` scope and
@@ -89,9 +89,9 @@ instruction section is **not appended** when off.
 
 - **Why:** a default Ken install must remain exactly the curated knowledge base the README promises —
   no second operating loop in every agent's connect-time instructions, no message-bus surface on a
-  product whose value is curation. It also makes "experimental" *mechanical* rather than
+  product whose value is curation. It also makes the contract exclusion *mechanical* rather than
   documentary: COMPATIBILITY.md already excludes anything optional-and-off-by-default, so the
-  contract is genuinely free to move during the shakedown period.
+  interface is genuinely free to evolve additively as the feature grows.
 - **Trade-off accepted:** one more thing to switch on, and a feature that fewer people will discover.
 
 ### C3 — Pull with long-poll *(chosen: pull)*
@@ -648,7 +648,7 @@ correct.
    move. So a burst of failing tool calls is invisible in metrics, and — because those errors are tool
    results, not HTTP errors or log lines — invisible in logs too.
 
-**The increment (a single, coherent unit; target: a later experimental MINOR).**
+**The increment (a single, coherent unit; target: a later MINOR).**
 
 - **Counters, not just gauges, for the things that fail.** Add monotonic counters that a rate query
   can see even when the instantaneous gauge is zero: `ken_comm_tool_errors_total{tool,reason}` (every

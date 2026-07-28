@@ -44,11 +44,12 @@ the compatibility contract.
   messages.
 - **On-disk layout** beyond "your knowledge lives in `data/ken.db`" (snapshot
   filenames, `releases/<v>/` internals, etc.).
-- Anything documented as **experimental**, **optional-and-off-by-default**, or
-  **"Planned"**. This explicitly includes the **inter-session communication surface**
-  ([docs/COMM.md](docs/COMM.md)) — its `comm_*` tools, endpoint ids, MCP endpoint path, and
-  settings — for at least one MINOR release after it first ships. The `comm` and `comm-file`
-  token scopes are **reserved** now so that splitting them later is not a MAJOR.
+- Anything documented as **optional-and-off-by-default** or **"Planned"**. This includes
+  the **inter-session communication surface** ([docs/COMM.md](docs/COMM.md)) — its `comm_*`
+  tools, endpoint ids, MCP endpoint path, and settings. COMM is a **supported** feature, but
+  because it is opt-in and off by default its interface is not part of the byte-level contract;
+  it evolves **additively**. The `comm` and `comm-file` token scopes are **reserved** so that
+  splitting them later is not a MAJOR.
 
 ## Deprecation policy
 

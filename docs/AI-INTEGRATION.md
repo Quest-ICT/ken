@@ -428,7 +428,7 @@ can't do it, and Ken makes no external calls.
 
 ---
 
-## Inter-session communication (optional, experimental)
+## Inter-session communication (optional, off by default)
 
 Separate from everything above. If your operator has enabled it, Ken also lets **two AI sessions hand
 work to each other** — one developing, one testing, one monitoring — instead of you copying context

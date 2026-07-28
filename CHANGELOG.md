@@ -15,6 +15,18 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+- **Inter-session communication (COMM) is no longer labelled "experimental."** It has been in use
+  since 1.2.0, and the "experimental" wording undersold a feature that is stable in practice — it read
+  as a preview that might vanish. COMM is now described as a **supported, opt-in** feature that is
+  **off by default**, everywhere the label appeared: the `/comm` web console, the startup banner and
+  CLI help, the MCP connect-time instructions agents receive, and the docs. Nothing about its behaviour
+  changes — it is still off unless `KEN_COMM_ENABLED=1`, still needs a dedicated `comm`-scope token, and
+  file exchange is still separately gated. Its interface stays **outside the byte-level compatibility
+  contract**, but now for the honest reason — it is optional and off by default (which
+  [COMPATIBILITY.md](COMPATIBILITY.md) already excludes), not because it is unstable — so it continues
+  to evolve additively (the open channel-relabelling and endpoint-identity items can still land).
+
 ## [1.3.0] — 2026-07-27
 
 ### Added

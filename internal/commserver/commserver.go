@@ -151,7 +151,7 @@ func (h *Handler) ParkedWaiters() int { return h.w.parked() }
 // change behaviour in the common case, which is worth having, and docs/COMM.md is
 // explicit that the enforced boundary is the human-approved channel rather than
 // this text.
-const instructions = `Ken COMM — inter-session messaging between AI sessions (EXPERIMENTAL).
+const instructions = `Ken COMM — inter-session messaging between AI sessions (opt-in; off by default).
 
 You talk to ANOTHER AI session over a channel a human authorized. Loop:
 - comm_register once per session; KEEP the endpoint_id and endpoint_secret — every other tool needs both, and the secret is shown only once.

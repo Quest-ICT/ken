@@ -137,7 +137,7 @@ Rate limiting (env; on by default — loopback + KEN_RATELIMIT_ALLOW_CIDRS + /he
   KEN_RATELIMIT_LOCKOUT_SEC  auto-block duration, seconds (default 900)
   KEN_RATELIMIT_ALLOW_CIDRS  extra always-allowed CIDRs (comma-separated)
 
-Inter-session communication (EXPERIMENTAL; OFF unless enabled — see docs/COMM.md):
+Inter-session communication (OFF unless enabled — see docs/COMM.md):
   KEN_COMM_ENABLED  1 = expose the comm MCP endpoint at /comm/mcp + console at /comm (default off)
   KEN_COMM_DB       message database path (default <db dir>/comm/comm.db; NOT backed up — it is expendable)
                     needs a DEDICATED token:  ken token add --actor comm-dev --scopes comm
@@ -393,7 +393,7 @@ func runServe(args []string) {
 			}
 		})
 		registerCommCollectors(reg, commStore, commHandler)
-		log.Printf("COMM: inter-session communication ENABLED (experimental) at /comm/mcp + console at /comm (db=%s) — requires a dedicated token with the 'comm' scope", commStore.Path())
+		log.Printf("COMM: inter-session communication ENABLED at /comm/mcp + console at /comm (db=%s) — requires a dedicated token with the 'comm' scope", commStore.Path())
 	}
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
