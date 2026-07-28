@@ -15,6 +15,17 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+- **Documented that enabling `KEN_BACKUP_GROUP` / `KEN_BACKUP_DIR` is a one-time root action**, and
+  recorded in [`scripts/ken-upgrade`](scripts/ken-upgrade) why they are deliberately **not** in the
+  scoped upgrade wrapper's allowlist. The property that makes that allowlist safe is that no accepted
+  argument can change **who can read what** — version, TLS mode, domain, port and firewall all change
+  what the service *does*, none changes who can read its data. `--backup-group` would break it: a
+  caller could nominate its own group as one allowed to read every database snapshot. Because the
+  installer re-discovers both settings from the installed unit, one root run is enough — every later
+  scoped upgrade preserves them without the flag. (Raised by the production operations session, which
+  argued *against* being granted the convenience.)
+
 ## [1.4.0] — 2026-07-28
 
 ### Changed

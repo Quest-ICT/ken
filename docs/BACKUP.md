@@ -266,6 +266,14 @@ sudo -u kenpull cat /opt/ken/backups/ken-*.db* > /dev/null && echo "pull account
 > Pass `-y` when re-running the installer for this (as above): without it, an installer run from a
 > terminal starts the interactive wizard and will re-prompt for TLS and everything else.
 
+> **Enabling this is a one-time ROOT action, on purpose.** Run the installer by hand, as root, once.
+> It is deliberately *not* reachable through the scoped [`ken-upgrade`](../scripts/ken-upgrade)
+> wrapper: that wrapper's safety rests on no accepted argument being able to change **who can read
+> what**, and a flag that nominates a group allowed to read every database snapshot is exactly that —
+> a caller could name its own group. After the one root run, the setting is re-discovered from the
+> installed unit on every later upgrade, so an ordinary scoped `ken-upgrade` preserves it indefinitely
+> and never needs the flag again.
+
 > **Use the installer flag for this one — not a `systemctl edit` drop-in.** Unlike `KEN_AGE_RECIPIENT`
 > (which the snapshot script consumes on its own), the backup group also needs the **directory** made
 > setgid, and only the installer does that. Setting `KEN_BACKUP_GROUP` in a drop-in alone leaves the

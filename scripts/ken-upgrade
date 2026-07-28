@@ -15,6 +15,20 @@
 #   * Every argument is validated against a strict allowlist; caller input is
 #     never passed through unchecked. File-path / prefix / user flags that would
 #     let the caller write root-owned files to an arbitrary location are refused.
+#   * The property that makes the allowlist safe: NO ACCEPTED ARGUMENT MAY CHANGE
+#     WHO CAN READ WHAT. Version, TLS mode, domain, email, port and firewall all
+#     change what the service DOES; none of them changes who can read its data.
+#     This is why `--backup-group` and `--backup-dir` are deliberately NOT here and
+#     must not be added: `--backup-group` lets the caller nominate a group that may
+#     read every database snapshot — self-escalation wearing configuration's clothes,
+#     since the caller can name its own group — and `--backup-dir` is an arbitrary
+#     path the installer then chowns. They are correct flags for root to use and
+#     wrong flags to expose across a privilege boundary.
+#     Enabling them is a ONE-TIME ROOT action, run by hand. The installer then
+#     re-discovers both from the installed unit on every later upgrade, so an ordinary
+#     scoped `ken-upgrade` preserves the setting indefinitely and never needs the flag.
+#     (Raised by the production operations session, which argued AGAINST being given
+#     the convenience — the right instinct, recorded here so it is not undone.)
 #   * Releases are fetched from the PUBLIC GitHub Releases over HTTPS — no download
 #     credential is needed; integrity is guaranteed by the SHA256SUMS check below.
 #
