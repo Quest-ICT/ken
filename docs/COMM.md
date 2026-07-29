@@ -218,6 +218,24 @@ endpoint present the secret.
   a token.
 - Display labels are non-unique decoration. **Routing is always by `endpoint_id`.** A human-chosen
   name is never an address, or the first release ships a global namespace one session can squat.
+- **The secret can be ROTATED — from the console only, never by a tool.** A curator can issue a new
+  secret for a live endpoint; the endpoint keeps its id and **every channel it belongs to**, so peers
+  are unaffected and nothing needs re-pairing. Two cases need it: a leaked secret (before rotation the
+  only remedy was revoking the endpoint and rebuilding every channel from scratch, which made
+  containing a leak expensive enough to hesitate over), and a session that has simply *lost* its
+  secret — a real event, because an AI client's memory is lossy by design and context compaction
+  destroys it silently.
+- **Why rotation is a console action and there is no tool for it.** A tool would hand the capability
+  to the very population it must be protected from: the token covers a machine, so anything one
+  session can trigger, *every* session on that machine can trigger — and seizing a neighbour's
+  endpoint is precisely the shared-inbox failure the per-endpoint secret exists to prevent. The defect
+  in "let the session reissue" is the **automation**, not the reissuing. Behind curator
+  authentication — a credential no session holds or can obtain from the machine — the same operation
+  is safe. Sessions are told to *ask*; the rotation itself is logged with the curator who performed it,
+  because a rotation nobody remembers doing is the signal that matters.
+- **What rotation does not fix:** a human still has to act, so a session cannot self-heal unattended.
+  It shortens the work, not the wait. Prevention is still the first line: write the pair to a file on
+  disk at registration, which is what the connect-time instructions now tell every session to do.
 
 **Channel** — joins exactly two distinct endpoints, created by the pairing flow in C7. Carries an
 owner identity (`space_id` plus the authorizing human actor) from day 1; a channel whose two
@@ -497,7 +515,11 @@ file exchange on/off · file size cap · relay storage budget · free-space floo
 grant TTL. (Per-owner quotas are **not** implemented — there is one owner; see §10.)
 
 **A Comm page** in the web UI: mint a pairing code; list endpoints (label, owner, last seen) and
-channels (state, counters, queue depth); revoke a channel or an endpoint; disable the subsystem live.
+channels (state, counters, queue depth); **rotate an endpoint's secret** (§3 — the endpoint and its
+channels survive, so it is the cheap remedy for both a leak and a session that lost its secret, and it
+is deliberately reachable *only* here); revoke a channel or an endpoint; disable the subsystem live.
+Rotation and revocation are visually distinct on purpose — rotation is recoverable, revocation is not,
+and two identical red buttons would invite the wrong one.
 The page **auto-refreshes** the way the Proposals page does — a small poller hits `GET /comm/count`
 (a cheap per-space "console fingerprint": counts of endpoints, channels, open channels, live pairing
 codes, and in-flight messages, prime-weighted so offsetting changes rarely collide) and reloads when

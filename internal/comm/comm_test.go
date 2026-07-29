@@ -715,3 +715,101 @@ func TestConsoleFingerprint(t *testing.T) {
 		t.Fatalf("space 2 fingerprint = %d, want 0 (space isolation)", other)
 	}
 }
+
+// Rotation is the incident-response primitive COMM was missing: until it existed,
+// the only remedy for a LEAKED endpoint secret was revoking the endpoint and
+// re-pairing every channel from scratch.
+//
+// The property that makes it SAFE is structural rather than testable here — no tool
+// reaches this function, only the authenticated console does, because one bearer
+// token covers a machine and anything a session could trigger, every session on that
+// machine could trigger. What is tested is what makes it WORTH having: the identity
+// and the channel memberships survive, so no peer has to re-pair.
+func TestRotatingASecretKeepsTheEndpointAndItsChannels(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "prod", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.MintPairingCode(ctx, 1, 42, "dev<->prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, b, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-register to learn a secret we can prove stops working: RegisterEndpoint is
+	// the only path that ever reveals one.
+	c, cSecret, err := st.RegisterEndpoint(ctx, owner("tok-c"), "solo", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AuthenticateEndpoint(ctx, c.EndpointID, cSecret); err != nil {
+		t.Fatalf("baseline authentication failed before rotating: %v", err)
+	}
+	newSecret, err := st.RotateEndpointSecret(ctx, c.EndpointID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newSecret == cSecret {
+		t.Fatal("rotation returned the same secret")
+	}
+	// Containment: the leaked value must stop working the moment it is rotated.
+	if _, err := st.AuthenticateEndpoint(ctx, c.EndpointID, cSecret); err == nil {
+		t.Fatal("the OLD secret still authenticates after rotation — a leaked secret would remain usable, which is the whole thing this prevents")
+	}
+	got, err := st.AuthenticateEndpoint(ctx, c.EndpointID, newSecret)
+	if err != nil {
+		t.Fatalf("the new secret does not authenticate: %v", err)
+	}
+	if got.EndpointID != c.EndpointID {
+		t.Fatalf("rotation changed the endpoint id from %s to %s", c.EndpointID, got.EndpointID)
+	}
+
+	// The point of rotating rather than revoking: membership survives.
+	aNew, err := st.RotateEndpointSecret(ctx, a.EndpointID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aNew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chans, err := st.ListChannels(ctx, rotated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chans) != 1 || chans[0].ChannelID != ch.ChannelID {
+		t.Fatalf("channels after rotation = %+v, want the original %s — if membership is lost, rotation is only a slower revoke",
+			chans, ch.ChannelID)
+	}
+}
+
+// A revoked endpoint must not be rotatable: rotating one would resurrect a
+// capability an operator deliberately destroyed. Revoke is what a leak response
+// escalates TO, never back from.
+func TestRotatingARevokedEndpointIsRefused(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	ep, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RevokeEndpoint(ctx, ep.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RotateEndpointSecret(ctx, ep.EndpointID); err == nil {
+		t.Fatal("rotated a REVOKED endpoint — that would undo a deliberate destruction")
+	}
+}

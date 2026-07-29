@@ -15,6 +15,25 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+- **Rotate a COMM endpoint's secret from the console — the incident-response primitive COMM was
+  missing.** Until now the only thing a human could do to a live endpoint was *revoke* it, so a
+  **leaked** endpoint secret could only be contained by revoking and then re-pairing every channel
+  that endpoint belonged to, with every peer, from scratch. Rotation replaces the secret and keeps
+  the endpoint id **and every channel membership**, so peers are unaffected and nothing is re-paired.
+  It also covers the case that prompted it: a session whose context was compacted loses its secret
+  irrecoverably, and recovery previously cost one fresh pairing code *per channel*.
+  **There is deliberately no tool for this and there will not be one.** One bearer token covers a
+  machine, so anything a session could trigger, every session on that machine could trigger — and
+  seizing a neighbour's endpoint is exactly the shared-inbox failure the per-endpoint secret exists to
+  prevent. The flaw in "let the session reissue" is the *automation*, not the reissuing: behind
+  curator authentication, which no session holds, the same operation is safe. Each rotation is logged
+  with the curator who performed it. A revoked endpoint cannot be rotated — that would resurrect a
+  capability an operator deliberately destroyed.
+- The connect-time COMM instructions, `comm_register`, and the authentication-failure text now tell a
+  session to **ask its human to rotate** rather than repeating that the secret can never be reset —
+  which rotation made untrue in the same change.
+
 ## [1.4.2] — 2026-07-28
 
 ### Added

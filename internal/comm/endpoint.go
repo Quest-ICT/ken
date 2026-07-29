@@ -22,6 +22,11 @@ type Endpoint struct {
 	HostHint   string
 	CreatedAt  string
 	LastSeenAt string
+	// RotatedAt and RotateCount are DISPLAY state for the console ("did I already
+	// rotate this one?"). comm.db is expendable and not backed up, so the
+	// authoritative audit record is the server log, not these columns.
+	RotatedAt   string
+	RotateCount int
 }
 
 // RegisterEndpoint mints a new endpoint for an authenticated session and returns
@@ -112,6 +117,56 @@ WHERE id=? AND last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-60 seconds')
 	return &ep, nil
 }
 
+// RotateEndpointSecret replaces an endpoint's secret and returns the new one,
+// shown once. The endpoint keeps its id, its owner and — the point of the whole
+// operation — every channel it belongs to, so its peers are unaffected and nothing
+// needs re-pairing.
+//
+// THIS IS DELIBERATELY NOT REACHABLE FROM ANY TOOL, and that placement is the
+// entire security argument. One bearer token covers a machine, so the endpoint
+// pair is the only thing separating two sessions sharing it; a reissue any SESSION
+// could trigger would let any session on that machine seize any endpoint on it.
+// That is why deriving a new secret from token material was rejected. The defect
+// there is the AUTOMATION, not the reissuing — so rotation lives behind curator
+// authentication, which is a credential no session holds or can obtain from the
+// machine, and a neighbouring session with the COMM token gains nothing.
+//
+// Two callers in mind, and the second is the stronger reason to have it:
+//
+//   - A session lost its secret (context compaction destroys it, and it is
+//     unrecoverable by construction). Today that costs one fresh pairing code PER
+//     CHANNEL plus coordinated re-joins with every peer.
+//   - A secret LEAKED — into a transcript, a log, a file something else could read.
+//     Until now the only remedy was revoking the endpoint and rebuilding every
+//     channel from scratch, which is why containing a leak was expensive enough to
+//     hesitate over. Rotation is the missing incident-response primitive.
+//
+// A revoked endpoint is refused: rotating one would quietly resurrect a capability
+// an operator deliberately destroyed, and the revoke path is what a leak response
+// escalates TO, never back from.
+func (s *Store) RotateEndpointSecret(ctx context.Context, endpointID string) (string, error) {
+	secret, err := randBase62(40)
+	if err != nil {
+		return "", err
+	}
+	res, err := s.W.ExecContext(ctx, `
+UPDATE endpoint
+   SET secret_sha256=?,
+       secret_rotated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+       rotate_count=COALESCE(rotate_count,0)+1
+ WHERE endpoint_id=? AND revoked_at IS NULL`, sha256Hex(secret), endpointID)
+	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Unknown and revoked are one answer, matching AuthenticateEndpoint's stance:
+		// the console caller is already authenticated, so it loses nothing, and the
+		// two cases never diverge into a probe.
+		return "", ErrNotFound
+	}
+	return secret, nil
+}
+
 // RevokeEndpoint soft-revokes an endpoint, immediately denying further use.
 // Its channels stay queryable for the operator; its messages age out normally.
 func (s *Store) RevokeEndpoint(ctx context.Context, endpointID string) error {
@@ -134,7 +189,7 @@ WHERE endpoint_id=? AND revoked_at IS NULL`, endpointID)
 func (s *Store) ListEndpoints(ctx context.Context, spaceID int64) ([]Endpoint, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT id, endpoint_id, token_id, actor_id, space_id, COALESCE(label,''), COALESCE(host_hint,''),
-       created_at, last_seen_at
+       created_at, last_seen_at, COALESCE(secret_rotated_at,''), COALESCE(rotate_count,0)
 FROM endpoint WHERE space_id=? AND revoked_at IS NULL ORDER BY created_at DESC`, spaceID)
 	if err != nil {
 		return nil, err
@@ -144,7 +199,8 @@ FROM endpoint WHERE space_id=? AND revoked_at IS NULL ORDER BY created_at DESC`,
 	for rows.Next() {
 		var ep Endpoint
 		if err := rows.Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Owner.SpaceID,
-			&ep.Label, &ep.HostHint, &ep.CreatedAt, &ep.LastSeenAt); err != nil {
+			&ep.Label, &ep.HostHint, &ep.CreatedAt, &ep.LastSeenAt,
+			&ep.RotatedAt, &ep.RotateCount); err != nil {
 			return nil, err
 		}
 		out = append(out, ep)

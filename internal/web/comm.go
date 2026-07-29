@@ -29,12 +29,21 @@ import (
 const spaceForSession = int64(1)
 
 func (a *app) handleComm(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.renderComm(w, r, sess, "")
+	a.renderComm(w, r, sess, "", reveal{})
+}
+
+// reveal carries a just-rotated endpoint secret to the page. Both fields are set
+// together or neither is: a secret with no endpoint id beside it is unusable, since
+// every comm tool needs the pair.
+type reveal struct {
+	EndpointID string
+	Secret     string
 }
 
 // renderComm draws the console. newCode, when non-empty, is a just-minted pairing
-// code shown ONCE — only its hash is stored, so it can never be shown again.
-func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Session, newCode string) {
+// code shown ONCE — only its hash is stored, so it can never be shown again. rot
+// carries a just-rotated endpoint secret under the same one-time contract.
+func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Session, newCode string, rot reveal) {
 	if a.comm == nil {
 		http.NotFound(w, r)
 		return
@@ -78,6 +87,7 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	a.render(w, r, sess, "comm", map[string]any{
 		"Endpoints": endpoints, "Channels": channels, "Codes": codes, "Stats": stats,
 		"NewCode": newCode, "CommURL": a.publicCommURL(r), "Fingerprint": fp,
+		"Rotated": rot,
 	})
 }
 
@@ -128,7 +138,7 @@ func (a *app) handleCommPair(w http.ResponseWriter, r *http.Request, sess *store
 	}
 	// Render directly rather than redirecting, so the one-time code survives to the
 	// page — the same reason token creation does.
-	a.renderComm(w, r, sess, code)
+	a.renderComm(w, r, sess, code, reveal{})
 }
 
 // handleCommRevokeChannel is the brake: it closes a channel permanently.
@@ -147,6 +157,41 @@ func (a *app) handleCommRevokeChannel(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	flashRedirect(w, r, "/comm", "flash.comm_channel_revoked", id)
+}
+
+// handleCommRotateEndpoint replaces an endpoint's secret while keeping its identity
+// and every channel it belongs to.
+//
+// The security property lives in WHERE this handler is, not in what it does: it is
+// behind requireAuth + CSRF, so triggering it needs curator authentication — a
+// credential no session holds. A session that has the COMM bearer token cannot reach
+// it, which is exactly why an equivalent tool was refused. See
+// comm.RotateEndpointSecret for the full argument.
+//
+// Rendered rather than redirected, because the new secret is shown once — the same
+// contract as a minted pairing code.
+func (a *app) handleCommRotateEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if a.comm == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	secret, err := a.comm.RotateEndpointSecret(r.Context(), id)
+	if err != nil {
+		flashRedirect(w, r, "/comm", "flash.comm_rotate_failed", err.Error())
+		return
+	}
+	// The authoritative audit record. comm.db is expendable and deliberately not
+	// backed up, so the counters on the row are console display state and THIS is
+	// the trace that survives — it names who did it, because a rotation an operator
+	// did not perform is the signal that matters.
+	log.Printf("COMM: endpoint %s secret rotated by %q (actor %d) — the previous secret no longer authenticates",
+		id, sess.ActorName, sess.ActorID)
+	a.renderComm(w, r, sess, "", reveal{EndpointID: id, Secret: secret})
 }
 
 // handleCommRevokeEndpoint revokes one session's endpoint, denying it further use.

@@ -314,7 +314,7 @@ func TestInstructionsTellTheModelWhereToKeepTheSecret(t *testing.T) {
 	for _, want := range []string{
 		"WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK",
 		"context compaction is routine and silent",
-		"never be re-read, re-derived or reset",
+		"ask your human to rotate that endpoint's secret",
 	} {
 		if !strings.Contains(instructions, want) {
 			t.Errorf("connect-time instructions no longer carry %q — a session that loses its\n"+

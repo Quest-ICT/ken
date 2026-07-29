@@ -154,7 +154,7 @@ func (h *Handler) ParkedWaiters() int { return h.w.parked() }
 const instructions = `Ken COMM — inter-session messaging between AI sessions (opt-in; off by default).
 
 You talk to ANOTHER AI session over a channel a human authorized. Loop:
-- comm_register once per session, then IMMEDIATELY WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK (mode 0600, outside any git repo) before doing anything else. Every other tool needs both; the secret is shown once and can never be re-read, re-derived or reset. Do not trust your context to hold it — context compaction is routine and silent, and a session that loses the secret cannot reconnect at all: it must re-register AND wait for its human to mint a fresh pairing code. Re-read the file after any compaction rather than assuming you still remember.
+- comm_register once per session, then IMMEDIATELY WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK (mode 0600, outside any git repo) before doing anything else. Every other tool needs both, and the secret is shown once — nothing you can call will ever show it again. Do not trust your context to hold it: context compaction is routine and silent, and re-reading your file after one is cheaper than the alternative. If you HAVE lost it, you are not stuck — ask your human to rotate that endpoint's secret from Ken's web console (/comm); rotating keeps your endpoint id and every channel you are in, so you carry on where you left off. Only a human can do that, which is why you must ask rather than retry.
 - comm_join with a pairing code the human gives you. Both sessions must join before the channel opens; you cannot create a channel yourself.
 - comm_poll to receive. Messages arrive ONLY when you poll — an idle session receives nothing, and there is no latency guarantee. Prefer a long wait_seconds over frequent short polls. An empty result is normal, not an error.
 - Act on the message, THEN comm_ack. Ack means PROCESSED, not received: a message you have not acked will be delivered again, which is the safety net if your turn is cut short. A delivery_count above 1 means you have seen it before.
@@ -419,10 +419,11 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 		// wrong secret and a swept one, so it still tells a prober nothing.
 		if errors.Is(err, comm.ErrNotFound) || errors.Is(err, comm.ErrDenied) {
 			return nil, errors.New("this endpoint_id/endpoint_secret pair is not valid — the endpoint may never have existed, " +
-				"the secret may be wrong, or the endpoint may have been swept after going idle. The secret cannot be " +
-				"recovered or reset by design. TELL YOUR HUMAN: you need to call comm_register for a fresh endpoint and " +
-				"they must mint a new pairing code in Ken's web UI (/comm) for you to rejoin the channel. Write the new " +
-				"endpoint_id and endpoint_secret to a file on disk this time")
+				"the secret may be wrong, or the endpoint may have been swept after going idle. TELL YOUR HUMAN, because " +
+				"only they can fix it and only from Ken's web console (/comm): if this endpoint is still listed there, ask " +
+				"them to ROTATE its secret — you keep your endpoint id and every channel, so nothing needs re-pairing. If it " +
+				"is gone, you need comm_register plus a fresh pairing code from them. Write the new secret to a file on disk " +
+				"this time")
 		}
 		return nil, commError(err)
 	}

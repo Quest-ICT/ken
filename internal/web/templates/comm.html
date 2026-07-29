@@ -19,6 +19,21 @@
   </div>
 </div>
 
+{{if .Data.Rotated.Secret}}
+<!-- One-time reveal of a rotated endpoint secret. Only the hash is stored, so this
+     is the single moment it exists in readable form — same contract as a pairing
+     code. Both halves are shown because every comm tool needs the PAIR. -->
+<div class="card card--accent" style="margin-bottom:var(--sp-5)">
+  <div class="card__head"><h2 class="h3">{{.T "comm.rotated_heading"}}</h2></div>
+  <div class="card__body">
+    <p class="help">{{.T "comm.rotated_help_body"}}</p>
+    <p>{{.T "comm.col_endpoint"}}: <code class="mono">{{.Data.Rotated.EndpointID}}</code></p>
+    <p><code class="mono" style="font-size:1.15rem;letter-spacing:.04em">{{.Data.Rotated.Secret}}</code></p>
+    <p class="help"><b>{{.T "comm.rotated_warn"}}</b></p>
+  </div>
+</div>
+{{end}}
+
 <div class="grid-2">
   <!-- mint a pairing code: the human act the design depends on -->
   <section>
@@ -157,10 +172,17 @@
         {{range .Data.Endpoints}}
           <tr>
             <td class="mono">{{.EndpointID}}</td>
-            <td>{{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}</td>
+            <td>
+              {{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}
+              {{if .RotatedAt}}<span class="badge badge--sm" title="{{$.T "comm.rotated_help"}}">{{$.T "comm.rotated"}} ×{{.RotateCount}}</span>{{end}}
+            </td>
             <td class="mono">{{localtime .LastSeenAt}}</td>
             <td class="mono">{{localtime .CreatedAt}}</td>
             <td>
+              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/rotate" data-confirm="{{$.T "comm.rotate_confirm"}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <button class="btn btn--sm" type="submit" title="{{$.T "comm.rotate_help"}}">{{$.T "comm.rotate"}}</button>
+              </form>
               <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{$.T "comm.revoke_endpoint_confirm"}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--danger btn--sm" type="submit" title="{{$.T "comm.revoke_endpoint_help"}}">{{$.T "comm.revoke"}}</button>
