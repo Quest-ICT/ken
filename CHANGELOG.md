@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-07-29
+
 ### Fixed
 - **The hearsay marker could never fire on a deployment that followed the documented setup.**
   `ken station key` hardcoded a **human** actor and the console used the logged-in curator's, while
@@ -1233,7 +1235,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.2
 [1.5.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.0
 [1.4.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.2
