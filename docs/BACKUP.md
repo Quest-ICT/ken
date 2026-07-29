@@ -339,6 +339,33 @@ which one that is. So:
 > — and you spend effort carefully protecting a live credential. (Found in production while preparing
 > exactly that migration of an old archive.)
 
+### Retiring plaintext snapshots: the order is the whole procedure
+
+Turning encryption on does not retire the plaintext files already on disk, and deleting them is the
+step people get wrong. Do all three, in this order:
+
+1. **Upgrade to 1.4.1 or later.** Migration `0011` clears the session table and defuses the replayable
+   cookies in every pre-1.4.1 snapshot, per the note above.
+2. **Decrypt and verify one encrypted snapshot off-box**, on the machine holding the private key — the
+   drill under *Encryption: turning it on*. Check integrity **and** entry count against what the server
+   reported at write time.
+3. **Only then destroy the plaintext**, with `shred` rather than `rm`.
+
+**Step 2 before step 3 is the one that matters, and it is not obvious.** Until an encrypted snapshot
+has actually been decrypted and read, the encrypted archive is a *hypothesis* — a wrong recipient, a
+lost key or a truncated transfer all produce files that look perfectly healthy in `ls`. The plaintext
+copies are, at that moment, your only backups known to be readable. Deleting them first means giving
+up a proven backup for an unproven one, and you discover which it was during a restore, which is the
+worst possible time.
+
+Doing 3 before 1 is the other trap: you carefully shred files whose most sensitive content — a live
+session cookie — the upgrade would have made worthless anyway, and you keep the exposure alive in the
+meantime.
+
+> Production ran exactly this sequence to retire 18 plaintext snapshots (11 nightly, 7 pre-upgrade,
+> oldest 2026-07-21) after enabling encryption. The ordering rule is theirs; it is written here because
+> the reasoning is invisible once the outcome looks routine.
+
 **Upgrading from 1.2.x?** Before 1.3.0 the pre-upgrade snapshot was always written in plaintext (with
 a local, unmarked timestamp), even on hosts with encrypted nightlies. Those files are full copies of
 the knowledge base and retention never prunes them:
