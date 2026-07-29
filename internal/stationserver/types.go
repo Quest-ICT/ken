@@ -192,3 +192,13 @@ type voucherOut struct {
 	StationID      string `json:"station_id"`
 	StationName    string `json:"station_name"`
 }
+
+type linkRequestIn struct {
+	ToStation string `json:"to_station" jsonschema:"required; the station you want to be able to talk to, by NAME as your human refers to it"`
+	Reason    string `json:"reason" jsonschema:"required; why this relationship should exist. Written for YOUR HUMAN, who decides — it is never shown to the other station before they approve, so do not address it to them"`
+}
+
+type linkRequestOut struct {
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+}

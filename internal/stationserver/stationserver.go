@@ -150,6 +150,41 @@ func newServer(d Deps) *mcp.Server {
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
+		Name: "station_link_request",
+		Description: "Ask your human to let this station talk to another one. An approved link is a standing " +
+			"relationship: either side can then open a channel when it needs one, with no pairing code. The reason " +
+			"you give is shown to YOUR HUMAN only and is never delivered to the other station, so write it for the " +
+			"person deciding, not for the peer. You will be told it is pending either way — do not re-ask in a loop.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in linkRequestIn) (*mcp.CallToolResult, linkRequestOut, error) {
+		p, err := requireStation(ctx)
+		if err != nil {
+			return nil, linkRequestOut{}, err
+		}
+		if strings.TrimSpace(in.Reason) == "" {
+			return nil, linkRequestOut{}, errors.New("a reason is required — your human decides on it, and an unexplained request is one they cannot judge")
+		}
+		target, err := d.Store.StationByName(ctx, p.SpaceID, strings.TrimSpace(in.ToStation))
+		if err != nil {
+			return nil, linkRequestOut{}, errors.New("no such station is available to link to — ask your human for the exact name")
+		}
+		// The hearsay marker, resolved the same way a note or task resolves it. This
+		// is the ONLY signal the human gets that the request may not be this session's
+		// own idea: a peer cannot open a channel, but it can talk this session into
+		// asking for one, and the request then arrives looking like its own.
+		if _, err := d.Store.CreateStationLinkRequest(ctx, p.SpaceID, p.TokenID,
+			p.StationID, target.StationID, in.Reason, hearsayFor(ctx, d, p)); err != nil {
+			return nil, linkRequestOut{}, err
+		}
+		// Identical answer whether the request was filed or silently dropped against a
+		// muted pair. A caller that could tell the difference could probe the human's
+		// past refusals one request at a time.
+		return nil, linkRequestOut{
+			Status: "pending",
+			Note:   "Submitted for your human to decide. Tell them in words that you asked and why — this tool result reaches nobody otherwise. Do not ask again for this station.",
+		}, nil
+	})
+
+	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "station_me",
 		Description: "Your briefing: who you are staffing, open tasks (named), handoff staleness, and what is " +
 			"waiting on your human. Call it FIRST in every session, and relay what it says to your human in words — " +

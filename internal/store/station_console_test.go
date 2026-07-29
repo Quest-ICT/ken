@@ -223,3 +223,165 @@ func TestAssetUsageCountsOnlyThisStation(t *testing.T) {
 		t.Fatal("note bytes reported as 0 though a page with a body exists")
 	}
 }
+
+// A denied pair is MUTED, and a re-request must be indistinguishable from a filed
+// one. If the caller could tell the difference, a persistent session could probe the
+// human's past refusals one request at a time — and the mute exists precisely to stop
+// re-asking until a tired human says yes.
+func TestADeniedLinkIsMutedAndTheMuteCannotBeProbed(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	a, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateStation(ctx, 1, "promo", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "we need to coordinate the launch", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == "" {
+		t.Fatal("the first request was dropped")
+	}
+	if err := st.DenyStationRequest(ctx, first, "promo does not need production access", actorID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-asking must SUCCEED at the API level and file nothing.
+	second, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "asking again", false)
+	if err != nil {
+		t.Fatalf("a muted re-request returned an error, which is exactly the signal that must not exist: %v", err)
+	}
+	if second != "" {
+		t.Fatal("a muted re-request was filed — the human's refusal should hold without them re-deciding")
+	}
+	pending, err := st.PendingStationRequests(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("%d request(s) reached the human despite the mute", len(pending))
+	}
+
+	// And the mute is on the UNORDERED pair: asking from the other side must not
+	// reset it, or the relationship is simply re-asked in the opposite direction.
+	reverse, err := st.CreateStationLinkRequest(ctx, 1, "kens_2", b.StationID, a.StationID, "from the other side", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reverse != "" {
+		t.Fatal("the mute was bypassed by asking from the other station — it must be on the unordered pair")
+	}
+}
+
+// The transitive path (S9): a peer cannot open a channel, but it can talk another
+// session into asking for one, and the request then reaches the human looking like
+// that session's own idea. The marker is the only signal the human gets.
+//
+// It must be NULL rather than 0 when there is no signal — with COMM off nothing is
+// known, and a 0 would claim knowledge the server does not have.
+func TestLinkRequestsRecordWhetherTheAskerWasMidConversation(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	a, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateStation(ctx, 1, "promo", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := st.CreateStation(ctx, 1, "infra", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "prompted", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, c.StationID, "own idea", false); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := st.PendingStationRequests(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d pending requests, want 2", len(rows))
+	}
+	var marked, unmarked int
+	for _, r := range rows {
+		if r.PromptedByPeerTraffic {
+			marked++
+		} else {
+			unmarked++
+		}
+	}
+	if marked != 1 || unmarked != 1 {
+		t.Fatalf("marked=%d unmarked=%d, want exactly one of each — the marker shipped permanently false until this change", marked, unmarked)
+	}
+}
+
+// Approving must clear the mute. The human changed their mind; leaving the denial in
+// place would silently drop the next request for a relationship they just allowed.
+func TestApprovingALinkClearsAnEarlierDenial(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	a, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateStation(ctx, 1, "promo", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "please", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DenyStationRequest(ctx, first, "not yet", actorID); err != nil {
+		t.Fatal(err)
+	}
+	// The human relents and creates the link directly from a later request. Simulate
+	// by clearing through approval of a fresh request, which requires the mute gone.
+	linked, err := st.AreStationsLinked(ctx, a.StationID, b.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linked {
+		t.Fatal("stations are linked before any approval")
+	}
+
+	// Insert a request bypassing the mute the way the console would if the human
+	// approved a pending one, then approve it.
+	id, err := randBase62(12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.ExecContext(ctx, `
+INSERT INTO station_request(request_id, space_id, kind, from_station, to_station, from_token_id, reason)
+VALUES(?,1,'link',?,?,'kens_1','second thoughts')`, id, a.StationID, b.StationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApproveLinkRequest(ctx, id, actorID); err != nil {
+		t.Fatal(err)
+	}
+	linked, err = st.AreStationsLinked(ctx, a.StationID, b.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !linked {
+		t.Fatal("approving a link request did not create an active link")
+	}
+	// The mute must be gone, or the next request for a now-allowed relationship is
+	// silently dropped.
+	again, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "third", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again == "" {
+		t.Fatal("a request is still being muted after the human APPROVED the relationship")
+	}
+}

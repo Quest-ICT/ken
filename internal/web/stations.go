@@ -138,6 +138,24 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 	}
 	_ = r.ParseForm()
 	id := r.PathValue("id")
+
+	// A LINK request has no name to type — the human is approving a relationship
+	// between two stations that already exist, not creating one. Routed on the form's
+	// declared kind rather than on whether a name happens to be present, so a
+	// mis-filled form fails loudly instead of taking the wrong branch.
+	if r.FormValue("kind") == "link" {
+		l, err := a.store.ApproveLinkRequest(r.Context(), id, sess.ActorID)
+		switch {
+		case errors.Is(err, store.ErrRequestNotPending):
+			flashRedirect(w, r, "/stations", "flash.station_request_gone", "")
+		case err != nil:
+			flashRedirect(w, r, "/stations", "flash.station_approve_failed", err.Error())
+		default:
+			flashRedirect(w, r, "/stations", "flash.link_approved", l.NameA+" ↔ "+l.NameB)
+		}
+		return
+	}
+
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
 		flashRedirect(w, r, "/stations", "flash.station_name_required", "")

@@ -95,6 +95,14 @@
           {{if .Reason}}<p><b>{{$.T "stations.req_reason"}}:</b> {{.Reason}}</p>{{end}}
           {{if .NameHint}}<p class="help">{{$.T "stations.req_hint"}}: <code>{{.NameHint}}</code> — {{$.T "stations.req_hint_note"}}</p>{{end}}
 
+          {{if eq .Kind "link"}}
+          <p class="help">{{$.T "stations.link_help"}}</p>
+          <form method="post" action="/stations/requests/{{.RequestID}}/approve">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+            <input type="hidden" name="kind" value="link">
+            <button class="btn btn--primary" type="submit" title="{{$.T "stations.link_approve_help"}}">{{$.T "stations.link_approve"}}</button>
+          </form>
+          {{else}}
           <form method="post" action="/stations/requests/{{.RequestID}}/approve">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
             <div class="field">
@@ -105,6 +113,7 @@
             </div>
             <button class="btn btn--primary" type="submit" title="{{$.T "stations.req_approve_help"}}">{{$.T "stations.req_approve"}}</button>
           </form>
+          {{end}}
 
           <form method="post" action="/stations/requests/{{.RequestID}}/deny">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
