@@ -168,3 +168,16 @@ type fileGrantOut struct {
 	SHA256      string `json:"sha256" jsonschema:"verify your downloaded file against this"`
 	ExpiresAt   string `json:"expires_at"`
 }
+
+type openLinkedIn struct {
+	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
+	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	ToStation      string `json:"to_station" jsonschema:"required; the station to open a channel with, by NAME. A human must already have approved a link between your station and that one"`
+	Label          string `json:"label,omitempty" jsonschema:"optional; a human-readable name for the channel, shown in your human's console"`
+}
+
+type openLinkedOut struct {
+	ChannelID string `json:"channel_id"`
+	Open      bool   `json:"open"`
+	Reused    bool   `json:"reused,omitempty"`
+}

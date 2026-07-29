@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -231,6 +232,55 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			}
 		}
 		return nil, out, nil
+	})
+
+	addTool(s, d.Metrics, &mcp.Tool{
+		Name: "comm_open_channel",
+		Description: "Open a channel with another STATION your human has already linked to yours — no pairing " +
+			"code needed, because the approval was given once for the relationship rather than per conversation. " +
+			"Both sides must be staffing a station. If there is no approved link, ask for one with " +
+			"station_link_request on the /station endpoint and tell your human you did.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in openLinkedIn) (*mcp.CallToolResult, openLinkedOut, error) {
+		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
+		if err != nil {
+			return nil, openLinkedOut{}, err
+		}
+		if ep.StationID == "" {
+			return nil, openLinkedOut{}, errors.New("this endpoint is not bound to a station, so it has no relationships to spend — " +
+				"get a voucher from station_binding_voucher on /station and register again, or use a pairing code from your human")
+		}
+		p := principalFrom(ctx)
+		target, err := d.Store.StationByName(ctx, p.SpaceID, strings.TrimSpace(in.ToStation))
+		if err != nil {
+			return nil, openLinkedOut{}, errors.New("no such station — ask your human for the exact name")
+		}
+		// The authorization lives in the DURABLE database and is read from there.
+		// comm.db holds no standing permission and must not start: a link is a human
+		// decision, and human decisions survive a comm.db loss (S7, S9).
+		linked, err := d.Store.AreStationsLinked(ctx, ep.StationID, target.StationID)
+		if err != nil {
+			return nil, openLinkedOut{}, err
+		}
+		if !linked {
+			return nil, openLinkedOut{}, errors.New("your human has not approved a link between these two stations — " +
+				"ask for one with station_link_request on the /station endpoint, then TELL YOUR HUMAN you asked and why; " +
+				"they decide, and this call will keep failing until they do")
+		}
+		// Someone must be staffing the other side for a channel to have two ends.
+		peer, err := d.Comm.LiveEndpointForStation(ctx, target.StationID)
+		if err != nil {
+			return nil, openLinkedOut{}, errors.New("nobody is currently staffing " + target.Name +
+				" — the link is approved, but a channel needs a live session on both sides. Try again when one is running")
+		}
+		label := strings.TrimSpace(in.Label)
+		if label == "" {
+			label = stationLabel(ctx, d, ep.StationID) + " <-> " + target.Name
+		}
+		ch, err := d.Comm.OpenLinkedChannel(ctx, ep, peer, p.ActorID, label)
+		if err != nil {
+			return nil, openLinkedOut{}, commError(err)
+		}
+		return nil, openLinkedOut{ChannelID: ch.ChannelID, Open: ch.Open()}, nil
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
@@ -536,3 +586,13 @@ func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
 // its handler time is dominated by the wait, not by work. Kept as a named function
 // so the exclusion is explicit and testable rather than an inline string compare.
 func recordsDuration(tool string) bool { return tool != "comm_poll" }
+
+// stationLabel resolves a station's human name for a default channel label, falling
+// back to the opaque id. A label is decoration shown in the console; it is never an
+// address, so a miss costs readability and nothing else.
+func stationLabel(ctx context.Context, d Deps, stationID string) string {
+	if st, err := d.Store.StationByID(ctx, stationID); err == nil {
+		return st.Name
+	}
+	return stationID
+}

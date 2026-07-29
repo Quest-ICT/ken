@@ -285,3 +285,117 @@ FROM channel WHERE id=?`, id).
 	c.EndpointB, c.OpenedAt = bID.Int64, opn.String
 	return &c, nil
 }
+
+// OpenLinkedChannel materializes a channel between two station-bound endpoints whose
+// stations a human has already linked (docs/STATIONS.md S9).
+//
+// This is what a link is FOR. Without it a link records the human's decision without
+// ever spending it, and every conversation still costs a pairing code — which is the
+// step the link exists to remove. The decision itself is not removed: the channel can
+// only come into existence because a human approved the relationship, which is the
+// same gate one level up.
+//
+// The caller MUST have verified the link in the knowledge-base store first; this
+// package cannot see it. That is S7's boundary, not laziness — comm.db holds no
+// durable authorization and must not start.
+//
+// Opened directly rather than left pending: the pairing flow is pending-until-both-join
+// because a CODE is a rendezvous between two sessions that have not met. A link has
+// already established that both stations may talk, so there is nothing to wait for.
+// Idempotent — asking twice returns the existing channel rather than a second one,
+// because a session that retries after a lost response must not fragment the
+// conversation into two.
+func (s *Store) OpenLinkedChannel(ctx context.Context, a, b *Endpoint, ownerActorID int64, label string) (*Channel, error) {
+	if a.ID == b.ID {
+		return nil, ErrDenied
+	}
+	if a.StationID == "" || b.StationID == "" {
+		return nil, ErrDenied
+	}
+	var out *Channel
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		// An existing OPEN channel between these two STATIONS is reused, not
+		// duplicated — matched on stations rather than endpoints so a replacement
+		// session on either side finds the conversation its predecessor was having
+		// instead of starting a parallel one.
+		var existing string
+		err := t.QueryRowContext(ctx, `
+SELECT c.channel_id
+  FROM channel c
+  JOIN endpoint ea ON ea.id = c.endpoint_a
+  JOIN endpoint eb ON eb.id = c.endpoint_b
+ WHERE c.state='open'
+   AND ((ea.station_id=? AND eb.station_id=?) OR (ea.station_id=? AND eb.station_id=?))
+ LIMIT 1`, a.StationID, b.StationID, b.StationID, a.StationID).Scan(&existing)
+		if err == nil {
+			ch, _, cerr := s.channelByPublicID(ctx, t, existing)
+			out = ch
+			return cerr
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+
+		channelID, err := randBase62(22)
+		if err != nil {
+			return err
+		}
+		res, err := t.ExecContext(ctx, `
+INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, opened_at, label)
+VALUES(?,?,?,?,?, 'open', strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?)`,
+			channelID, a.Owner.SpaceID, ownerActorID, a.ID, b.ID, nullStr(label))
+		if err != nil {
+			return err
+		}
+		if _, err := res.LastInsertId(); err != nil {
+			return err
+		}
+		ch, _, cerr := s.channelByPublicID(ctx, t, channelID)
+		out = ch
+		return cerr
+	})
+	return out, err
+}
+
+// channelByPublicID loads a channel inside an open transaction.
+func (s *Store) channelByPublicID(ctx context.Context, t *sql.Tx, channelID string) (*Channel, int64, error) {
+	var (
+		ch  Channel
+		bID sql.NullInt64
+		opn sql.NullString
+	)
+	err := t.QueryRowContext(ctx, `
+SELECT id, channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, created_at, opened_at
+FROM channel WHERE channel_id=?`, channelID).
+		Scan(&ch.ID, &ch.ChannelID, &ch.SpaceID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, 0, ErrNotFound
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	ch.EndpointB, ch.OpenedAt = bID.Int64, opn.String
+	return &ch, ch.EndpointB, nil
+}
+
+// LiveEndpointForStation returns the most recently seen live endpoint reading for a
+// station, or nil when nobody is staffing it.
+//
+// "Most recent" rather than "the only one" because a station may legitimately have
+// several readers (S4). Picking the freshest is a heuristic for "who is actually
+// here", and it does not need to be exact: whichever endpoint is chosen, the message
+// lands in the STATION's inbox and any reader can claim it.
+func (s *Store) LiveEndpointForStation(ctx context.Context, stationID string) (*Endpoint, error) {
+	var id int64
+	err := s.R.QueryRowContext(ctx, `
+SELECT id FROM endpoint
+ WHERE station_id=? AND revoked_at IS NULL
+ ORDER BY last_seen_at DESC LIMIT 1`, stationID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.endpointByRowID(ctx, id)
+}

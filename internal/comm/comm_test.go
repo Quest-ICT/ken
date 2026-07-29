@@ -1141,3 +1141,88 @@ func TestRevokingAnEndpointReleasesItsClaims(t *testing.T) {
 		t.Fatalf("after revoking the claim holder, the other reader saw %d message(s), want 1 — the operator revoked it so someone else could take over", len(got))
 	}
 }
+
+// The payoff of a link: two stations open a channel with NO pairing code, because a
+// human approved the relationship once instead of approving each conversation.
+//
+// The gate is not removed, only moved: the channel exists because a person said these
+// two posts may talk. What is removed is the per-conversation step.
+func TestLinkedStationsOpenAChannelWithoutAPairingCode(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "prod", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = bindEndpoint(t, st, a, "stn_dev", "kens_a")
+	b = bindEndpoint(t, st, b, "stn_prod", "kens_b")
+
+	ch, err := st.OpenLinkedChannel(ctx, a, b, 42, "dev <-> prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ch.Open() {
+		t.Fatalf("a linked channel opened in state %q — there is no rendezvous to wait for, both stations are already approved", ch.State)
+	}
+	// It must carry real traffic, not merely exist.
+	if _, err := st.Send(ctx, a, ch.ChannelID, "opened from a link", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Body != "opened from a link" {
+		t.Fatalf("the peer received %d message(s): %+v", len(got), got)
+	}
+
+	// Idempotent: a retry after a lost response must not fragment one conversation
+	// into two channels.
+	again, err := st.OpenLinkedChannel(ctx, a, b, 42, "dev <-> prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ChannelID != ch.ChannelID {
+		t.Fatalf("a second open produced a NEW channel (%s vs %s) — a retry would split the conversation", again.ChannelID, ch.ChannelID)
+	}
+
+	// And a REPLACEMENT session on one side rejoins the SAME conversation, because
+	// the match is on stations rather than endpoints.
+	a2, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2 = bindEndpoint(t, st, a2, "stn_dev", "kens_a")
+	rejoined, err := st.OpenLinkedChannel(ctx, a2, b, 42, "dev <-> prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejoined.ChannelID != ch.ChannelID {
+		t.Fatalf("a replacement session started a PARALLEL channel (%s vs %s) instead of finding its predecessor's", rejoined.ChannelID, ch.ChannelID)
+	}
+}
+
+// An unbound endpoint has no station and therefore no relationships to spend. It must
+// be refused rather than silently opening an unauthorized channel.
+func TestOpenLinkedChannelRefusesUnboundEndpoints(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "prod", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = bindEndpoint(t, st, b, "stn_prod", "kens_b")
+
+	if _, err := st.OpenLinkedChannel(ctx, a, b, 42, "x"); err == nil {
+		t.Fatal("an UNBOUND endpoint opened a linked channel — it belongs to no station, so no human ever approved a relationship for it")
+	}
+}
