@@ -235,6 +235,41 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
+		Name: "comm_bind",
+		Description: "Bind the endpoint you ALREADY have to a station, without re-registering. Use this when " +
+			"your human has just set stations up and you are a session that was already running: you keep your " +
+			"endpoint_id, your secret and every channel you are in, and your station gains your inbox — so a " +
+			"later session can take over from you. Get the voucher from station_binding_voucher on /station. " +
+			"If you are registering for the first time, pass the voucher to comm_register instead.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bindIn) (*mcp.CallToolResult, bindOut, error) {
+		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
+		if err != nil {
+			return nil, bindOut{}, err
+		}
+		// Already bound is refused rather than re-pointed. Moving an endpoint BETWEEN
+		// stations would carry the first station's unread mail into the second — the
+		// shared-inbox accident in a new costume. Binding one that has NO station
+		// carries nothing across, which is why that direction is allowed and this one
+		// is not.
+		if ep.StationID != "" {
+			return nil, bindOut{}, errors.New("this endpoint is already bound to a station — an endpoint cannot move between stations, " +
+				"because it would carry the first station's unread mail into the second. Register a new endpoint if you need a different station")
+		}
+		sid, keyID, err := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID)
+		if err != nil {
+			return nil, bindOut{}, err
+		}
+		if err := d.Comm.BindEndpointToStation(ctx, ep.EndpointID, sid, keyID); err != nil {
+			return nil, bindOut{}, commError(err)
+		}
+		return nil, bindOut{
+			StationID: sid,
+			Note: "Bound. Your endpoint_id, secret and channels are unchanged — nothing to re-pair. " +
+				"Your mail now belongs to the station, so if you are replaced, the next session inherits it.",
+		}, nil
+	})
+
+	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_open_channel",
 		Description: "Open a channel with another STATION your human has already linked to yours — no pairing " +
 			"code needed, because the approval was given once for the relationship rather than per conversation. " +

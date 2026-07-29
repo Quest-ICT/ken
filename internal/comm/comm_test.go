@@ -1306,3 +1306,83 @@ func TestUnboundSendersKeepTheirOwnSequence(t *testing.T) {
 		t.Fatalf("the reverse direction started at %d, want 1 — per channel AND direction", m.Seq)
 	}
 }
+
+// A session that was ALREADY RUNNING when its human set stations up must be able to
+// adopt one in place. Without this, adoption means re-registering — a new endpoint,
+// a new secret, and every channel abandoned — which is the cost stations exist to
+// remove, charged at the moment of adopting them.
+func TestAnAlreadyRunningEndpointCanAdoptAStationAndKeepItsChannels(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "long-running", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// It has been talking to a peer for a while, over an ordinary pairing code.
+	code, err := st.MintPairingCode(ctx, 1, 42, "old channel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, b, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, b, ch.ChannelID, "mail that arrived before stations existed", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The human sets stations up. The session adopts one WITHOUT re-registering.
+	if err := st.BindEndpointToStation(ctx, a.EndpointID, "stn_adopted", "kens_k"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Its credential still works — nothing was reissued.
+	bound, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret)
+	if err != nil {
+		t.Fatalf("the endpoint's own secret stopped working after binding: %v", err)
+	}
+	if bound.StationID != "stn_adopted" {
+		t.Fatalf("station = %q after binding", bound.StationID)
+	}
+	// Its channel survived.
+	chans, err := st.ListChannels(ctx, bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chans) != 1 || chans[0].ChannelID != ch.ChannelID {
+		t.Fatalf("channels after adoption = %+v, want the original %s — adoption must not cost a re-pair", chans, ch.ChannelID)
+	}
+	// And the mail it had not read is still readable, now as the station's.
+	got, err := st.Poll(ctx, bound, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("polled %d messages after adopting a station, want the 1 that predates it — binding must not strand mail already addressed to the endpoint", len(got))
+	}
+
+	// A SECOND session can now take over, which is the point of adopting at all.
+	successor, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "successor", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor = bindEndpoint(t, st, successor, "stn_adopted", "kens_k")
+	if _, err := st.Send(ctx, b, ch.ChannelID, "sent after the handover", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	inherited, err := st.Poll(ctx, successor, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inherited) == 0 {
+		t.Fatal("the successor inherited nothing — adoption did not actually move the inbox to the station")
+	}
+}

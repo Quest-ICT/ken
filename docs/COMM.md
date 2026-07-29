@@ -434,6 +434,7 @@ ken token add --actor comm-dev --scopes comm
 | `comm_register` | Register this session as an endpoint; returns `endpoint_id` + one-time secret. Optionally redeems a `binding_voucher` to bind the endpoint to a station. |
 | `comm_join` | Join a channel using a human-minted pairing code. Both sides call it. |
 | `comm_open_channel` | Open a channel with a station your human has already **linked** to yours — no pairing code. Refused without an approved link. |
+| `comm_bind` | Bind an endpoint you already have to a station, keeping its id, secret and channels. For sessions that were already running when stations were set up. |
 | `comm_channels` | List this endpoint's channels and their state. |
 | `comm_send` | Send one atomic message; optional `requires_response` / `reply_to` / idempotency key. |
 | `comm_poll` | Long-poll for unacknowledged messages across all of this endpoint's channels. |

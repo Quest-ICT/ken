@@ -15,6 +15,19 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+- **`comm_bind` — adopt a station without re-registering.** Binding could only happen at
+  `comm_register`, so a session that was already running when its human enabled stations had to
+  register again: a new endpoint, a new secret, and every channel abandoned. That is the exact cost
+  stations exist to remove, charged at the moment of adopting them. A running session now takes a
+  voucher and calls `comm_bind`, keeping its endpoint id, its secret, its channels and its unread
+  mail — which then belongs to the station, so a later session inherits it.
+  An endpoint still binds **once**: re-pointing a bound one would carry the first station's unread
+  mail into the second, while binding one that has no station carries nothing across.
+- `docs/STATIONS.md` §12 now carries the ordered turn-it-on procedure for a deployment with sessions
+  already running, and says what each step actually buys — durable memory and a task list after the
+  key is in place, a station-owned inbox only after binding.
+
 ## [1.5.0] — 2026-07-29
 
 ### Added

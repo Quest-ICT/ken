@@ -696,6 +696,41 @@ rather than merely exist:
 
 ## 12. Migration — and the statements elsewhere that must change
 
+### Turning it on where sessions are already running
+
+The order matters, and only the last step involves the sessions themselves:
+
+1. **Enable it**: `KEN_STATION_ENABLED=1`, restart. The schema was already there — migrations are
+   unconditional (S2) — so this adds the `/station/mcp` surface and the `/stations` console, nothing
+   else.
+2. **Create a station per working identity, naming each one yourself**: `ken station add --name
+   prod-ops`. Or leave this until a session asks with `station_request` and approve it in the console;
+   either way a human types the name (S3).
+3. **Mint one key per MACHINE, never per person, and never copy one**: `ken station key --station
+   prod-ops --label vps`. Key-per-machine is what makes revoking a single one mean anything (S5).
+4. **Put the key in that machine's MCP client config as an `Authorization` header** — never in a
+   prompt, never as a tool argument (S5). The session now has a notebook, a task list and a locker
+   immediately; nothing further is required for those.
+5. **Only if you want the messaging half:** the session calls `station_binding_voucher` on `/station`
+   and passes the voucher to **`comm_bind`** on `/comm`. It keeps its endpoint id, its secret and
+   every channel it is in — adoption costs no re-pairing. `comm_register` also accepts a voucher, but
+   that is for a session registering for the FIRST time; an already-running session should bind in
+   place.
+
+**What each step buys, so none of it is done on faith:** after step 4 a session has durable memory
+and a task list that survives it. After step 5 the STATION owns its inbox, so a replacement session
+inherits unread mail — which is the only step that makes losing a session cheap. Approving a **link**
+(S9) between two stations is what then lets either open a channel with no pairing code.
+
+**An endpoint binds once and cannot move between stations.** Binding one that has no station carries
+nothing across; re-pointing a bound one would carry the first station's unread mail into the second,
+which is the shared-inbox accident in a new costume. Register a new endpoint if a session genuinely
+needs a different station.
+
+---
+
+
+
 1. **`comm_register` with no station key stays valid indefinitely.** Binding is an *identity*, never a
    requirement. Existing endpoints keep working, unbound.
 2. **Pairing codes and `comm_join` are not deprecated.** Links are an addition; a human who prefers to

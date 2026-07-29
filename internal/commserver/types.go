@@ -181,3 +181,14 @@ type openLinkedOut struct {
 	Open      bool   `json:"open"`
 	Reused    bool   `json:"reused,omitempty"`
 }
+
+type bindIn struct {
+	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
+	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	BindingVoucher string `json:"binding_voucher" jsonschema:"required; a fresh voucher from station_binding_voucher on the /station endpoint"`
+}
+
+type bindOut struct {
+	StationID string `json:"station_id"`
+	Note      string `json:"note"`
+}
