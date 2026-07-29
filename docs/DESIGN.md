@@ -432,6 +432,14 @@ exchange (same-host rendezvous plus a one-time-grant HTTP relay). Curation is pr
 promote view. Full contract, including the isolation rules that make the in-process choice honest:
 [`COMM.md`](COMM.md).
 
+**Designed, not yet built — stations** ([`STATIONS.md`](STATIONS.md)): a durable, human-named working
+identity that AI sessions staff, owning a notebook, a task list and a small file locker, and serving as
+COMM's durable address so a peer relationship outlives the session that made it. Written contract-first
+for the reason C-series decisions exist at all — the design's load-bearing choices (who owns a message
+inbox when several sessions staff one identity, what a credential revocation actually severs, where
+durable state may point) are cheap to argue on paper and expensive to discover in code. Opt-in and off
+by default, like COMM.
+
 **Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5) · COMM console re-labelling + endpoint identity (COMM.md §12) · **client-side sortable listing tables** (below). *(All §1 security-priority items are now implemented.)*
 
 **Deferred UI enhancement — sortable listing tables (all web UI grids, not just COMM).** Every

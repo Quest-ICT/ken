@@ -15,6 +15,17 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+- **[docs/STATIONS.md](docs/STATIONS.md) — a design contract for stations**, written before any code in
+  the style of `COMM.md`. A *station* is a durable, human-created and human-**named** working identity
+  that AI sessions staff and outlive: it owns a notebook, a task list and a small file locker, and it is
+  what COMM addresses, so a peer relationship survives the session that created it. Twelve locked
+  decisions, each with its trade-off; nothing is implemented yet. The document exists because the
+  expensive questions here are not features but invariants — who owns a message inbox when several
+  sessions staff one identity, what a credential revocation actually severs, which database a durable
+  row may point into, and what a snapshot then carries. It also names the statements in `BACKUP.md`,
+  `COMPATIBILITY.md`, `COMM.md` and `MCP-TOOLS.md` that must change on the day it ships.
+
 ### Changed
 - **`ken backup snapshot`/`verify` now name the real cause when `KEN_DB` is unset.** The command fell
   back to a *relative* `./data` and failed with `create data dir: mkdir data: permission denied` — which

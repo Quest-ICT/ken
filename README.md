@@ -63,6 +63,7 @@ installers are built and tested.
 - [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md) — how to make your AI use Ken (token strategy + the operating loop).
 - [docs/OAUTH.md](docs/OAUTH.md) — connect claude.ai as a custom connector (the optional OAuth server).
 - [docs/COMM.md](docs/COMM.md) — inter-session communication: let two AI sessions hand work to each other (**opt-in, off by default**).
+- [docs/STATIONS.md](docs/STATIONS.md) — stations: durable, human-named AI working identities with a notebook, a task list and a small file locker (**design contract; not yet built**).
 - [docs/I18N.md](docs/I18N.md) — the multilingual UI: add a language or override any string at runtime (drop-in `.properties`).
 - [docs/INSTALL.md](docs/INSTALL.md) — install / deploy (self-extracting `.bin`, systemd, TLS posture).
 - [docs/MONITORING.md](docs/MONITORING.md) — health, metrics, and the Grafana/Prometheus bundle.
