@@ -470,7 +470,18 @@ func runServe(args []string) {
 				return err == nil && ok
 			}
 		}
-		mux.Handle("/station/mcp", stationserver.NewHTTPHandler(sd))
+		sd.TaskLimits, sd.NoteLimits, sd.LockerLimits = stationLimits(live.Current())
+		stationHandler := stationserver.NewHTTPHandler(sd)
+		// Live: an operator lowering a station cap is usually reacting to something
+		// already growing, which is the worst case for "applies at the next restart".
+		lastStation := stationRelevant(live.Current().Values)
+		live.OnChange(func(sn *settings.Snapshot) {
+			if k := stationRelevant(sn.Values); k != lastStation {
+				lastStation = k
+				stationHandler.SetLimits(stationLimits(sn))
+			}
+		})
+		mux.Handle("/station/mcp", stationHandler)
 		log.Printf("STATIONS: enabled at /station/mcp — requires a kens_ key bound to a station (ken station add --name <n>, then ken station key --station <n> --label <machine>)")
 	}
 
@@ -914,4 +925,38 @@ func openComm(path string, limits comm.Limits) (*comm.Store, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return cs, nil
+}
+
+// stationLimits maps the live settings onto the station bounds (docs/STATIONS.md §9).
+//
+// KiB rather than bytes in the settings, because these are the numbers an operator
+// reasons about in a backup conversation — "four megabytes of notebook per station"
+// is a sentence, "4194304" is not.
+func stationLimits(s *settings.Snapshot) (store.StationTaskLimits, store.StationNoteLimits, store.StationLockerLimits) {
+	return store.StationTaskLimits{
+			MaxOpen:               s.StationMaxOpenTasks,
+			MaxTextBytes:          s.StationTaskTextBytes,
+			MaxDetailBytes:        s.StationTaskDetailBytes,
+			ListLimit:             s.StationTaskListLimit,
+			BriefStampThrottleSec: store.DefaultStationTaskLimits().BriefStampThrottleSec,
+		},
+		store.StationNoteLimits{
+			MaxPageBytes:     s.StationNotePageKiB << 10,
+			MaxRevisionBytes: s.StationNoteRevisionKiB << 10,
+			MaxNotebookBytes: s.StationNotebookKiB << 10,
+		},
+		store.StationLockerLimits{
+			MaxBlobBytes:  s.StationLockerBlobKiB << 10,
+			MaxTotalBytes: s.StationLockerTotalKiB << 10,
+		}
+}
+
+// stationRelevant is the changed-subset key for station settings, so an unrelated
+// edit (a rate limit, a TLS field) does not churn the live bounds.
+func stationRelevant(v settings.Values) string {
+	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%d",
+		v.StationNotePageKiB, v.StationNoteRevisionKiB, v.StationNotebookKiB,
+		v.StationLockerBlobKiB, v.StationLockerTotalKiB,
+		v.StationMaxOpenTasks, v.StationTaskTextBytes, v.StationTaskDetailBytes,
+		v.StationTaskListLimit)
 }

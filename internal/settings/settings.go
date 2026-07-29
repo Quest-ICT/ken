@@ -88,6 +88,20 @@ type Values struct {
 	// than a request. Only bound endpoints are affected; unbound traffic never
 	// claims anything.
 	CommClaimLeaseSec int
+
+	// Station bounds (docs/STATIONS.md §9). Every one of these is a BACKUP decision
+	// before it is a storage decision: station assets live in ken.db, so whatever a
+	// station may hold, the nightly snapshot copies — and S12's ×15 multiplier is the
+	// reason the reasons are attached rather than the numbers standing alone.
+	StationNotePageKiB     int
+	StationNoteRevisionKiB int
+	StationNotebookKiB     int
+	StationLockerBlobKiB   int
+	StationLockerTotalKiB  int
+	StationMaxOpenTasks    int
+	StationTaskTextBytes   int
+	StationTaskDetailBytes int
+	StationTaskListLimit   int
 }
 
 // Snapshot is Values plus the derived objects consumers read.
@@ -245,6 +259,38 @@ var Fields = []Field{
 	intField("comm_claim_lease_sec", "Inter-session comms", "Station claim lease (seconds)",
 		"When several sessions staff one station, the first to poll a message claims it and the others do not see it. This is how long that claim lasts before the message returns to the queue for another session to pick up. It only matters if you use stations; too short and a session still working gets undercut, too long and a session that died holds its messages out of reach.",
 		func(v Values) int { return v.CommClaimLeaseSec }, func(v *Values, n int) { v.CommClaimLeaseSec = n }, 30, 3600),
+
+	// --- Stations (docs/STATIONS.md §9) -------------------------------------------
+	// The help text states the REASON for each bound, not the number: a bound whose
+	// reason is attached is one an operator can raise deliberately, and one whose
+	// reason is missing gets raised by a hundred because a session complained.
+	intField("station_note_page_kib", "Stations", "Notebook page size (KiB)",
+		"The largest a single notebook page may be. A page bigger than this is a document rather than a note, and notebook pages travel in every backup.",
+		func(v Values) int { return v.StationNotePageKiB }, func(v *Values, n int) { v.StationNotePageKiB = n }, 1, 1024),
+	intField("station_note_revision_kib", "Stations", "Revision history per page (KiB)",
+		"How much edit history one page keeps before the oldest revisions are dropped. This is an undo buffer, not an archive — it exists so a session can recover from its own bad overwrite.",
+		func(v Values) int { return v.StationNoteRevisionKiB }, func(v *Values, n int) { v.StationNoteRevisionKiB = n }, 0, 4096),
+	intField("station_notebook_kib", "Stations", "Notebook per station (KiB)",
+		"Total size of a station's current notebook pages, excluding history. Roughly sixty full pages at the default page size.",
+		func(v Values) int { return v.StationNotebookKiB }, func(v *Values, n int) { v.StationNotebookKiB = n }, 64, 65536),
+	intField("station_locker_blob_kib", "Stations", "Locker file size (KiB)",
+		"The largest single file a station may store. The locker is for memory and instruction files, not payloads.",
+		func(v Values) int { return v.StationLockerBlobKiB }, func(v *Values, n int) { v.StationLockerBlobKiB = n }, 1, 4096),
+	intField("station_locker_total_kib", "Stations", "Locker per station (KiB)",
+		"Total locker storage one station may use. Everything here lands verbatim in your backups, and Ken cannot inspect it.",
+		func(v Values) int { return v.StationLockerTotalKiB }, func(v *Values, n int) { v.StationLockerTotalKiB = n }, 16, 65536),
+	intField("station_max_open_tasks", "Stations", "Open tasks per station",
+		"How many tasks a station may have open at once. A list longer than this is not being worked, and refusing is more honest than letting it grow.",
+		func(v Values) int { return v.StationMaxOpenTasks }, func(v *Values, n int) { v.StationMaxOpenTasks = n }, 10, 5000),
+	intField("station_task_text_bytes", "Stations", "Task line length (bytes)",
+		"A task's one-line summary and its resolution line. Short by construction: anything needing more belongs in the detail field or a notebook page.",
+		func(v Values) int { return v.StationTaskTextBytes }, func(v *Values, n int) { v.StationTaskTextBytes = n }, 64, 4096),
+	intField("station_task_detail_bytes", "Stations", "Task detail size (bytes)",
+		"The optional detail and context attached to a task. A task needing more than this is really a notebook page with a plan.",
+		func(v Values) int { return v.StationTaskDetailBytes }, func(v *Values, n int) { v.StationTaskDetailBytes = n }, 256, 65536),
+	intField("station_task_list_limit", "Stations", "Task list page size",
+		"The default AND maximum number of tasks one listing returns. It bounds how much of the pile a session can pull into its context at once.",
+		func(v Values) int { return v.StationTaskListLimit }, func(v *Values, n int) { v.StationTaskListLimit = n }, 5, 200),
 }
 
 // Live holds the current snapshot atomically and applies edits.
@@ -386,7 +432,22 @@ func DefaultsFromEnv() Values {
 		CommGrantTTLSec:   300,
 
 		CommEndpointIdleTTLSec: 7 * 24 * 3600,
-		CommClaimLeaseSec:      300,
+		// §9 says fifteen minutes, and the reasoning is better than the five I first
+		// wrote: the lease has to outlast a MODEL TURN, not a request. A session that
+		// claims a message and then does a long piece of work must not have it taken
+		// away mid-thought, because the second reader would act on it too — which is
+		// the duplicate-action failure claim-once exists to prevent.
+		CommClaimLeaseSec: 900,
+
+		StationNotePageKiB:     64,
+		StationNoteRevisionKiB: 256,
+		StationNotebookKiB:     4096,
+		StationLockerBlobKiB:   256,
+		StationLockerTotalKiB:  2048,
+		StationMaxOpenTasks:    500,
+		StationTaskTextBytes:   512,
+		StationTaskDetailBytes: 4096,
+		StationTaskListLimit:   50,
 	}
 	// Clamp env-provided values so a bad env can't silently disable the limiter or overflow.
 	if v.IPPerMin <= 0 {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -36,14 +37,71 @@ type Deps struct {
 	// note or task written mid-conversation is marked (§7). Optional: with COMM off it
 	// is nil and the marking is simply absent — "no signal", never "known clean".
 	Hearsay func(ctx context.Context, actorID int64) bool
-	// Limits bound the assets. Every one is a BACKUP decision (S12).
+	// Limits bound the assets. Every one is a BACKUP decision (S12). These are the
+	// STARTING values; SetLimits replaces them live.
 	TaskLimits   store.StationTaskLimits
 	NoteLimits   store.StationNoteLimits
 	LockerLimits store.StationLockerLimits
+
+	// limits reads the live bundle. Set by NewHTTPHandler; nil in tests that build a
+	// server directly, where the starting values stand.
+	limits func() *limits
+}
+
+// taskLim, noteLim and lockerLim read the live bounds, falling back to whatever the
+// Deps were built with when no live source is wired (tests).
+func (d Deps) taskLim() store.StationTaskLimits {
+	if d.limits != nil {
+		return d.limits().Task
+	}
+	return d.TaskLimits
+}
+func (d Deps) noteLim() store.StationNoteLimits {
+	if d.limits != nil {
+		return d.limits().Note
+	}
+	return d.NoteLimits
+}
+func (d Deps) lockerLim() store.StationLockerLimits {
+	if d.limits != nil {
+		return d.limits().Locker
+	}
+	return d.LockerLimits
 }
 
 // Handler is the station MCP endpoint.
-type Handler struct{ http.Handler }
+type Handler struct {
+	http.Handler
+	// lim is swapped whole on a settings change and read per call, so an operator's
+	// edit applies live rather than at the next restart — the point of a live
+	// settings page. Every one of these bounds is a BACKUP decision (S12), which is
+	// the case where waiting for a restart is least acceptable: an operator lowering
+	// a cap is usually reacting to something already growing.
+	lim atomic.Pointer[limits]
+}
+
+// limits is the swappable bundle.
+type limits struct {
+	Task   store.StationTaskLimits
+	Note   store.StationNoteLimits
+	Locker store.StationLockerLimits
+}
+
+// SetLimits applies new bounds live. Zero-valued members keep their defaults, so a
+// partially-filled struct cannot silently set a cap to zero — which for a retention
+// bound would mean "prune everything".
+func (h *Handler) SetLimits(task store.StationTaskLimits, note store.StationNoteLimits, locker store.StationLockerLimits) {
+	if task.MaxOpen == 0 {
+		task = store.DefaultStationTaskLimits()
+	}
+	if note.MaxPageBytes == 0 {
+		note = store.DefaultStationNoteLimits()
+	}
+	if locker.MaxBlobBytes == 0 {
+		locker = store.DefaultStationLockerLimits()
+	}
+	h.lim.Store(&limits{Task: task, Note: note, Locker: locker})
+}
 
 // NewHTTPHandler builds the endpoint: a streamable-HTTP MCP server wrapped in
 // station-only bearer auth.
@@ -57,9 +115,13 @@ func NewHTTPHandler(d Deps) *Handler {
 	if d.LockerLimits.MaxBlobBytes == 0 {
 		d.LockerLimits = store.DefaultStationLockerLimits()
 	}
+	h := &Handler{}
+	h.SetLimits(d.taskLim(), d.noteLim(), d.lockerLim())
+	d.limits = func() *limits { return h.lim.Load() }
 	srv := newServer(d)
 	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
-	return &Handler{Handler: authMiddleware(d.Store, d.TokenLimiter, d.Metrics, inner)}
+	h.Handler = authMiddleware(d.Store, d.TokenLimiter, d.Metrics, inner)
+	return h
 }
 
 // instructions are delivered on connect. The FOURTH sentence about tasks is the one that
@@ -280,7 +342,7 @@ func newServer(d Deps) *mcp.Server {
 		if mode == "" {
 			mode = "append"
 		}
-		n, err := d.Store.WriteStationNote(ctx, d.NoteLimits, p.StationID, in.Key, in.Title, in.Body,
+		n, err := d.Store.WriteStationNote(ctx, d.noteLim(), p.StationID, in.Key, in.Title, in.Body,
 			in.Tags, mode, in.IfRev, p.TokenID, p.ActorID, hearsayFor(ctx, d, p))
 		if err != nil {
 			return nil, noteOut{}, err
@@ -319,7 +381,7 @@ func newServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, taskAddOut{}, err
 		}
-		t, near, err := d.Store.AddStationTask(ctx, d.TaskLimits, store.StationTask{
+		t, near, err := d.Store.AddStationTask(ctx, d.taskLim(), store.StationTask{
 			StationID: p.StationID, Text: in.Text, Detail: in.Detail, Context: in.Context,
 			BlockedOn: in.BlockedOn, RemindAfter: in.RemindAfter,
 		}, p.TokenID, p.ActorID, hearsayFor(ctx, d, p))
@@ -338,7 +400,7 @@ func newServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, taskListOut{}, err
 		}
-		ts, total, err := d.Store.ListStationTasks(ctx, d.TaskLimits, p.StationID, in.State, in.BlockedOn, in.Limit)
+		ts, total, err := d.Store.ListStationTasks(ctx, d.taskLim(), p.StationID, in.State, in.BlockedOn, in.Limit)
 		if err != nil {
 			return nil, taskListOut{}, err
 		}
@@ -428,7 +490,7 @@ func newServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, lockerMeta{}, err
 		}
-		e, err := d.Store.PutStationLockerBlob(ctx, d.LockerLimits, p.StationID, in.Name,
+		e, err := d.Store.PutStationLockerBlob(ctx, d.lockerLim(), p.StationID, in.Name,
 			[]byte(in.Body), in.ContentType, p.TokenID, p.ActorID)
 		if err != nil {
 			return nil, lockerMeta{}, err
@@ -498,7 +560,7 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 	if err != nil {
 		return meOut{}, err
 	}
-	b, err := d.Store.BriefStationTasks(ctx, d.TaskLimits, p.StationID)
+	b, err := d.Store.BriefStationTasks(ctx, d.taskLim(), p.StationID)
 	if err != nil {
 		return meOut{}, err
 	}

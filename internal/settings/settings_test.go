@@ -25,7 +25,16 @@ var testDefaults = settings.Values{
 	CommFileMaxMB: 16, CommFileBudgetMB: 256, CommFileMinFreeMB: 512,
 	CommFileTTLSec: 24 * 3600, CommGrantTTLSec: 300,
 	CommEndpointIdleTTLSec: 7 * 24 * 3600,
-	CommClaimLeaseSec:      300,
+	CommClaimLeaseSec:      900,
+	StationNotePageKiB:     64,
+	StationNoteRevisionKiB: 256,
+	StationNotebookKiB:     4096,
+	StationLockerBlobKiB:   256,
+	StationLockerTotalKiB:  2048,
+	StationMaxOpenTasks:    500,
+	StationTaskTextBytes:   512,
+	StationTaskDetailBytes: 4096,
+	StationTaskListLimit:   50,
 }
 
 func testStore(t *testing.T) *store.Store {
