@@ -34,6 +34,7 @@ import (
 	"github.com/Quest-ICT/ken/internal/oauth"
 	"github.com/Quest-ICT/ken/internal/ratelimit"
 	"github.com/Quest-ICT/ken/internal/settings"
+	"github.com/Quest-ICT/ken/internal/stationserver"
 	"github.com/Quest-ICT/ken/internal/store"
 	"github.com/Quest-ICT/ken/internal/version"
 	"github.com/Quest-ICT/ken/internal/web"
@@ -58,6 +59,9 @@ func main() {
 			return
 		case "embed":
 			runEmbed(args[1:])
+			return
+		case "station":
+			runStation(args[1:])
 			return
 		case "serve":
 			runServe(args[1:])
@@ -93,6 +97,7 @@ Usage:
   ken backup snapshot|verify make/verify a consistent DB snapshot
   ken import --dir DIR       import flat memory .md files as curated entries
   ken embed backfill|status  compute embeddings for semantic search
+  ken station add|list|key   create and name stations, mint their keys (docs/STATIONS.md)
   ken version                print the build version and source location
 
 Serve flags:
@@ -144,6 +149,15 @@ Inter-session communication (OFF unless enabled — see docs/COMM.md):
                     (add comm-file to that token for file exchange: --scopes comm,comm-file)
                     a token may hold comm scopes or knowledge-base scopes, never both
                     file exchange is a separate live setting (Settings -> Inter-session comms)
+
+Stations — durable AI working identities (OFF unless enabled — see docs/STATIONS.md):
+  KEN_STATION_ENABLED  1 = expose the station MCP endpoint at /station/mcp (default off)
+                    a station is created and NAMED by a human; a session staffs it
+                    needs a DEDICATED key:  ken token add --actor dev --scopes station
+                    (add station-locker for the file locker)
+                    a token holds knowledge-base, comm, or station scopes — station and
+                    comm may combine, neither may mix with knowledge-base scopes
+                    works with COMM off: the notebook and task list need no peers
 
 Observability (health always on; metrics on by default, loopback-only):
   /healthz          liveness (public, plain "ok")
@@ -436,6 +450,26 @@ func runServe(args []string) {
 	if i18nDir == "" {
 		i18nDir = filepath.Join(filepath.Dir(*dbPath), "i18n")
 	}
+	// Stations: durable, human-named working identities (docs/STATIONS.md). Gated on
+	// its OWN flag alone — never on KEN_COMM_ENABLED, because the notebook and the task
+	// list are valuable to a solo session with no peers (S2), and gating them behind a
+	// messaging feature they have nothing to do with would be the wrong dependency.
+	if os.Getenv("KEN_STATION_ENABLED") == "1" {
+		sd := stationserver.Deps{Store: st, TokenLimiter: rlToken, Metrics: reg}
+		// The hearsay marker is keyed on the ACTOR, so it only works when COMM is on and
+		// the station key was minted under the same actor as that machine's comm token.
+		// With COMM off it is nil and the marking is absent — "no signal", never
+		// "known clean" (§7).
+		if commStore != nil {
+			sd.Hearsay = func(ctx context.Context, actorID int64) bool {
+				ok, err := commStore.ReceivedSince(ctx, actorID, live.Current().CommProvenanceWindowSec)
+				return err == nil && ok
+			}
+		}
+		mux.Handle("/station/mcp", stationserver.NewHTTPHandler(sd))
+		log.Printf("STATIONS: enabled at /station/mcp — requires a dedicated key with the 'station' scope (ken token add --scopes station)")
+	}
+
 	mux.Handle("/", reg.Counting("web", web.Handler(web.Deps{
 		Store: st, SecureCookies: secure, SetupToken: os.Getenv("KEN_SETUP_TOKEN"),
 		TrustedProxies: os.Getenv("KEN_TRUSTED_PROXIES"), Settings: live, OAuthEnabled: oauthEnabled,

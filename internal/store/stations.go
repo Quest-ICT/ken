@@ -341,3 +341,56 @@ func hasScope(scopes []string, want string) bool {
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique")
 }
+
+// CreateStationRequest files an agent's ask for a human decision (S3/S9). The reason and
+// purpose are shown ONLY to the human: nothing here is delivered to a target station
+// before approval, because a request that reached its target would be a one-shot
+// unauthorized message channel.
+func (s *Store) CreateStationRequest(ctx context.Context, spaceID int64, tokenID, fromStation, nameHint, purpose string) (string, error) {
+	id, err := randBase62(12)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.W.ExecContext(ctx, `
+INSERT INTO station_request(request_id, space_id, kind, from_station, from_token_id, name_hint, purpose)
+VALUES(?,?,'station',?,?,?,?)`,
+		id, spaceID, nullStr(fromStation), tokenID, nullStr(nameHint), purpose); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// StationRequestRow is a pending ask awaiting a human decision.
+type StationRequestRow struct {
+	RequestID, Kind, NameHint, Purpose, Reason, CreatedAt string
+	PromptedByPeerTraffic                                 bool
+}
+
+// PendingStationRequests lists what is waiting on the human.
+func (s *Store) PendingStationRequests(ctx context.Context, spaceID int64) ([]StationRequestRow, error) {
+	rows, err := s.R.QueryContext(ctx, `
+SELECT request_id, kind, COALESCE(name_hint,''), purpose, reason, created_at,
+       COALESCE(prompted_by_peer_traffic,0)
+FROM station_request WHERE space_id=? AND state='pending' ORDER BY created_at`, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StationRequestRow
+	for rows.Next() {
+		var r StationRequestRow
+		if err := rows.Scan(&r.RequestID, &r.Kind, &r.NameHint, &r.Purpose, &r.Reason,
+			&r.CreatedAt, &r.PromptedByPeerTraffic); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// FirstHumanActor returns the earliest human actor, so CLI commands have a sane default.
+func (s *Store) FirstHumanActor(ctx context.Context) (int64, error) {
+	var id int64
+	err := s.R.QueryRowContext(ctx, `SELECT id FROM actor WHERE kind='human' ORDER BY id LIMIT 1`).Scan(&id)
+	return id, err
+}
