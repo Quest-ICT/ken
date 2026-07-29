@@ -96,6 +96,18 @@ type Limits struct {
 	ReplyDeadlineSeconds int
 	// PairingCodeTTLSeconds is how long a human-minted pairing code stays valid.
 	PairingCodeTTLSeconds int
+	// ClaimLeaseSeconds is how long a station-bound reader holds a claimed message
+	// before it returns to the unclaimed tail (docs/STATIONS.md S4).
+	//
+	// It bounds how long a session that claimed a message and then DIED can strand
+	// it from its station's other readers. Too short and a reader still working is
+	// undercut by a second reader picking the message up; too long and a dead
+	// session's mail sits invisible. Sized against a turn rather than a request,
+	// because "claimed" means "a model is reasoning about it", not "a query ran".
+	//
+	// Applies ONLY to bound endpoints. An unbound endpoint is the sole reader of
+	// its own mail, so there is nothing to claim it against.
+	ClaimLeaseSeconds int
 
 	// FilesEnabled gates file exchange INDEPENDENTLY of COMM itself, and defaults
 	// off: the relay is the bulk of the subsystem's risk (disk, quotas, orphan
@@ -135,6 +147,7 @@ func DefaultLimits() Limits {
 		MetadataTTLSeconds:    7 * 24 * 3600,
 		ReplyDeadlineSeconds:  3600,
 		PairingCodeTTLSeconds: 900,
+		ClaimLeaseSeconds:     300,
 
 		FilesEnabled:     false,
 		FileMaxBytes:     16 << 20,

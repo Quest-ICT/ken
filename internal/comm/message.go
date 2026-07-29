@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 )
@@ -264,29 +265,71 @@ VALUES(?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?), ?)`,
 	return messageByID(ctx, t, messageID)
 }
 
-// Poll returns this endpoint's un-acknowledged messages across all its channels,
-// oldest first, and counts a delivery attempt for each.
+// Poll returns the un-acknowledged messages this endpoint may read, oldest first,
+// and counts a delivery attempt for each.
 //
-// Poll is a pure read of DELIVERABILITY: being polled never hides a message from
-// the next poll. Only Ack advances state. That is what makes a lost poll response
-// harmless — the messages simply come back — and it is why "delivered" is an
-// informational timestamp rather than a gate.
+// TWO REGIMES, and which one applies depends on whether the endpoint is bound to a
+// station (docs/STATIONS.md S4).
+//
+// UNBOUND — the shipped behaviour, unchanged. The endpoint is the sole reader of
+// its own mail. Poll is a pure read of DELIVERABILITY: being polled never hides a
+// message from the next poll, only Ack advances state. That is what makes a lost
+// poll response harmless — the messages simply come back — and it is why
+// "delivered" is an informational timestamp rather than a gate.
+//
+// BOUND — the STATION owns the inbox and this endpoint is one of possibly several
+// credentialed readers, so delivery becomes CLAIM-ONCE. The first reader to poll a
+// message claims it, and while the claim holds, that message is hidden from the
+// station's other readers. This deliberately weakens the "polling never hides
+// anything" property above, and it has to: without it, two sessions staffing one
+// station would both act on the same message, which is precisely the shared-inbox
+// accident the per-endpoint secret exists to prevent.
+//
+// The claim is a LEASE, not a transfer of ownership. When it expires unacknowledged
+// the message returns to the unclaimed tail and may reach a DIFFERENT reader than
+// first saw it. Without the lease, a session that claims and then dies strands its
+// messages permanently and COMM's C6 promise — a message delivered but never acted
+// upon comes back — would be false.
+//
+// The ordering promise weakens accordingly, and the tool description says so: from
+// "per channel and direction" to "per channel and direction, across the station's
+// readers". Two sessions polling one station see a PARTITIONED stream and neither
+// sees the whole order. That is the price of letting a second session help without
+// severing the first.
 func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 	var out []Message
 	err := s.tx(ctx, func(t *sql.Tx) error {
+		// The recipient predicate is the whole difference between the two regimes.
+		// Unbound: my own rowid, exactly as before. Bound: any endpoint of my
+		// station, so a replacement session inherits the mail addressed to the
+		// endpoint it replaced.
+		//
+		// A station_id that no longer resolves to a live station is treated as
+		// UNBOUND rather than as an error — S7's restore-skew rule, and the reason
+		// the join is LEFT rather than INNER.
+		recipient := `m.recipient_endpoint = ?`
+		args := []any{ep.ID}
+		if ep.StationID != "" {
+			recipient = `r.station_id = ?`
+			args = []any{ep.StationID}
+		}
 		rows, err := t.QueryContext(ctx, `
 SELECT m.message_id
 FROM message m
 JOIN channel c ON c.id = m.channel_id
-WHERE m.recipient_endpoint=?
+LEFT JOIN endpoint r ON r.id = m.recipient_endpoint
+WHERE `+recipient+`
   AND m.state IN ('queued','delivered')
   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
   AND c.state='open'
+  AND (m.claimed_by_endpoint IS NULL
+       OR m.claimed_by_endpoint = ?
+       OR m.claim_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 ORDER BY m.seq, m.id
-LIMIT ?`, ep.ID, limit)
+LIMIT ?`, append(args, ep.ID, limit)...)
 		if err != nil {
 			return err
 		}
@@ -306,6 +349,32 @@ LIMIT ?`, ep.ID, limit)
 		rows.Close()
 
 		for _, id := range ids {
+			// Claiming is conditional on the message still being claimable, so two
+			// readers of one station racing on the same row cannot both take it:
+			// exactly one UPDATE matches. The read above is advisory; THIS is the
+			// arbiter. An unbound endpoint writes no claim at all — it is the sole
+			// reader of its own mail, so a claim would be bookkeeping with no reader
+			// to exclude.
+			if ep.StationID != "" {
+				res, err := t.ExecContext(ctx, `
+UPDATE message
+SET claimed_by_endpoint=?,
+    claim_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now', ?)
+WHERE message_id=?
+  AND (claimed_by_endpoint IS NULL
+       OR claimed_by_endpoint = ?
+       OR claim_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+					ep.ID, fmt.Sprintf("+%d seconds", s.lim().ClaimLeaseSeconds), id, ep.ID)
+				if err != nil {
+					return err
+				}
+				// Lost the race: another reader of this station claimed it between the
+				// SELECT and here. Skip it rather than returning a message this reader
+				// does not hold.
+				if n, _ := res.RowsAffected(); n == 0 {
+					continue
+				}
+			}
 			if _, err := t.ExecContext(ctx, `
 UPDATE message
 SET state='delivered',
@@ -342,6 +411,24 @@ WHERE message_id=?`, id); err != nil {
 // deadline passes: a responder that crashed and recovered plausibly needs to
 // re-read what it owes.
 func (s *Store) Ack(ctx context.Context, ep *Endpoint, messageID string) error {
+	// The recipient predicate mirrors Poll's, and it MUST: a bound reader can be
+	// handed a message addressed to a DIFFERENT endpoint of its station — that is the
+	// whole point of the station owning the inbox — so an ack scoped to this
+	// endpoint's own rowid would silently match nothing. The message would then come
+	// back on the next poll, and a replacement session would loop on mail it had
+	// already acted upon. One ack settles it for the STATION (S4).
+	if ep.StationID != "" {
+		_, err := s.W.ExecContext(ctx, `
+UPDATE message
+SET state='acked',
+    acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+    claimed_by_endpoint=NULL, claim_expires_at=NULL,
+    body = CASE WHEN requires_response=1 AND replied_by IS NULL THEN body ELSE NULL END
+WHERE message_id=?
+  AND recipient_endpoint IN (SELECT id FROM endpoint WHERE station_id=?)
+  AND state IN ('queued','delivered')`, messageID, ep.StationID)
+		return err
+	}
 	_, err := s.W.ExecContext(ctx, `
 UPDATE message
 SET state='acked',
@@ -358,6 +445,20 @@ WHERE message_id=? AND recipient_endpoint=? AND state IN ('queued','delivered')`
 func (s *Store) AckUpTo(ctx context.Context, ep *Endpoint, channelID string, seq int64) error {
 	ch, peer, err := s.ChannelFor(ctx, ep, channelID)
 	if err != nil {
+		return err
+	}
+	// Same station-scoping as Ack, and for the same reason: a cumulative ack from a
+	// replacement reader must settle the mail addressed to the endpoint it replaced.
+	if ep.StationID != "" {
+		_, err = s.W.ExecContext(ctx, `
+UPDATE message
+SET state='acked',
+    acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+    claimed_by_endpoint=NULL, claim_expires_at=NULL,
+    body = CASE WHEN requires_response=1 AND replied_by IS NULL THEN body ELSE NULL END
+WHERE channel_id=? AND sender_endpoint=? AND seq<=? AND state IN ('queued','delivered')
+  AND recipient_endpoint IN (SELECT id FROM endpoint WHERE station_id=?)`,
+			ch.ID, peer, seq, ep.StationID)
 		return err
 	}
 	_, err = s.W.ExecContext(ctx, `

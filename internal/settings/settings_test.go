@@ -25,6 +25,7 @@ var testDefaults = settings.Values{
 	CommFileMaxMB: 16, CommFileBudgetMB: 256, CommFileMinFreeMB: 512,
 	CommFileTTLSec: 24 * 3600, CommGrantTTLSec: 300,
 	CommEndpointIdleTTLSec: 7 * 24 * 3600,
+	CommClaimLeaseSec:      300,
 }
 
 func testStore(t *testing.T) *store.Store {

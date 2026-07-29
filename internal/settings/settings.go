@@ -81,6 +81,13 @@ type Values struct {
 	// row set grows forever — but a non-positive value must DISABLE the sweep, never
 	// mean "sweep everything now" (see the sweep guard in internal/comm).
 	CommEndpointIdleTTLSec int
+	// CommClaimLeaseSec is how long a station-bound reader holds a claimed message
+	// before it returns to its station's unclaimed tail (docs/STATIONS.md S4). It
+	// bounds how long a session that claimed a message and then died can strand it
+	// from the station's other readers, so it is sized against a MODEL TURN rather
+	// than a request. Only bound endpoints are affected; unbound traffic never
+	// claims anything.
+	CommClaimLeaseSec int
 }
 
 // Snapshot is Values plus the derived objects consumers read.
@@ -235,6 +242,9 @@ var Fields = []Field{
 	intField("comm_endpoint_idle_sec", "Inter-session comms", "Idle session cleanup (seconds)",
 		"How long a registered session with no message traffic survives before it is removed. An actively polling session refreshes its last-seen and is never removed; this only reaps sessions that registered and went away. Keep it comfortably longer than a working session's idle gaps.",
 		func(v Values) int { return v.CommEndpointIdleTTLSec }, func(v *Values, n int) { v.CommEndpointIdleTTLSec = n }, 300, 90*24*3600),
+	intField("comm_claim_lease_sec", "Inter-session comms", "Station claim lease (seconds)",
+		"When several sessions staff one station, the first to poll a message claims it and the others do not see it. This is how long that claim lasts before the message returns to the queue for another session to pick up. It only matters if you use stations; too short and a session still working gets undercut, too long and a session that died holds its messages out of reach.",
+		func(v Values) int { return v.CommClaimLeaseSec }, func(v *Values, n int) { v.CommClaimLeaseSec = n }, 30, 3600),
 }
 
 // Live holds the current snapshot atomically and applies edits.
@@ -376,6 +386,7 @@ func DefaultsFromEnv() Values {
 		CommGrantTTLSec:   300,
 
 		CommEndpointIdleTTLSec: 7 * 24 * 3600,
+		CommClaimLeaseSec:      300,
 	}
 	// Clamp env-provided values so a bad env can't silently disable the limiter or overflow.
 	if v.IPPerMin <= 0 {

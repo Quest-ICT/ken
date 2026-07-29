@@ -17,9 +17,15 @@ package commserver
 type registerIn struct {
 	Label    string `json:"label,omitempty" jsonschema:"optional; a human-readable name for this session, e.g. 'dev' or 'test'. Decoration only — never an address"`
 	HostHint string `json:"host_hint,omitempty" jsonschema:"optional; an opaque string identifying this machine, used only as a hint about whether a same-host file handoff is worth attempting. NEVER authorization, and an absent hint matches nothing"`
+	// BindingVoucher is the ONLY way an endpoint becomes station-bound. It is a
+	// short-lived single-use value, never the station key itself — see S5.
+	BindingVoucher string `json:"binding_voucher,omitempty" jsonschema:"optional; a short-lived voucher from station_binding_voucher on the /station endpoint, which binds this endpoint to that station so the station owns the inbox and a later session can take over. NEVER pass a station key here — vouchers expire in minutes, keys do not"`
 }
 
 type registerOut struct {
+	// StationID is set only when a binding voucher was redeemed. Echoed back so a
+	// session can confirm which station it is staffing rather than assuming.
+	StationID      string `json:"station_id,omitempty"`
 	EndpointID     string `json:"endpoint_id"`
 	EndpointSecret string `json:"endpoint_secret" jsonschema:"shown ONCE — keep it; every other comm tool requires it"`
 }

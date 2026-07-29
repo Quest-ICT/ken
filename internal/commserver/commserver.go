@@ -26,6 +26,7 @@ package commserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -196,7 +197,29 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if err != nil {
 			return nil, registerOut{}, commError(err)
 		}
-		return nil, registerOut{EndpointID: ep.EndpointID, EndpointSecret: secret}, nil
+		// Binding is a SECOND step rather than part of the insert, because the
+		// voucher lives in the durable database and this one does not. Redemption is
+		// what decides the station: the caller never names one, so it cannot ask to
+		// join a station it was not handed a voucher for.
+		//
+		// A failed redemption leaves a working UNBOUND endpoint rather than failing
+		// the registration. The session has a usable credential either way, and
+		// destroying it over a stale voucher would turn a retryable mistake into a
+		// lost secret — the exact failure this whole design exists to reduce.
+		var stationID string
+		if in.BindingVoucher != "" {
+			sid, keyID, rerr := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID)
+			if rerr != nil {
+				return nil, registerOut{
+					EndpointID: ep.EndpointID, EndpointSecret: secret,
+				}, fmt.Errorf("registered, but NOT bound to a station: %w — your endpoint_id and endpoint_secret above are valid and usable; to bind, ask /station for a fresh voucher and register again", rerr)
+			}
+			if err := d.Comm.BindEndpointToStation(ctx, ep.EndpointID, sid, keyID); err != nil {
+				return nil, registerOut{EndpointID: ep.EndpointID, EndpointSecret: secret}, commError(err)
+			}
+			stationID = sid
+		}
+		return nil, registerOut{StationID: stationID, EndpointID: ep.EndpointID, EndpointSecret: secret}, nil
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{

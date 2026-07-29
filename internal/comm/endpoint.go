@@ -27,6 +27,18 @@ type Endpoint struct {
 	// authoritative audit record is the server log, not these columns.
 	RotatedAt   string
 	RotateCount int
+
+	// StationID is the durable station this endpoint reads for, or "" when unbound
+	// (docs/STATIONS.md S4). An opaque id into ken.db with no foreign key: S7's rule
+	// is that cross-database pointers run expendable -> durable, and under restore
+	// skew an id that no longer resolves is treated as UNBOUND rather than as an
+	// error. Bound endpoints share their station's inbox with claim-once delivery.
+	StationID string
+	// BoundByStationKeyID is the station key that authorised the binding. Revoking
+	// that key severs every endpoint it bound (S6) — without this column, revocation
+	// would stop future bindings and leave the leaked capability running.
+	BoundByStationKeyID string
+	BoundAt             string
 }
 
 // RegisterEndpoint mints a new endpoint for an authenticated session and returns
@@ -90,10 +102,12 @@ func (s *Store) AuthenticateEndpoint(ctx context.Context, endpointID, secret str
 	)
 	err := s.R.QueryRowContext(ctx, `
 SELECT id, endpoint_id, secret_sha256, token_id, actor_id, space_id, label, host_hint,
-       created_at, last_seen_at, revoked_at
+       created_at, last_seen_at, revoked_at,
+       COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,'')
 FROM endpoint WHERE endpoint_id=?`, endpointID).
 		Scan(&ep.ID, &ep.EndpointID, &hash, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Owner.SpaceID,
-			&label, &hint, &ep.CreatedAt, &ep.LastSeenAt, &revoked)
+			&label, &hint, &ep.CreatedAt, &ep.LastSeenAt, &revoked,
+			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -167,6 +181,78 @@ UPDATE endpoint
 	return secret, nil
 }
 
+// BindEndpointToStation attaches an endpoint to a station, making it a reader of
+// that station's inbox rather than the sole owner of its own (docs/STATIONS.md S4).
+//
+// Called from comm_register AFTER the caller's binding voucher has been redeemed on
+// the durable side: this function trusts stationID because RedeemBindingVoucher is
+// what established it, and there is deliberately no path that lets a caller name a
+// station directly. Binding is set once at registration and never changed — an
+// endpoint that could move between stations would let a session carry another
+// station's unread mail across, which is the shared-inbox failure in a new costume.
+func (s *Store) BindEndpointToStation(ctx context.Context, endpointID, stationID, keyID string) error {
+	res, err := s.W.ExecContext(ctx, `
+UPDATE endpoint
+   SET station_id=?, bound_by_station_key_id=?,
+       bound_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ WHERE endpoint_id=? AND station_id IS NULL AND revoked_at IS NULL`,
+		stationID, keyID, endpointID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SeverEndpointsBoundBy revokes every endpoint a given station key bound, and
+// releases their claims. It reports how many were severed so the console can state
+// the count BEFORE the click, as S6 requires.
+//
+// This is what makes revoking a station key mean something. You revoke because the
+// key leaked; a revocation that stops future bindings but leaves the already-bound
+// sessions running until an idle sweep notices is theatre — and traffic keeps an
+// endpoint alive indefinitely, so the sweep may never come.
+//
+// Claims are released in the same statement rather than left to expire: a severed
+// reader is never coming back to ack, so holding its messages for the rest of the
+// lease would hide them from the station's remaining readers for no reason.
+func (s *Store) SeverEndpointsBoundBy(ctx context.Context, keyID string) (int, error) {
+	var n int64
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		if _, err := t.ExecContext(ctx, `
+UPDATE message
+   SET claimed_by_endpoint=NULL, claim_expires_at=NULL
+ WHERE acked_at IS NULL
+   AND claimed_by_endpoint IN (SELECT id FROM endpoint WHERE bound_by_station_key_id=?)`,
+			keyID); err != nil {
+			return err
+		}
+		res, err := t.ExecContext(ctx, `
+UPDATE endpoint SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ WHERE bound_by_station_key_id=? AND revoked_at IS NULL`, keyID)
+		if err != nil {
+			return err
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	return int(n), err
+}
+
+// CountEndpointsBoundBy reports how many LIVE endpoints a station key bound, so the
+// console can say "this will disconnect N live sessions" before the operator clicks
+// (S6). A destructive action whose blast radius is only visible afterwards is one an
+// operator learns to fear rather than use.
+func (s *Store) CountEndpointsBoundBy(ctx context.Context, keyID string) (int, error) {
+	var n int
+	err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM endpoint WHERE bound_by_station_key_id=? AND revoked_at IS NULL`,
+		keyID).Scan(&n)
+	return n, err
+}
+
 // RevokeEndpoint soft-revokes an endpoint, immediately denying further use.
 // Its channels stay queryable for the operator; its messages age out normally.
 func (s *Store) RevokeEndpoint(ctx context.Context, endpointID string) error {
@@ -189,7 +275,8 @@ WHERE endpoint_id=? AND revoked_at IS NULL`, endpointID)
 func (s *Store) ListEndpoints(ctx context.Context, spaceID int64) ([]Endpoint, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT id, endpoint_id, token_id, actor_id, space_id, COALESCE(label,''), COALESCE(host_hint,''),
-       created_at, last_seen_at, COALESCE(secret_rotated_at,''), COALESCE(rotate_count,0)
+       created_at, last_seen_at, COALESCE(secret_rotated_at,''), COALESCE(rotate_count,0),
+       COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,'')
 FROM endpoint WHERE space_id=? AND revoked_at IS NULL ORDER BY created_at DESC`, spaceID)
 	if err != nil {
 		return nil, err
@@ -200,7 +287,8 @@ FROM endpoint WHERE space_id=? AND revoked_at IS NULL ORDER BY created_at DESC`,
 		var ep Endpoint
 		if err := rows.Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Owner.SpaceID,
 			&ep.Label, &ep.HostHint, &ep.CreatedAt, &ep.LastSeenAt,
-			&ep.RotatedAt, &ep.RotateCount); err != nil {
+			&ep.RotatedAt, &ep.RotateCount,
+			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt); err != nil {
 			return nil, err
 		}
 		out = append(out, ep)
@@ -216,10 +304,12 @@ func (s *Store) endpointByRowID(ctx context.Context, id int64) (*Endpoint, error
 		hint  sql.NullString
 	)
 	err := s.R.QueryRowContext(ctx, `
-SELECT id, endpoint_id, token_id, actor_id, space_id, label, host_hint, created_at, last_seen_at
+SELECT id, endpoint_id, token_id, actor_id, space_id, label, host_hint, created_at, last_seen_at,
+       COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,'')
 FROM endpoint WHERE id=?`, id).
 		Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Owner.SpaceID,
-			&label, &hint, &ep.CreatedAt, &ep.LastSeenAt)
+			&label, &hint, &ep.CreatedAt, &ep.LastSeenAt,
+			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

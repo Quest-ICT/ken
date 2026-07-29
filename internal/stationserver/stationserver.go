@@ -111,6 +111,37 @@ func newServer(d Deps) *mcp.Server {
 		&mcp.ServerOptions{Instructions: instructions})
 
 	addTool(s, d.Metrics, &mcp.Tool{
+		Name: "station_binding_voucher",
+		Description: "Get a short-lived voucher that binds a COMM endpoint to this station. Pass it to " +
+			"comm_register as binding_voucher on the /comm endpoint, THEN write the returned endpoint_id and " +
+			"endpoint_secret to a file on disk. Binding means the STATION owns the inbox: a later session " +
+			"staffing this station inherits the unread mail, so losing your endpoint stops being fatal. " +
+			"NEVER pass your station key to comm_register — that is what this voucher exists to avoid; it " +
+			"expires in minutes and is good for exactly one binding.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ voucherIn) (*mcp.CallToolResult, voucherOut, error) {
+		p, err := requireStation(ctx)
+		if err != nil {
+			return nil, voucherOut{}, err
+		}
+		st, err := d.Store.StationByID(ctx, p.StationID)
+		if err != nil {
+			return nil, voucherOut{}, err
+		}
+		// p.TokenID, not anything the caller supplied: the voucher records which KEY
+		// asked, so revoking that key later severs the endpoints it bound (S6).
+		v, err := d.Store.IssueBindingVoucher(ctx, p.StationID, p.TokenID)
+		if err != nil {
+			return nil, voucherOut{}, err
+		}
+		return nil, voucherOut{
+			BindingVoucher: v,
+			ExpiresInSec:   int(store.VoucherTTL.Seconds()),
+			StationID:      st.StationID,
+			StationName:    st.Name,
+		}, nil
+	})
+
+	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "station_me",
 		Description: "Your briefing: who you are staffing, open tasks (named), handoff staleness, and what is " +
 			"waiting on your human. Call it FIRST in every session, and relay what it says to your human in words — " +

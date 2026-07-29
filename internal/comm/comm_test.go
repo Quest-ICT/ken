@@ -813,3 +813,205 @@ func TestRotatingARevokedEndpointIsRefused(t *testing.T) {
 		t.Fatal("rotated a REVOKED endpoint — that would undo a deliberate destruction")
 	}
 }
+
+// bindEndpoint attaches an endpoint to a station id directly, standing in for the
+// voucher round-trip (which lives in the knowledge-base store and is covered there).
+func bindEndpoint(t *testing.T, st *Store, ep *Endpoint, stationID, keyID string) *Endpoint {
+	t.Helper()
+	if err := st.BindEndpointToStation(context.Background(), ep.EndpointID, stationID, keyID); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	out, err := st.endpointByRowID(context.Background(), ep.ID)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	return out
+}
+
+// THE PROPERTY SLICE 4 EXISTS FOR: a replacement session inherits the mail addressed
+// to the session it replaced, with no new pairing code and no peer involvement.
+//
+// This is the fix for the outage that started the whole design — a session lost its
+// endpoint secret to context compaction and recovery cost a human minting a fresh
+// pairing code per channel, which stalled for a day until they were available.
+func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	const station = "stn_prod_ops"
+
+	// The original reader, bound to the station, paired with a peer.
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = bindEndpoint(t, st, a, station, "kens_key1")
+	code, err := st.MintPairingCode(ctx, 1, 42, "dev<->peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, peer, ch.ChannelID, "the archive host is refusing the pull", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The original session dies WITHOUT polling. Its secret is gone; nothing can ever
+	// authenticate as it again.
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = bindEndpoint(t, st, b, station, "kens_key1")
+
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the replacement reader saw %d message(s), want 1 — inheriting the station's unread mail is the entire point of binding", len(got))
+	}
+	if got[0].Body != "the archive host is refusing the pull" {
+		t.Fatalf("wrong message inherited: %q", got[0].Body)
+	}
+	// And it can settle it for the station: one ack, not one per reader.
+	if err := st.Ack(ctx, b, got[0].MessageID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("acked message came back to the station (%d)", len(again))
+	}
+}
+
+// Claim-once: two readers of ONE station must not both act on the same message.
+// That is the shared-inbox accident the per-endpoint secret was invented to prevent,
+// and letting a station have several readers would re-create it without this.
+func TestTwoReadersOfOneStationDoNotBothGetTheSameMessage(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	const station = "stn_shared"
+
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "reader-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = bindEndpoint(t, st, a, station, "kens_key1")
+	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, peer, ch.ChannelID, "only one of you should do this", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second session joins the same station.
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "reader-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = bindEndpoint(t, st, b, station, "kens_key1")
+
+	first, err := st.Poll(ctx, a, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 {
+		t.Fatalf("first reader got %d, want 1", len(first))
+	}
+	second, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 0 {
+		t.Fatalf("the SECOND reader also received the claimed message (%d) — both sessions would act on it, which is exactly the shared-inbox failure this design refuses", len(second))
+	}
+}
+
+// An UNBOUND endpoint must behave exactly as it did before stations existed. This is
+// the compatibility promise that lets the shipped path stay valid indefinitely: a
+// session that never heard of stations is unaffected, and never claims anything.
+func TestUnboundEndpointsAreUnaffectedByClaiming(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a, b, chID := pair(t, st)
+
+	if _, err := st.Send(ctx, b, chID, "hello", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	// Polling twice must return it twice: for an unbound endpoint, polling is a pure
+	// read of deliverability and only Ack advances state.
+	for i := 1; i <= 2; i++ {
+		got, err := st.Poll(ctx, a, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("poll %d returned %d messages, want 1 — an unbound endpoint must not have gained claim semantics", i, len(got))
+		}
+	}
+}
+
+// Revoking a station key severs every endpoint it bound (S6) and releases their
+// claims. A revocation that leaves the leaked capability running until an idle sweep
+// notices is theatre — and traffic keeps an endpoint alive indefinitely.
+func TestRevokingAStationKeySeversTheEndpointsItBound(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "laptop", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, otherSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "vps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindEndpoint(t, st, a, "stn_x", "kens_leaked")
+	bindEndpoint(t, st, other, "stn_x", "kens_safe")
+
+	n, err := st.CountEndpointsBoundBy(ctx, "kens_leaked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("count before severing = %d, want 1 — the console states this number before the click", n)
+	}
+	severed, err := st.SeverEndpointsBoundBy(ctx, "kens_leaked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if severed != 1 {
+		t.Fatalf("severed %d, want 1", severed)
+	}
+	if _, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret); err == nil {
+		t.Fatal("an endpoint bound by the REVOKED key still authenticates — revocation that leaves the capability running is theatre")
+	}
+	// A different key's endpoint is untouched: revocation is targeted, which is the
+	// whole reason keys are minted per machine rather than copied.
+	if _, err := st.AuthenticateEndpoint(ctx, other.EndpointID, otherSecret); err != nil {
+		t.Fatalf("severing one key's endpoints also killed another key's: %v", err)
+	}
+}

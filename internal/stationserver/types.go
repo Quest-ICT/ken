@@ -180,3 +180,15 @@ type countOut struct {
 type okOut struct {
 	OK bool `json:"ok"`
 }
+
+// voucherIn takes no arguments on purpose: the station is decided by the key in the
+// Authorization header, never by anything the model says. A station_id argument
+// would let a session ask to be bound to a station it does not hold a key for.
+type voucherIn struct{}
+
+type voucherOut struct {
+	BindingVoucher string `json:"binding_voucher"`
+	ExpiresInSec   int    `json:"expires_in_seconds"`
+	StationID      string `json:"station_id"`
+	StationName    string `json:"station_name"`
+}

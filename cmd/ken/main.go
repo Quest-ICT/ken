@@ -840,6 +840,7 @@ func commLimits(s *settings.Snapshot) comm.Limits {
 		GrantTTLSeconds:  s.CommGrantTTLSec,
 
 		EndpointIdleTTLSeconds: s.CommEndpointIdleTTLSec,
+		ClaimLeaseSeconds:      s.CommClaimLeaseSec,
 	}
 }
 
