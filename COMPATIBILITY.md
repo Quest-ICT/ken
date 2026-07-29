@@ -23,7 +23,9 @@ and then the claim — not the reverse.
   existing one, is a MAJOR change. The controlled-vocabulary enums are part of the
   contract: entry `kind` (`user`/`feedback`/`project`/`reference`), version `state`,
   `staleness`, `lifecycle`, `link_type` (`relates`/`supersedes`/`refutes`/`depends_on`),
-  and token `scopes` (`read`/`write-draft`/`propose`/`curate`).
+  and token `scopes` (`read`/`write-draft`/`propose`/`curate`; the opt-in surfaces add
+  `comm`/`comm-file` and `station`/`station-locker`, which are outside this contract while
+  those surfaces are).
 - **The CLI surface** — the `ken` subcommands and their flags (`serve`, `token`,
   `user`, `backup`, `embed`, `import`). New subcommands/flags may be added in a MINOR;
   removing or repurposing one is MAJOR.
@@ -32,7 +34,7 @@ and then the claim — not the reverse.
   This includes **`KEN_SOURCE_URL`**, which sets the "Source" link a running instance
   shows: if you run a **modified** Ken, set it to your own repository — AGPL-3.0 §13
   requires a network service to offer *its own* Corresponding Source, not upstream's.
-- **Bearer-token & cookie format** — the `ken_` / `kenc_` token prefixes and the auth
+- **Bearer-token & cookie format** — the `ken_` / `kenc_` / `kens_` token prefixes and the auth
   scheme MCP clients present (`Authorization: Bearer …`). An issued token keeps working
   across MINOR/PATCH upgrades.
 - **HTTP endpoints an external client depends on** — `/mcp`, the OAuth 2.1
@@ -59,6 +61,12 @@ and then the claim — not the reverse.
   because it is opt-in and off by default its interface is not part of the byte-level contract;
   it evolves **additively**. The `comm` and `comm-file` token scopes are **reserved** so that
   splitting them later is not a MAJOR.
+
+  The same applies to the **station surface** ([docs/STATIONS.md](docs/STATIONS.md)) — its
+  `station_*` tools, station ids, MCP endpoint path, notebook/task/locker shapes and settings.
+  `station` and `station-locker` are likewise reserved together, on the same reasoning: splitting
+  a shipped scope is a MAJOR, merging two is free. The `kens_` prefix IS contract (above), because
+  a credential's shape freezes the moment one is issued.
 
 ## Deprecation policy
 
