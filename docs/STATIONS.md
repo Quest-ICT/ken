@@ -170,8 +170,9 @@ locker blobs, and the small surfacing timestamps the briefing needs. Expendable,
 message claim record (which reader took it, when, lease expiry) and a per-reader last-poll timestamp
 for the console's staffed-now display.
 
-- **`last_surfaced_at` lives in `ken.db`, and the lifetime argument is withdrawn for it deliberately.**
-  It looks like churn but is not: one timestamp per task, touched once per briefing — not per message.
+- **`last_briefed_at` lives in `ken.db`, and the lifetime argument is withdrawn for it deliberately.**
+  It looks like churn but is not: it is touched only on the handful of rows a briefing actually
+  displays, at most once per staffing session (§11.4) — not per task, not per message.
   The alternative, putting it in `comm.db`, is unimplementable, because that file is opened only under
   `KEN_COMM_ENABLED` — and S2 promises the task list works with COMM off. Aging-first surfacing is the
   whole point of §11, so it cannot depend on the messaging subsystem.
@@ -265,10 +266,11 @@ every off-box copy.
 
 - **Why refuse:** silent eviction of a working note is data loss the session cannot see. A refusal is
   an error the model reads and reacts to.
-- **The one carve-out, stated here so §9 does not contradict it:** refuse-never-evict governs
-  **content** — pages, tasks, blobs — and the head revision is never evicted. *Revision history is an
-  undo buffer, not content*, and is pruned oldest-first. It is the only thing this design deletes
-  without asking.
+- **Two carve-outs, stated here so §9 does not contradict them:** refuse-never-evict governs
+  **content** — pages, open tasks, blobs — and the head revision is never evicted. *Revision history is
+  an undo buffer, not content*, and is pruned oldest-first; so is the **terminal-task archive** beyond
+  its bound, because a closed task is a record rather than working state. Those two are the only things
+  this design deletes without asking, and both are stated in §9.
 - **A refusal names the cap in its message.** `MCP-TOOLS.md` records that there is no machine-readable
   error vocabulary, so "typed error" would be a contract this surface cannot honour; the text is the
   contract.
@@ -299,7 +301,7 @@ active|dormant|revoked}`. Undirected. Channels materialize from it.
 **Assets**, per station, in `ken.db`:
 - **Notebook page** — `{key, title, tags[], body, rev, updated_at, station_key_id, actor_id,
   hearsay_at_write}`, with bounded revision history.
-- **Task** — a row; shape delegated (§11), fixed points there.
+- **Task** — a row, not prose; full shape in §11.3.
 - **Locker blob** — `{name, bytes, sha256, content_type, updated_at}`.
 
 **Ownership** is keyed on `space_id` plus the authorizing human actor, exactly as COMM keys it and for
@@ -319,15 +321,23 @@ returned on the first `/station` call — deliberately small, counts and the few
 whole assets:
 
 ```
-You are staffing: prod-ops  ("production operations for kb.quest.mx")
-  tasks     7 open — 2 waiting on the human, 1 due today, 3 not surfaced in 30+ days
+You are staffing: prod-ops  ("production operations for the live instance")
+  tasks     7 open — 2 waiting on the human, 1 overdue,
+                     3 not briefed in the last 5 sessions, 1 briefed 5+ times unchanged
+    t-3  due   verify the decrypt drill before deleting the plaintext archive
+    t-7  human decide whether backups/ is ever synced off-box
+    t-1  aging sweep the pre-1.4.1 plaintext pre-upgrade snapshots      (briefed 6x)
+    …3 more
   notebook  9 pages; handoff last written 4 days and 12 activities ago
   links     promo (active), public-dev (active)
   inbox     2 unread
 ```
 
 Everything else costs a second call. The briefing exists to make the *right next action* obvious, not
-to page in the station's memory.
+to page in the station's memory. **It names rows, it does not only count them** — the counts are the
+remainder, and a task the human never hears named is a task that decayed (§11.4). The head's slot
+allocation is fixed by §11.5, and only the rows it displays are stamped, at most once per staffing
+session.
 
 **Whether the connect-time instructions can be per-station is an open question (§13).** MCP
 instructions are one string per server, so a per-station briefing in the instructions would require a
@@ -375,7 +385,7 @@ transfer collides on it, and every station is expected to have one.
 | `station_link_request` | Ask the human to approve a relationship: `to_station`, `reason` (human-only). |
 | `station_note_list` / `_read` / `_write` | Keys, titles, sizes; one page; `append`/`replace` with `if_rev`. |
 | `station_note_promote` | Open a pending promotion for the human to convert (S10). |
-| `station_task_*` | Delegated shape (§11). |
+| `station_task_add` / `_list` / `_close` / `_drop` / `_snooze` | §11.8. Closing is the cheapest verb, deliberately. |
 | `station_locker_*` | `list`, `put`, `get`, `delete`. Bounded; refuses over cap. |
 
 ### Scopes
@@ -438,6 +448,9 @@ multiplier from S12.
 | notebook per station | 4 MiB of **head revisions** | ~60 full pages; history is bounded separately above |
 | locker blob / total | 256 KiB / 2 MiB | memory and instruction files, not payloads |
 | open tasks per station | 500 | a longer list is not being worked |
+| task `text` / `resolution` | 512 B each | one line, by construction |
+| task `detail` + `context` | 4 KiB | a task needing more than this is a notebook page with a plan |
+| closed + dropped tasks retained | 2000 per station, then oldest-first pruning | the record of what was decided is worth keeping; it is not worth keeping ×15 forever (S12's second carve-out) |
 | station queue (unclaimed) | 20 messages + byte cap; TTL **7 days** | "nobody is staffing it" is exactly when the 24 h message TTL is too short |
 | claim lease | 15 minutes | long enough for a working session, short enough that a dead one does not strand mail |
 | link requests | quota per station; exponential mute on a denied **unordered** pair (1h → 6h → 24h → 7d) | a denied relationship must not be re-asked in a loop |
@@ -461,6 +474,10 @@ alone — never on `KEN_COMM_ENABLED`, because stations work with COMM off:
 - **name the station at approval**, and publish/unpublish;
 - per-station **asset usage against the caps**, with notebook, task and locker views (locker with
   download);
+- the **cross-station task view** §11.8 requires — every open task in the space, ordered by the §11.5
+  contract, `blocked_on` filtering to `human` by default, station name as a column, archived stations
+  marked, and the `hearsay_at_write` badge shown exactly as S9 badges a peer-prompted request. This is
+  the human's whole-pile view and the only surface where the pile is visible at once;
 - the **key list** with retire / revoke and revoke's "this will disconnect N live sessions" count;
 - **archive / unarchive** — reversible: keys stop binding, live endpoints are severed, links go
   *dormant* rather than revoked so unarchiving restores them, and the name is held unless explicitly
@@ -473,32 +490,195 @@ alone — never on `KEN_COMM_ENABLED`, because stations work with COMM off:
 
 ---
 
-## 11. The task list — brief for the delegated design
+## 11. The task list
 
-The delegated design owns the *shape* of a good task list for an AI. These points are settled:
+### 11.1 The failure being fixed is decay, not storage
 
-1. **The failure being fixed is decay, not storage.** Pending items live in a session's context; older
-   ones lose to newer material and to compaction, so recall is effortful, lossy and recency-biased.
-   Surfacing is therefore **aging-first** — items not raised recently outrank new ones — and happens in
-   the briefing, unasked.
-2. **`blocked_on` is an enum of slugs: `self | human | peer`** — no spaces, since the value freezes as
-   contract — plus a client rule for unknown values so the vocabulary can grow additively.
-3. **A resolution link may point at a knowledge-base slug + revision, a commit, or a URL — never a COMM
-   message id.** That would be a `ken.db` row pointing into the expendable file, violating S7 in the
-   direction that matters.
-4. **`last_surfaced_at` lives in `ken.db`** (S7): one timestamp per task, touched once per briefing,
-   and it must work with COMM off.
-5. **Closing must be cheaper than snoozing.** If deferring is the low-effort path, everything is
-   deferred and the list rots into the thing it replaced.
+Pending items live in a session's context. As a conversation grows they lose to newer material and to
+compaction, so recall becomes a *memory harvest*: effortful, lossy, and biased toward the recent. The
+observable symptom is that older commitments surface less and less often until they stop surfacing at
+all — and nobody notices, because the thing that would have noticed is the thing that decayed.
 
-To decide: item shape and required fields, what "done" records, how duplicates are avoided without a
-search, how ordering is expressed as a contract rather than a heuristic, and what the tool descriptions
-must say so a model closes items without being told twice.
+Storage alone does not fix it. **A list I have to remember to read is the same failure one level
+down.** Everything below follows from that: the list must surface itself, and it must actively
+counteract recency rather than merely resist it.
 
-**Checklists are out of scope and are a different shape** — a finite procedure, instantiated per run,
-valued for completeness, and reset. A task list is open-ended, actor-owned and valued for not
-forgetting. One thing that tries to be both is bad at each; if checklists earn their place they arrive
-later as templates + runs.
+### 11.2 The honest limit — stated first, because it bounds everything after it
+
+Two links in this loop are **instruction-borne and unverifiable**, in the sense COMM.md §8 means when
+it says instruction text "is not a control":
+
+- **Capture.** Nothing makes a model call `station_task_add`. The faculty being asked to record the
+  item is the same attention §11.1 says decays — the model that forgets to remind is the model that
+  forgets to write it down.
+- **Relay.** Ken can observe that it *generated* a briefing. It cannot observe that the model told the
+  human. A tool result is not a message to a person.
+
+This section is designed so that neither failure is silent, and so that no metric claims otherwise
+(§11.4, §11.7). It cannot make either impossible, and does not pretend to — the same stance S9 takes
+about a reflexive approval and S11 about a locker's contents.
+
+### 11.3 The item
+
+```
+{ id                    short, stable, sayable out loud   — "close t-7"
+  text                  one line, imperative               — what to do
+  detail?               longer context: why, and what done looks like
+  blocked_on            self | human | peer                — REQUIRED on add
+  blocked_on_station?   when blocked_on = peer, which station
+  remind_after?         a date; suppressed from the briefing head until it passes
+  context?              what this arose from
+  state                 open | done | dropped
+  resolution?           one line, required to leave `open`
+  resolution_link?      kb slug+rev · commit · URL · notebook page key · promotion id
+                        — never a COMM message id (S7)
+  created_at, created_by_station_key, actor_id, hearsay_at_write
+  last_briefed_at, briefed_count
+  deferred_until?, defer_count, last_defer_reason
+  closed_at?, closed_by?, closed_reason? }
+```
+
+**The enum is defined, not just declared**, and the definition ships in the tool description because
+two sessions must classify the same item the same way:
+
+- `self` — I can act on this now; nothing external is required.
+- `human` — it cannot move until the owner does or decides something.
+- `peer` — another *station* owes something; name it in `blocked_on_station`.
+
+**`blocked_on` is required on add.** It is a three-value enum and costs one token; making it optional
+would put an unstated default into the human's only view (§11.8). It is also the field that earns its
+place: most of a session's closing summary is this value computed by hand — *"two things waiting on
+you"* — recalculated every time and therefore wrong as often as the memory it comes from.
+
+**There is deliberately no priority field.** Priority is a number people assign once and never
+maintain, and its staleness is invisible. Ordering is derived (§11.5) from facts that maintain
+themselves.
+
+**`dropped` is not `done`, and neither is final.** Abandoning a commitment is a real outcome, and
+conflating it with completion destroys the list's ability to answer *"what did we decide not to do?"*.
+Both require a reason, both remain readable (`station_task_list(state:)`), and
+`station_task_reopen` exists because a decision to drop is sometimes wrong.
+
+**`hearsay_at_write`** is required by §7 of every task, exactly as of every notebook revision — a
+commitment created while the session was being told things by a peer is marked as such, and the badge
+travels to the human's view.
+
+### 11.4 What "surfaced" may honestly mean
+
+The anti-decay ordering key is the most abusable thing in this design, because the obvious
+implementation measures the wrong event.
+
+**The field is `last_briefed_at`, named for what Ken can actually observe.** It is stamped when a
+briefing *displays* that row — never on `station_task_list`, which is a pure query, and never on rows
+the briefing merely counted. It is stamped **at most once per station key per staffing session**, so
+that `station_me` ("the briefing on demand", §6) cannot re-stamp the aging clock every time a model
+re-orients itself.
+
+Why the pedantry: if a briefing stamped the whole open set on every connect, a regularly-staffed
+station would show a perfect surfacing history while the human was told nothing — the aging nag would
+read healthy and the feature would be inert. That is precisely the "healthy metrics, non-functional
+feature" failure COMM.md §13 exists to prevent, and it would reproduce the owner's original symptom
+with better plumbing and a number asserting it was fine.
+
+So the metric is honest about its own weakness: **`briefed_count` counts briefings, not human
+exposures**, and §11.7's nags say so in their wording.
+
+### 11.5 Ordering is a contract, and the head has fixed slots
+
+The point of the list is that its answer is *predictable*. A tunable heuristic reproduces the original
+problem in a new place. So the order is stated in full:
+
+1. **Due** — `remind_after` has passed.
+2. **Blocked on the human.**
+3. **Aging** — `last_briefed_at` oldest first. The clause that inverts the failure.
+4. **Tie-break** — `created_at` oldest first.
+
+**But rank order alone starves clause 3, so the briefing head has fixed slots.** Classes 1 and 2 are
+*monotonic*: a passed date never un-passes, and the human-blocked pile is by definition the one not
+being cleared. Ranked purely by class, they occupy the head forever and the aging clause never runs.
+So the head is **up to 2 due + 2 human-blocked + 3 aging**, each slot filled by `last_briefed_at`
+oldest first, with counts for the remainder. Silence — the cheapest possible human response — can
+therefore no longer pin an item at rank 1 and freeze everything beneath it.
+
+**Deferral is a surfacing rule, never a membership rule.** An item with a future `deferred_until` is
+suppressed from the briefing *head* only. It stays in the open set, stays in `station_task_list`,
+stays in the counts, and stays in `station_task_add`'s near-match check — otherwise the items that
+have gone quiet, which are exactly the ones this feature exists for, would be invisible to the two
+mechanisms meant to protect them.
+
+### 11.6 Closing is cheapest; deferring is legitimate but leaves a trace
+
+- **Close** takes ids and one line: `station_task_close(["t-7"], "shipped in 1.4.1")`. It accepts
+  **several ids**, because closing a batch after a release is the common case and five calls is five
+  chances not to bother.
+- **Defer** requires a date *and* a reason, and increments `defer_count`. Deferring is a legitimate
+  decision; deferring silently and repeatedly is the failure mode, so it leaves a record the briefing
+  reads back.
+- **Drop refuses `blocked_on: human` items** unless the call carries the human's own decision. Without
+  that guard, §11.7's nag would aim the model's one destructive verb squarely at the pile the whole
+  feature exists to preserve — the one that reliably accumulates and that the owner says disappears on
+  him today.
+
+### 11.7 The nags, worded honestly
+
+Three, all computed, all in the briefing:
+
+- **Aging** — *"3 not briefed in the last 5 sessions."* Expressed in **station activity**, not
+  wall-clock days, for the same reason §4 measures handoff staleness that way: an idle station is not
+  neglecting anything.
+- **Briefed without progress** — *"2 briefed 5+ times, unchanged and never deferred."* The sharper
+  signal. An item repeatedly put in front of a session and never actioned, never deferred and never
+  closed is either not real or blocked on something nobody has named. The wording says *briefed*, not
+  *raised*, because Ken does not know whether the human ever heard it.
+- **Deferred repeatedly** — *"1 deferred 3 times."* The trace §11.6 promises, made visible.
+
+None of the three recommends deletion of a human-blocked item (§11.6).
+
+### 11.8 The human's view is cross-station, and ordered like the list
+
+Per-station lists answer the AI's question. They do not answer the human's — *"what is everyone
+waiting on me for?"* — which is the pain that motivated the feature. The console therefore carries a
+**cross-station view of all open tasks**, with `blocked_on` as a filter that **defaults to `human`**
+rather than as the query, so the whole pile remains reachable.
+
+It is ordered by **the §11.5 contract applied across stations** — due, then aging, then created — with
+the station name as a column. Ordering it by recent station activity would sink the old items on the
+one surface built to stop exactly that.
+
+Archived stations' tasks appear, marked, because a commitment does not stop existing when a post is
+retired.
+
+### 11.9 Tool surface
+
+| Tool | Notes |
+|---|---|
+| `station_task_add(text, blocked_on, remind_after?, detail?, context?, merge_into?)` | `blocked_on` required. Returns the id and any near-matches from the open set. |
+| `station_task_list(blocked_on?, due?, aging?, state?, limit?)` | §11.5 order, compact; 50 default and hard ceiling. A pure query: stamps nothing. |
+| `station_task_close(ids[], resolution, resolution_link?)` | Batch. |
+| `station_task_defer(ids[], until, reason)` | Deliberately the wordiest call here. |
+| `station_task_drop(ids[], reason)` | Refuses `blocked_on: human` without the human's decision. |
+| `station_task_reopen(ids[], reason)` | Because dropping is sometimes wrong. |
+
+The descriptions must carry **four** sentences, and the fourth is the one that makes the feature work
+rather than merely exist:
+
+1. *Add is cheap — add the moment you say "we should", not at the end.*
+2. *Close the moment the thing is done, not at the end of the session.*
+3. *If an item has been briefed repeatedly and nothing changed, say what is blocking it or defer it
+   with a reason — do not silently leave it, and do not drop something the human owes.*
+4. **In your first message of a session, tell the human in words every item blocked on them and
+   everything past its date.** A briefing the model reads and does not relay is the original failure
+   with extra steps.
+
+### 11.10 What is deliberately absent
+
+- **No priority field** (§11.3), **no subtasks** (a task needing decomposition is a notebook page with
+  a plan, whose parts are tasks), **no assignee beyond `blocked_on`** (there is one human).
+- **No checklists.** They are a different shape: a *finite procedure*, instantiated per run, valued for
+  **completeness**, and reset — a release gate is one. A task list is open-ended, actor-owned and
+  valued for **not forgetting**. One thing that tries to be both is bad at each: steps that outlive
+  their run, or commitments that get "reset". If checklists earn their place they arrive later as
+  templates + runs, sharing no schema with this.
 
 ---
 
