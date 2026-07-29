@@ -153,8 +153,11 @@ Inter-session communication (OFF unless enabled — see docs/COMM.md):
 Stations — durable AI working identities (OFF unless enabled — see docs/STATIONS.md):
   KEN_STATION_ENABLED  1 = expose the station MCP endpoint at /station/mcp (default off)
                     a station is created and NAMED by a human; a session staffs it
-                    needs a DEDICATED key:  ken token add --actor dev --scopes station
-                    (add station-locker for the file locker)
+                    create it, then mint its key:  ken station add --name prod-ops
+                                                   ken station key --station prod-ops --label laptop
+                    (add --locker to that key for the file locker)
+                    NOT ken token add: /station needs a kens_ key BOUND to a station,
+                    which only ken station key mints
                     a token holds knowledge-base, comm, or station scopes — station and
                     comm may combine, neither may mix with knowledge-base scopes
                     works with COMM off: the notebook and task list need no peers
@@ -467,7 +470,7 @@ func runServe(args []string) {
 			}
 		}
 		mux.Handle("/station/mcp", stationserver.NewHTTPHandler(sd))
-		log.Printf("STATIONS: enabled at /station/mcp — requires a dedicated key with the 'station' scope (ken token add --scopes station)")
+		log.Printf("STATIONS: enabled at /station/mcp — requires a kens_ key bound to a station (ken station add --name <n>, then ken station key --station <n> --label <machine>)")
 	}
 
 	mux.Handle("/", reg.Counting("web", web.Handler(web.Deps{

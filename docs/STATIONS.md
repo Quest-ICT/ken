@@ -1,10 +1,21 @@
 # Ken — stations, notebooks and task lists
 
-> **Status: DESIGN CONTRACT — not yet built.** Written before the code, the way [`COMM.md`](COMM.md)
-> was, so the decisions are argued while they are still cheap. When it ships it will be **opt-in and
+> **Status: DESIGN CONTRACT — PARTIALLY BUILT as of 1.4.2.** Written before the code, the way
+> [`COMM.md`](COMM.md) was, so the decisions are argued while they are still cheap. It is **opt-in and
 > off by default** (`KEN_STATION_ENABLED`), which places it outside the byte-level compatibility
 > contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)) exactly as COMM is — supported, but free to
 > evolve additively.
+>
+> **Built and shipped (dark) in 1.4.2:** the schema, `kens_` station keys and the three-way scope
+> split, the notebook with revisions, the task list with its ordering contract (§11), the locker, the
+> `/station/mcp` surface, and `ken station add|list|key|requests`.
+>
+> **NOT built — do not read the sections below as descriptions of working behaviour:** the operator
+> console (§10), peer links and denials (S9), and the whole COMM integration — the binding voucher
+> (S5), `endpoint.station_id`, the station-owned inbox and its claim lease (S4), and severing (S6).
+> Until those land, **a station cannot talk to anything**: channels are still reached only by a
+> human-minted 15-minute pairing code, exactly as COMM shipped. Sections describing them state a
+> contract to build against, not a promise the code currently keeps.
 >
 > Convention in this document: **S*n*** is a locked decision, **§*n*** is a section.
 

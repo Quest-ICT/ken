@@ -192,6 +192,10 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Append to or replace a notebook page. Keep the 'handoff' page current AS YOU GO — a handoff " +
 			"written only when you know you are leaving is never written. Pass if_rev when you have read the page and " +
 			"are overwriting it, so a second session staffing this station cannot be silently clobbered. " +
+			"NEVER put a token, key or password here — Ken cannot tell, your human can read it, and it goes into " +
+			"every backup. If you are worried about losing a credential when your context is compacted, a page here " +
+			"is the WRONG place: reading it needs the station key, so it is unreachable in exactly that emergency. " +
+			"Write the RECOVERY PATH instead — which station, which peers, what to re-run. " +
 			"Routing rule: if a session on a DIFFERENT station would want this months from now, it is knowledge (kb_save), not a note.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteWriteIn) (*mcp.CallToolResult, noteOut, error) {
 		p, err := requireStation(ctx)

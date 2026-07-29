@@ -98,6 +98,19 @@ func runToken(args []string) {
 		if err := checkScopeMix(scopes); err != nil {
 			die(err.Error())
 		}
+		// Refuse to mint a station credential HERE, rather than let it fail at first
+		// use. This command issues a `ken_` token with no station binding, and
+		// /station/mcp requires a `kens_` key bound to one — so the token would
+		// authenticate nowhere while looking exactly like a working one. Fail at mint
+		// time, where the operator is still holding the command that can be corrected.
+		for _, s := range scopes {
+			if stationScopes[s] {
+				die("station scopes are not mintable here: /station/mcp requires a kens_ key BOUND to a station, " +
+					"and this command issues an unbound ken_ token.\n" +
+					"  ken station add --name <name>                         (a human names the station)\n" +
+					"  ken station key --station <name> --label <machine>    (mints the key it will present)")
+			}
+		}
 		actorID, err := st.FindOrCreateActor(ctx, *kind, *actor)
 		must(err)
 		tok, err := st.IssueToken(ctx, actorID, scopes, *label)

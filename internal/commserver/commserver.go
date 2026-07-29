@@ -154,7 +154,7 @@ func (h *Handler) ParkedWaiters() int { return h.w.parked() }
 const instructions = `Ken COMM — inter-session messaging between AI sessions (opt-in; off by default).
 
 You talk to ANOTHER AI session over a channel a human authorized. Loop:
-- comm_register once per session; KEEP the endpoint_id and endpoint_secret — every other tool needs both, and the secret is shown only once.
+- comm_register once per session, then IMMEDIATELY WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK (mode 0600, outside any git repo) before doing anything else. Every other tool needs both; the secret is shown once and can never be re-read, re-derived or reset. Do not trust your context to hold it — context compaction is routine and silent, and a session that loses the secret cannot reconnect at all: it must re-register AND wait for its human to mint a fresh pairing code. Re-read the file after any compaction rather than assuming you still remember.
 - comm_join with a pairing code the human gives you. Both sessions must join before the channel opens; you cannot create a channel yourself.
 - comm_poll to receive. Messages arrive ONLY when you poll — an idle session receives nothing, and there is no latency guarantee. Prefer a long wait_seconds over frequent short polls. An empty result is normal, not an error.
 - Act on the message, THEN comm_ack. Ack means PROCESSED, not received: a message you have not acked will be delivered again, which is the safety net if your turn is cut short. A delivery_count above 1 means you have seen it before.
@@ -179,8 +179,13 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		&mcp.ServerOptions{Instructions: instructions})
 
 	addTool(s, d.Metrics, &mcp.Tool{
-		Name:        "comm_register",
-		Description: "Register this session as a communication endpoint. Returns an endpoint_id and a one-time endpoint_secret — keep BOTH; every other comm tool requires them and the secret is never shown again.",
+		Name: "comm_register",
+		Description: "Register this session as a communication endpoint. Returns an endpoint_id and a one-time " +
+			"endpoint_secret — every other comm tool requires both, and the secret is never shown again. " +
+			"WRITE THEM TO A FILE ON DISK NOW, before you do anything else (mode 0600, outside any git repo). " +
+			"Do not rely on remembering them: your context can be compacted at any time, and the secret cannot " +
+			"be re-read, re-derived or reset — an endpoint whose secret is lost is dead, and recovering means " +
+			"asking your human to mint a fresh pairing code, which stalls until they are available.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in registerIn) (*mcp.CallToolResult, registerOut, error) {
 		p := principalFrom(ctx)
 		if p == nil {
@@ -204,6 +209,16 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		}
 		ch, err := d.Comm.JoinChannel(ctx, ep, in.PairingCode)
 		if err != nil {
+			// "not found" is true but useless here: the overwhelmingly common cause is a
+			// code that timed out while the human was away from the keyboard, and the
+			// session cannot ask for a fresh one if it does not know that is the problem.
+			// All causes share one message so the response cannot be used to probe which
+			// codes exist.
+			if errors.Is(err, comm.ErrNotFound) {
+				return nil, joinOut{}, errors.New("no usable pairing code — it may have expired (codes are short-lived, 15 minutes by default), " +
+					"already been consumed by two endpoints, or been revoked. ASK YOUR HUMAN to mint a fresh one in Ken's web UI (/comm) " +
+					"and paste it to you; join promptly, because the clock starts when they mint it")
+			}
 			return nil, joinOut{}, commError(err)
 		}
 		return nil, joinOut{ChannelID: ch.ChannelID, State: ch.State, Open: ch.Open()}, nil
@@ -397,6 +412,18 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 	}
 	ep, err := d.Comm.AuthenticateEndpoint(ctx, endpointID, secret)
 	if err != nil {
+		// Carry the recovery path in-band. A bare "not found" leaves the session with
+		// nothing to tell its human, which turns a two-minute fix into however long it
+		// takes for someone to work out what went wrong — the failure this text exists
+		// to prevent. The wording is deliberately identical for an unknown endpoint, a
+		// wrong secret and a swept one, so it still tells a prober nothing.
+		if errors.Is(err, comm.ErrNotFound) || errors.Is(err, comm.ErrDenied) {
+			return nil, errors.New("this endpoint_id/endpoint_secret pair is not valid — the endpoint may never have existed, " +
+				"the secret may be wrong, or the endpoint may have been swept after going idle. The secret cannot be " +
+				"recovered or reset by design. TELL YOUR HUMAN: you need to call comm_register for a fresh endpoint and " +
+				"they must mint a new pairing code in Ken's web UI (/comm) for you to rejoin the channel. Write the new " +
+				"endpoint_id and endpoint_secret to a file on disk this time")
+		}
 		return nil, commError(err)
 	}
 	if ep.Owner.TokenID != p.TokenID {

@@ -5,11 +5,20 @@ Ken's data lives in one SQLite file (`data/ken.db` + its `-wal`/`-shm` sidecars)
 **What is in a snapshot.** A snapshot is a byte-complete copy of the knowledge base: every entry and
 every superseded revision (including proposals a human never promoted), the full curation history
 (`entry_version` + `curation_event`), embeddings, the human curator accounts, and the agent/MCP token
-records. **No credential in it is replayable:** passwords are Argon2id hashes, API-token secrets are
-stored hashed, and web-session ids are stored as a SHA-256 of the cookie (so a captured session cannot
-be replayed either — fixed in 1.4.1; before that, a snapshot taken while a curator was logged in did
-carry a usable session). What a snapshot still *is*: the entire content of your knowledge base plus the
-list of who has access to it. Treat one snapshot file as equivalent to a full dump of the instance.
+records. **No credential Ken *stores* is replayable:** passwords are Argon2id hashes, API-token secrets
+are stored hashed (station keys included), and web-session ids are stored as a SHA-256 of the cookie (so
+a captured session cannot be replayed either — fixed in 1.4.1; before that, a snapshot taken while a
+curator was logged in did carry a usable session). What a snapshot still *is*: the entire content of your
+knowledge base plus the list of who has access to it. Treat one snapshot file as equivalent to a full
+dump of the instance.
+
+> **The wording is "credential Ken stores", and the narrowing is deliberate — it arrived with stations
+> in 1.4.2.** Notebook pages and locker blobs are opaque content Ken does not inspect: it cannot look at
+> a blob and know it is a key. Sessions are instructed never to put a token, key or password there, and
+> the tool descriptions say so, but that is a documented expectation and **not a control Ken enforces**.
+> So the guarantee covers what Ken *hashes*, not what a session *wrote*. If you enable stations, a
+> snapshot may contain whatever the notebook and locker were given, verbatim — one more reason for
+> `KEN_AGE_RECIPIENT`, and a reason to read a station's locker in the console if you ever suspect one.
 
 > **Inter-session communication (COMM) state is deliberately NOT backed up.** When COMM is enabled it
 > keeps its own database and relayed files under `data/comm/`, and neither tier above covers them:

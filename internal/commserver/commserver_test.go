@@ -298,3 +298,27 @@ func TestPollExcludedFromDurationHistogram(t *testing.T) {
 		}
 	}
 }
+
+// TestInstructionsTellTheModelWhereToKeepTheSecret pins the fix for a real outage:
+// a dev session lost its endpoint_secret to context compaction, could not
+// reconnect, and work stopped for a day waiting for a human to mint a fresh
+// pairing code.
+//
+// The old text said "KEEP the endpoint_id and endpoint_secret". That is advice a
+// human client follows by writing a config file and an AI client follows by
+// remembering — and remembering is precisely the thing that fails, silently and by
+// design. The instruction is only useful if it names the DESTINATION, so this test
+// asserts the destination and the irreversibility, not merely that the words
+// "endpoint_secret" appear.
+func TestInstructionsTellTheModelWhereToKeepTheSecret(t *testing.T) {
+	for _, want := range []string{
+		"WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK",
+		"context compaction is routine and silent",
+		"never be re-read, re-derived or reset",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("connect-time instructions no longer carry %q — a session that loses its\n"+
+				"secret cannot reconnect at all, so this guidance is load-bearing", want)
+		}
+	}
+}
