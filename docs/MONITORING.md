@@ -50,10 +50,15 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
 
 - **Traffic** — `ken_http_requests_total{surface,outcome}`, `ken_http_request_duration_seconds`
   (**histogram** — request latency for the web surface; use `histogram_quantile(0.95, …)` for p95).
-- **MCP** — `ken_mcp_tool_calls_total{tool,outcome}` for the eight `kb_*` tools, and for the
-  `comm_*` tools when inter-session communication is enabled; `ken_mcp_tool_duration_seconds{tool}`
-  (**histogram**) is per-tool handler latency — the work time, so `comm_poll` (a long-poll) is
-  deliberately excluded, since a parked wait is not latency.
+- **MCP** — `ken_mcp_tool_calls_total{tool,outcome}` and `ken_mcp_tool_duration_seconds{tool}`
+  (**histogram**, per-tool handler latency) cover **every** MCP surface that is enabled: the `kb_*`
+  tools always, the `comm_*` tools when inter-session communication is on, and the `station_*` tools
+  when stations are. `comm_poll` is deliberately excluded from the latency histogram — it is a
+  long-poll, and a parked wait is not latency.
+- **No station-specific gauges exist**, and their absence is stated rather than left to be inferred:
+  there is no equivalent of the `ken_comm_*` series counting stations, notebook bytes or open tasks.
+  Per-tool call counts are the only station signal today. The per-station usage an operator actually
+  wants — assets against their caps — is on the `/stations` console instead.
 - **Knowledge base** — `ken_kb_entries`, `ken_kb_versions`, `ken_kb_proposals_pending`,
   `ken_kb_embeddings` / `ken_kb_embeddable_versions`, `ken_users`, `ken_tokens_active`.
 - **Inter-session comms** (only when `KEN_COMM_ENABLED=1`; see [`COMM.md`](COMM.md)) —

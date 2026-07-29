@@ -1,21 +1,22 @@
 # Ken — stations, notebooks and task lists
 
-> **Status: DESIGN CONTRACT — PARTIALLY BUILT as of 1.4.2.** Written before the code, the way
-> [`COMM.md`](COMM.md) was, so the decisions are argued while they are still cheap. It is **opt-in and
-> off by default** (`KEN_STATION_ENABLED`), which places it outside the byte-level compatibility
-> contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)) exactly as COMM is — supported, but free to
-> evolve additively.
+> **Status: BUILT and supported; opt-in and OFF by default (`KEN_STATION_ENABLED`).** Written before
+> the code, the way [`COMM.md`](COMM.md) was, so the decisions were argued while they were still
+> cheap — then implemented against. Being off by default places it outside the byte-level
+> compatibility contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)) exactly as COMM is: supported,
+> but free to evolve additively.
 >
-> **Built and shipped (dark) in 1.4.2:** the schema, `kens_` station keys and the three-way scope
-> split, the notebook with revisions, the task list with its ordering contract (§11), the locker, the
-> `/station/mcp` surface, and `ken station add|list|key|requests`.
+> **Built:** the schema and `kens_` station keys with the three-way scope split (S5); the notebook
+> with revisions (S10); the task list and its ordering contract (§11); the locker (S11); the
+> `/station/mcp` surface (§6); the operator console at `/stations` (§10); `ken station
+> add|list|key|requests`; peer links, denials and their mute (S9); endpoint binding by voucher (S5);
+> the station-owned inbox with claim-once delivery and its lease (S4); severing on key revocation
+> (S6); and `comm_open_channel`, which opens a channel over an approved link with **no pairing code**.
 >
-> **NOT built — do not read the sections below as descriptions of working behaviour:** the operator
-> console (§10), peer links and denials (S9), and the whole COMM integration — the binding voucher
-> (S5), `endpoint.station_id`, the station-owned inbox and its claim lease (S4), and severing (S6).
-> Until those land, **a station cannot talk to anything**: channels are still reached only by a
-> human-minted 15-minute pairing code, exactly as COMM shipped. Sections describing them state a
-> contract to build against, not a promise the code currently keeps.
+> **Not built, and named here so no section reads as a promise it does not keep:** `station_directory`
+> (§6) — discovery is deferred until there are enough stations for a list to beat asking a human for a
+> name; per-station connect-time instructions (§13); and station-specific metrics, which do not exist
+> beyond the generic per-tool counters every MCP surface emits.
 >
 > Convention in this document: **S*n*** is a locked decision, **§*n*** is a section.
 
@@ -390,14 +391,14 @@ transfer collides on it, and every station is expected to have one.
 | Tool | Purpose |
 |---|---|
 | `station_me` | Who am I, my links, my counts — the briefing on demand. Sets `self_described_*`. |
-| `station_bind` | Exchange the header credential for a single-use binding voucher for `comm_register`. |
+| `station_binding_voucher` | Exchange the header credential for a single-use voucher that `comm_register` redeems. |
 | `station_request` | Ask the human to create a station. The only tool a station-less key may call. |
-| `station_directory` | Published stations plus those I have a link to. |
+| `station_directory` | **NOT BUILT.** Published stations plus those I have a link to. A session names a peer by the name its human uses; discovery is deferred until there are enough stations for a list to beat asking. |
 | `station_link_request` | Ask the human to approve a relationship: `to_station`, `reason` (human-only). |
 | `station_note_list` / `_read` / `_write` | Keys, titles, sizes; one page; `append`/`replace` with `if_rev`. |
 | `station_note_promote` | Open a pending promotion for the human to convert (S10). |
-| `station_task_add` / `_list` / `_close` / `_drop` / `_snooze` | §11.8. Closing is the cheapest verb, deliberately. |
-| `station_locker_*` | `list`, `put`, `get`, `delete`. Bounded; refuses over cap. |
+| `station_task_add` / `_list` / `_close` / `_drop` / `_defer` | §11.8. Closing is the cheapest verb, deliberately. |
+| `station_locker_*` | `list` and `put` shipped; `get` and `delete` are the console's job today (§10). Bounded; refuses over cap rather than evicting (S12). |
 
 ### Scopes
 

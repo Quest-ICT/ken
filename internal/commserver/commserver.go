@@ -182,11 +182,11 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_register",
 		Description: "Register this session as a communication endpoint. Returns an endpoint_id and a one-time " +
-			"endpoint_secret — every other comm tool requires both, and the secret is never shown again. " +
+			"endpoint_secret — every other comm tool requires both, and NO tool will ever show the secret again. " +
 			"WRITE THEM TO A FILE ON DISK NOW, before you do anything else (mode 0600, outside any git repo). " +
-			"Do not rely on remembering them: your context can be compacted at any time, and the secret cannot " +
-			"be re-read, re-derived or reset — an endpoint whose secret is lost is dead, and recovering means " +
-			"asking your human to mint a fresh pairing code, which stalls until they are available.",
+			"Do not rely on remembering them: your context can be compacted at any time, silently. " +
+			"If you do lose the secret you are not stuck — ask your human to ROTATE it from Ken's web console, " +
+			"which keeps this endpoint and every channel it is in. Only a human can do that.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in registerIn) (*mcp.CallToolResult, registerOut, error) {
 		p := principalFrom(ctx)
 		if p == nil {
@@ -519,8 +519,9 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 				"the secret may be wrong, or the endpoint may have been swept after going idle. TELL YOUR HUMAN, because " +
 				"only they can fix it and only from Ken's web console (/comm): if this endpoint is still listed there, ask " +
 				"them to ROTATE its secret — you keep your endpoint id and every channel, so nothing needs re-pairing. If it " +
-				"is gone, you need comm_register plus a fresh pairing code from them. Write the new secret to a file on disk " +
-				"this time")
+				"is gone, you need comm_register plus a fresh pairing code from them — UNLESS you staff a station, in which " +
+				"case take a voucher from station_binding_voucher on /station, call comm_register with it, and you inherit " +
+				"your station's mail with no code and no waiting. Write the new secret to a file on disk this time")
 		}
 		return nil, commError(err)
 	}

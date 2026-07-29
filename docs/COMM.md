@@ -157,7 +157,15 @@ gives it to both sessions; each calls `comm_join` with it, and the channel exist
 - **Why:** this is the one place COMM can borrow the property that makes the rest of Ken trustworthy.
   The curation gate works because a capability is *withheld* (no tool requires `curate`), not because
   the model is asked nicely. Channel establishment is where the same trick is available: agents talk
-  freely inside a channel a human deliberately created, and can never create one themselves.
+  freely inside a channel a human deliberately created.
+- **Stations refine this and do not weaken it — but the literal sentence changed, so it is restated
+  here rather than left to be discovered.** With [stations](STATIONS.md) enabled, a session staffing
+  one can call `comm_open_channel` and get a channel with **no pairing code and no human present at
+  that moment**. The human decision did not disappear; it moved from the conversation to the
+  *relationship*, and it happened earlier: someone approved a **link** between those two stations
+  (S9), which is a durable row in `ken.db` that the agent cannot write. So "an agent cannot conjure a
+  channel" remains true — an unlinked pair is refused, and the only way to become linked is a human
+  clicking approve. What is no longer true is "a human mints a code for every conversation".
 - **Second reason:** both-sides-join is also what keeps the multi-user future additive (§10) — a
   unilateral "A opens a channel to B" would have to *tighten* into an accept flow later, which is a
   breaking change.
@@ -220,24 +228,8 @@ endpoint present the secret.
   a token.
 - Display labels are non-unique decoration. **Routing is always by `endpoint_id`.** A human-chosen
   name is never an address, or the first release ships a global namespace one session can squat.
-- **The secret can be ROTATED — from the console only, never by a tool.** A curator can issue a new
-  secret for a live endpoint; the endpoint keeps its id and **every channel it belongs to**, so peers
-  are unaffected and nothing needs re-pairing. Two cases need it: a leaked secret (before rotation the
-  only remedy was revoking the endpoint and rebuilding every channel from scratch, which made
-  containing a leak expensive enough to hesitate over), and a session that has simply *lost* its
-  secret — a real event, because an AI client's memory is lossy by design and context compaction
-  destroys it silently.
-- **Why rotation is a console action and there is no tool for it.** A tool would hand the capability
-  to the very population it must be protected from: the token covers a machine, so anything one
-  session can trigger, *every* session on that machine can trigger — and seizing a neighbour's
-  endpoint is precisely the shared-inbox failure the per-endpoint secret exists to prevent. The defect
-  in "let the session reissue" is the **automation**, not the reissuing. Behind curator
-  authentication — a credential no session holds or can obtain from the machine — the same operation
-  is safe. Sessions are told to *ask*; the rotation itself is logged with the curator who performed it,
-  because a rotation nobody remembers doing is the signal that matters.
-- **What rotation does not fix:** a human still has to act, so a session cannot self-heal unattended.
-  It shortens the work, not the wait. Prevention is still the first line: write the pair to a file on
-  disk at registration, which is what the connect-time instructions now tell every session to do.
+- **The secret can be ROTATED, and a lost one is not fatal.** §3.1 below is the whole story: what to
+  do, what each remedy requires in advance, and what each costs when it is needed.
 
 **Channel** — joins exactly two distinct endpoints, each of which may optionally be **bound to a
 station** (see [STATIONS.md](STATIONS.md) S4). A channel is created either by the pairing flow in C7
@@ -250,6 +242,54 @@ endpoints do not share an owner is rejected.
 endpoint, `requires_response`, optional `reply_to`, delivery count, timestamps, size, content hash.
 
 ---
+
+### 3.1 Losing the endpoint secret
+
+`comm_register` returns the secret once and nothing will ever show it again. This is not an edge case
+to design around later: **an AI client's memory is lossy by design.** Context compaction is routine,
+silent, and gives the session no signal — a session does not know it has forgotten. Treat a lost
+secret as an expected event with a known remedy rather than as an accident.
+
+Three mechanisms answer it. They are not alternatives ranked by quality; they differ in **what each
+requires in advance** and **what each costs at the moment of failure**.
+
+**Prevention — write the pair to disk at registration.** Requires nothing but doing it. The
+connect-time instructions tell every session to write `endpoint_id` and `endpoint_secret` to a `0600`
+file outside any git repo before its next tool call, and to re-read that file after a compaction
+rather than trusting its context. It costs nothing, needs no operator, and is the **only** mechanism
+that helps a session running unattended. *What it does not solve:* it is useless to a session that
+did not do it before the failure, and a file on disk is a secret on disk — no help at all for a
+secret that has leaked, and one more place one can leak from.
+
+**Rotation — a curator issues a new secret from the `/comm` console.** Requires a human at the
+keyboard. It preserves the endpoint id and every channel the endpoint belongs to, so peers are
+undisturbed and nothing is re-paired. It is also the **only** remedy for a secret that has *leaked*,
+which neither of the others addresses. *What it does not solve:* the wait. Rotation shortens the work
+to seconds; the session is still stalled until somebody is available.
+
+> **Why rotation has no tool, and will not get one.** A Ken token covers a *machine*, so every session
+> on that box presents the same credential — anything one session can trigger, every session can
+> trigger, against any endpoint on the machine. A rotation tool would let a session seize a
+> neighbour's endpoint, which is precisely the shared-inbox accident the per-endpoint secret exists to
+> prevent. The defect is the **automation**, not the reissuing: behind curator authentication — a
+> credential no session holds or can obtain from the machine — the same operation is safe. Each
+> rotation is logged with the curator who performed it, because a rotation nobody remembers doing is
+> the signal that matters.
+
+**Replacement — bind a fresh endpoint to the same station.** Requires [stations](STATIONS.md) enabled
+**and** the binding arranged in advance (S5): the lost session must have registered with a
+`binding_voucher`. A new session staffing that station takes a voucher from `station_binding_voucher`,
+calls `comm_register` with it, and inherits the station's unread mail — because the **station** owns
+the inbox (S4), and the dead endpoint's claims return to the unclaimed tail rather than stranding.
+Where the two stations already hold an approved **link** (S9), it re-opens the channel with
+`comm_open_channel`: no pairing code, and no human in the loop at that moment. This is the only path
+that recovers without waiting for a person. *What it does not solve:* it recovers the **mailbox and
+the relationships, not the conversation** — the transcript was never Ken's to keep (S1) — and it does
+nothing for a session that was never bound, which is every session until an operator sets stations up.
+
+**The honest summary.** A session that wrote its pair to disk recovers alone. A session bound to a
+station recovers alone. A session that did neither waits for a human, and no mechanism here changes
+that — which is why prevention is stated first in the instructions and costs nothing.
 
 ## 4. Delivery semantics
 
@@ -391,8 +431,9 @@ ken token add --actor comm-dev --scopes comm
 
 | Tool | Purpose |
 |---|---|
-| `comm_register` | Register this session as an endpoint; returns `endpoint_id` + one-time secret. |
+| `comm_register` | Register this session as an endpoint; returns `endpoint_id` + one-time secret. Optionally redeems a `binding_voucher` to bind the endpoint to a station. |
 | `comm_join` | Join a channel using a human-minted pairing code. Both sides call it. |
+| `comm_open_channel` | Open a channel with a station your human has already **linked** to yours — no pairing code. Refused without an approved link. |
 | `comm_channels` | List this endpoint's channels and their state. |
 | `comm_send` | Send one atomic message; optional `requires_response` / `reply_to` / idempotency key. |
 | `comm_poll` | Long-poll for unacknowledged messages across all of this endpoint's channels. |

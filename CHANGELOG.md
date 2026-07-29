@@ -32,7 +32,56 @@ same change — never "docs later".
   capability an operator deliberately destroyed.
 - The connect-time COMM instructions, `comm_register`, and the authentication-failure text now tell a
   session to **ask its human to rotate** rather than repeating that the secret can never be reset —
-  which rotation made untrue in the same change.
+  which rotation made untrue in the same change. (`comm_register`'s description was claimed here
+  before it was actually edited; the audit that closed out this release caught it.)
+- **Stations are complete and supported — still opt-in and off by default.** 1.4.2 shipped the
+  foundation dark and said plainly that the console, peer links and the COMM binding were missing.
+  They are built:
+  - **The `/stations` operator console.** The request queue where a human approves a session's ask and
+    **types the station's name** — the capability every tool is denied. Publish/unpublish, archive and
+    unarchive, per-station asset usage against the caps, key list with retire, and an atomic asset
+    **transfer** that is refused outright on a name collision and reports which names clashed (a
+    `handoff` page collides in the common case, and silently merging would destroy exactly the page a
+    human reaches for). Leading the page is the **cross-station task view**: every task waiting on the
+    human, across every station, ordered by §11.5. That view is the answer to the problem stations
+    exist for — a person should not have to ask each session in turn what it is still waiting on.
+  - **Endpoint binding.** A session takes a short-lived single-use voucher from `/station` and passes
+    it to `comm_register`; the station key itself never becomes a tool argument, because tool
+    arguments are model output and land in transcripts and logs. A bound endpoint reads the
+    **station's** inbox rather than its own, with claim-once delivery and a lease — so a replacement
+    session inherits the mail its predecessor never read, with no pairing code and nobody waiting at a
+    keyboard. An **unbound** endpoint behaves exactly as before, and a test says so.
+  - **Peer links.** A human approves a *relationship* once instead of a conversation each time;
+    `comm_open_channel` then opens channels with no code. A denied pair is muted on the **unordered**
+    pair with escalating windows, and a re-request is silently dropped while returning the ordinary
+    "pending" answer — telling the caller otherwise would let it probe past refusals one request at a
+    time. Requests record whether the asking session was mid-conversation, which is the only signal a
+    human gets that a peer may have talked it into asking.
+  - **Revoking a station key severs what it bound.** Enforced at *use* rather than at revocation,
+    because `ken token revoke` runs in a separate process with no message-database handle and could
+    never have marked those endpoints however it was wired.
+  - The station bounds from `STATIONS.md` §9 are now **live settings** in their own group, applied
+    without a restart.
+
+### Fixed
+- **A cumulative acknowledge could settle messages nobody had read.** The per-channel sequence keyed
+  on the sending *endpoint*, so a replacement session began numbering at 1 while its predecessor had
+  reached 20 — two messages in one channel and direction sharing a sequence number. Since
+  `ack_up_to_seq` is a **range**, acking after a takeover settled the predecessor's unread mail too.
+  Found by checking a promise the design document made against what the code did; the counter now
+  keys on the sending station, as `STATIONS.md` S4 always said it must.
+- **`comm_register` could destroy the one-time secret it had just minted.** When a binding voucher
+  failed to redeem — a stale one, the ordinary case — the handler returned an error, and the MCP SDK
+  discards structured output when a handler does that: the caller received the error text and nothing
+  else, while the endpoint existed in the database with a secret nobody would ever see. A binding
+  failure is now reported *in* the result.
+- The binding voucher was stored in **plaintext** — the only credential in Ken that was, in the one
+  database the backup story copies off-box. Hashed like every other secret.
+- Documentation corrected against the code across `STATIONS.md`, `COMM.md`, `README.md`, `DESIGN.md`,
+  `MONITORING.md`, `MCP-TOOLS.md` and `COMPATIBILITY.md` — including a status banner that still told
+  readers to disregard sections describing shipped behaviour, a missing ninth `comm_*` tool, three
+  station tool names that never shipped under those names, and `kenc_` described as a token prefix
+  when it is an OAuth client id and never a bearer token.
 
 ## [1.4.2] — 2026-07-28
 
