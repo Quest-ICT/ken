@@ -192,3 +192,12 @@ type bindOut struct {
 	StationID string `json:"station_id"`
 	Note      string `json:"note"`
 }
+
+type unbindIn struct {
+	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
+	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+}
+
+type unbindOut struct {
+	Note string `json:"note"`
+}

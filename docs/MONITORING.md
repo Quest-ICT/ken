@@ -22,6 +22,22 @@ in [`monitoring/`](../monitoring/).
 Always `200 ok`. Use it for a load-balancer or `systemd`/k8s liveness probe. It is
 exempt from the rate limiter, so probes are never throttled.
 
+> **Check it on the port your deployment actually listens on.** `localhost:8080` is the
+> plain-HTTP default; a deployment that terminates TLS in-process listens on **:443**
+> (and :80 only for the redirect and ACME), so the 8080 form fails with *"Failed to
+> connect"* on a perfectly healthy server. That matters more than it sounds, because the
+> moment an operator runs a health check is usually **seconds after a restart**, when
+> "it's down" is the most believable explanation available — a connection refused there
+> reads as an outage the change just caused. It cost a production operator a minute of
+> exactly that. Derive the URL from your own configuration:
+>
+> ```bash
+> curl -fsS "$(systemctl show ken -p Environment | grep -qi 'KEN_TLS=off\|KEN_TLS=$' && echo http://localhost:8080 || echo https://localhost)/healthz"
+> ```
+>
+> or simply use the scheme, host and port this instance is configured with. A verification
+> step that cries wolf after a restart trains people to stop running it.
+
 ### `/health` (readiness)
 Returns the Actuator-style shape:
 

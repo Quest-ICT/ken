@@ -153,9 +153,20 @@ single-use **binding voucher** that `comm_register` accepts.
 - **Several named keys per station** ("laptop", "vps"), each independently revocable — key-per-machine
   is what makes targeted revocation mean anything, and it is why §1 says to mint rather than copy.
 - **The key must carry the same `actor_id` as that machine's comm token.** The hearsay window is keyed
-  on the actor, so a different actor silently defeats `prompted_by_peer_traffic` (S9). A marker that
-  fails open without saying so is worse than no marker, so the console refuses the mismatch at mint
-  time.
+  on the actor, so a different actor silently defeats `prompted_by_peer_traffic` (S9), and a marker
+  that fails open without saying so is worse than no marker.
+  **This is NOT enforced at mint time, and an earlier version of this line claimed it was.** Nothing
+  compares the two actors, because a station is legitimately usable with COMM off (S2) and there is
+  then no comm token to match — refusing would break the supported case to protect an unsupported
+  one. What the tooling does instead is make the correct actor the DEFAULT and say which it chose:
+  `ken station key` resolves the actor holding this deployment's comm token, names it, and refuses to
+  guess when several could apply; the console offers a picker that marks comm-token holders. Minting
+  under the wrong actor is still possible and still silent — the honest statement is that this is a
+  papercut the tooling steers around, not a boundary the server holds.
+  *(The original claim was false in a way that mattered: station keys were minted under a HUMAN actor
+  while comm tokens default to `ai`, and `(kind, display_name)` is unique — so on any deployment
+  following the documented setup the marker was permanently false, and the only shipped remedy was to
+  mislabel an AI session's token as human.)*
 
 ### S6 — Revocation severs; retirement does not *(chosen: two verbs, severing default)*
 
@@ -166,6 +177,14 @@ third verb: "rotate" is mint-new-then-retire-old, and the console composes it.
 - **Why severing is the default:** you revoke because the key leaked. A revocation that leaves the
   leaked capability running until an idle sweep notices is theatre — and traffic keeps an endpoint
   alive indefinitely.
+- **"Retire does not sever" is about ENDPOINTS, and is misleading about the KEY itself.** Station-key
+  authentication requires `retired_at IS NULL`, so a retired key stops working *immediately*: the
+  session holding it loses its notebook, task list and locker at once. What survives untouched are the
+  COMM endpoints that key already bound. So the composed rotation — mint new, retire old — cuts the
+  running session's station tools at the retire step if done in that order. **The safe order is: mint
+  → install in the client config → restart the session → verify the new key works → only then
+  retire.** Stated because the natural reading of "non-severing" is that rotation is seamless, and it
+  is not.
 - **Trade-off accepted:** revoke is destructive to live work, so the console states the count before
   the click — *"this will disconnect 2 live sessions"* — and a severed endpoint's next call returns a
   **distinguishable** error so the model reports "my station key was revoked" instead of retrying.

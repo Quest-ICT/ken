@@ -206,6 +206,50 @@ UPDATE endpoint
 	return nil
 }
 
+// UnbindEndpointFromStation returns a bound endpoint to standing alone. It keeps its
+// id, its secret and every channel it is in; only the station association goes.
+//
+// This exists because binding was a ONE-WAY DOOR and nobody should have to walk
+// through one to try a feature. An operator weighing adoption asked the right
+// question — "is it reversible?" — and the honest answer was no, which is a bad
+// answer for a step whose whole purpose is to make things cheaper.
+//
+// What unbinding means for mail is the reason it is safe. Messages are addressed to
+// an ENDPOINT rowid; the station merely widens which endpoint may read them. So
+// unbinding narrows this endpoint back to its own mail and strands nothing: anything
+// addressed to it is still addressed to it, and anything addressed to a sibling was
+// never its to begin with. Claims it currently holds ARE released, because after
+// unbinding it will not be polling for them and leaving them held would hide those
+// messages from the station's remaining readers for the rest of the lease.
+func (s *Store) UnbindEndpointFromStation(ctx context.Context, endpointID string) error {
+	var n int64
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		if _, err := t.ExecContext(ctx, `
+UPDATE message SET claimed_by_endpoint=NULL, claim_expires_at=NULL
+ WHERE acked_at IS NULL
+   AND claimed_by_endpoint = (SELECT id FROM endpoint WHERE endpoint_id=?)
+   AND recipient_endpoint <> (SELECT id FROM endpoint WHERE endpoint_id=?)`,
+			endpointID, endpointID); err != nil {
+			return err
+		}
+		res, err := t.ExecContext(ctx, `
+UPDATE endpoint SET station_id=NULL, bound_by_station_key_id=NULL, bound_at=NULL
+ WHERE endpoint_id=? AND station_id IS NOT NULL AND revoked_at IS NULL`, endpointID)
+		if err != nil {
+			return err
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SeverEndpointsBoundBy revokes every endpoint a given station key bound, and
 // releases their claims. It reports how many were severed so the console can state
 // the count BEFORE the click, as S6 requires.

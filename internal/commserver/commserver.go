@@ -270,6 +270,29 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
+		Name: "comm_unbind",
+		Description: "Detach this endpoint from its station and go back to standing alone. You keep your " +
+			"endpoint_id, your secret and every channel you are in — only the station association goes, so mail " +
+			"addressed to you stays yours and mail addressed to the station's other readers stops being visible. " +
+			"Use it if binding was a mistake, or before your human revokes the station key that bound you.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in unbindIn) (*mcp.CallToolResult, unbindOut, error) {
+		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
+		if err != nil {
+			return nil, unbindOut{}, err
+		}
+		if ep.StationID == "" {
+			return nil, unbindOut{}, errors.New("this endpoint is not bound to a station")
+		}
+		if err := d.Comm.UnbindEndpointFromStation(ctx, ep.EndpointID); err != nil {
+			return nil, unbindOut{}, commError(err)
+		}
+		return nil, unbindOut{
+			Note: "Unbound. Your endpoint and channels are unchanged. Mail already delivered to the station's " +
+				"other readers stays with them; anything addressed to you is still yours. You can bind again later.",
+		}, nil
+	})
+
+	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_open_channel",
 		Description: "Open a channel with another STATION your human has already linked to yours — no pairing " +
 			"code needed, because the approval was given once for the relationship rather than per conversation. " +

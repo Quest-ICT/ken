@@ -220,7 +220,15 @@ type StationKey struct {
 // actorID must be the SAME actor as that machine's comm token, because the hearsay
 // window is keyed on the actor — a different actor silently defeats
 // prompted_by_peer_traffic, and a marker that fails open without saying so is worse
-// than no marker (S5). The caller enforces that; this function records what it is told.
+// than no marker (S5).
+//
+// THIS FUNCTION DOES NOT ENFORCE THAT, and neither does anything else. It records what
+// it is told. An earlier version of this comment said "the caller enforces that",
+// naming an enforcer that never existed — which cost a production operator real time,
+// because a contract comment asserting a guarantee is worse than silence: it stops the
+// reader looking. What the callers do instead is make the right actor the DEFAULT:
+// `ken station key` resolves the actor holding this deployment's comm token and says
+// which one it picked, and the console offers a picker that marks them.
 func (s *Store) IssueStationKey(ctx context.Context, actorID int64, stationID, label string, scopes []string) (string, error) {
 	tokenID, err := randBase62(12)
 	if err != nil {

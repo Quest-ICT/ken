@@ -15,6 +15,39 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+- **The hearsay marker could never fire on a deployment that followed the documented setup.**
+  `ken station key` hardcoded a **human** actor and the console used the logged-in curator's, while
+  `ken token add` defaults to **ai** and `(kind, display_name)` is unique — so a machine's station key
+  and its comm token were different actors, and the hearsay window (which joins on the actor) never
+  matched. `hearsay_at_write` was permanently false, silently, and the only remedy the shipped
+  commands offered was to deliberately mislabel an AI session's token as human: repairing one
+  provenance signal by corrupting the one the curation model rests on. `ken station key` now resolves
+  the actor that holds this deployment's comm token, says which it chose, and refuses to guess when
+  several could apply; `--kind` defaults to `ai`, matching `ken token add`. Found by the production
+  operator on the first real setup.
+- **`IssueStationKey`'s doc comment named an enforcer that does not exist** ("the caller enforces
+  that") — no caller ever compared the two actors. A contract comment asserting a guarantee is worse
+  than silence: it stops the reader looking. `STATIONS.md` S5 carried the same false claim, that the
+  console "refuses the mismatch at mint time". Both now state what is actually true: nothing enforces
+  it, because a station is legitimately usable with COMM off and there is then no token to match; the
+  tooling steers to the right actor instead.
+- **`retire` is documented as non-severing, and that is only true of endpoints.** A retired station
+  key stops authenticating immediately, so the session holding it loses its notebook, task list and
+  locker at once — which makes the documented rotation (mint-new-then-retire-old) cut a running
+  session at the retire step. S6 now states the safe order: mint → install → restart → verify → retire.
+- **`docs/MONITORING.md` gave a health check on `localhost:8080` with no caveat.** A TLS-terminating
+  deployment listens on :443, so the line fails with "connection refused" on a healthy server — and
+  an operator runs it seconds after a restart, when "it's down" is the most believable explanation
+  available. It read as an outage the change had just caused.
+
+### Added
+- **`comm_unbind` — binding is no longer a one-way door.** An endpoint can return to standing alone,
+  keeping its id, its secret and every channel; only the station association goes. Asked for by the
+  production operator before adopting a station, which was the right question: revoking a station key
+  *severs* the endpoints it bound, so binding without an exit meant risking four live channels on a
+  step meant to make things cheaper.
+
 ## [1.5.1] — 2026-07-29
 
 ### Added

@@ -1386,3 +1386,72 @@ func TestAnAlreadyRunningEndpointCanAdoptAStationAndKeepItsChannels(t *testing.T
 		t.Fatal("the successor inherited nothing — adoption did not actually move the inbox to the station")
 	}
 }
+
+// Binding was a one-way door, and an operator weighing adoption asked the right
+// question before stepping through it: is it reversible? It was not. That is a bad
+// property for a step whose entire purpose is to make things cheaper.
+//
+// Unbinding must cost nothing: the endpoint keeps its id, its secret and every
+// channel, and mail addressed to IT is still readable afterwards.
+func TestUnbindReturnsAnEndpointToStandingAloneWithoutLosingAnything(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	const station = "stn_x"
+
+	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "mine", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BindEndpointToStation(ctx, a.EndpointID, station, "kens_k"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, peer, ch.ChannelID, "addressed to me", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.UnbindEndpointFromStation(ctx, a.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	back, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret)
+	if err != nil {
+		t.Fatalf("the endpoint's secret stopped working after unbinding: %v", err)
+	}
+	if back.StationID != "" {
+		t.Fatalf("still bound to %q after unbinding", back.StationID)
+	}
+	chans, err := st.ListChannels(ctx, back)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chans) != 1 || chans[0].ChannelID != ch.ChannelID {
+		t.Fatalf("channels after unbinding = %+v, want the original %s — unbinding must cost nothing", chans, ch.ChannelID)
+	}
+	// Its own mail is still its own. Unbinding narrows what it may read; it must not
+	// strand anything that was addressed to this endpoint in the first place.
+	got, err := st.Poll(ctx, back, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Body != "addressed to me" {
+		t.Fatalf("polled %+v after unbinding, want the message addressed to this endpoint", got)
+	}
+	// And it can bind again — the door swings both ways, which is the point.
+	if err := st.BindEndpointToStation(ctx, a.EndpointID, station, "kens_k"); err != nil {
+		t.Fatalf("could not re-bind after unbinding: %v", err)
+	}
+}

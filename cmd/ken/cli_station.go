@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/Quest-ICT/ken/internal/store"
@@ -36,7 +37,7 @@ func runStation(args []string) {
 		}
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
 		defer st.Close()
-		actorID := mustActor(ctx, st, *actor)
+		actorID := mustHumanActor(ctx, st, *actor)
 		s, err := st.CreateStation(ctx, 1, *name, *purpose, actorID)
 		if errors.Is(err, store.ErrStationNameTaken) {
 			die(fmt.Sprintf("a station named %q already exists in this space", *name))
@@ -67,6 +68,7 @@ func runStation(args []string) {
 		name := fs.String("station", "", "station name (required)")
 		label := fs.String("label", "", "which machine this key is for, e.g. laptop (recommended)")
 		actor := fs.String("actor", "", "actor to mint under — MUST match this machine's comm token actor")
+		kind := fs.String("kind", "ai", "actor kind: ai|human. A session's credential is an ai actor, matching `ken token add`")
 		locker := fs.Bool("locker", false, "also grant the station-locker scope")
 		_ = fs.Parse(args[1:])
 		if *name == "" {
@@ -79,7 +81,7 @@ func runStation(args []string) {
 			die(fmt.Sprintf("no station named %q — create it first: ken station add --name %s", *name, *name))
 		}
 		must(err)
-		actorID := mustActor(ctx, st, *actor)
+		actorID := mustStationActor(ctx, st, *actor, *kind)
 		scopes := []string{"station"}
 		if *locker {
 			scopes = append(scopes, "station-locker")
@@ -91,10 +93,6 @@ func runStation(args []string) {
 		fmt.Printf("  claude mcp add --transport http ken-station https://<ken-host>/station/mcp \\\n")
 		fmt.Printf("      --header \"Authorization: Bearer %s\"\n\n", key)
 		fmt.Println("Mint a SEPARATE key per machine: revocation is per key, which is what makes it targeted.")
-		if *actor == "" {
-			fmt.Println("\nNOTE: minted under the default actor. If this machine also has a COMM token, mint")
-			fmt.Println("both under the SAME --actor, or the hearsay marking silently fails open.")
-		}
 
 	case "requests":
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
@@ -121,7 +119,10 @@ func runStation(args []string) {
 
 // mustActor resolves a human actor, defaulting to the first human user so the common
 // case needs no flag.
-func mustActor(ctx context.Context, st *store.Store, name string) int64 {
+// mustHumanActor resolves the HUMAN recorded as a station's creator. Creation is a
+// human act by design (S3), so hardcoding the kind is correct here — unlike key
+// minting, where it was the defect.
+func mustHumanActor(ctx context.Context, st *store.Store, name string) int64 {
 	if name != "" {
 		id, err := st.FindOrCreateActor(ctx, "human", name)
 		must(err)
@@ -132,4 +133,80 @@ func mustActor(ctx context.Context, st *store.Store, name string) int64 {
 		die("no human user exists yet — create one first: ken user add --name you")
 	}
 	return id
+}
+
+// mustStationActor resolves which actor a station key belongs to.
+//
+// It belongs to the SESSION, not to the curator who mints it — and this used to get
+// that wrong in a way nothing surfaced. The kind was hardcoded to "human" while COMM
+// tokens default to "ai", and (kind, display_name) is unique, so the station key and
+// the comm token on one machine were different actors. The hearsay window joins on the
+// actor, so it could never match: the marking was permanently false, silently, on any
+// deployment that followed the documented setup.
+//
+// So: no --actor now means "work out which one, and say so" rather than "use the first
+// human". An actor is never CREATED here — a typo would otherwise mint a key that
+// authenticates perfectly and marks nothing.
+func mustStationActor(ctx context.Context, st *store.Store, name, kind string) int64 {
+	if kind != "ai" && kind != "human" {
+		die("--kind must be ai or human")
+	}
+	if name != "" {
+		id, err := st.FindActor(ctx, kind, name)
+		if errors.Is(err, store.ErrNotFound) {
+			die(fmt.Sprintf("no %s actor named %q exists. Existing actors:\n%s",
+				kind, name, actorTable(ctx, st)))
+		}
+		must(err)
+		return id
+	}
+
+	cands, err := st.ActorsForStationKey(ctx)
+	must(err)
+	var withComm []store.ActorCandidate
+	for _, c := range cands {
+		if c.HasComm {
+			withComm = append(withComm, c)
+		}
+	}
+	switch len(withComm) {
+	case 1:
+		c := withComm[0]
+		fmt.Printf("Minting under actor %q (%s) — it holds this deployment's comm token, so the\n"+
+			"hearsay marking will work. Override with --actor/--kind.\n\n", c.Name, c.Kind)
+		return c.ID
+	case 0:
+		// No comm token anywhere: stations work with COMM off (S2), so this is a
+		// legitimate deployment rather than an error. Any actor will do, and the
+		// marking is simply absent — "no signal", never "known clean".
+		id, ferr := st.FirstHumanActor(ctx)
+		if ferr != nil {
+			die("no actors exist yet — create a user first: ken user add --name you")
+		}
+		fmt.Print("No comm token found, so nothing to match: the hearsay marking will be absent\n" +
+			"rather than wrong. If you enable COMM later, re-mint this key under that token's actor.\n\n")
+		return id
+	default:
+		die(fmt.Sprintf("several actors hold comm tokens, so I will not guess which machine this key is for.\n"+
+			"Pass --actor NAME (and --kind if not ai):\n%s", actorTable(ctx, st)))
+		return 0
+	}
+}
+
+// actorTable renders the candidates so an operator can pick without a second command.
+func actorTable(ctx context.Context, st *store.Store) string {
+	cands, err := st.ActorsForStationKey(ctx)
+	if err != nil {
+		return "  (could not list actors: " + err.Error() + ")"
+	}
+	var b strings.Builder
+	for _, c := range cands {
+		mark := "  "
+		if c.HasComm {
+			mark = "* "
+		}
+		fmt.Fprintf(&b, "%s%-8s %-24s %s\n", mark, c.Kind, c.Name, c.CommTags)
+	}
+	b.WriteString("  (* holds a comm token — that is the one to match)")
+	return b.String()
 }
