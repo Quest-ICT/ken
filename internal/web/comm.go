@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
@@ -84,8 +85,45 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		return
 	}
 
+	// Per-endpoint channel context, assembled here so the template stays a renderer.
+	//
+	// This is what makes a confirm dialog actionable. Endpoint LABELS are
+	// agent-supplied — a session names itself — so after a few weeks the list is a
+	// column of similar strings an operator cannot tell apart, and rotating the wrong
+	// row is a self-inflicted outage on a session that was working fine. Channels are
+	// the thing a human actually recognises: "Ken dev <-> prod" means something, an
+	// opaque id and a self-chosen label do not.
+	type epView struct {
+		comm.Endpoint
+		OpenChannels int
+		ChannelsLine string // human channel names, comma-joined; "" when none
+	}
+	byEndpoint := map[string][]string{}
+	for _, ch := range channels {
+		if ch.State != "open" {
+			continue
+		}
+		name := ch.Label
+		if name == "" {
+			name = ch.ChannelID
+		}
+		if ch.EndpointA != "" {
+			byEndpoint[ch.EndpointA] = append(byEndpoint[ch.EndpointA], name)
+		}
+		if ch.EndpointB != "" {
+			byEndpoint[ch.EndpointB] = append(byEndpoint[ch.EndpointB], name)
+		}
+	}
+	eps := make([]epView, 0, len(endpoints))
+	for _, ep := range endpoints {
+		names := byEndpoint[ep.EndpointID]
+		eps = append(eps, epView{
+			Endpoint: ep, OpenChannels: len(names), ChannelsLine: strings.Join(names, ", "),
+		})
+	}
+
 	a.render(w, r, sess, "comm", map[string]any{
-		"Endpoints": endpoints, "Channels": channels, "Codes": codes, "Stats": stats,
+		"Endpoints": eps, "Channels": channels, "Codes": codes, "Stats": stats,
 		"NewCode": newCode, "CommURL": a.publicCommURL(r), "Fingerprint": fp,
 		"Rotated": rot,
 	})

@@ -99,6 +99,44 @@
     if (msg && !window.confirm(msg)) ev.preventDefault();
   });
 
+  /* ---- One-time secret reveal: copy, dismiss, and guard against a stray reload ----
+     A rotated endpoint secret exists in readable form exactly once: only its hash is
+     stored. "Shown once" and "destroyed by an accidental reload" are DIFFERENT
+     promises, and only the first is defensible — the old secret is already dead, so a
+     stray F5 costs a working endpoint and hands the operator a second lockout while
+     they are still dealing with the first. Recovery is another rotation, so it is not
+     fatal, but it is avoidable.
+
+     Nothing here stores the secret. The guard simply refuses to let the page go
+     quietly until the operator says they have it. ------------------------------- */
+  document.addEventListener("click", function (ev) {
+    var copyBtn = ev.target.closest ? ev.target.closest("[data-copy]") : null;
+    if (copyBtn) {
+      var el = document.querySelector(copyBtn.getAttribute("data-copy"));
+      if (el && navigator.clipboard) {
+        navigator.clipboard.writeText(el.textContent.trim()).then(function () {
+          var was = copyBtn.textContent;
+          copyBtn.textContent = copyBtn.getAttribute("data-copied") || was;
+          setTimeout(function () { copyBtn.textContent = was; }, 1500);
+        });
+      }
+      return;
+    }
+    var done = ev.target.closest ? ev.target.closest("[data-dismiss-reveal]") : null;
+    if (done) {
+      var card = document.getElementById("reveal-card");
+      if (card) { card.removeAttribute("data-unsaved-secret"); card.remove(); }
+    }
+  });
+
+  window.addEventListener("beforeunload", function (ev) {
+    if (document.querySelector("[data-unsaved-secret]")) {
+      ev.preventDefault();
+      ev.returnValue = ""; // browsers show their own wording; the text is ignored
+      return "";
+    }
+  });
+
   /* ---- Back-to-top visibility + close mobile nav on Escape --------------- */
   var btt = null;
   function onScroll() { if (btt) btt.classList.toggle("is-visible", (window.pageYOffset || 0) > 400); }
