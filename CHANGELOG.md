@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-07-29
+
 ### Added
 - **`comm_bind` — adopt a station without re-registering.** Binding could only happen at
   `comm_register`, so a session that was already running when its human enabled stations had to
@@ -1198,7 +1200,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.0
 [1.4.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.2
 [1.4.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.1
