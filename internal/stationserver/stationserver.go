@@ -179,7 +179,10 @@ func newServer(d Deps) *mcp.Server {
 			"endpoint_secret to a file on disk. Binding means the STATION owns the inbox: a later session " +
 			"staffing this station inherits the unread mail, so losing your endpoint stops being fatal. " +
 			"NEVER pass your station key to comm_register — that is what this voucher exists to avoid; it " +
-			"expires in minutes and is good for exactly one binding.",
+			"expires in minutes and is good for exactly one binding. " +
+			"THE VOUCHER IS ITSELF A CREDENTIAL: anyone holding it plus any comm-scoped token can join " +
+			"this station's inbox and TAKE messages out of your poll. Never send it to a peer, never put " +
+			"it in a message, a file or a notebook page — use it yourself, immediately, and then it is spent.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ voucherIn) (*mcp.CallToolResult, voucherOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {

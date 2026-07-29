@@ -111,6 +111,12 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 				return
 			}
 		}
+		// Record use here too. Prod observed three comm tokens reporting last_used_at
+		// NULL after 102 acknowledged messages, because TouchToken was only ever called
+		// from the knowledge-base authenticator. A token whose last use is unknown
+		// cannot be reasoned about during an incident.
+		st.TouchToken(r.Context(), p.TokenID)
+
 		next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})
 }

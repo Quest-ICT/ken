@@ -170,6 +170,8 @@
             <thead>
               <tr>
                 <th data-col-key="label">{{$.T "stations.key_label"}}</th>
+                <th data-col-key="id">{{$.T "stations.key_id"}}</th>
+                <th data-col-key="created">{{$.T "stations.key_created"}}</th>
                 <th data-col-key="used">{{$.T "stations.key_last_used"}}</th>
                 <th data-col-key="state">{{$.T "stations.key_state"}}</th>
                 <th data-nosort>{{$.T "stations.col_actions"}}</th>
@@ -179,7 +181,9 @@
               {{range .Keys}}
               <tr>
                 <td>{{.Label}}</td>
-                <td data-sort="{{.LastUsedAt}}">{{if .LastUsedAt}}{{localtime .LastUsedAt}}{{else}}—{{end}}</td>
+                <td class="mono">{{.TokenID}}</td>
+                <td data-sort="{{.CreatedAt}}">{{localtime .CreatedAt}}</td>
+                <td data-sort="{{.LastUsedAt}}" title="{{$.T "stations.key_not_audited"}}">{{if .LastUsedAt}}{{localtime .LastUsedAt}}{{else}}<span class="muted">{{$.T "stations.key_unmeasured"}}</span>{{end}}</td>
                 <td>
                   {{if .RevokedAt}}<span class="badge badge--warn">{{$.T "stations.key_revoked"}}</span>
                   {{else if .RetiredAt}}<span class="badge badge--plain">{{$.T "stations.key_retired"}}</span>

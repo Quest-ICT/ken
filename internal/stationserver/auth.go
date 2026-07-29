@@ -107,6 +107,20 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			}
 		}
 
+		// Record that this key was used. Until now nothing did: TouchToken was called
+		// only from the knowledge-base authenticator, so `last_used_at` was NEVER
+		// written for a station key — and the console rendered a last-used column that
+		// was permanently blank. An operator reads a blank as "unused" rather than
+		// "unmeasured", which is the worse of the two readings, and it made "retire the
+		// key nothing is using" unanswerable even in principle.
+		//
+		// It also means a stolen station key could read an entire notebook, task list
+		// and briefing with no trace at all. This is a coarse signal — throttled to
+		// about once a minute, no per-read record — but the difference between "no
+		// timestamp" and "used four minutes ago" is the difference between an
+		// unanswerable incident and a scoped one.
+		st.TouchToken(r.Context(), sp.TokenID)
+
 		scopes := map[string]bool{}
 		for _, s := range sp.Scopes {
 			scopes[s] = true

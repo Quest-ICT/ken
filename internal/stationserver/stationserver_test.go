@@ -203,3 +203,51 @@ func TestTaskViewCarriesTheFieldsTheBriefingNeeds(t *testing.T) {
 		t.Fatal("remind_after drives the Due class; dropping it breaks the ordering contract")
 	}
 }
+
+// A station key's use must leave a trace. Nothing recorded it before: TouchToken was
+// called only from the knowledge-base authenticator, so `last_used_at` was permanently
+// NULL for every station key — and the console rendered a last-used column that was
+// always blank, which an operator reads as "unused" rather than "unmeasured".
+//
+// The concrete cost, reported from production: two keys for the same machine were
+// indistinguishable in the console at the exact moment the documented rotation says
+// "retire the old one". The wider cost: a stolen key could read an entire notebook and
+// task list with no trace at all.
+func TestUsingAStationKeyRecordsThatItWasUsed(t *testing.T) {
+	st, srv, key, station := harness(t)
+	ctx := context.Background()
+
+	before, err := st.ListStationKeys(ctx, station.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 1 {
+		t.Fatalf("fixture has %d keys, want 1", len(before))
+	}
+	if before[0].LastUsedAt != "" {
+		t.Fatalf("last_used_at was already set before any call: %q", before[0].LastUsedAt)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`))
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated initialize returned HTTP %d", resp.StatusCode)
+	}
+
+	after, err := st.ListStationKeys(ctx, station.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after[0].LastUsedAt == "" {
+		t.Fatal("using a station key left NO trace — a leaked key would be undetectable after the fact, " +
+			"and the console's last-used column would stay permanently blank")
+	}
+}
