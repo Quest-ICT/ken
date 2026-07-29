@@ -34,9 +34,15 @@ and then the claim — not the reverse.
   This includes **`KEN_SOURCE_URL`**, which sets the "Source" link a running instance
   shows: if you run a **modified** Ken, set it to your own repository — AGPL-3.0 §13
   requires a network service to offer *its own* Corresponding Source, not upstream's.
-- **Bearer-token & cookie format** — the `ken_` / `kenc_` / `kens_` token prefixes and the auth
-  scheme MCP clients present (`Authorization: Bearer …`). An issued token keeps working
-  across MINOR/PATCH upgrades.
+- **Credential prefixes & cookie format** — and they are not all the same kind of thing, so the
+  contract is stated per prefix rather than as one list:
+  - `ken_` — an API token presented as `Authorization: Bearer …` on `/mcp` and, when it carries the
+    `comm` scope, on `/comm/mcp`.
+  - `kens_` — a **station key**, presented the same way on `/station/mcp`. Distinct from `ken_`
+    because it additionally carries a station binding.
+  - `kenc_` — an **OAuth client id**, not a bearer token and never presented as one.
+
+  An issued credential of any of these shapes keeps working across MINOR/PATCH upgrades.
 - **HTTP endpoints an external client depends on** — `/mcp`, the OAuth 2.1
   discovery / registration / authorize / token endpoints, and `/healthz`.
 - **The database schema is forward-compatible.** Upgrades only **add** migrations and

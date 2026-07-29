@@ -40,7 +40,9 @@ Naming the non-goals first, because several of them are the reason the design lo
 - **Not a chat system.** There is no presence, no typing indicator, no history to scroll. Message
   bodies are deleted once the receiver has processed them.
 - **Not a message broker.** No topics, no fan-out, no subscriptions, no durable log. A channel joins
-  exactly two endpoints.
+  exactly two endpoints. When stations are in use those endpoints may each belong to a *station*, and
+  the station's other readers can claim its mail — but delivery is still **claim-once**, never
+  fan-out, precisely so this line stays true.
 - **Not a file server.** File exchange (§11) exists to move a working document between two of the
   *same human's* sessions, not to host or distribute anything: bytes are deleted once delivered or
   expired, grants are single-use, and nothing is ever served without authentication.
@@ -237,7 +239,10 @@ endpoint present the secret.
   It shortens the work, not the wait. Prevention is still the first line: write the pair to a file on
   disk at registration, which is what the connect-time instructions now tell every session to do.
 
-**Channel** — joins exactly two distinct endpoints, created by the pairing flow in C7. Carries an
+**Channel** — joins exactly two distinct endpoints, each of which may optionally be **bound to a
+station** (see [STATIONS.md](STATIONS.md) S4). A channel is created either by the pairing flow in C7
+or, when a human has approved a **link** between two stations, by `comm_open_channel` with no code at
+all — the approval moved from the conversation to the relationship, it did not disappear. Carries an
 owner identity (`space_id` plus the authorizing human actor) from day 1; a channel whose two
 endpoints do not share an owner is rejected.
 
@@ -274,6 +279,15 @@ Required on every operation, because §C6 makes redelivery normal:
 Ordering is promised **per channel and direction** and nowhere else: polls return strictly ascending
 sequence numbers, and a cumulative acknowledge (`ack_up_to`) is available because it collapses
 chatter and is idempotent by construction.
+
+**For a STATION-BOUND endpoint the promise weakens, and the weakening is deliberate.** A station owns
+one logical inbox that several endpoints may read, so the guarantee becomes *per channel and
+direction, across the station's readers*: two sessions polling one station see a **partitioned**
+stream and neither sees the whole order. `delivery_count` likewise counts per **station** rather than
+per endpoint, so a redelivered message may reach a different reader than first saw it. That is the
+price of letting a second session help without severing the first, and of letting a replacement
+session inherit mail its predecessor never read. An **unbound** endpoint is unaffected: it is the
+sole reader of its own mail and the original promise holds exactly.
 
 ### 4.3 Request/response
 
@@ -364,8 +378,12 @@ the bearer token identifies a *machine*, so the endpoint pair is what identifies
 it.
 
 Enable with `KEN_COMM_ENABLED=1`; the message database defaults to `<db dir>/comm/comm.db`
-(`KEN_COMM_DB`). Mint a **dedicated** token — a token may hold comm scopes or knowledge-base scopes,
-never both, enforced at mint time:
+(`KEN_COMM_DB`). Mint a **dedicated** token. There are **three** scope families — knowledge-base,
+comm, and station — and the rule is not "one family per token" but which pairs may combine:
+knowledge-base scopes may not be mixed with either of the others, while `station` and `comm` MAY be
+held together, because a session legitimately staffs a post and talks from it. A token that could
+both read working notes and write curated knowledge is the mixing this check exists to prevent.
+Enforced at mint time:
 
 ```
 ken token add --actor comm-dev --scopes comm

@@ -1226,3 +1226,83 @@ func TestOpenLinkedChannelRefusesUnboundEndpoints(t *testing.T) {
 		t.Fatal("an UNBOUND endpoint opened a linked channel — it belongs to no station, so no human ever approved a relationship for it")
 	}
 }
+
+// S4 says the per-channel sequence must key on the sending STATION, "or outbound
+// numbering restarts every reconnect". It restarted: keyed on the endpoint rowid, a
+// replacement session got a fresh counter beginning at 1 while its predecessor had
+// already reached 2.
+//
+// The damage is not cosmetic ordering. ack_up_to_seq is a RANGE, so acking up to 2
+// after a takeover settles the replacement's messages AND the predecessor's —
+// including ones nobody ever read. Silent mail loss from an ordinary documented call.
+func TestSequenceDoesNotRestartWhenASessionIsReplaced(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = bindEndpoint(t, st, a, "stn_dev", "k")
+	b = bindEndpoint(t, st, b, "stn_peer", "k")
+	ch, err := st.OpenLinkedChannel(ctx, a, b, 1, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var last int64
+	for _, body := range []string{"first", "second"} {
+		m, err := st.Send(ctx, a, ch.ChannelID, body, SendOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = m.Seq
+	}
+
+	// The session dies; a replacement binds to the SAME station and sends.
+	a2, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a2 = bindEndpoint(t, st, a2, "stn_dev", "k")
+	m, err := st.Send(ctx, a2, ch.ChannelID, "first from the replacement", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Seq <= last {
+		t.Fatalf("the replacement sent seq %d after its predecessor reached %d — duplicate sequence "+
+			"numbers in one channel and direction, so a cumulative ack settles messages nobody read", m.Seq, last)
+	}
+}
+
+// The unbound regime keeps its own counter, and the two namespaces must not collide:
+// a station id and an endpoint rowid live in the same column, so they are tagged.
+func TestUnboundSendersKeepTheirOwnSequence(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a, b, chID := pair(t, st)
+
+	var seqs []int64
+	for i := 0; i < 3; i++ {
+		m, err := st.Send(ctx, a, chID, "x", SendOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seqs = append(seqs, m.Seq)
+	}
+	if seqs[0] != 1 || seqs[1] != 2 || seqs[2] != 3 {
+		t.Fatalf("unbound sequence = %v, want strictly ascending from 1 — the shipped behaviour must be unchanged", seqs)
+	}
+	// The other direction has its own counter, as it always did.
+	m, err := st.Send(ctx, b, chID, "reply", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Seq != 1 {
+		t.Fatalf("the reverse direction started at %d, want 1 — per channel AND direction", m.Seq)
+	}
+}

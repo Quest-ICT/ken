@@ -4,7 +4,22 @@ The **AI-facing interface**. Ken exposes these tools over a remote **streamable-
 endpoint. This document is the contract: shapes here are stable API; change them only by
 *adding* optional fields, never by removing or retyping an existing one.
 
-- **Endpoint:** `https://<ken-host>/mcp` (TLS-only).
+- **Endpoint:** `https://<ken-host>/mcp` (TLS-only). **This document covers the knowledge-base
+  surface only.** Ken has two other MCP endpoints, both optional and both off by default, each with
+  its own token family and its own contract document — a client registers Ken once per surface it
+  uses, which is a security property rather than packaging taste (a knowledge-base token cannot send
+  messages, and a comm token cannot write knowledge):
+  | surface | endpoint | tools | credential | contract |
+  |---|---|---|---|---|
+  | knowledge base | `/mcp` | `kb_*` | `ken_` token, knowledge-base scopes | this document |
+  | inter-session comms | `/comm/mcp` | `comm_*` | `ken_` token, `comm` scope | [COMM.md](COMM.md) |
+  | stations | `/station/mcp` | `station_*` | `kens_` key, bound to a station | [STATIONS.md](STATIONS.md) |
+
+  The comm surface takes an ordinary `ken_` token that carries the `comm` scope — the separation is
+  enforced by the SCOPE, not by a distinct prefix, and a token may not hold both families. Stations
+  are the exception with a prefix of their own, because a station key additionally carries a station
+  binding that an ordinary token has no field for. (`kenc_` is unrelated: it prefixes OAuth *client
+  ids*, not tokens.)
 - **Register in Claude Code:**
   `claude mcp add --transport http ken https://<ken-host>/mcp --header "Authorization: Bearer $KEN_TOKEN" --scope user`
 - **Tool prefix:** `kb_*` (chosen).

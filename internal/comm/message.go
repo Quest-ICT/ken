@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 )
 
 // Message is one atomic transfer over a channel.
@@ -200,20 +201,57 @@ WHERE id=? AND replied_by IS NULL`, newRow, replyToRow); err != nil {
 // reissued the same low numbers.
 //
 // Safe as an upsert-then-read under the single-writer discipline.
+//
+// The counter is keyed on the SENDER'S STATION when it has one, and on its endpoint
+// rowid otherwise (docs/STATIONS.md S4). Keyed on the endpoint alone, a replacement
+// session — a different endpoint of the same station — starts a fresh counter at 1
+// while its predecessor already reached 20, and two messages in one channel and
+// direction then share a sequence number. Ordering breaks, but the real damage is
+// that `ack_up_to_seq` is a RANGE: acking up to 2 after a takeover settles the new
+// session's messages AND old ones nobody read.
 func nextSeq(ctx context.Context, t *sql.Tx, chRow, sender int64) (int64, error) {
+	key, err := senderKey(ctx, t, sender)
+	if err != nil {
+		return 0, err
+	}
 	if _, err := t.ExecContext(ctx, `
-INSERT INTO channel_seq(channel_id, sender_endpoint, next_seq) VALUES(?,?,2)
-ON CONFLICT(channel_id, sender_endpoint) DO UPDATE SET next_seq = next_seq + 1`,
-		chRow, sender); err != nil {
+INSERT INTO channel_seq(channel_id, sender_key, next_seq) VALUES(?,?,2)
+ON CONFLICT(channel_id, sender_key) DO UPDATE SET next_seq = next_seq + 1`,
+		chRow, key); err != nil {
 		return 0, err
 	}
 	var next int64
 	if err := t.QueryRowContext(ctx,
-		`SELECT next_seq FROM channel_seq WHERE channel_id=? AND sender_endpoint=?`,
-		chRow, sender).Scan(&next); err != nil {
+		`SELECT next_seq FROM channel_seq WHERE channel_id=? AND sender_key=?`,
+		chRow, key).Scan(&next); err != nil {
 		return 0, err
 	}
 	return next - 1, nil
+}
+
+// senderKey resolves the counter key for a sender, INSIDE the send transaction so it
+// cannot observe a binding that changes underneath it.
+//
+// The prefix tags the two namespaces apart. Without it, a station whose id happened to
+// be the decimal string of some endpoint's rowid would silently share that endpoint's
+// counter — a collision that never appears in testing and is unrecoverable once it
+// does.
+func senderKey(ctx context.Context, t *sql.Tx, sender int64) (string, error) {
+	var station sql.NullString
+	err := t.QueryRowContext(ctx, `SELECT station_id FROM endpoint WHERE id=?`, sender).Scan(&station)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The endpoint is gone mid-send. Fall back to the rowid form rather than
+		// failing: the message is already authorized, and an unbound key is the
+		// conservative choice — it can only ever under-share a counter.
+		return "e:" + strconv.FormatInt(sender, 10), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if station.Valid && station.String != "" {
+		return "s:" + station.String, nil
+	}
+	return "e:" + strconv.FormatInt(sender, 10), nil
 }
 
 // enqueueLocked inserts one plain message inside an open write transaction:
