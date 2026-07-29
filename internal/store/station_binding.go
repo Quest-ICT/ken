@@ -2,11 +2,20 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 )
+
+// voucherHash is what is stored. Same treatment as every other secret in this
+// codebase — see IssueStationKey and the session-id hashing added in 1.4.1.
+func voucherHash(v string) string {
+	sum := sha256.Sum256([]byte(v))
+	return hex.EncodeToString(sum[:])
+}
 
 // Binding vouchers (docs/STATIONS.md S5).
 //
@@ -44,10 +53,17 @@ func (s *Store) IssueBindingVoucher(ctx context.Context, stationID, tokenID stri
 	if err != nil {
 		return "", err
 	}
+	// Stored HASHED, like every other secret in Ken (passwords, token secrets,
+	// endpoint secrets, session ids). It is short-lived and single-use, which is an
+	// argument for a small blast radius — not an argument for being the one
+	// credential kept in cleartext, and least of all in ken.db, which is the file the
+	// backup story copies off-box. BACKUP.md's guarantee is "no credential Ken STORES
+	// is replayable"; a plaintext voucher would have made that false the day it
+	// shipped.
 	_, err = s.W.ExecContext(ctx, `
-INSERT INTO station_binding_voucher(voucher_id, station_id, token_id, expires_at)
+INSERT INTO station_binding_voucher(voucher_sha256, station_id, token_id, expires_at)
 VALUES(?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now', ?))`,
-		voucher, stationID, tokenID, fmt.Sprintf("+%d seconds", int(VoucherTTL.Seconds())))
+		voucherHash(voucher), stationID, tokenID, fmt.Sprintf("+%d seconds", int(VoucherTTL.Seconds())))
 	if err != nil {
 		return "", err
 	}
@@ -73,12 +89,13 @@ func (s *Store) RedeemBindingVoucher(ctx context.Context, voucher, endpointID st
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	h := voucherHash(voucher)
 	res, err := tx.ExecContext(ctx, `
 UPDATE station_binding_voucher
    SET redeemed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), redeemed_by_endpoint=?
- WHERE voucher_id=?
+ WHERE voucher_sha256=?
    AND redeemed_at IS NULL
-   AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`, endpointID, voucher)
+   AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`, endpointID, h)
 	if err != nil {
 		return "", "", err
 	}
@@ -92,7 +109,7 @@ UPDATE station_binding_voucher
 		`SELECT v.station_id, v.token_id
 		   FROM station_binding_voucher v
 		   JOIN station s ON s.station_id = v.station_id
-		  WHERE v.voucher_id=? AND s.state='active'`, voucher).Scan(&stationID, &tokenID)
+		  WHERE v.voucher_sha256=? AND s.state='active'`, h).Scan(&stationID, &tokenID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// The voucher was valid but its station has been archived since it was
 		// issued. Refuse rather than bind: an archived station's keys stop binding
@@ -138,4 +155,44 @@ func (s *Store) StationKeyOwner(ctx context.Context, tokenID string) (string, er
 		return "", err
 	}
 	return station.String, nil
+}
+
+// ErrStationKeyRevoked is returned to a caller whose station key has been revoked.
+// It is DISTINGUISHABLE from an ordinary auth failure on purpose (S6): a model that
+// is told its key was revoked reports that to its human, while one that merely sees
+// "invalid" retries in a loop. This does not weaken §5's unprobeability, because it
+// is returned only AFTER the endpoint's own secret has verified — it informs a
+// proven holder and tells a prober nothing.
+var ErrStationKeyRevoked = errors.New("the station key that bound this endpoint has been revoked — tell your human; you cannot reconnect with it, and a new key must be minted from the console")
+
+// IsStationKeyRevoked reports whether a station key has been revoked.
+//
+// This exists because severing cannot be made reliable at the REVOKING end. Both
+// revoke paths — the /tokens console and `ken token revoke` — go through
+// RevokeToken, and the CLI runs in a SEPARATE PROCESS with no comm.db handle at all,
+// so a revocation issued there can never reach into the message database to mark
+// endpoints. Making the check happen at USE instead means every revocation path
+// works, including ones added later that forget about stations: it fails closed by
+// construction rather than by remembering.
+//
+// The eager sweep (comm.SeverEndpointsBoundBy) still runs where a comm handle
+// exists, because it also RELEASES CLAIMS — a severed reader is never coming back to
+// ack, and leaving its claims to expire would hide those messages from the station's
+// remaining readers for the rest of the lease.
+func (s *Store) IsStationKeyRevoked(ctx context.Context, tokenID string) (bool, error) {
+	if tokenID == "" {
+		return false, nil
+	}
+	var revoked sql.NullString
+	err := s.R.QueryRowContext(ctx,
+		`SELECT revoked_at FROM api_token WHERE token_id=?`, tokenID).Scan(&revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The key row is gone entirely. Treat as revoked: a binding whose authority
+		// cannot be produced must not keep working.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return revoked.Valid && revoked.String != "", nil
 }

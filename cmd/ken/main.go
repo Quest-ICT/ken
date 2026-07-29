@@ -510,6 +510,16 @@ func runServe(args []string) {
 				if oauthEnabled {
 					_ = st.PurgeExpiredOAuth(janitorCtx) // spent codes + long-expired tokens
 				}
+				if stationsEnabled {
+					// Expired UNREDEEMED binding vouchers. Redeemed ones are kept
+					// deliberately: they answer "which key bound this endpoint",
+					// which is the first question asked when a station key leaks.
+					// Hourly is right — a voucher lives five minutes, so this is
+					// about unbounded growth in a BACKED-UP database, not latency.
+					if n, err := st.SweepBindingVouchers(janitorCtx); err == nil && n > 0 {
+						log.Printf("housekeeping: swept %d expired binding voucher(s)", n)
+					}
+				}
 			}
 		}
 	}()
@@ -847,11 +857,11 @@ func commLimits(s *settings.Snapshot) comm.Limits {
 // commRelevant is the changed-subset key for COMM settings: a settings edit
 // rebuilds the subsystem's limits only when one of these actually moved.
 func commRelevant(v settings.Values) string {
-	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%t|%d|%d|%d|%d|%d|%d",
+	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%t|%d|%d|%d|%d|%d|%d|%d",
 		v.CommMaxBodyBytes, v.CommMaxUnacked, v.CommMessageTTLSec, v.CommMetadataTTLSec,
 		v.CommReplyDeadlineS, v.CommPairingCodeTTLS, v.CommPollWaitMaxSec, v.CommProvenanceWindowSec,
 		v.CommFilesEnabled, v.CommFileMaxMB, v.CommFileBudgetMB, v.CommFileMinFreeMB,
-		v.CommFileTTLSec, v.CommGrantTTLSec, v.CommEndpointIdleTTLSec)
+		v.CommFileTTLSec, v.CommGrantTTLSec, v.CommEndpointIdleTTLSec, v.CommClaimLeaseSec)
 }
 
 // registerCommCollectors exposes COMM gauges on the existing /metrics endpoint.

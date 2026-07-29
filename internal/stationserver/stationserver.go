@@ -127,6 +127,14 @@ func newServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, voucherOut{}, err
 		}
+		// Refuse at ISSUE for an archived station, rather than handing out a voucher
+		// that redemption will always reject. An archived station's keys stop binding
+		// (S3), so the voucher could never work — and comm_register would report it
+		// as "unknown, already used, or expired", which is three wrong reasons that
+		// send the session looking for a problem it does not have.
+		if st.State != "active" {
+			return nil, voucherOut{}, fmt.Errorf("station %q is archived, so it cannot bind new endpoints — tell your human; they can unarchive it from the /stations console", st.Name)
+		}
 		// p.TokenID, not anything the caller supplied: the voucher records which KEY
 		// asked, so revoking that key later severs the endpoints it bound (S6).
 		v, err := d.Store.IssueBindingVoucher(ctx, p.StationID, p.TokenID)

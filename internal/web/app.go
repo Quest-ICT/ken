@@ -1016,6 +1016,20 @@ func (a *app) handleTokenRevoke(w http.ResponseWriter, r *http.Request, sess *st
 		flashRedirect(w, r, "/tokens", "flash.token_revoke_failed", err.Error())
 		return
 	}
+	// S6: revoking a station key severs the endpoints it bound. The authoritative
+	// enforcement is at USE (store.IsStationKeyRevoked), because `ken token revoke`
+	// runs in a separate process and can never reach comm.db — but doing it eagerly
+	// HERE, where a comm handle exists, also RELEASES the claims those endpoints
+	// hold. A severed reader is never coming back to ack, so leaving its claims to
+	// expire would hide those messages from the station's other readers for the rest
+	// of the lease.
+	if a.comm != nil {
+		if n, err := a.comm.SeverEndpointsBoundBy(r.Context(), id); err != nil {
+			log.Printf("web: severing endpoints bound by %s: %v", id, err)
+		} else if n > 0 {
+			log.Printf("COMM: revoking station key %s severed %d bound endpoint(s) and released their claims", id, n)
+		}
+	}
 	flashRedirect(w, r, "/tokens", "flash.token_revoked", id)
 }
 

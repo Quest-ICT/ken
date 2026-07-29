@@ -29,7 +29,11 @@ BEGIN;
 
 CREATE TABLE station_binding_voucher (
   id            INTEGER PRIMARY KEY,
-  voucher_id    TEXT    NOT NULL UNIQUE,   -- the opaque value handed to comm_register
+  -- SHA-256 of the value handed to comm_register, never the value itself. Short and
+  -- single-use is an argument for a small blast radius, not for being the one
+  -- credential in Ken kept in cleartext — and this is the database the backup story
+  -- copies off-box, where BACKUP.md promises nothing replayable is stored.
+  voucher_sha256 TEXT   NOT NULL UNIQUE,
   station_id    TEXT    NOT NULL REFERENCES station(station_id) ON DELETE CASCADE,
   -- The station key that asked for it. Recorded so revoking that key can sever
   -- every endpoint it bound (S6) — the reason revocation is not merely cosmetic.

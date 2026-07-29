@@ -256,13 +256,32 @@ func (s *Store) CountEndpointsBoundBy(ctx context.Context, keyID string) (int, e
 // RevokeEndpoint soft-revokes an endpoint, immediately denying further use.
 // Its channels stay queryable for the operator; its messages age out normally.
 func (s *Store) RevokeEndpoint(ctx context.Context, endpointID string) error {
-	res, err := s.W.ExecContext(ctx, `
+	var n int64
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		// Release whatever this endpoint was holding, in the same breath. S4 requires
+		// a claim to be released when its endpoint is revoked: a revoked reader is
+		// never coming back to ack, so holding its messages for the remainder of the
+		// lease would hide them from the station's other readers for no reason — the
+		// operator revoked a wedged session precisely so someone else could take over.
+		if _, err := t.ExecContext(ctx, `
+UPDATE message SET claimed_by_endpoint=NULL, claim_expires_at=NULL
+ WHERE acked_at IS NULL
+   AND claimed_by_endpoint = (SELECT id FROM endpoint WHERE endpoint_id=?)`, endpointID); err != nil {
+			return err
+		}
+		res, err := t.ExecContext(ctx, `
 UPDATE endpoint SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
 WHERE endpoint_id=? AND revoked_at IS NULL`, endpointID)
+		if err != nil {
+			return err
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil

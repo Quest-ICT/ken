@@ -25,7 +25,13 @@ type registerIn struct {
 type registerOut struct {
 	// StationID is set only when a binding voucher was redeemed. Echoed back so a
 	// session can confirm which station it is staffing rather than assuming.
-	StationID      string `json:"station_id,omitempty"`
+	StationID string `json:"station_id,omitempty"`
+	// BindingError reports a FAILED binding without failing the call. It cannot be
+	// an error return: this handler has already created an endpoint whose secret is
+	// shown exactly once, and the MCP SDK discards structured output when a handler
+	// returns an error — the model would receive the error text and NOTHING ELSE,
+	// destroying the secret it just minted. Verified against the SDK, not assumed.
+	BindingError   string `json:"binding_error,omitempty" jsonschema:"present only when a binding_voucher was supplied and could not be redeemed. Your endpoint_id and endpoint_secret ARE valid and usable — save them. You are simply not bound to a station; ask /station for a fresh voucher and register again if you need binding"`
 	EndpointID     string `json:"endpoint_id"`
 	EndpointSecret string `json:"endpoint_secret" jsonschema:"shown ONCE — keep it; every other comm tool requires it"`
 }

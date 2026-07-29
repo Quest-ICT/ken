@@ -26,7 +26,6 @@ package commserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -206,20 +205,32 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		// the registration. The session has a usable credential either way, and
 		// destroying it over a stale voucher would turn a retryable mistake into a
 		// lost secret — the exact failure this whole design exists to reduce.
-		var stationID string
+		//
+		// ONCE THE ENDPOINT EXISTS, THIS HANDLER MUST NOT RETURN AN ERROR. The MCP SDK
+		// discards structured output when a handler returns one — the caller receives
+		// the error text and nothing else — so failing here would destroy a one-time
+		// secret that has already been minted and can never be shown again. That is
+		// precisely the loss this whole design exists to prevent, and it would have
+		// been introduced by the change meant to fix it. A binding failure is
+		// therefore reported IN the result, and the endpoint is returned working but
+		// unbound.
+		out := registerOut{EndpointID: ep.EndpointID, EndpointSecret: secret}
 		if in.BindingVoucher != "" {
 			sid, keyID, rerr := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID)
-			if rerr != nil {
-				return nil, registerOut{
-					EndpointID: ep.EndpointID, EndpointSecret: secret,
-				}, fmt.Errorf("registered, but NOT bound to a station: %w — your endpoint_id and endpoint_secret above are valid and usable; to bind, ask /station for a fresh voucher and register again", rerr)
+			switch {
+			case rerr != nil:
+				out.BindingError = "not bound to a station: " + rerr.Error() +
+					" — your endpoint_id and endpoint_secret above ARE valid; save them now, then ask /station for a fresh voucher and register again if you need binding"
+			default:
+				if berr := d.Comm.BindEndpointToStation(ctx, ep.EndpointID, sid, keyID); berr != nil {
+					out.BindingError = "not bound to a station: " + berr.Error() +
+						" — your endpoint_id and endpoint_secret above ARE valid; save them now"
+				} else {
+					out.StationID = sid
+				}
 			}
-			if err := d.Comm.BindEndpointToStation(ctx, ep.EndpointID, sid, keyID); err != nil {
-				return nil, registerOut{EndpointID: ep.EndpointID, EndpointSecret: secret}, commError(err)
-			}
-			stationID = sid
 		}
-		return nil, registerOut{StationID: stationID, EndpointID: ep.EndpointID, EndpointSecret: secret}, nil
+		return nil, out, nil
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
@@ -434,6 +445,19 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 		return nil, errors.New("endpoint_id and endpoint_secret are required — call comm_register first")
 	}
 	ep, err := d.Comm.AuthenticateEndpoint(ctx, endpointID, secret)
+	if err == nil && ep.BoundByStationKeyID != "" {
+		// S6: revoking a station key severs the endpoints it bound. Checked HERE, at
+		// use, because the revoking end cannot be relied upon — `ken token revoke`
+		// runs in a separate process with no comm.db handle, so a revocation issued
+		// there could never mark the endpoint. Failing closed at use covers every
+		// revocation path, including ones added later that forget stations exist.
+		//
+		// Ordered after the secret has verified, so the distinguishable answer
+		// reaches a proven holder and tells a prober nothing.
+		if revoked, rerr := d.Store.IsStationKeyRevoked(ctx, ep.BoundByStationKeyID); rerr == nil && revoked {
+			return nil, store.ErrStationKeyRevoked
+		}
+	}
 	if err != nil {
 		// Carry the recovery path in-band. A bare "not found" leaves the session with
 		// nothing to tell its human, which turns a two-minute fix into however long it

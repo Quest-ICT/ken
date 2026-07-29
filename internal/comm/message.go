@@ -307,14 +307,18 @@ func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, e
 		// station, so a replacement session inherits the mail addressed to the
 		// endpoint it replaced.
 		//
-		// A station_id that no longer resolves to a live station is treated as
-		// UNBOUND rather than as an error — S7's restore-skew rule, and the reason
-		// the join is LEFT rather than INNER.
+		// The bound form deliberately still includes this endpoint's OWN rowid. S7
+		// names one skew direction that actually occurs — ken.db restored backwards
+		// while comm.db stays current — and after it, comm.db rows carry a station_id
+		// that resolves to nothing. Without the `OR`, such a reader would poll a
+		// station that no longer exists and see none of its own mail. With it, it
+		// degrades to exactly the unbound behaviour, which is what "treated as
+		// unbound rather than as an error" has to mean in practice.
 		recipient := `m.recipient_endpoint = ?`
 		args := []any{ep.ID}
 		if ep.StationID != "" {
-			recipient = `r.station_id = ?`
-			args = []any{ep.StationID}
+			recipient = `(r.station_id = ? OR m.recipient_endpoint = ?)`
+			args = []any{ep.StationID, ep.ID}
 		}
 		rows, err := t.QueryContext(ctx, `
 SELECT m.message_id

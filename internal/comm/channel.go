@@ -174,10 +174,17 @@ func (s *Store) ChannelFor(ctx context.Context, ep *Endpoint, channelID string) 
 		bID sql.NullInt64
 		opn sql.NullString
 	)
+	var stnA, stnB string
 	err := s.R.QueryRowContext(ctx, `
-SELECT id, channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, created_at, opened_at
-FROM channel WHERE channel_id=?`, channelID).
-		Scan(&ch.ID, &ch.ChannelID, &ch.SpaceID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn)
+SELECT c.id, c.channel_id, c.space_id, c.owner_actor_id, c.endpoint_a, c.endpoint_b,
+       c.state, c.created_at, c.opened_at,
+       COALESCE(ea.station_id,''), COALESCE(eb.station_id,'')
+FROM channel c
+LEFT JOIN endpoint ea ON ea.id = c.endpoint_a
+LEFT JOIN endpoint eb ON eb.id = c.endpoint_b
+WHERE c.channel_id=?`, channelID).
+		Scan(&ch.ID, &ch.ChannelID, &ch.SpaceID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn,
+			&stnA, &stnB)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, 0, ErrNotFound
 	}
@@ -186,11 +193,29 @@ FROM channel WHERE channel_id=?`, channelID).
 	}
 	ch.EndpointB, ch.OpenedAt = bID.Int64, opn.String
 
+	// Membership is by endpoint OR, for a bound endpoint, by STATION.
+	//
+	// The station half is not a convenience: without it, inheriting a predecessor's
+	// mail is a half-feature. A replacement reader is by construction NOT a member of
+	// the channel its predecessor joined — that is the whole point, no re-pairing —
+	// so an endpoint-only check lets it POLL the inherited messages and then refuse
+	// every follow-up: it could not reply to them (Send resolves the peer through
+	// here) and could not acknowledge cumulatively. It would loop on mail it had
+	// already acted upon while the sender waited for an answer that could not be
+	// sent.
+	//
+	// Widening this means any reader of a station can act on any channel one of its
+	// siblings joined. That IS the model: S4 makes the STATION the party to the
+	// relationship, and the endpoint merely a credentialed reader of it.
 	var peer int64
-	switch ep.ID {
-	case ch.EndpointA:
+	switch {
+	case ep.ID == ch.EndpointA:
 		peer = ch.EndpointB
-	case ch.EndpointB:
+	case ep.ID == ch.EndpointB:
+		peer = ch.EndpointA
+	case ep.StationID != "" && ep.StationID == stnA:
+		peer = ch.EndpointB
+	case ep.StationID != "" && ep.StationID == stnB:
 		peer = ch.EndpointA
 	default:
 		// Not a member. ErrNotFound, not ErrDenied: a non-member must not learn

@@ -1015,3 +1015,129 @@ func TestRevokingAStationKeySeversTheEndpointsItBound(t *testing.T) {
 		t.Fatalf("severing one key's endpoints also killed another key's: %v", err)
 	}
 }
+
+// The review found that a replacement reader could POLL inherited mail but not act
+// on it: ChannelFor resolved membership by endpoint rowid alone, so the reader was
+// not a member of the channel its predecessor joined. It could neither reply nor ack
+// cumulatively — it would loop on mail it had already handled while the sender
+// waited for an answer that could not be sent. Inheriting mail you cannot answer is
+// not a feature.
+func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	const station = "stn_prod_ops"
+
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = bindEndpoint(t, st, a, station, "kens_key1")
+	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{"first", "second"} {
+		if _, err := st.Send(ctx, peer, ch.ChannelID, body, SendOpts{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A replaces itself. B is NOT a member of the channel — that is the point.
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = bindEndpoint(t, st, b, station, "kens_key1")
+
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("replacement polled %d messages, want 2", len(got))
+	}
+	// It must be able to ANSWER what it inherited.
+	if _, err := st.Send(ctx, b, ch.ChannelID, "picking this up from my predecessor", SendOpts{}); err != nil {
+		t.Fatalf("the replacement cannot reply on the inherited channel: %v — polling mail it cannot answer is a half-feature", err)
+	}
+	// And settle it cumulatively, the form the tool description advertises.
+	if err := st.AckUpTo(ctx, b, ch.ChannelID, got[len(got)-1].Seq); err != nil {
+		t.Fatalf("cumulative ack failed for the replacement: %v", err)
+	}
+	again, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("%d message(s) redelivered after a cumulative ack — this is the infinite-redelivery loop the fix exists to prevent", len(again))
+	}
+}
+
+// Revoking an endpoint must release its claims (S4). An operator revokes a WEDGED
+// session precisely so another reader can take over; holding its mail for the rest
+// of the lease defeats the reason they clicked.
+func TestRevokingAnEndpointReleasesItsClaims(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	const station = "stn_x"
+
+	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "wedged", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = bindEndpoint(t, st, a, station, "kens_key1")
+	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, peer, ch.ChannelID, "work to do", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.Poll(ctx, a, 10); err != nil || len(got) != 1 {
+		t.Fatalf("setup poll: %v, %d messages", err, len(got))
+	}
+
+	// A second reader must NOT see it while A holds the claim.
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "helper", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = bindEndpoint(t, st, b, station, "kens_key1")
+	if got, err := st.Poll(ctx, b, 10); err != nil || len(got) != 0 {
+		t.Fatalf("the claim is not holding: %v, %d messages", err, len(got))
+	}
+
+	// Revoke the wedged reader — the claim must go with it.
+	if err := st.RevokeEndpoint(ctx, a.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("after revoking the claim holder, the other reader saw %d message(s), want 1 — the operator revoked it so someone else could take over", len(got))
+	}
+}

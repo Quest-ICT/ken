@@ -2,12 +2,16 @@ package commserver
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
@@ -322,3 +326,71 @@ func TestInstructionsTellTheModelWhereToKeepTheSecret(t *testing.T) {
 		}
 	}
 }
+
+// THE CRITICAL FINDING, pinned by driving the real endpoint over HTTP.
+//
+// comm_register mints a secret shown exactly once. The MCP SDK DISCARDS structured
+// output when a handler returns an error — the caller receives the error text and
+// NOTHING else — so returning an error after the endpoint exists destroys that
+// secret permanently. The first version of station binding did precisely that on a
+// stale voucher: it invented a brand-new way to lose an endpoint secret, inside the
+// change whose whole purpose was making that loss survivable.
+//
+// Driven through the real HTTP handler with a real token, because the property is
+// about what reaches the CLIENT, and only the transport can show that.
+func TestRegisterReturnsTheSecretEvenWhenBindingFails(t *testing.T) {
+	st := newKB(t)
+	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	if err := cs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	tok := mintToken(t, st, "comm-agent", "comm")
+
+	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
+	defer srv.Close()
+
+	call := func(body string) string {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		if sid != "" {
+			req.Header.Set("Mcp-Session-Id", sid)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if s := resp.Header.Get("Mcp-Session-Id"); s != "" {
+			sid = s
+		}
+		b, _ := io.ReadAll(resp.Body)
+		return string(b)
+	}
+	call(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`)
+	call(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+
+	// A voucher that cannot possibly redeem — the stale-voucher case, which is the
+	// realistic one: a session asks for a voucher, talks to its human, and registers
+	// after the five-minute TTL has passed.
+	out := call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"comm_register","arguments":{"label":"dev","binding_voucher":"stale-and-unredeemable"}}}`)
+
+	if !strings.Contains(out, "endpoint_secret") {
+		t.Fatalf("THE SECRET WAS DESTROYED by a failed binding — the endpoint exists in the database and nothing can ever authenticate as it.\nResponse: %s", out)
+	}
+	if !strings.Contains(out, "binding_error") {
+		t.Fatalf("a failed binding was not reported to the caller at all: %s", out)
+	}
+	if strings.Contains(out, `"isError":true`) {
+		t.Fatalf("comm_register returned an error, which discards the structured result: %s", out)
+	}
+}
+
+// sid carries the MCP session id between the calls above.
+var sid string
