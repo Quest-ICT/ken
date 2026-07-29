@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-07-29
+
 ### Added
 - **Rotate a COMM endpoint's secret from the console — the incident-response primitive COMM was
   missing.** Until now the only thing a human could do to a live endpoint was *revoke* it, so a
@@ -1183,7 +1185,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.0
 [1.4.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.2
 [1.4.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.1
 [1.4.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.0
