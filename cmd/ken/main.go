@@ -151,7 +151,7 @@ Inter-session communication (OFF unless enabled — see docs/COMM.md):
                     file exchange is a separate live setting (Settings -> Inter-session comms)
 
 Stations — durable AI working identities (OFF unless enabled — see docs/STATIONS.md):
-  KEN_STATION_ENABLED  1 = expose the station MCP endpoint at /station/mcp (default off)
+  KEN_STATION_ENABLED  1 = expose the station MCP endpoint at /station/mcp + console at /stations (default off)
                     a station is created and NAMED by a human; a session staffs it
                     create it, then mint its key:  ken station add --name prod-ops
                                                    ken station key --station prod-ops --label laptop
@@ -457,7 +457,8 @@ func runServe(args []string) {
 	// its OWN flag alone — never on KEN_COMM_ENABLED, because the notebook and the task
 	// list are valuable to a solo session with no peers (S2), and gating them behind a
 	// messaging feature they have nothing to do with would be the wrong dependency.
-	if os.Getenv("KEN_STATION_ENABLED") == "1" {
+	stationsEnabled := os.Getenv("KEN_STATION_ENABLED") == "1"
+	if stationsEnabled {
 		sd := stationserver.Deps{Store: st, TokenLimiter: rlToken, Metrics: reg}
 		// The hearsay marker is keyed on the ACTOR, so it only works when COMM is on and
 		// the station key was minted under the same actor as that machine's comm token.
@@ -476,7 +477,7 @@ func runServe(args []string) {
 	mux.Handle("/", reg.Counting("web", web.Handler(web.Deps{
 		Store: st, SecureCookies: secure, SetupToken: os.Getenv("KEN_SETUP_TOKEN"),
 		TrustedProxies: os.Getenv("KEN_TRUSTED_PROXIES"), Settings: live, OAuthEnabled: oauthEnabled,
-		I18n: i18n.New(i18nDir), Comm: commStore,
+		I18n: i18n.New(i18nDir), Comm: commStore, StationsEnabled: stationsEnabled,
 	})))
 
 	// The per-IP abuse guard is the outermost handler — ahead of web routing and MCP auth.

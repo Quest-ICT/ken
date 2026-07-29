@@ -27,6 +27,7 @@
       <a href="/proposals"><span class="navlabel">{{.T "nav.proposals"}}</span>{{if .PropCount}} <span class="badge badge--accent badge--sm badge--plain" aria-label="{{.TN "nav.proposals_pending" .PropCount}}">{{.PropCount}}</span>{{end}}</a>
       <a href="/tokens"><span class="navlabel">{{.T "nav.tokens"}}</span></a>
       {{if .CommEnabled}}<a href="/comm"><span class="navlabel">{{.T "nav.comm"}}</span></a>{{end}}
+      {{if .StationsEnabled}}<a href="/stations"><span class="navlabel">{{.T "nav.stations"}}</span></a>{{end}}
       <a href="/settings"><span class="navlabel">{{.T "nav.settings"}}</span></a>
     </nav>
     <div class="topbar__tools">

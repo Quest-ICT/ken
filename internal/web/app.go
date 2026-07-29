@@ -58,6 +58,10 @@ type app struct {
 	oauthEnabled bool                       // mounts the OAuth consent flow + Connectors UI
 	i18n         *i18n.Manager              // reloadable UI translations
 	comm         *comm.Store                // inter-session comms; nil = feature off, console + nav hidden
+	// stationsEnabled mounts the /stations console. Gated on the stations flag ALONE
+	// and never on comm: stations work with COMM off, and hiding the operator surface
+	// for a running feature is worse than showing a page with one section idle.
+	stationsEnabled bool
 }
 
 func newApp(d Deps) *app {
@@ -70,16 +74,17 @@ func newApp(d Deps) *app {
 		setupTok, _ = randToken()
 	}
 	a := &app{
-		store:        d.Store,
-		pages:        parsePages(),
-		secure:       d.SecureCookies,
-		cookieName:   name,
-		setupToken:   setupTok,
-		ip:           clientip.NewResolver(d.TrustedProxies),
-		settings:     d.Settings,
-		oauthEnabled: d.OAuthEnabled,
-		i18n:         d.I18n,
-		comm:         d.Comm,
+		store:           d.Store,
+		pages:           parsePages(),
+		secure:          d.SecureCookies,
+		cookieName:      name,
+		setupToken:      setupTok,
+		ip:              clientip.NewResolver(d.TrustedProxies),
+		settings:        d.Settings,
+		oauthEnabled:    d.OAuthEnabled,
+		i18n:            d.I18n,
+		comm:            d.Comm,
+		stationsEnabled: d.StationsEnabled,
 	}
 	if a.i18n == nil {
 		a.i18n = i18n.New("") // embedded en+es defaults, no external override dir
@@ -98,7 +103,7 @@ func parsePages() map[string]*template.Template {
 		"localtime":     func(iso string) template.HTML { return timeEl(iso, "") },
 		"localdeadline": func(iso string) template.HTML { return timeEl(iso, "relative") },
 	}
-	for _, p := range []string{"login", "setup", "dashboard", "search", "browse", "entry", "proposals", "tokens", "settings", "consent", "comm"} {
+	for _, p := range []string{"login", "setup", "dashboard", "search", "browse", "entry", "proposals", "tokens", "settings", "consent", "comm", "stations"} {
 		m[p] = template.Must(template.New("base.html").Funcs(funcs).
 			ParseFS(tplFS, "templates/base.html", "templates/"+p+".html"))
 	}
@@ -172,6 +177,18 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("POST /tokens/{id}/revoke", a.requireAuth(a.handleTokenRevoke))
 	mux.HandleFunc("GET /settings", a.requireAuth(a.handleSettings))
 	mux.HandleFunc("POST /settings", a.requireAuth(a.handleSettingsSave))
+	if a.stationsEnabled {
+		mux.HandleFunc("GET /stations", a.requireAuth(a.handleStations))
+		mux.HandleFunc("GET /stations/count", a.requireAuth(a.handleStationsCount))
+		mux.HandleFunc("GET /stations/{id}/locker", a.requireAuth(a.handleStationLocker))
+		mux.HandleFunc("POST /stations/requests/{id}/approve", a.requireAuth(a.handleStationApprove))
+		mux.HandleFunc("POST /stations/requests/{id}/deny", a.requireAuth(a.handleStationDeny))
+		mux.HandleFunc("POST /stations/{id}/key", a.requireAuth(a.handleStationKey))
+		mux.HandleFunc("POST /stations/keys/{id}/retire", a.requireAuth(a.handleStationKeyRetire))
+		mux.HandleFunc("POST /stations/{id}/publish", a.requireAuth(a.handleStationPublish))
+		mux.HandleFunc("POST /stations/{id}/archive", a.requireAuth(a.handleStationArchive))
+		mux.HandleFunc("POST /stations/{id}/transfer", a.requireAuth(a.handleStationTransfer))
+	}
 	if a.comm != nil {
 		mux.HandleFunc("GET /comm", a.requireAuth(a.handleComm))
 		mux.HandleFunc("GET /comm/count", a.requireAuth(a.handleCommCount))
@@ -301,7 +318,9 @@ type view struct {
 	// CommEnabled gates the inter-session communication nav entry. The page 404s
 	// when the feature is off, so the link must not be shown then.
 	CommEnabled bool
-	tr          *i18n.Manager // translator (unexported; reached via .T / .TN / .Langs)
+	// StationsEnabled gates the stations nav entry; the page 404s when off.
+	StationsEnabled bool
+	tr              *i18n.Manager // translator (unexported; reached via .T / .TN / .Langs)
 }
 
 // T translates a message key for the current request language (templates: {{.T "key"}};
@@ -386,7 +405,7 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 		theme = c.Value
 	}
 	v := view{Session: sess, Flash: flash, PropCount: pc, Version: version.Version, SourceURL: version.SourceURL(), Data: data,
-		Lang: lang, Path: r.URL.RequestURI(), Chrome: chrome, Theme: theme, CommEnabled: a.commEnabled(), tr: a.i18n}
+		Lang: lang, Path: r.URL.RequestURI(), Chrome: chrome, Theme: theme, CommEnabled: a.commEnabled(), StationsEnabled: a.stationsEnabled, tr: a.i18n}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.pages[page].ExecuteTemplate(w, "base.html", v); err != nil {
 		log.Printf("web: render %s: %v", page, err)

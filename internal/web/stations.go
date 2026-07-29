@@ -1,0 +1,366 @@
+package web
+
+import (
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/Quest-ICT/ken/internal/store"
+)
+
+// The stations console (docs/STATIONS.md §10).
+//
+// This page exists for the same reason the COMM console does: the design withholds a
+// capability from agents, and without a human surface there is no way to exercise the
+// gate. A session can ask for a station; only here does one come into existence, and
+// only here does a human type its name.
+//
+// Gated on the stations flag ALONE and never on COMM. Stations work with COMM off —
+// the notebook and the task list need no peers — and tying the console to COMM would
+// hide the operator surface for a feature that is running.
+//
+// The cross-station task view is the part that earns the page. Everything else has a
+// CLI equivalent; the whole-pile view does not, and it is the only surface where a
+// human sees every task waiting on them at once instead of whatever the session they
+// happen to be talking to remembers to mention.
+
+// stationsPageSize bounds the cross-station task list. Generous, because this view's
+// whole purpose is to show the pile rather than a sample of it — but bounded, because
+// an unbounded render is how a console page becomes the slowest thing in the app.
+const stationsPageSize = 200
+
+func (a *app) handleStations(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	a.renderStations(w, r, sess, "")
+}
+
+// renderStations draws the console. newKey, when non-empty, is a just-minted station
+// key shown ONCE — only its hash is stored, so it can never be shown again.
+func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store.Session, newKey string) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	ctx := r.Context()
+
+	stations, err := a.store.ListStations(ctx, spaceForSession)
+	if err != nil {
+		log.Printf("web: stations list: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	requests, err := a.store.PendingStationRequests(ctx, spaceForSession)
+	if err != nil {
+		log.Printf("web: station requests: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	links, err := a.store.ListStationLinks(ctx, spaceForSession)
+	if err != nil {
+		log.Printf("web: station links: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// blocked_on defaults to `human` because that is the question this page answers:
+	// what is waiting on ME. Any other value is opt-in via the query string.
+	blockedOn := r.URL.Query().Get("blocked_on")
+	if blockedOn == "" {
+		blockedOn = "human"
+	}
+	if blockedOn == "any" {
+		blockedOn = ""
+	}
+	tasks, err := a.store.CrossStationHumanTasks(ctx, spaceForSession, blockedOn, stationsPageSize)
+	if err != nil {
+		log.Printf("web: cross-station tasks: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Per-station detail is assembled here rather than in the template, so the
+	// template stays a renderer and the N+1 is explicit and bounded by station count.
+	type stationView struct {
+		store.Station
+		Usage *store.StationUsage
+		Keys  []store.StationKey
+	}
+	views := make([]stationView, 0, len(stations))
+	for _, s := range stations {
+		usage, err := a.store.StationAssetUsage(ctx, s.StationID)
+		if err != nil {
+			log.Printf("web: station usage %s: %v", s.StationID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		keys, err := a.store.ListStationKeys(ctx, s.StationID)
+		if err != nil {
+			log.Printf("web: station keys %s: %v", s.StationID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		views = append(views, stationView{Station: s, Usage: usage, Keys: keys})
+	}
+
+	// Task rows already carry StationName — the cross-station query joins it — so the
+	// only thing left is §10's "archived stations marked". A task on an archived
+	// station is still waiting on the human, and hiding that it came from a station
+	// nobody is staffing would misrepresent why it has sat there.
+	archived := make(map[string]bool, len(stations))
+	for _, s := range stations {
+		if s.State == "archived" {
+			archived[s.StationID] = true
+		}
+	}
+
+	a.render(w, r, sess, "stations", map[string]any{
+		"Stations": views, "Requests": requests, "Links": links,
+		"Tasks": tasks, "Archived": archived,
+		"BlockedOn": r.URL.Query().Get("blocked_on"),
+		"NewKey":    newKey,
+	})
+}
+
+// handleStationApprove is the curation gate for identities: a request becomes a
+// station, named by the human at this moment. The agent's name_hint is displayed on
+// the page and carries no weight here.
+func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody) // before checkCSRF, which parses the form
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	id := r.PathValue("id")
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		flashRedirect(w, r, "/stations", "flash.station_name_required", "")
+		return
+	}
+	st, err := a.store.ApproveStationRequest(r.Context(), id, name, sess.ActorID)
+	switch {
+	case errors.Is(err, store.ErrRequestNotPending):
+		flashRedirect(w, r, "/stations", "flash.station_request_gone", "")
+		return
+	case errors.Is(err, store.ErrStationNameTaken):
+		flashRedirect(w, r, "/stations", "flash.station_name_taken", name)
+		return
+	case err != nil:
+		flashRedirect(w, r, "/stations", "flash.station_approve_failed", err.Error())
+		return
+	}
+	flashRedirect(w, r, "/stations", "flash.station_approved", st.Name)
+}
+
+// handleStationDeny records a refusal WITH a reason. The reason is required by the
+// store, not merely by this form, so the CLI cannot bypass it.
+func (a *app) handleStationDeny(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if reason == "" {
+		flashRedirect(w, r, "/stations", "flash.station_reason_required", "")
+		return
+	}
+	err := a.store.DenyStationRequest(r.Context(), r.PathValue("id"), reason, sess.ActorID)
+	switch {
+	case errors.Is(err, store.ErrRequestNotPending):
+		flashRedirect(w, r, "/stations", "flash.station_request_gone", "")
+	case err != nil:
+		flashRedirect(w, r, "/stations", "flash.station_deny_failed", err.Error())
+	default:
+		flashRedirect(w, r, "/stations", "flash.station_denied", "")
+	}
+}
+
+// handleStationKey mints a key for an existing station. Shown once, then never again —
+// so this renders the page directly instead of redirecting, exactly as pairing-code
+// minting and token creation do.
+func (a *app) handleStationKey(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	label := strings.TrimSpace(r.FormValue("label"))
+	if label == "" {
+		flashRedirect(w, r, "/stations", "flash.station_key_label_required", "")
+		return
+	}
+	scopes := []string{"station"}
+	if r.FormValue("locker") == "1" {
+		scopes = append(scopes, "station-locker")
+	}
+	key, err := a.store.IssueStationKey(r.Context(), sess.ActorID, r.PathValue("id"), label, scopes)
+	if err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_key_failed", err.Error())
+		return
+	}
+	a.renderStations(w, r, sess, key)
+}
+
+// handleStationKeyRetire stops a key binding new endpoints without touching live ones.
+// The severing verb (revoke) goes through the ordinary token path so it cannot diverge
+// from `ken token revoke` — see S6.
+func (a *app) handleStationKeyRetire(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	if err := a.store.RetireStationKey(r.Context(), r.PathValue("id")); err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_key_retire_failed", err.Error())
+		return
+	}
+	flashRedirect(w, r, "/stations", "flash.station_key_retired", "")
+}
+
+// handleStationPublish flips the directory listing. Publishing is a claim a station
+// makes about itself being discoverable; it is not authorization, and nothing about
+// reachability follows from it.
+func (a *app) handleStationPublish(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	pub := r.FormValue("published") == "1"
+	if err := a.store.SetStationPublished(r.Context(), r.PathValue("id"), pub); err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_publish_failed", err.Error())
+		return
+	}
+	flashRedirect(w, r, "/stations", "flash.station_saved", "")
+}
+
+// handleStationArchive is reversible by design (S3): the name is held, links go
+// dormant rather than revoked, and unarchiving restores them. That is why this is one
+// handler with a boolean and not two verbs.
+func (a *app) handleStationArchive(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	archived := r.FormValue("archived") == "1"
+	if err := a.store.ArchiveStation(r.Context(), r.PathValue("id"), archived); err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_archive_failed", err.Error())
+		return
+	}
+	if archived {
+		flashRedirect(w, r, "/stations", "flash.station_archived", "")
+		return
+	}
+	flashRedirect(w, r, "/stations", "flash.station_unarchived", "")
+}
+
+// handleStationTransfer moves assets between stations — "the session is gone and its
+// work should not be", and "this machine is being replaced".
+//
+// A collision is reported with the colliding NAMES, because a bare refusal leaves the
+// operator with nothing to act on and a `handoff`-on-`handoff` clash is the common case.
+func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	from := r.PathValue("id")
+	to := strings.TrimSpace(r.FormValue("to"))
+	if to == "" {
+		flashRedirect(w, r, "/stations", "flash.station_transfer_needs_target", "")
+		return
+	}
+	res, err := a.store.TransferStationAssets(r.Context(), from, to,
+		r.FormValue("notes") == "1", r.FormValue("tasks") == "1", r.FormValue("locker") == "1")
+
+	var collision *store.ErrTransferCollision
+	switch {
+	case errors.As(err, &collision):
+		flashRedirect(w, r, "/stations", "flash.station_transfer_collision",
+			collision.Class+": "+strings.Join(collision.Colliding, ", "))
+	case err != nil:
+		flashRedirect(w, r, "/stations", "flash.station_transfer_failed", err.Error())
+	default:
+		flashRedirect(w, r, "/stations", "flash.station_transferred",
+			fmt.Sprintf("%d notes, %d tasks, %d files", res.Notes, res.Tasks, res.Locker))
+	}
+}
+
+// handleStationsCount feeds the same generic poller Proposals and COMM use, so a
+// request filed while the operator is looking at the page surfaces without a reload.
+// Behind requireAuth like the page, so it is not an unauthenticated info leak.
+func (a *app) handleStationsCount(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	reqs, err := a.store.PendingStationRequests(r.Context(), spaceForSession)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintf(w, `{"count":%d}`, len(reqs))
+}
+
+// handleStationLocker serves a locker blob to the operator. Stations are told never to
+// put a credential here and Ken cannot enforce it, so this download is also the
+// mechanism by which a human can CHECK — which is the only control the design actually
+// has (S11).
+func (a *app) handleStationLocker(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	blob, err := a.store.GetStationLockerBlob(r.Context(), r.PathValue("id"), r.URL.Query().Get("name"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	// text/plain with nosniff and an attachment disposition: a locker blob is agent-
+	// authored content, and rendering it inline would make the console a delivery
+	// vehicle for whatever a session decided to store.
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(blob.Name))
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(blob.Bytes)
+}

@@ -45,6 +45,14 @@ type Deps struct {
 	// the page and its nav entry entirely. Mirrors KEN_COMM_ENABLED; the comm MCP
 	// endpoint is mounted separately in main.go.
 	Comm *comm.Store
+	// StationsEnabled, when true, mounts the stations console (/stations) — where a
+	// human approves a session's request for a working identity and TYPES its name,
+	// which is the capability every station tool is denied. Mirrors
+	// KEN_STATION_ENABLED; the station MCP endpoint is mounted separately in main.go.
+	//
+	// Independent of Comm on purpose: the notebook and task list need no peers, so a
+	// deployment may legitimately run stations with COMM off.
+	StationsEnabled bool
 }
 
 // Handler returns the web UI mux. When no admin exists yet it logs the one-time

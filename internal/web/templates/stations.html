@@ -1,0 +1,282 @@
+{{define "title"}}{{.T "stations.tab"}}{{end}}
+{{define "content"}}
+<div class="page-head">
+  <p class="eyebrow">{{.T "stations.eyebrow"}}</p>
+  <h1 class="h1">{{.T "stations.heading"}}</h1>
+  <p class="lede">{{.T "stations.lede"}}</p>
+  <!-- Same live-refresh contract as /comm and /proposals: app.js polls the count
+       endpoint and reloads when it diverges from this rendered value, then re-stamps
+       the time on every poll so the page proves it is still checking. Here the count
+       is pending REQUESTS — the thing that arrives while nobody is looking. -->
+  <p class="live-checked" data-live-refresh="{{len .Data.Requests}}">{{.T "status.last_checked"}} <time data-live-checked></time></p>
+</div>
+
+{{if .Data.NewKey}}
+<!-- One-time key reveal. Only the hash is stored, so this is the single moment the
+     secret exists in readable form — same contract as a pairing code or an API token. -->
+<div class="card card--accent" style="margin-bottom:var(--sp-5)">
+  <div class="card__head"><h2 class="h3">{{.T "stations.key_new"}}</h2></div>
+  <div class="card__body">
+    <p class="help">{{.T "stations.key_new_help"}}</p>
+    <pre class="code code--wrap"><code>{{.Data.NewKey}}</code></pre>
+    <p class="help"><b>{{.T "stations.key_new_warn"}}</b></p>
+  </div>
+</div>
+{{end}}
+
+<!-- ============ the pile: every task waiting on the human, across stations ============
+     This section is first on the page deliberately. It is the only surface where the
+     whole pile is visible at once, and the reason the feature exists: a human should
+     not have to ask each session in turn what it is still waiting on. -->
+<section class="card" style="margin-bottom:var(--sp-5)">
+  <div class="card__head">
+    <h2 class="h3">{{.T "stations.tasks_heading"}}</h2>
+    <nav class="tabs tabs--sm">
+      <a href="/stations" class="{{if not .Data.BlockedOn}}is-active{{end}}" title="{{.T "stations.filter_human_help"}}">{{.T "stations.filter_human"}}</a>
+      <a href="/stations?blocked_on=self" class="{{if eq .Data.BlockedOn "self"}}is-active{{end}}" title="{{.T "stations.filter_self_help"}}">{{.T "stations.filter_self"}}</a>
+      <a href="/stations?blocked_on=peer" class="{{if eq .Data.BlockedOn "peer"}}is-active{{end}}" title="{{.T "stations.filter_peer_help"}}">{{.T "stations.filter_peer"}}</a>
+      <a href="/stations?blocked_on=any" class="{{if eq .Data.BlockedOn "any"}}is-active{{end}}" title="{{.T "stations.filter_any_help"}}">{{.T "stations.filter_any"}}</a>
+    </nav>
+  </div>
+  <div class="card__body">
+    {{if .Data.Tasks}}
+    <table class="table" data-listing-table="ken.stations.tasks">
+      <thead>
+        <tr>
+          <th data-col-key="task">{{.T "stations.col_task"}}</th>
+          <th data-col-key="station">{{.T "stations.col_station"}}</th>
+          <th data-col-key="blocked">{{.T "stations.col_blocked"}}</th>
+          <th data-col-key="age">{{.T "stations.col_created"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Data.Tasks}}
+        <tr>
+          <td>
+            {{.Text}}
+            {{if .HearsayAtWrite}}<span class="badge badge--warn" title="{{$.T "stations.hearsay_help"}}">{{$.T "stations.hearsay"}}</span>{{end}}
+            {{if gt .DeferCount 0}}<span class="badge" title="{{$.T "stations.deferred_help"}}">{{$.T "stations.deferred"}} ×{{.DeferCount}}</span>{{end}}
+            {{if .Detail}}<div class="help">{{.Detail}}</div>{{end}}
+            {{if .LastDeferReason}}<div class="help"><i>{{$.T "stations.last_defer"}}: {{.LastDeferReason}}</i></div>{{end}}
+          </td>
+          <td>
+            {{.StationName}}
+            {{if index $.Data.Archived .StationID}}<span class="badge badge--muted" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
+          </td>
+          <td><span class="badge">{{.BlockedOn}}</span></td>
+          <td data-sort="{{.CreatedAt}}">{{localtime .CreatedAt}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="help">{{.T "stations.tasks_empty"}}</p>
+    {{end}}
+  </div>
+</section>
+
+<!-- ============ the request queue: the curation gate for identities ============ -->
+<section class="card" style="margin-bottom:var(--sp-5)">
+  <div class="card__head"><h2 class="h3">{{.T "stations.requests_heading"}}</h2></div>
+  <div class="card__body">
+    <p class="help">{{.T "stations.requests_help"}}</p>
+    {{if .Data.Requests}}
+      {{range .Data.Requests}}
+      <div class="card card--nested" style="margin-bottom:var(--sp-4)">
+        <div class="card__body">
+          <p>
+            <span class="badge">{{.Kind}}</span>
+            {{if .PromptedByPeerTraffic}}<span class="badge badge--warn" title="{{$.T "stations.prompted_help"}}">{{$.T "stations.prompted"}}</span>{{end}}
+            <span class="help">{{localtime .CreatedAt}}</span>
+          </p>
+          {{if .Purpose}}<p><b>{{$.T "stations.req_purpose"}}:</b> {{.Purpose}}</p>{{end}}
+          {{if .Reason}}<p><b>{{$.T "stations.req_reason"}}:</b> {{.Reason}}</p>{{end}}
+          {{if .NameHint}}<p class="help">{{$.T "stations.req_hint"}}: <code>{{.NameHint}}</code> — {{$.T "stations.req_hint_note"}}</p>{{end}}
+
+          <form method="post" action="/stations/requests/{{.RequestID}}/approve" class="form-inline">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+            <div class="field">
+              <label for="n-{{.RequestID}}">{{$.T "stations.req_name"}}</label>
+              <input class="input" id="n-{{.RequestID}}" name="name" type="text" required
+                     placeholder="prod-ops" title="{{$.T "stations.req_name_help"}}">
+              <span class="help">{{$.T "stations.req_name_help"}}</span>
+            </div>
+            <button class="btn btn--primary" type="submit" title="{{$.T "stations.req_approve_help"}}">{{$.T "stations.req_approve"}}</button>
+          </form>
+
+          <form method="post" action="/stations/requests/{{.RequestID}}/deny" class="form-inline">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+            <div class="field">
+              <label for="d-{{.RequestID}}">{{$.T "stations.req_deny_reason"}}</label>
+              <input class="input" id="d-{{.RequestID}}" name="reason" type="text" required
+                     title="{{$.T "stations.req_deny_reason_help"}}">
+              <span class="help">{{$.T "stations.req_deny_reason_help"}}</span>
+            </div>
+            <button class="btn" type="submit" title="{{$.T "stations.req_deny_help"}}">{{$.T "stations.req_deny"}}</button>
+          </form>
+        </div>
+      </div>
+      {{end}}
+    {{else}}
+      <p class="help">{{.T "stations.requests_empty"}}</p>
+    {{end}}
+  </div>
+</section>
+
+<!-- ============ the stations themselves ============ -->
+<section class="card" style="margin-bottom:var(--sp-5)">
+  <div class="card__head"><h2 class="h3">{{.T "stations.list_heading"}}</h2></div>
+  <div class="card__body">
+    {{if .Data.Stations}}
+      {{range .Data.Stations}}
+      <div class="card card--nested" style="margin-bottom:var(--sp-4)">
+        <div class="card__head">
+          <h3 class="h4">
+            {{.Name}}
+            {{if eq .State "archived"}}<span class="badge badge--muted" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
+            {{if .Published}}<span class="badge" title="{{$.T "stations.published_help"}}">{{$.T "stations.published"}}</span>{{end}}
+          </h3>
+        </div>
+        <div class="card__body">
+          {{if .Purpose}}<p>{{.Purpose}}</p>{{end}}
+          {{if .SelfDescribedAbout}}
+          <!-- Rendered as a CLAIM, not a fact: the station wrote this about itself
+               and nothing verified it. The label carries that, per S8. -->
+          <p class="help"><b>{{$.T "stations.self_described"}}:</b> {{.SelfDescribedAbout}}</p>
+          {{end}}
+
+          <p class="help">
+            {{$.T "stations.usage_notes"}}: {{.Usage.Notes}} ({{.Usage.NoteBytes}} B) ·
+            {{$.T "stations.usage_tasks"}}: {{.Usage.OpenTasks}}/{{.Usage.TotalTasks}} ·
+            {{$.T "stations.usage_locker"}}: {{.Usage.LockerFiles}} ({{.Usage.LockerBytes}} B) ·
+            {{$.T "stations.usage_keys"}}: {{.Usage.Keys}}
+          </p>
+          {{if .LastActivityAt}}<p class="help">{{$.T "stations.last_activity"}}: {{localtime .LastActivityAt}}</p>{{end}}
+
+          <!-- keys -->
+          {{if .Keys}}
+          <table class="table table--sm">
+            <thead>
+              <tr>
+                <th data-col-key="label">{{$.T "stations.key_label"}}</th>
+                <th data-col-key="used">{{$.T "stations.key_last_used"}}</th>
+                <th data-col-key="state">{{$.T "stations.key_state"}}</th>
+                <th data-nosort>{{$.T "stations.col_actions"}}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Keys}}
+              <tr>
+                <td>{{.Label}}</td>
+                <td data-sort="{{.LastUsedAt}}">{{if .LastUsedAt}}{{localtime .LastUsedAt}}{{else}}—{{end}}</td>
+                <td>
+                  {{if .RevokedAt}}<span class="badge badge--warn">{{$.T "stations.key_revoked"}}</span>
+                  {{else if .RetiredAt}}<span class="badge badge--muted">{{$.T "stations.key_retired"}}</span>
+                  {{else}}<span class="badge">{{$.T "stations.key_live"}}</span>{{end}}
+                </td>
+                <td>
+                  {{if and (not .RevokedAt) (not .RetiredAt)}}
+                  <form method="post" action="/stations/keys/{{.TokenID}}/retire">
+                    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                    <button class="btn btn--sm" type="submit" title="{{$.T "stations.key_retire_help"}}">{{$.T "stations.key_retire"}}</button>
+                  </form>
+                  {{end}}
+                </td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+          {{end}}
+
+          <!-- mint a key -->
+          <form method="post" action="/stations/{{.StationID}}/key" class="form-inline">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+            <div class="field">
+              <label for="k-{{.StationID}}">{{$.T "stations.key_new_label"}}</label>
+              <input class="input" id="k-{{.StationID}}" name="label" type="text" required
+                     placeholder="laptop" title="{{$.T "stations.key_new_label_help"}}">
+              <span class="help">{{$.T "stations.key_new_label_help"}}</span>
+            </div>
+            <label class="check" title="{{$.T "stations.key_locker_help"}}">
+              <input type="checkbox" name="locker" value="1"> {{$.T "stations.key_locker"}}
+            </label>
+            <button class="btn" type="submit" title="{{$.T "stations.key_mint_help"}}">{{$.T "stations.key_mint"}}</button>
+          </form>
+
+          <!-- publish / archive -->
+          <div class="row-actions">
+            <form method="post" action="/stations/{{.StationID}}/publish">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <input type="hidden" name="published" value="{{if .Published}}0{{else}}1{{end}}">
+              <button class="btn btn--sm" type="submit" title="{{$.T "stations.publish_help"}}">
+                {{if .Published}}{{$.T "stations.unpublish"}}{{else}}{{$.T "stations.publish"}}{{end}}
+              </button>
+            </form>
+            <form method="post" action="/stations/{{.StationID}}/archive">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <input type="hidden" name="archived" value="{{if eq .State "archived"}}0{{else}}1{{end}}">
+              <button class="btn btn--sm" type="submit" title="{{$.T "stations.archive_help"}}">
+                {{if eq .State "archived"}}{{$.T "stations.unarchive"}}{{else}}{{$.T "stations.archive"}}{{end}}
+              </button>
+            </form>
+          </div>
+
+          <!-- asset transfer: "the session is gone and its work should not be" -->
+          <details>
+            <summary title="{{$.T "stations.transfer_help"}}">{{$.T "stations.transfer"}}</summary>
+            <form method="post" action="/stations/{{.StationID}}/transfer">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <p class="help">{{$.T "stations.transfer_note"}}</p>
+              <div class="field">
+                <label for="t-{{.StationID}}">{{$.T "stations.transfer_to"}}</label>
+                <select class="input" id="t-{{.StationID}}" name="to" title="{{$.T "stations.transfer_to_help"}}">
+                  {{$me := .StationID}}
+                  {{range $.Data.Stations}}{{if ne .StationID $me}}
+                  <option value="{{.StationID}}">{{.Name}}</option>
+                  {{end}}{{end}}
+                </select>
+              </div>
+              <label class="check"><input type="checkbox" name="notes" value="1" checked> {{$.T "stations.transfer_notes"}}</label>
+              <label class="check"><input type="checkbox" name="tasks" value="1" checked> {{$.T "stations.transfer_tasks"}}</label>
+              <label class="check"><input type="checkbox" name="locker" value="1" checked> {{$.T "stations.transfer_locker"}}</label>
+              <button class="btn btn--sm" type="submit" title="{{$.T "stations.transfer_submit_help"}}">{{$.T "stations.transfer_submit"}}</button>
+            </form>
+          </details>
+        </div>
+      </div>
+      {{end}}
+    {{else}}
+      <p class="help">{{.T "stations.list_empty"}}</p>
+    {{end}}
+  </div>
+</section>
+
+<!-- ============ links ============ -->
+{{if .Data.Links}}
+<section class="card">
+  <div class="card__head"><h2 class="h3">{{.T "stations.links_heading"}}</h2></div>
+  <div class="card__body">
+    <table class="table" data-listing-table="ken.stations.links">
+      <thead>
+        <tr>
+          <th data-col-key="a">{{.T "stations.link_a"}}</th>
+          <th data-col-key="b">{{.T "stations.link_b"}}</th>
+          <th data-col-key="state">{{.T "stations.link_state"}}</th>
+          <th data-col-key="since">{{.T "stations.link_since"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Data.Links}}
+        <tr>
+          <td>{{.NameA}}</td>
+          <td>{{.NameB}}</td>
+          <td><span class="badge">{{.State}}</span></td>
+          <td data-sort="{{.ApprovedAt}}">{{localtime .ApprovedAt}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}
+{{end}}
