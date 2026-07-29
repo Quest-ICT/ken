@@ -18,7 +18,7 @@
   <div class="card__head"><h2 class="h3">{{.T "stations.key_new"}}</h2></div>
   <div class="card__body">
     <p class="help">{{.T "stations.key_new_help"}}</p>
-    <pre class="code code--wrap"><code>{{.Data.NewKey}}</code></pre>
+    <p><code class="mono" style="font-size:1.15rem;letter-spacing:.04em">{{.Data.NewKey}}</code></p>
     <p class="help"><b>{{.T "stations.key_new_warn"}}</b></p>
   </div>
 </div>
@@ -31,15 +31,16 @@
 <section class="card" style="margin-bottom:var(--sp-5)">
   <div class="card__head">
     <h2 class="h3">{{.T "stations.tasks_heading"}}</h2>
-    <nav class="tabs tabs--sm">
-      <a href="/stations" class="{{if not .Data.BlockedOn}}is-active{{end}}" title="{{.T "stations.filter_human_help"}}">{{.T "stations.filter_human"}}</a>
-      <a href="/stations?blocked_on=self" class="{{if eq .Data.BlockedOn "self"}}is-active{{end}}" title="{{.T "stations.filter_self_help"}}">{{.T "stations.filter_self"}}</a>
-      <a href="/stations?blocked_on=peer" class="{{if eq .Data.BlockedOn "peer"}}is-active{{end}}" title="{{.T "stations.filter_peer_help"}}">{{.T "stations.filter_peer"}}</a>
-      <a href="/stations?blocked_on=any" class="{{if eq .Data.BlockedOn "any"}}is-active{{end}}" title="{{.T "stations.filter_any_help"}}">{{.T "stations.filter_any"}}</a>
+    <nav class="inline">
+      <a href="/stations" class="badge {{if not .Data.BlockedOn}}badge--accent{{else}}badge--plain{{end}}" title="{{.T "stations.filter_human_help"}}">{{.T "stations.filter_human"}}</a>
+      <a href="/stations?blocked_on=self" class="badge {{if eq .Data.BlockedOn "self"}}badge--accent{{else}}badge--plain{{end}}" title="{{.T "stations.filter_self_help"}}">{{.T "stations.filter_self"}}</a>
+      <a href="/stations?blocked_on=peer" class="badge {{if eq .Data.BlockedOn "peer"}}badge--accent{{else}}badge--plain{{end}}" title="{{.T "stations.filter_peer_help"}}">{{.T "stations.filter_peer"}}</a>
+      <a href="/stations?blocked_on=any" class="badge {{if eq .Data.BlockedOn "any"}}badge--accent{{else}}badge--plain{{end}}" title="{{.T "stations.filter_any_help"}}">{{.T "stations.filter_any"}}</a>
     </nav>
   </div>
   <div class="card__body">
     {{if .Data.Tasks}}
+    <div class="table-wrap">
     <table class="table" data-listing-table="ken.stations.tasks">
       <thead>
         <tr>
@@ -61,14 +62,15 @@
           </td>
           <td>
             {{.StationName}}
-            {{if index $.Data.Archived .StationID}}<span class="badge badge--muted" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
+            {{if index $.Data.Archived .StationID}}<span class="badge badge--plain" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
           </td>
-          <td><span class="badge">{{.BlockedOn}}</span></td>
+          <td><span class="badge">{{$.T (printf "stations.blocked_%s" .BlockedOn)}}</span></td>
           <td data-sort="{{.CreatedAt}}">{{localtime .CreatedAt}}</td>
         </tr>
         {{end}}
       </tbody>
     </table>
+    </div>
     {{else}}
     <p class="help">{{.T "stations.tasks_empty"}}</p>
     {{end}}
@@ -82,10 +84,10 @@
     <p class="help">{{.T "stations.requests_help"}}</p>
     {{if .Data.Requests}}
       {{range .Data.Requests}}
-      <div class="card card--nested" style="margin-bottom:var(--sp-4)">
+      <div class="card" style="margin-bottom:var(--sp-4)">
         <div class="card__body">
           <p>
-            <span class="badge">{{.Kind}}</span>
+            <span class="badge">{{$.T (printf "stations.kind_%s" .Kind)}}</span>
             {{if .PromptedByPeerTraffic}}<span class="badge badge--warn" title="{{$.T "stations.prompted_help"}}">{{$.T "stations.prompted"}}</span>{{end}}
             <span class="help">{{localtime .CreatedAt}}</span>
           </p>
@@ -93,7 +95,7 @@
           {{if .Reason}}<p><b>{{$.T "stations.req_reason"}}:</b> {{.Reason}}</p>{{end}}
           {{if .NameHint}}<p class="help">{{$.T "stations.req_hint"}}: <code>{{.NameHint}}</code> — {{$.T "stations.req_hint_note"}}</p>{{end}}
 
-          <form method="post" action="/stations/requests/{{.RequestID}}/approve" class="form-inline">
+          <form method="post" action="/stations/requests/{{.RequestID}}/approve">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
             <div class="field">
               <label for="n-{{.RequestID}}">{{$.T "stations.req_name"}}</label>
@@ -104,7 +106,7 @@
             <button class="btn btn--primary" type="submit" title="{{$.T "stations.req_approve_help"}}">{{$.T "stations.req_approve"}}</button>
           </form>
 
-          <form method="post" action="/stations/requests/{{.RequestID}}/deny" class="form-inline">
+          <form method="post" action="/stations/requests/{{.RequestID}}/deny">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
             <div class="field">
               <label for="d-{{.RequestID}}">{{$.T "stations.req_deny_reason"}}</label>
@@ -129,11 +131,11 @@
   <div class="card__body">
     {{if .Data.Stations}}
       {{range .Data.Stations}}
-      <div class="card card--nested" style="margin-bottom:var(--sp-4)">
+      <div class="card" style="margin-bottom:var(--sp-4)">
         <div class="card__head">
-          <h3 class="h4">
+          <h3 class="h3">
             {{.Name}}
-            {{if eq .State "archived"}}<span class="badge badge--muted" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
+            {{if eq .State "archived"}}<span class="badge badge--plain" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
             {{if .Published}}<span class="badge" title="{{$.T "stations.published_help"}}">{{$.T "stations.published"}}</span>{{end}}
           </h3>
         </div>
@@ -155,7 +157,7 @@
 
           <!-- keys -->
           {{if .Keys}}
-          <table class="table table--sm">
+          <table class="table">
             <thead>
               <tr>
                 <th data-col-key="label">{{$.T "stations.key_label"}}</th>
@@ -171,7 +173,7 @@
                 <td data-sort="{{.LastUsedAt}}">{{if .LastUsedAt}}{{localtime .LastUsedAt}}{{else}}—{{end}}</td>
                 <td>
                   {{if .RevokedAt}}<span class="badge badge--warn">{{$.T "stations.key_revoked"}}</span>
-                  {{else if .RetiredAt}}<span class="badge badge--muted">{{$.T "stations.key_retired"}}</span>
+                  {{else if .RetiredAt}}<span class="badge badge--plain">{{$.T "stations.key_retired"}}</span>
                   {{else}}<span class="badge">{{$.T "stations.key_live"}}</span>{{end}}
                 </td>
                 <td>
@@ -189,7 +191,7 @@
           {{end}}
 
           <!-- mint a key -->
-          <form method="post" action="/stations/{{.StationID}}/key" class="form-inline">
+          <form method="post" action="/stations/{{.StationID}}/key">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
             <div class="field">
               <label for="k-{{.StationID}}">{{$.T "stations.key_new_label"}}</label>
@@ -204,7 +206,7 @@
           </form>
 
           <!-- publish / archive -->
-          <div class="row-actions">
+          <div class="inline">
             <form method="post" action="/stations/{{.StationID}}/publish">
               <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
               <input type="hidden" name="published" value="{{if .Published}}0{{else}}1{{end}}">
@@ -256,6 +258,7 @@
 <section class="card">
   <div class="card__head"><h2 class="h3">{{.T "stations.links_heading"}}</h2></div>
   <div class="card__body">
+    <div class="table-wrap">
     <table class="table" data-listing-table="ken.stations.links">
       <thead>
         <tr>
