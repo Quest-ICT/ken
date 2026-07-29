@@ -15,7 +15,26 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.4.2] — 2026-07-28
+
 ### Added
+- **Stations: the foundation ships DARK and is NOT yet ready to enable.** `KEN_STATION_ENABLED`
+  exposes a `/station/mcp` endpoint where a session staffs a durable, human-named identity and uses
+  its notebook, task list and locker. What is implemented: the schema, `kens_` station keys (a new
+  scope family — see below), the notebook with revisions, the task list with its ordering contract,
+  the locker, the MCP surface, and `ken station add|list|key|requests` — which is the **only** way to
+  create and name a station, because that capability is deliberately withheld from every tool.
+  **What is NOT implemented yet: the operator console, peer links, and the COMM binding**, so an
+  operator who turns the flag on today gets a working notebook and task list but no web UI for them
+  and no relationship between stations. Left off, it is completely inert: the tables ship empty and
+  nothing is mounted. Design contract: [docs/STATIONS.md](docs/STATIONS.md).
+- **A third token scope family, and a fix that had to land with it.** `station` and `station-locker`
+  join `comm`/`comm-file`, minted as `kens_` credentials bound to one station. The scope-mixing check
+  bucketed every non-comm scope as knowledge-base, so the moment `station` became valid it would have
+  minted `read,write-draft,propose,station` **silently** while refusing `comm,station` — exactly
+  backwards, since a session legitimately staffs a post and talks from it, while a token that both
+  reads working notes and writes knowledge is the mixing that check exists to prevent. It is now a
+  three-family partition with `station`+`comm` as the one permitted pair.
 - **[docs/STATIONS.md](docs/STATIONS.md) — a design contract for stations**, written before any code in
   the style of `COMM.md`. A *station* is a durable, human-created and human-**named** working identity
   that AI sessions staff and outlive: it owns a notebook, a task list and a small file locker, and it is
@@ -1096,7 +1115,11 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.2
+[1.4.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.1
+[1.4.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.4.0
+[1.3.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.3.0
 [1.2.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.2
 [1.2.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.1
 [1.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.2.0
