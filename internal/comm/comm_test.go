@@ -1516,3 +1516,78 @@ func TestAdoptingAStationDoesNotBreakAnExistingChannel(t *testing.T) {
 		t.Fatalf("post-unbind seq = %d, not past the pre-unbind %d — the counter went backwards", m2.Seq, m.Seq)
 	}
 }
+
+// UNBIND MUST WORK FROM INSIDE THE COLLIDED STATE. Requested by the production
+// operator after they bound on 1.5.2, hit the collision, and unbound to recover.
+//
+// This is the property that matters most about the fix, and it is not the fix
+// itself: anyone who adopted a station on 1.5.2 or 1.5.3 has an endpoint that cannot
+// send, and comm_unbind is their ONLY way back. If a later change ever makes unbind
+// depend on sending, or on the sequence table being consistent, that operator is
+// stranded with no path out.
+//
+// So this simulates the broken state directly — a station-keyed counter behind the
+// endpoint's own history — rather than relying on the current code to produce it.
+func TestUnbindRecoversAnEndpointStuckInASequenceCollision(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a, b, chID := pair(t, st)
+	const station = "stn_stuck"
+
+	for _, body := range []string{"one", "two", "three"} {
+		if _, err := st.Send(ctx, a, chID, body, SendOpts{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Force the exact state a 1.5.2/1.5.3 bind produced: bound, with a station
+	// counter that starts from scratch and collides with this endpoint's own seqs.
+	if _, err := st.W.ExecContext(ctx,
+		`UPDATE endpoint SET station_id=?, bound_by_station_key_id='kens_old' WHERE endpoint_id=?`,
+		station, a.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	var chRow int64
+	if err := st.R.QueryRowContext(ctx, `SELECT id FROM channel WHERE channel_id=?`, chID).Scan(&chRow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.ExecContext(ctx,
+		`INSERT INTO channel_seq(channel_id, sender_key, next_seq) VALUES(?,?,1)`,
+		chRow, "s:"+station); err != nil {
+		t.Fatal(err)
+	}
+
+	stuck, err := st.endpointByRowID(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, stuck, chID, "this should fail", SendOpts{}); err == nil {
+		t.Fatal("the simulated collided state did not actually break sending — the test is not testing what it claims")
+	} else if !errors.Is(err, ErrSequenceCollision) {
+		t.Fatalf("collision surfaced as %v, want ErrSequenceCollision so the operator is told what happened", err)
+	}
+
+	// THE REMEDIATION. It must work while sending is broken.
+	if err := st.UnbindEndpointFromStation(ctx, stuck.EndpointID); err != nil {
+		t.Fatalf("UNBIND FAILED FROM THE COLLIDED STATE: %v — this is the only way back for anyone who "+
+			"adopted a station on 1.5.2 or 1.5.3, and without it they are stranded", err)
+	}
+	recovered, err := st.endpointByRowID(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.Send(ctx, recovered, chID, "sending works again", SendOpts{})
+	if err != nil {
+		t.Fatalf("sending still broken after unbinding: %v", err)
+	}
+	if m.Seq <= 3 {
+		t.Fatalf("post-recovery seq = %d, want past the endpoint's own history", m.Seq)
+	}
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("peer received %d messages, want all 4 — recovery must not have cost a message", len(got))
+	}
+}

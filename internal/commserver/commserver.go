@@ -608,6 +608,16 @@ func commError(err error) error {
 		return errors.New("file exchange is disabled by the operator")
 	case errors.Is(err, comm.ErrQuota):
 		return errors.New("file storage quota exceeded — retry later, offer a smaller file, or use a same-host path transfer")
+	case errors.Is(err, comm.ErrSequenceCollision):
+		// Named rather than falling through to "internal error", because the operator
+		// who hits this has just adopted a station and has no path from a generic
+		// string to a sequence counter — they will suspect the network, the token, the
+		// peer, or whatever they restarted. Production hit exactly this and said they
+		// only knew where to look because a report happened to arrive first.
+		return errors.New("this endpoint cannot number a new message on that channel — it adopted a station " +
+			"after already sending there, and on this server version that restarts its per-channel counter. " +
+			"TELL YOUR HUMAN: call comm_unbind to detach from the station and sending works again immediately, " +
+			"then upgrade Ken before binding again. Nothing was lost and no channel was damaged")
 	case errors.Is(err, comm.ErrBadName):
 		return errors.New("invalid file name — use a bare filename: no directories, no '..', no control characters")
 	case err == nil:

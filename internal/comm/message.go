@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Message is one atomic transfer over a channel.
@@ -185,6 +186,9 @@ WHERE id=? AND replied_by IS NULL`, newRow, replyToRow); err != nil {
 		out, err = messageByID(ctx, t, messageID)
 		return err
 	})
+	if isSeqCollision(err) {
+		return nil, ErrSequenceCollision
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +231,32 @@ ON CONFLICT(channel_id, sender_key) DO UPDATE SET next_seq = next_seq + 1`,
 		return 0, err
 	}
 	return next - 1, nil
+}
+
+// ErrSequenceCollision reports that a message could not be numbered because this
+// endpoint's per-channel counter has fallen behind its own history on that channel.
+//
+// It exists because the failure it names is otherwise a bare "internal error", and an
+// operator who has just adopted a station has no path from that string to a sequence
+// counter — they will suspect the network, the token, the peer, or the restart they
+// happened to do. A production operator hit exactly this and said so: they only knew
+// where to look because a report arrived first.
+//
+// The condition is repaired by comm_unbind, which is the remediation path for anyone
+// who bound on a release before the counter was carried across.
+var ErrSequenceCollision = errors.New("sequence collision")
+
+// isSeqCollision recognises the UNIQUE index on (channel_id, sender_endpoint, seq).
+// Matched on the index's own columns rather than a driver code, so it cannot quietly
+// start matching some other constraint.
+func isSeqCollision(err error) bool {
+	if err == nil {
+		return false
+	}
+	e := err.Error()
+	return strings.Contains(e, "UNIQUE") &&
+		strings.Contains(e, "message.seq") &&
+		strings.Contains(e, "message.sender_endpoint")
 }
 
 // senderKey resolves the counter key for a sender, INSIDE the send transaction so it

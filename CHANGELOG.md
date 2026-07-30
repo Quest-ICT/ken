@@ -15,6 +15,23 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.5.5] — 2026-07-30
+
+### Fixed
+- **The sequence collision now names its own cause and its remedy.** When an endpoint that had
+  adopted a station could not number a new message, the caller got a bare `internal error` — and an
+  operator has no path from that string to a sequence counter. They will suspect the network, the
+  token, the peer, or whatever they last restarted. The production operator hit exactly this and
+  said they only knew where to look because a report happened to arrive first. The error now says
+  what happened, that `comm_unbind` restores sending immediately, and that nothing was lost.
+- **`comm_unbind` is pinned as the remediation path**, with a test that drives it *from inside* the
+  collided state rather than from a healthy one. Anyone who adopted a station on 1.5.2 or 1.5.3 has
+  an endpoint that cannot send, and unbind is their only way back — so if a later change ever makes
+  unbind depend on sending, or on the sequence table being consistent, that operator is stranded.
+  The test simulates the broken state directly rather than relying on current code to produce it,
+  because the code that produced it has been fixed.
+
+
 ## [1.5.4] — 2026-07-30
 
 ### Fixed
@@ -1294,7 +1311,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.4...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.5...HEAD
+[1.5.5]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.5
 [1.5.4]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.4
 [1.5.3]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.3
 [1.5.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.2
