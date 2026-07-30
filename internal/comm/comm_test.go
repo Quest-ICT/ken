@@ -1455,3 +1455,64 @@ func TestUnbindReturnsAnEndpointToStandingAloneWithoutLosingAnything(t *testing.
 		t.Fatalf("could not re-bind after unbinding: %v", err)
 	}
 }
+
+// ADOPTION MUST NOT BREAK A CHANNEL THE ENDPOINT ALREADY USED. Found the hard way: I
+// bound this project's own session to its new station, tried to send on a channel it
+// had been talking on all day, and got an internal error.
+//
+// The mechanism is two correct pieces colliding. `message` has a UNIQUE index on
+// (channel_id, sender_endpoint, seq). The per-channel counter keys on the sending
+// STATION once bound and on the endpoint rowid otherwise — which is what stops a
+// REPLACEMENT session restarting at 1. So binding MID-CONVERSATION moved the endpoint
+// to a fresh counter beginning at 1 while its own messages 1, 2, 3 were already on the
+// channel, and the next send violated the constraint. The endpoint could not talk
+// again until it unbound.
+func TestAdoptingAStationDoesNotBreakAnExistingChannel(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a, b, chID := pair(t, st)
+
+	// A conversation that predates the station.
+	for _, body := range []string{"first", "second", "third"} {
+		if _, err := st.Send(ctx, a, chID, body, SendOpts{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The human sets stations up; this session adopts one in place.
+	a = bindEndpoint(t, st, a, "stn_adopted", "kens_k")
+
+	m, err := st.Send(ctx, a, chID, "sent after adopting a station", SendOpts{})
+	if err != nil {
+		t.Fatalf("SENDING BROKE after adopting a station: %v — the counter restarted and collided "+
+			"with this endpoint's own earlier messages on the channel", err)
+	}
+	if m.Seq <= 3 {
+		t.Fatalf("post-adoption seq = %d, want > 3 — it must continue the endpoint's own numbering, "+
+			"not restart under the station key", m.Seq)
+	}
+	// The peer still receives it, so the channel genuinely still works.
+	got, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("peer polled %d messages, want all 4", len(got))
+	}
+
+	// And unbinding must not break it either — the counter has to come back forward.
+	if err := st.UnbindEndpointFromStation(ctx, a.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	back, err := st.endpointByRowID(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, err := st.Send(ctx, back, chID, "sent after unbinding again", SendOpts{})
+	if err != nil {
+		t.Fatalf("SENDING BROKE after unbinding: %v", err)
+	}
+	if m2.Seq <= m.Seq {
+		t.Fatalf("post-unbind seq = %d, not past the pre-unbind %d — the counter went backwards", m2.Seq, m.Seq)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"strconv"
 )
 
 // Endpoint is one AI session's communication point.
@@ -191,16 +192,61 @@ UPDATE endpoint
 // endpoint that could move between stations would let a session carry another
 // station's unread mail across, which is the shared-inbox failure in a new costume.
 func (s *Store) BindEndpointToStation(ctx context.Context, endpointID, stationID, keyID string) error {
-	res, err := s.W.ExecContext(ctx, `
+	var n int64
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		var rowID int64
+		if err := t.QueryRowContext(ctx,
+			`SELECT id FROM endpoint WHERE endpoint_id=? AND station_id IS NULL AND revoked_at IS NULL`,
+			endpointID).Scan(&rowID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+
+		// CARRY THE SEQUENCE COUNTER ACROSS, and this is not bookkeeping — without it
+		// adoption breaks every channel the endpoint has already used.
+		//
+		// The per-channel counter keys on the sending STATION once bound and on the
+		// endpoint rowid otherwise. So binding mid-conversation moves this endpoint to a
+		// FRESH counter starting at 1, while `message` carries a UNIQUE index on
+		// (channel_id, sender_endpoint, seq) — its own earlier messages are already at
+		// 1, 2, 3. The next send is a constraint violation and the endpoint simply
+		// cannot talk on that channel any more.
+		//
+		// Found by binding this very repository's session and watching its own channel
+		// stop working. Two correct pieces — station-keyed sequencing so a REPLACEMENT
+		// session does not restart at 1, and in-place adoption so a RUNNING session
+		// keeps its channels — that together switch counter namespaces mid-stream.
+		//
+		// MAX is the right merge: the destination counter must exceed anything this
+		// endpoint has already sent, and anything a sibling of the station has sent. It
+		// only ever moves forward, so it cannot reissue a number either has used.
+		if _, err := t.ExecContext(ctx, `
+INSERT INTO channel_seq(channel_id, sender_key, next_seq)
+SELECT channel_id, ?, next_seq FROM channel_seq WHERE sender_key = ?
+ON CONFLICT(channel_id, sender_key)
+  DO UPDATE SET next_seq = MAX(channel_seq.next_seq, excluded.next_seq)`,
+			"s:"+stationID, "e:"+strconv.FormatInt(rowID, 10)); err != nil {
+			return err
+		}
+
+		res, err := t.ExecContext(ctx, `
 UPDATE endpoint
    SET station_id=?, bound_by_station_key_id=?,
        bound_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
  WHERE endpoint_id=? AND station_id IS NULL AND revoked_at IS NULL`,
-		stationID, keyID, endpointID)
+			stationID, keyID, endpointID)
+		if err != nil {
+			return err
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -230,6 +276,21 @@ UPDATE message SET claimed_by_endpoint=NULL, claim_expires_at=NULL
    AND claimed_by_endpoint = (SELECT id FROM endpoint WHERE endpoint_id=?)
    AND recipient_endpoint <> (SELECT id FROM endpoint WHERE endpoint_id=?)`,
 			endpointID, endpointID); err != nil {
+			return err
+		}
+		// The mirror of the carry-forward in BindEndpointToStation, and needed for the
+		// same reason in reverse: after unbinding this endpoint numbers under its own
+		// rowid again, and that counter may sit BEHIND what it already sent under the
+		// station key. Moving it forward keeps the UNIQUE index on
+		// (channel_id, sender_endpoint, seq) satisfiable.
+		if _, err := t.ExecContext(ctx, `
+INSERT INTO channel_seq(channel_id, sender_key, next_seq)
+SELECT cs.channel_id, 'e:' || e.id, cs.next_seq
+  FROM channel_seq cs
+  JOIN endpoint e ON e.endpoint_id = ?
+ WHERE cs.sender_key = 's:' || e.station_id
+ON CONFLICT(channel_id, sender_key)
+  DO UPDATE SET next_seq = MAX(channel_seq.next_seq, excluded.next_seq)`, endpointID); err != nil {
 			return err
 		}
 		res, err := t.ExecContext(ctx, `

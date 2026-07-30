@@ -15,6 +15,28 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.5.4] — 2026-07-30
+
+### Fixed
+- **Adopting a station broke every channel the endpoint had already used.** `comm_bind` on an
+  endpoint with existing traffic left it unable to send: the next message failed with
+  `UNIQUE constraint failed: message.channel_id, message.sender_endpoint, message.seq`, and it
+  stayed broken until the endpoint unbound.
+  Two correct pieces collided. The per-channel counter keys on the sending **station** once bound
+  and on the endpoint rowid otherwise — which is what stops a *replacement* session restarting at 1
+  (1.5.2). `comm_bind` lets a *running* session adopt in place (1.5.1). Together, adoption moved an
+  endpoint to a fresh counter beginning at 1 while its own messages 1, 2, 3 were already on the
+  channel. Binding and unbinding now carry the counter across, merging with `MAX` so it only ever
+  moves forward and can never reissue a number either the endpoint or a station sibling has used.
+  Affects **1.5.2 and 1.5.3**; a *fresh* endpoint binding at `comm_register` time was never affected,
+  since it has no history to collide with.
+  Found by binding this project's own session to its own station and watching its channel stop
+  working — the feature used exactly as its handout documented.
+
+All of 1.5.3 came from the first real production setup of stations. This one came from the first real
+*use* of adoption. Both were invisible to tests written by the person who built them.
+
+
 ## [1.5.3] — 2026-07-30
 
 ### Fixed
@@ -1272,7 +1294,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.3...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.4...HEAD
+[1.5.4]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.4
 [1.5.3]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.3
 [1.5.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.2
 [1.5.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.1
