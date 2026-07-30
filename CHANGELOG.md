@@ -15,6 +15,43 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.5.3] — 2026-07-30
+
+### Fixed
+- **Station-key and comm-token use was never recorded, so a leaked key left no trace.**
+  `TouchToken` had exactly one caller — the knowledge-base authenticator — which meant
+  `last_used_at` was permanently `NULL` for every `kens_` station key and every comm token.
+  Production measured three comm tokens still blank after 102 acknowledged messages. Both
+  authenticators now record use.
+  The consequence was larger than a blank column: a stolen station key could read an entire
+  notebook, task list and briefing with **no trace at all**, leaving a leak undetectable
+  afterwards and un-scopable during response. It is a coarse signal — throttled to about
+  once a minute, no per-read record — but the difference between "no timestamp" and "used
+  four minutes ago" is the difference between an unanswerable incident and a scoped one.
+- **The `/stations` key list could not tell two keys apart, at the exact moment the
+  documented rotation says to retire one.** Label, last-used and state were identical for
+  two keys minted for the same machine, and the only discriminator was a token id invisible
+  inside a form action. An operator following "mint → install → restart → verify → retire the
+  old one" reached the last step with no way to identify which row was old, and retiring the
+  wrong one immediately cuts the session just set up. The table now shows the **token id**
+  (which is also what `ken token revoke` takes, so console and CLI agree on how a key is
+  named) and **created_at** — both were already fetched and discarded.
+- The blank last-used cell now reads **"not measured"** with a tooltip saying station-key use
+  is not recorded, rather than a dash that invites reading it as "unused".
+
+### Changed
+- **`station_binding_voucher`'s description now says the voucher is itself a credential** —
+  that anyone holding it plus any comm-scoped token can join the station's inbox and *take*
+  messages out of your poll, and that it must never be sent to a peer or written to a file
+  or a notebook page. The tool text is where an agent actually reads a warning.
+  **This is wording, not enforcement.** Redemption still checks no actor, no token and no
+  endpoint, so a voucher remains a bearer capability; binding it to the redeeming identity
+  at mint time is a design change that has not been made. A production operator has
+  `comm_bind` on hold until it is, which is the correct call.
+
+All of the above came from the first real production setup of stations, reported with source
+citations by the operator who did it.
+
 ## [1.5.2] — 2026-07-29
 
 ### Fixed
@@ -1235,7 +1272,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.2...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.3...HEAD
+[1.5.3]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.3
 [1.5.2]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.2
 [1.5.1]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.1
 [1.5.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.0
