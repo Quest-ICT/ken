@@ -188,6 +188,7 @@ func (a *app) routes() http.Handler {
 		mux.HandleFunc("POST /stations/{id}/publish", a.requireAuth(a.handleStationPublish))
 		mux.HandleFunc("POST /stations/{id}/archive", a.requireAuth(a.handleStationArchive))
 		mux.HandleFunc("POST /stations/{id}/transfer", a.requireAuth(a.handleStationTransfer))
+		mux.HandleFunc("POST /stations/links/{id}/revoke", a.requireAuth(a.handleStationLinkRevoke))
 	}
 	if a.comm != nil {
 		mux.HandleFunc("GET /comm", a.requireAuth(a.handleComm))

@@ -115,12 +115,100 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		}
 	}
 
+	// Each link carries the live traffic revoking it would end, so the blast radius is
+	// in front of the human BEFORE the click rather than discovered after it. Same
+	// bounded N+1 as the per-station detail above, and for the same reason.
+	//
+	// COMM off means no channels exist to count, not that the count is unknown: the
+	// field stays 0 and the template shows the plain confirmation. Faking a number
+	// here would be worse than omitting one.
+	type linkView struct {
+		store.StationLink
+		LiveChannels int
+	}
+	linkViews := make([]linkView, 0, len(links))
+	for _, l := range links {
+		v := linkView{StationLink: l}
+		if a.comm != nil && l.State != "revoked" {
+			n, err := a.comm.CountOpenChannelsBetweenStations(ctx, l.StationA, l.StationB)
+			if err != nil {
+				log.Printf("web: link live channels %s: %v", l.LinkID, err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			v.LiveChannels = n
+		}
+		linkViews = append(linkViews, v)
+	}
+
 	a.render(w, r, sess, "stations", map[string]any{
-		"Stations": views, "Requests": requests, "Links": links,
+		"Stations": views, "Requests": requests, "Links": linkViews,
 		"Tasks": tasks, "Archived": archived,
 		"BlockedOn": r.URL.Query().Get("blocked_on"),
 		"NewKey":    newKey,
 	})
+}
+
+// handleStationLinkRevoke ends a relationship AND the live traffic it authorised.
+//
+// Two writes, in this order and not the other: the link first, so the permission is
+// gone even if the channel sweep fails, then the channels. A failure after the link
+// write leaves a revoked permission with live traffic — visible, reported, and
+// fixable from the /comm console — whereas the reverse order could leave severed
+// traffic under a permission that still reads as active, which looks like a bug in
+// COMM rather than a half-finished revocation.
+//
+// S9's approval is per relationship, so its withdrawal is too. This is the operator
+// brake that a durable roster needs before it can replace a pairing code: a
+// membership list nobody can take away is not a stronger gate than a bearer code, it
+// is a weaker one that lasts longer.
+func (a *app) handleStationLinkRevoke(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+
+	// Read before write: once the row says 'revoked' it can still be named, but the
+	// station ids are needed for the channel sweep and a missing link should 404
+	// rather than half-execute.
+	link, err := a.store.StationLinkByID(r.Context(), id)
+	if err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_link_revoke_failed", err.Error())
+		return
+	}
+	if err := a.store.RevokeStationLink(r.Context(), id); err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_link_revoke_failed", err.Error())
+		return
+	}
+
+	pair := link.NameA + " / " + link.NameB
+	closed := 0
+	if a.comm != nil {
+		n, err := a.comm.RevokeChannelsBetweenStations(r.Context(), link.StationA, link.StationB)
+		if err != nil {
+			// The permission is already gone; say so, and say what did NOT happen, so
+			// the operator knows to finish the job on /comm rather than assuming the
+			// whole action failed and retrying it.
+			log.Printf("web: revoke channels for link %s: %v", id, err)
+			flashRedirect(w, r, "/stations", "flash.station_link_revoked_channels_failed", pair)
+			return
+		}
+		closed = n
+	}
+	// Two keys rather than one with a spliced count: flash carries a single argument,
+	// and a number formatted into the argument would arrive in the operator's language
+	// with an English "channels closed" glued to it. The exact count is on the page.
+	if closed > 0 {
+		flashRedirect(w, r, "/stations", "flash.station_link_revoked_channels", pair)
+		return
+	}
+	flashRedirect(w, r, "/stations", "flash.station_link_revoked", pair)
 }
 
 // handleStationApprove is the curation gate for identities: a request becomes a

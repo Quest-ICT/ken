@@ -469,6 +469,21 @@ func runServe(args []string) {
 				ok, err := commStore.ReceivedSince(ctx, actorID, live.Current().CommProvenanceWindowSec)
 				return err == nil && ok
 			}
+			// Reachability for station_directory. This is the ONE place both handles
+			// exist, so the adaptation lives here and the dependency stays one-way:
+			// stationserver never imports comm. Absent when COMM is off, which the
+			// directory reports as unknown rather than as everyone being idle.
+			sd.Staffing = func(ctx context.Context) (map[string]stationserver.StationStaffing, error) {
+				raw, err := commStore.StaffingByStation(ctx)
+				if err != nil {
+					return nil, err
+				}
+				out := make(map[string]stationserver.StationStaffing, len(raw))
+				for id, s := range raw {
+					out[id] = stationserver.StationStaffing{Endpoints: s.Endpoints, LastSeenAt: s.LastSeenAt}
+				}
+				return out, nil
+			}
 		}
 		sd.TaskLimits, sd.NoteLimits, sd.LockerLimits = stationLimits(live.Current())
 		stationHandler := stationserver.NewHTTPHandler(sd)

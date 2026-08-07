@@ -402,3 +402,71 @@ func (s *Store) FirstHumanActor(ctx context.Context) (int64, error) {
 	err := s.R.QueryRowContext(ctx, `SELECT id FROM actor WHERE kind='human' ORDER BY id LIMIT 1`).Scan(&id)
 	return id, err
 }
+
+// DirectoryEntry is one row of the station directory: a station another station is
+// allowed to know exists, plus whether the two may currently talk.
+//
+// Linked is separate from visibility on purpose. Discovery and permission are
+// different questions, and collapsing them makes the directory useless for the case
+// it exists to serve — you cannot ask your human for a link to a station you were
+// never allowed to see the name of.
+type DirectoryEntry struct {
+	Station
+	Linked bool // an active link with the asking station exists RIGHT NOW
+}
+
+// ListStationsVisibleTo returns the stations `fromStation` may know about, newest
+// activity first.
+//
+// VISIBILITY RULE, and this is what finally gives `published` a reader: a station is
+// listed when it is PUBLISHED, or when the asking station already holds an active
+// link to it. Until now `published` was a human-settable flag that gated nothing —
+// writable from the console, read by no query — which is the same unfinished shape as
+// a column nothing selects. It now means exactly one thing: listed in the directory.
+//
+// The link clause is not redundant with publication. A station may be deliberately
+// unpublished and still be someone's established peer; hiding an existing
+// relationship from the party that holds it would be a lie by omission, and would
+// make the directory disagree with what comm_open_channel will actually do.
+//
+// Archived stations are excluded: the directory answers "who is available", and a
+// station nobody is staffing by design is not. Self is excluded for the same reason —
+// a session does not need to discover itself.
+//
+// The caller supplies liveness separately (comm.StaffingByStation); this package must
+// not reach into the expendable database (S7).
+func (s *Store) ListStationsVisibleTo(ctx context.Context, spaceID int64, fromStation string) ([]DirectoryEntry, error) {
+	rows, err := s.R.QueryContext(ctx, `
+SELECT st.station_id, st.space_id, st.name, st.purpose,
+       st.self_described_about, st.self_described_tags,
+       st.published, st.state, st.created_at, st.advertised_at, st.last_activity_at,
+       EXISTS(SELECT 1 FROM station_link l
+               WHERE l.state='active'
+                 AND ((l.station_a=st.station_id AND l.station_b=?2)
+                   OR (l.station_b=st.station_id AND l.station_a=?2))) AS linked
+  FROM station st
+ WHERE st.space_id=?1
+   AND st.state <> 'archived'
+   AND st.station_id <> ?2
+   AND (st.published=1 OR linked)
+ ORDER BY COALESCE(st.last_activity_at, st.created_at) DESC`, spaceID, fromStation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DirectoryEntry
+	for rows.Next() {
+		var e DirectoryEntry
+		var tags, advertised, lastAct sql.NullString
+		if err := rows.Scan(&e.StationID, &e.SpaceID, &e.Name, &e.Purpose, &e.SelfDescribedAbout,
+			&tags, &e.Published, &e.State, &e.CreatedAt, &advertised, &lastAct, &e.Linked); err != nil {
+			return nil, err
+		}
+		if tags.Valid {
+			_ = json.Unmarshal([]byte(tags.String), &e.SelfDescribedTags)
+		}
+		e.AdvertisedAt, e.LastActivityAt = advertised.String, lastAct.String
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

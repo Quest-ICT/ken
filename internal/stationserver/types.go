@@ -12,6 +12,30 @@ package stationserver
 // not survive a harness flattening a structured result into prose — and once flattened,
 // a claim reads as fact (S8).
 
+// dirEntry mirrors comm_directory's row on the /station surface. The claim fields
+// keep their claim-bearing names (S8) so a reader that flattens this still sees that
+// self_described_about is what the other station says, not what a human vouched for.
+type dirEntry struct {
+	Name               string   `json:"name"`
+	Purpose            string   `json:"purpose,omitempty"`
+	SelfDescribedAbout string   `json:"self_described_about,omitempty"`
+	SelfDescribedTags  []string `json:"self_described_tags,omitempty"`
+	Linked             bool     `json:"linked"`
+	// Omitted entirely when COMM cannot answer. See Deps.Staffing.
+	Staffed    *bool  `json:"staffed,omitempty"`
+	LastSeenAt string `json:"last_seen_at,omitempty"`
+}
+
+type dirIn struct{}
+
+type dirOut struct {
+	Stations []dirEntry `json:"stations"`
+	YouAre   string     `json:"you_are,omitempty"`
+	// CommKnown is false when this deployment has COMM off, so a reader can tell
+	// "reachability is unknown here" from "everyone is idle".
+	CommKnown bool `json:"comm_known"`
+}
+
 type meIn struct {
 	SelfDescribedAbout string   `json:"self_described_about,omitempty" jsonschema:"optional; how YOU describe what you know and are responsible for. A CLAIM, shown to others as self-described"`
 	SelfDescribedTags  []string `json:"self_described_tags,omitempty" jsonschema:"optional; short self-declared topic tags"`

@@ -279,6 +279,8 @@
           <th data-col-key="b">{{.T "stations.link_b"}}</th>
           <th data-col-key="state">{{.T "stations.link_state"}}</th>
           <th data-col-key="since">{{.T "stations.link_since"}}</th>
+          <th data-col-key="live">{{.T "stations.link_live"}}</th>
+          <th data-col-key="actions" data-nosort>{{.T "stations.link_actions"}}</th>
         </tr>
       </thead>
       <tbody>
@@ -288,6 +290,17 @@
           <td>{{.NameB}}</td>
           <td><span class="badge">{{.State}}</span></td>
           <td data-sort="{{.ApprovedAt}}">{{localtime .ApprovedAt}}</td>
+          <td data-sort="{{.LiveChannels}}">{{if .LiveChannels}}{{.LiveChannels}}{{else}}&mdash;{{end}}</td>
+          <td>
+            {{if ne .State "revoked"}}
+            <form class="inline" method="post" action="/stations/links/{{.LinkID}}/revoke"
+                  data-confirm="{{$.T "stations.link_revoke_confirm" .NameA .NameB .LiveChannels}}">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <button class="btn btn--danger btn--sm" type="submit"
+                      title="{{$.T "stations.link_revoke_help"}}">{{$.T "stations.link_revoke"}}</button>
+            </form>
+            {{end}}
+          </td>
         </tr>
         {{end}}
       </tbody>

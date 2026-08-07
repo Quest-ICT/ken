@@ -169,6 +169,37 @@ type fileGrantOut struct {
 	ExpiresAt   string `json:"expires_at"`
 }
 
+type directoryIn struct {
+	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
+	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+}
+
+// directoryEntry keeps the CLAIM fields under their claim-bearing names (S8). A
+// reader that flattens this struct still sees that `self_described_about` is what the
+// station says about itself and not something a human vouched for — which is the
+// whole reason those columns are named that way in the schema.
+type directoryEntry struct {
+	Name               string   `json:"name"`
+	Purpose            string   `json:"purpose,omitempty"`
+	SelfDescribedAbout string   `json:"self_described_about,omitempty"`
+	SelfDescribedTags  []string `json:"self_described_tags,omitempty"`
+	// Linked is the only field that answers "can I talk to this one RIGHT NOW".
+	// Visibility and permission are separate questions and this keeps them separate.
+	Linked bool `json:"linked"`
+	// Staffed and LastSeenAt are OMITTED entirely when COMM cannot answer, rather
+	// than reported as false/empty. "Unknown" and "nobody is there" are different
+	// facts and a directory that conflates them is worse than one that says less.
+	Staffed    *bool  `json:"staffed,omitempty"`
+	LastSeenAt string `json:"last_seen_at,omitempty"`
+}
+
+type directoryOut struct {
+	Stations []directoryEntry `json:"stations"`
+	// YouAre names the asking station, because a session that has just been handed a
+	// list of names needs to know which one it is before it addresses anybody.
+	YouAre string `json:"you_are,omitempty"`
+}
+
 type openLinkedIn struct {
 	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
 	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`

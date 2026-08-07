@@ -265,6 +265,73 @@ WHERE channel_id=? AND state<>'revoked'`, channelID)
 	return nil
 }
 
+// openChannelsBetweenStations is the pair predicate shared by the count and the
+// revoke below. It matches on STATIONS rather than endpoints, and in both column
+// orders, for the same reason OpenLinkedChannel does: which seat a station took is
+// an accident of who opened the channel, and a replacement session on either side
+// must be found by the same query that found its predecessor.
+const openChannelsBetweenStations = `
+  FROM channel c
+  JOIN endpoint ea ON ea.id = c.endpoint_a
+  JOIN endpoint eb ON eb.id = c.endpoint_b
+ WHERE c.state='open'
+   AND ((ea.station_id=? AND eb.station_id=?) OR (ea.station_id=? AND eb.station_id=?))`
+
+// CountOpenChannelsBetweenStations reports how much live traffic revoking a link
+// would end. It exists to be shown BEFORE the click: S6 asks for the blast radius
+// in front of the human, and "revoke" with no number attached is a button people
+// either avoid or press twice.
+//
+// Returns 0 rather than an error when the pair has never spoken, which is the
+// common case and is not a failure.
+func (s *Store) CountOpenChannelsBetweenStations(ctx context.Context, stationA, stationB string) (int, error) {
+	if stationA == "" || stationB == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*)`+openChannelsBetweenStations,
+		stationA, stationB, stationB, stationA).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// RevokeChannelsBetweenStations closes every open channel between two stations and
+// returns how many it closed.
+//
+// This is the caller RevokeStationLink's doc comment asks for: revoking the LINK
+// withdraws the permission, but a channel opened while the permission held keeps
+// working, because the channel row carries its own state. Ending the relationship
+// without ending its live traffic is a revocation that revokes nothing observable —
+// the same shape as a flag with no reader.
+//
+// Idempotent: revoking twice closes nothing the second time and returns 0. A pair
+// that never spoke is not an error.
+func (s *Store) RevokeChannelsBetweenStations(ctx context.Context, stationA, stationB string) (int, error) {
+	if stationA == "" || stationB == "" {
+		return 0, nil
+	}
+	var n int64
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		res, err := t.ExecContext(ctx, `
+UPDATE channel
+   SET state='revoked', revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ WHERE id IN (SELECT c.id`+openChannelsBetweenStations+`)`,
+			stationA, stationB, stationB, stationA)
+		if err != nil {
+			return err
+		}
+		n, _ = res.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // channelByRowID loads a channel inside an open transaction.
 func channelByRowID(ctx context.Context, t *sql.Tx, id int64) (*Channel, error) {
 	var (
@@ -376,6 +443,51 @@ FROM channel WHERE channel_id=?`, channelID).
 	}
 	ch.EndpointB, ch.OpenedAt = bID.Int64, opn.String
 	return &ch, ch.EndpointB, nil
+}
+
+// Staffing is what COMM knows about whether anyone is actually at a station: how
+// many live endpoints are reading for it, and when the freshest of them was last
+// seen.
+//
+// Deliberately two facts rather than one boolean. "Staffed" is a judgement about
+// freshness and the right threshold depends on how the reader intends to use it — a
+// directory shown to a human and a routing decision made by an agent do not want the
+// same cutoff. Reporting the inputs and letting the caller judge is the same choice
+// the console makes everywhere else: never fake a number, never hide one.
+type Staffing struct {
+	Endpoints  int    // live (non-revoked) endpoints bound to the station
+	LastSeenAt string // freshest last_seen_at across them; empty when Endpoints is 0
+}
+
+// StaffingByStation reports staffing for every station COMM has ever seen an endpoint
+// for, in ONE query.
+//
+// Batch rather than per-station on purpose: a directory listing N stations must not
+// cost N round trips, and the per-station form already exists for the single-target
+// case (LiveEndpointForStation). Stations with no endpoint are simply absent from the
+// map — a missing key means "nobody has ever staffed this", which is what the caller
+// wants to render, and materialising a zero row for every station in the space would
+// make the map lie about which ones COMM knows.
+func (s *Store) StaffingByStation(ctx context.Context) (map[string]Staffing, error) {
+	rows, err := s.R.QueryContext(ctx, `
+SELECT station_id, COUNT(*), COALESCE(MAX(last_seen_at),'')
+  FROM endpoint
+ WHERE station_id IS NOT NULL AND station_id <> '' AND revoked_at IS NULL
+ GROUP BY station_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]Staffing)
+	for rows.Next() {
+		var id string
+		var st Staffing
+		if err := rows.Scan(&id, &st.Endpoints, &st.LastSeenAt); err != nil {
+			return nil, err
+		}
+		out[id] = st
+	}
+	return out, rows.Err()
 }
 
 // LiveEndpointForStation returns the most recently seen live endpoint reading for a

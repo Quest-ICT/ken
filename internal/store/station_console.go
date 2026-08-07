@@ -553,3 +553,26 @@ UPDATE station_link SET state='revoked', revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ
 	}
 	return nil
 }
+
+// StationLinkByID resolves one link with both station names, so the caller can name
+// the pair in a confirmation and hand the two station ids to COMM.
+//
+// Separate from RevokeStationLink on purpose: the revoke is a write and this is the
+// read that must happen BEFORE it — once the row says 'revoked' the console still
+// needs to say whose relationship just ended.
+func (s *Store) StationLinkByID(ctx context.Context, linkID string) (StationLink, error) {
+	var l StationLink
+	err := s.R.QueryRowContext(ctx, `
+SELECT l.link_id, l.station_a, l.station_b,
+       COALESCE(a.name,'(deleted)'), COALESCE(b.name,'(deleted)'),
+       l.state, l.approved_at
+  FROM station_link l
+  LEFT JOIN station a ON a.station_id = l.station_a
+  LEFT JOIN station b ON b.station_id = l.station_b
+ WHERE l.link_id=?`, linkID).
+		Scan(&l.LinkID, &l.StationA, &l.StationB, &l.NameA, &l.NameB, &l.State, &l.ApprovedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return StationLink{}, ErrNotFound
+	}
+	return l, err
+}

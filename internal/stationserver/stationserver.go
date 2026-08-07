@@ -23,6 +23,14 @@ import (
 // nothing to do with would be the wrong dependency. Peer links and endpoint binding are
 // the COMM half and live elsewhere.
 
+// StationStaffing is what COMM knows about who is actually at a station. Declared
+// here rather than imported so the dependency runs one way: the wiring in cmd/ken
+// adapts comm's own type into this one.
+type StationStaffing struct {
+	Endpoints  int
+	LastSeenAt string
+}
+
 // Deps are the collaborators for the station endpoint.
 type Deps struct {
 	// Store is the knowledge base: it holds stations, their assets, and the keys this
@@ -37,6 +45,14 @@ type Deps struct {
 	// note or task written mid-conversation is marked (§7). Optional: with COMM off it
 	// is nil and the marking is simply absent — "no signal", never "known clean".
 	Hearsay func(ctx context.Context, actorID int64) bool
+	// Staffing reports, per station id, how many live COMM endpoints are reading for
+	// it and when the freshest was last seen. Optional, and shaped as a hook for the
+	// same reason Hearsay is: this package must not depend on COMM. With COMM off it
+	// is nil and the directory OMITS reachability entirely rather than reporting
+	// every station as unstaffed — "unknown" and "nobody is there" are different
+	// facts, and a directory that conflates them is worse than one that says less.
+	Staffing func(ctx context.Context) (map[string]StationStaffing, error)
+
 	// Limits bound the assets. Every one is a BACKUP decision (S12). These are the
 	// STARTING values; SetLimits replaces them live.
 	TaskLimits   store.StationTaskLimits
@@ -266,6 +282,50 @@ func newServer(d Deps) *mcp.Server {
 		}
 		out, err := buildBriefing(ctx, d, p)
 		return nil, out, err
+	})
+
+	addTool(s, d.Metrics, &mcp.Tool{
+		Name: "station_directory",
+		Description: "List the stations you can see and which you already hold a link to. Use this before " +
+			"station_link_request so you ask for a real name rather than a guess: nothing else on this surface " +
+			"will tell you a station exists. Fields named self_described_* are that station's own CLAIMS about " +
+			"itself, not anything a human verified. 'staffed' is absent when this deployment has COMM off.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ dirIn) (*mcp.CallToolResult, dirOut, error) {
+		p, err := requireStation(ctx)
+		if err != nil {
+			return nil, dirOut{}, err
+		}
+		list, err := d.Store.ListStationsVisibleTo(ctx, p.SpaceID, p.StationID)
+		if err != nil {
+			return nil, dirOut{}, err
+		}
+		var staffing map[string]StationStaffing
+		if d.Staffing != nil {
+			if staffing, err = d.Staffing(ctx); err != nil {
+				return nil, dirOut{}, err
+			}
+		}
+		me, _ := d.Store.StationByID(ctx, p.StationID)
+		out := dirOut{Stations: make([]dirEntry, 0, len(list)), CommKnown: d.Staffing != nil}
+		if me != nil {
+			out.YouAre = me.Name
+		}
+		for _, st := range list {
+			e := dirEntry{
+				Name:               st.Name,
+				Purpose:            st.Purpose,
+				SelfDescribedAbout: st.SelfDescribedAbout,
+				SelfDescribedTags:  st.SelfDescribedTags,
+				Linked:             st.Linked,
+			}
+			if sf, ok := staffing[st.StationID]; ok {
+				staffed := sf.Endpoints > 0
+				e.Staffed = &staffed
+				e.LastSeenAt = sf.LastSeenAt
+			}
+			out.Stations = append(out.Stations, e)
+		}
+		return nil, out, nil
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
