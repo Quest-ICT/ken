@@ -85,8 +85,38 @@ type Limits struct {
 	MaxBodyBytes int
 	// MaxUnackedPerChannel caps un-acked depth per channel (backpressure).
 	MaxUnackedPerChannel int
-	// MessageTTLSeconds is how long an un-acked message survives before expiring.
+	// MessageTTLSeconds is how long a DELIVERED but un-acked message survives
+	// before expiring. The clock starts at FIRST DELIVERY, not at send.
+	//
+	// It used to start at send, and that was wrong in a way no measurement inside
+	// the system could reveal: a human works ~8 h a day, so a session goes 16 h
+	// between pulls on a weeknight, 64 h over a weekend and weeks over annual
+	// leave. Against the shipped 24 h default that made every message sent during
+	// a Friday shift dead before Monday — 2.67x the TTL — and it is what killed a
+	// real 4 661-byte message sent on Sunday 2026-08-02. The clock was running
+	// during exactly the window in which nobody could possibly poll.
+	//
+	// Anchoring at delivery asks the right question: not "how long has this
+	// existed" but "how long has the recipient had it and done nothing".
 	MessageTTLSeconds int
+	// UndeliveredTTLSeconds bounds a message NOBODY HAS EVER SEEN. It exists only
+	// as a backstop against a permanently dead endpoint, so it is generous by
+	// design: undelivered mail is bounded primarily by MaxUnackedPerChannel, which
+	// is a volume bound and therefore immune to how long a human is away.
+	//
+	// Must be comfortably longer than the longest absence an operator expects. A
+	// value shorter than MessageTTLSeconds is nonsense — it would kill mail before
+	// the delivered clock could even start — and is treated as "use the default".
+	UndeliveredTTLSeconds int
+	// BodyRetentionSeconds is how long a body survives AFTER the message settles.
+	//
+	// Zero restores the historical behaviour: blank on ack. That behaviour
+	// destroyed 97% of one live deployment's message bodies (153 of 159) through
+	// the ordinary, instructed path — poll, act, ack — because ack blanked the
+	// body unless the message happened to require a response. The un-acked inbox
+	// was not a safety net; it was the archive, and acking was the instruction to
+	// destroy the only copy.
+	BodyRetentionSeconds int
 	// MetadataTTLSeconds is how long a settled (acked/expired) message's metadata
 	// row survives after creation. Bodies are dropped at ack; this governs only
 	// the audit shell.
@@ -144,6 +174,8 @@ func DefaultLimits() Limits {
 		MaxBodyBytes:          64 * 1024,
 		MaxUnackedPerChannel:  64,
 		MessageTTLSeconds:     24 * 3600,
+		UndeliveredTTLSeconds: 30 * 24 * 3600,
+		BodyRetentionSeconds:  24 * 3600,
 		MetadataTTLSeconds:    7 * 24 * 3600,
 		ReplyDeadlineSeconds:  3600,
 		PairingCodeTTLSeconds: 900,

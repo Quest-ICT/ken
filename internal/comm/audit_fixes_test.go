@@ -50,7 +50,11 @@ func TestRevokedPendingChannelCannotBeReopened(t *testing.T) {
 func TestTTLIsClampedToTheOperatorSetting(t *testing.T) {
 	ctx := context.Background()
 	l := DefaultLimits()
-	l.MessageTTLSeconds = 60
+	// A sender's ttl_seconds governs how long UNDELIVERED mail stays deliverable,
+	// so that is the ceiling it is clamped against. MessageTTLSeconds bounds the
+	// window AFTER delivery and a sender cannot choose it at all.
+	l.MessageTTLSeconds = 30
+	l.UndeliveredTTLSeconds = 60
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
@@ -127,6 +131,12 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The deadline is armed at DELIVERY, so nothing is overdue until the peer has
+	// been handed the message. Before this the clock ran from send, which is why
+	// 18% of real messages arrived with the deadline already blown.
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -161,13 +171,17 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 // The sender is told when a message dies unread, rather than believing it landed.
 func TestSenderIsNotifiedWhenAMessageExpires(t *testing.T) {
 	ctx := context.Background()
-	l := DefaultLimits()
-	l.MessageTTLSeconds = -1
-	st := newStore(t, l)
+	st := newStore(t, DefaultLimits())
 	a, _, channelID := pair(t, st)
 
 	sent, err := st.Send(ctx, a, channelID, "never read", SendOpts{})
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Backdate the UNDELIVERED backstop rather than setting a negative limit: a
+	// non-positive retention window must fail safe and do nothing, so the store
+	// refuses it, and reaching expiry through the real column is the honest route.
+	if _, err := st.W.Exec(`UPDATE message SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second') WHERE message_id=?`, sent.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := st.Sweep(ctx); err != nil {
@@ -191,7 +205,6 @@ func TestStatusNoticeBypassesBackpressure(t *testing.T) {
 	ctx := context.Background()
 	l := DefaultLimits()
 	l.MaxUnackedPerChannel = 2
-	l.MessageTTLSeconds = -1
 	st := newStore(t, l)
 	a, _, channelID := pair(t, st)
 
@@ -199,6 +212,9 @@ func TestStatusNoticeBypassesBackpressure(t *testing.T) {
 		if _, err := st.Send(ctx, a, channelID, "m", SendOpts{}); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
+	}
+	if _, err := st.W.Exec(`UPDATE message SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second')`); err != nil {
+		t.Fatal(err)
 	}
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatalf("sweep with a full channel: %v", err)

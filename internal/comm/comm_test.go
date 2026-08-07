@@ -264,11 +264,49 @@ func TestAckDropsBodyButKeepsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("metadata row must survive ack: %v", err)
 	}
-	if m.Body != "" {
-		t.Fatalf("body must be dropped on ack, got %q", m.Body)
+	// THE BODY SURVIVES THE ACK. This inverts the behaviour this test used to
+	// assert, deliberately: destroying the body at ack destroyed 97% of one live
+	// deployment's message bodies (153 of 159) through the ordinary, instructed
+	// path. The un-acked inbox was not a safety net, it was the archive, and ack
+	// was the instruction to burn the only copy.
+	if m.Body != "body-here" {
+		t.Fatalf("body was destroyed on ack, got %q — retention is %ds", m.Body, DefaultLimits().BodyRetentionSeconds)
 	}
 	if m.State != "acked" || m.BodyBytes != len("body-here") {
 		t.Fatalf("metadata not preserved: %+v", m)
+	}
+}
+
+// The historical behaviour is still reachable, exactly, by setting retention to 0.
+// An operator who wants comm to be a pure conduit keeps that, and the CONTROL
+// matters as much as the feature: without this, "bodies survive" could be true
+// because the blanking code is dead rather than because retention governs it.
+func TestZeroRetentionRestoresBlankOnAck(t *testing.T) {
+	ctx := context.Background()
+	l := DefaultLimits()
+	l.BodyRetentionSeconds = 0
+	st := newStore(t, l)
+	a, b, channelID := pair(t, st)
+
+	sent, err := st.Send(ctx, a, channelID, "body-here", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Ack(ctx, b, sent.MessageID); err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.MessageByID(ctx, sent.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Body != "" {
+		t.Fatalf("retention 0 must blank on ack, got %q", m.Body)
+	}
+	if m.BodyBytes != len("body-here") {
+		t.Fatalf("body_bytes must survive for accounting: %+v", m)
 	}
 }
 
@@ -350,8 +388,17 @@ func TestRequestResponseCorrelation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.ReplyDeadlineAt == "" {
-		t.Fatal("requires_response must arm a reply deadline")
+	// NOT armed at send: a deadline that starts before the recipient can know the
+	// message exists is a deadline against the transport, not against the peer.
+	if req.ReplyDeadlineAt != "" {
+		t.Fatalf("a deadline was armed at SEND: %q", req.ReplyDeadlineAt)
+	}
+	delivered, err := st.Poll(ctx, b, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered) != 1 || delivered[0].ReplyDeadlineAt == "" {
+		t.Fatalf("delivery must arm the reply deadline: %+v", delivered)
 	}
 
 	pending, err := st.PendingReplies(ctx, a)
@@ -495,7 +542,7 @@ func TestRevokedChannelStopsTraffic(t *testing.T) {
 func TestSweepExpiresDeliveredButUnackedMessages(t *testing.T) {
 	ctx := context.Background()
 	l := DefaultLimits()
-	l.MessageTTLSeconds = -1 // already expired at insert
+	l.MessageTTLSeconds = -1 // the DELIVERED clock: expired the instant it lands
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
@@ -503,9 +550,12 @@ func TestSweepExpiresDeliveredButUnackedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An expired message is never delivered.
-	if got, err := st.Poll(ctx, b, 10); err != nil || len(got) != 0 {
-		t.Fatalf("expired message was polled: %d %v", len(got), err)
+	// It must be DELIVERED first — which is what this test has always been named
+	// for and never actually did. Under the old send-anchored clock the message
+	// was already expired at insert, so the poll below returned nothing and the
+	// "delivered but unacked" path was never exercised at all.
+	if got, err := st.Poll(ctx, b, 10); err != nil || len(got) != 1 {
+		t.Fatalf("message was not delivered: %d %v", len(got), err)
 	}
 
 	expired, _, err := st.Sweep(ctx)
@@ -519,6 +569,9 @@ func TestSweepExpiresDeliveredButUnackedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Delivered-then-expired DOES drop the body: the recipient had it and did
+	// nothing. Only a message nobody ever saw keeps its text (see the undelivered
+	// case), because there "expired" would otherwise mean permanently unknowable.
 	if m.State != "expired" || m.Body != "" {
 		t.Fatalf("expired message not cleaned: %+v", m)
 	}

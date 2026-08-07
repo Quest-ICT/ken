@@ -82,7 +82,16 @@ func (s *Store) Send(ctx context.Context, ep *Endpoint, channelID, body string, 
 		return nil, err
 	}
 
-	ttl := clampTTL(opts.TTLSeconds, s.lim().MessageTTLSeconds)
+	// The send-time stamp is the UNDELIVERED backstop, not the message's real
+	// lifetime: the delivered clock is armed at first delivery (see Poll). A
+	// sender's ttl_seconds therefore means "how long should this stay deliverable
+	// while nobody has picked it up", which is the only lifetime a sender can
+	// meaningfully choose.
+	undelivered := s.lim().UndeliveredTTLSeconds
+	if undelivered <= 0 || undelivered < s.lim().MessageTTLSeconds {
+		undelivered = DefaultLimits().UndeliveredTTLSeconds
+	}
+	ttl := clampTTL(opts.TTLSeconds, undelivered)
 
 	var out *Message
 	err = s.tx(ctx, func(t *sql.Tx) error {
@@ -143,10 +152,13 @@ SELECT id FROM message WHERE message_id=? AND channel_id=? AND recipient_endpoin
 			return err
 		}
 
+		// NO deadline at send. It is armed at FIRST DELIVERY (see Poll), because a
+		// deadline anchored at send starts running while the recipient has no way
+		// to know the message exists: measured median delivery latency is 11 min,
+		// p90 144 min, max 23.7 h, against a 1 h default — 18% of messages used to
+		// arrive with the deadline already blown, which made the retention the
+		// deadline governs dead on arrival for nearly a fifth of all traffic.
 		var deadline any
-		if opts.RequiresResponse {
-			deadline = nowExpr(s.lim().ReplyDeadlineSeconds)
-		}
 
 		// Every placeholder is a plain `?`: mixing `?` with explicit `?N` in one
 		// statement renumbers the auto-assigned ones and silently binds the wrong
@@ -365,7 +377,14 @@ VALUES(?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?), ?)`,
 // sees the whole order. That is the price of letting a second session help without
 // severing the first.
 func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, error) {
-	if limit <= 0 || limit > 100 {
+	// Asking for MORE than the ceiling must give you the CEILING, not less than it.
+	// This used to collapse both cases to 50: measured with 64 queued, limit=100
+	// returned 64 but limit=101 returned 50, so a hub asking for everything got
+	// half — a trap that punishes exactly the caller trying to drain its backlog.
+	if limit > 100 {
+		limit = 100
+	}
+	if limit <= 0 {
 		limit = 50
 	}
 	var out []Message
@@ -447,12 +466,30 @@ WHERE message_id=?
 					continue
 				}
 			}
+			// FIRST DELIVERY ARMS BOTH CLOCKS, and only the first: the COALESCE
+			// guards on first_delivered_at mean a redelivery does not restart
+			// either one, or a peer could hold a message open indefinitely by
+			// polling without acking.
+			//
+			//   expires_at        -> now + MessageTTL. Until this moment the row
+			//                        carried the UNDELIVERED backstop, because a
+			//                        message nobody has seen has not had its
+			//                        chance yet and must survive a weekend.
+			//   reply_deadline_at -> now + ReplyDeadline, when a response is owed.
+			//
+			// Both were previously stamped at SEND, which ran them during exactly
+			// the window in which the recipient could not act.
 			if _, err := t.ExecContext(ctx, `
 UPDATE message
 SET state='delivered',
     delivery_count = delivery_count + 1,
+    expires_at = CASE WHEN first_delivered_at IS NULL
+                      THEN strftime('%Y-%m-%dT%H:%M:%fZ','now',?) ELSE expires_at END,
+    reply_deadline_at = CASE WHEN first_delivered_at IS NULL AND requires_response=1
+                             THEN strftime('%Y-%m-%dT%H:%M:%fZ','now',?) ELSE reply_deadline_at END,
     first_delivered_at = COALESCE(first_delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-WHERE message_id=?`, id); err != nil {
+WHERE message_id=?`,
+				nowExpr(s.lim().MessageTTLSeconds), nowExpr(s.lim().ReplyDeadlineSeconds), id); err != nil {
 				return err
 			}
 			m, err := messageByID(ctx, t, id)
@@ -483,6 +520,7 @@ WHERE message_id=?`, id); err != nil {
 // deadline passes: a responder that crashed and recovered plausibly needs to
 // re-read what it owes.
 func (s *Store) Ack(ctx context.Context, ep *Endpoint, messageID string) error {
+	blankNow := s.lim().BodyRetentionSeconds <= 0
 	// The recipient predicate mirrors Poll's, and it MUST: a bound reader can be
 	// handed a message addressed to a DIFFERENT endpoint of its station — that is the
 	// whole point of the station owning the inbox — so an ack scoped to this
@@ -495,19 +533,19 @@ UPDATE message
 SET state='acked',
     acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
     claimed_by_endpoint=NULL, claim_expires_at=NULL,
-    body = CASE WHEN requires_response=1 AND replied_by IS NULL THEN body ELSE NULL END
+    body = CASE WHEN ? THEN NULL ELSE body END
 WHERE message_id=?
   AND recipient_endpoint IN (SELECT id FROM endpoint WHERE station_id=?)
-  AND state IN ('queued','delivered')`, messageID, ep.StationID)
+  AND state IN ('queued','delivered')`, blankNow, messageID, ep.StationID)
 		return err
 	}
 	_, err := s.W.ExecContext(ctx, `
 UPDATE message
 SET state='acked',
     acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-    body = CASE WHEN requires_response=1 AND replied_by IS NULL THEN body ELSE NULL END
+    body = CASE WHEN ? THEN NULL ELSE body END
 WHERE message_id=? AND recipient_endpoint=? AND state IN ('queued','delivered')`,
-		messageID, ep.ID)
+		blankNow, messageID, ep.ID)
 	return err
 }
 
@@ -515,6 +553,7 @@ WHERE message_id=? AND recipient_endpoint=? AND state IN ('queued','delivered')`
 // including seq. Cumulative acking collapses ack chatter and is idempotent by
 // construction, which is why it exists alongside per-message Ack.
 func (s *Store) AckUpTo(ctx context.Context, ep *Endpoint, channelID string, seq int64) error {
+	blankNow := s.lim().BodyRetentionSeconds <= 0
 	ch, peer, err := s.ChannelFor(ctx, ep, channelID)
 	if err != nil {
 		return err
@@ -527,19 +566,19 @@ UPDATE message
 SET state='acked',
     acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
     claimed_by_endpoint=NULL, claim_expires_at=NULL,
-    body = CASE WHEN requires_response=1 AND replied_by IS NULL THEN body ELSE NULL END
-WHERE channel_id=? AND sender_endpoint=? AND seq<=? AND state IN ('queued','delivered')
+    body = CASE WHEN ? THEN NULL ELSE body END
+WHERE channel_id=? AND sender_endpoint=? AND seq<=? AND state='delivered'
   AND recipient_endpoint IN (SELECT id FROM endpoint WHERE station_id=?)`,
-			ch.ID, peer, seq, ep.StationID)
+			blankNow, ch.ID, peer, seq, ep.StationID)
 		return err
 	}
 	_, err = s.W.ExecContext(ctx, `
 UPDATE message
 SET state='acked',
     acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-    body = CASE WHEN requires_response=1 AND replied_by IS NULL THEN body ELSE NULL END
-WHERE channel_id=? AND sender_endpoint=? AND recipient_endpoint=? AND seq<=? AND state IN ('queued','delivered')`,
-		ch.ID, peer, ep.ID, seq)
+    body = CASE WHEN ? THEN NULL ELSE body END
+WHERE channel_id=? AND sender_endpoint=? AND recipient_endpoint=? AND seq<=? AND state='delivered'`,
+		blankNow, ch.ID, peer, ep.ID, seq)
 	return err
 }
 
@@ -611,9 +650,20 @@ WHERE state IN ('queued','delivered') AND kind='message' AND notified_at IS NULL
 		if err != nil {
 			return err
 		}
+		// Expiry marks the state but does NOT blank a body nobody ever read.
+		//
+		// It used to blank unconditionally, and that is how a 4 661-byte message
+		// requiring a response — sent 2026-08-02, expired undelivered a day later —
+		// became permanently unknowable to both parties. The sender is told it
+		// expired (step 3); keeping the text means "expired" is a fact they can act
+		// on rather than a hole. A DELIVERED message is different: the recipient had
+		// it and did nothing, so it follows the ordinary retention rule.
 		res, err := t.ExecContext(ctx, `
-UPDATE message SET state='expired', body=NULL
-WHERE state IN ('queued','delivered') AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+UPDATE message
+   SET state='expired',
+       body = CASE WHEN ? OR first_delivered_at IS NOT NULL THEN NULL ELSE body END
+WHERE state IN ('queued','delivered') AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+			s.lim().BodyRetentionSeconds <= 0)
 		if err != nil {
 			return err
 		}
@@ -632,12 +682,34 @@ WHERE requires_response=1 AND replied_by IS NULL AND kind='message' AND notified
 		if err != nil {
 			return err
 		}
-		if _, err := t.ExecContext(ctx, `
+		// RETENTION decides when a settled body goes — not the reply deadline.
+		//
+		// The old pass keyed on reply_deadline_at, so an acked message's text died
+		// one hour after it was SENT regardless of when it was read, and a message
+		// that asked no question was blanked at ack with no window at all. Between
+		// them those two rules destroyed 97% of one deployment's bodies through the
+		// documented poll/act/ack path.
+		//
+		// With retention at 0 the body is already gone at ack, so this pass finds
+		// nothing and the historical behaviour is preserved exactly.
+		//
+		// SCOPED TO DELIVERED MAIL. Retention runs from the moment a message
+		// SETTLED, and a message nobody ever received has no settle moment — there
+		// is no expired_at column and created_at is the wrong clock, because it
+		// would blank an unread body purely for having waited a long time, which is
+		// precisely the wait the delivery anchor exists to permit. An unread
+		// expired message therefore keeps its text until the metadata purge removes
+		// the whole row, which is bounded by MetadataTTLSeconds.
+		if r := s.lim().BodyRetentionSeconds; r > 0 {
+			if _, err := t.ExecContext(ctx, `
 UPDATE message SET body=NULL
-WHERE state='acked' AND body IS NOT NULL AND replied_by IS NULL
-  AND reply_deadline_at IS NOT NULL
-  AND reply_deadline_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`); err != nil {
-			return err
+WHERE body IS NOT NULL
+  AND state IN ('acked','expired')
+  AND first_delivered_at IS NOT NULL
+  AND COALESCE(acked_at, first_delivered_at) <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`,
+				nowExpr(-r)); err != nil {
+				return err
+			}
 		}
 
 		// 3. Deliver the failure notices through the ordinary poll path, so a client

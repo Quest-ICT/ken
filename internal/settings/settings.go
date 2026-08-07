@@ -54,13 +54,15 @@ type Values struct {
 	// They are bounds on an EPHEMERAL subsystem that shares a disk with the durable
 	// knowledge base, so the defaults are deliberately conservative: the failure
 	// they guard against is message traffic filling the volume and failing KB writes.
-	CommMaxBodyBytes    int
-	CommMaxUnacked      int
-	CommMessageTTLSec   int
-	CommMetadataTTLSec  int
-	CommReplyDeadlineS  int
-	CommPairingCodeTTLS int
-	CommPollWaitMaxSec  int
+	CommMaxBodyBytes      int
+	CommMaxUnacked        int
+	CommMessageTTLSec     int
+	CommUndeliveredTTLSec int
+	CommBodyRetentionSec  int
+	CommMetadataTTLSec    int
+	CommReplyDeadlineS    int
+	CommPairingCodeTTLS   int
+	CommPollWaitMaxSec    int
 	// CommProvenanceWindowSec is how recently a token must have RECEIVED an
 	// inter-session message for a version it authors to be marked as possible
 	// hearsay (docs/COMM.md §7). 0 disables the marking.
@@ -213,9 +215,15 @@ var Fields = []Field{
 	intField("comm_max_unacked", "Inter-session comms", "Max unacknowledged per channel",
 		"Backpressure. Past this a send is refused so two auto-processing sessions cannot loop unboundedly.",
 		func(v Values) int { return v.CommMaxUnacked }, func(v *Values, n int) { v.CommMaxUnacked = n }, 1, 100_000),
-	intField("comm_message_ttl_sec", "Inter-session comms", "Message lifetime (seconds)",
-		"How long an unacknowledged message stays deliverable before it expires. A TTL is not a quota.",
+	intField("comm_message_ttl_sec", "Inter-session comms", "Lifetime after delivery (seconds)",
+		"How long a DELIVERED but unacknowledged message survives. The clock starts when the recipient is first handed the message, not when it was sent — a session goes 16 h between pulls on a weeknight and 64 h over a weekend, so a send-anchored clock expired mail during the exact window nobody could read it.",
 		func(v Values) int { return v.CommMessageTTLSec }, func(v *Values, n int) { v.CommMessageTTLSec = n }, 60, 30*24*3600),
+	intField("comm_undelivered_ttl_sec", "Inter-session comms", "Lifetime before delivery (seconds)",
+		"Backstop for a message NOBODY has ever polled — it only bounds mail addressed to an endpoint that never comes back. Undelivered mail is bounded first by the per-channel unacknowledged cap, which is a volume limit and therefore immune to how long a human is away. Set this longer than the longest absence you expect: a fortnight's leave is 400 h.",
+		func(v Values) int { return v.CommUndeliveredTTLSec }, func(v *Values, n int) { v.CommUndeliveredTTLSec = n }, 3600, 90*24*3600),
+	intField("comm_body_retention_sec", "Inter-session comms", "Body retention after settling (seconds)",
+		"How long a message's TEXT survives after it is acknowledged or expires. ZERO restores the old behaviour of deleting the body the moment it is acknowledged — which destroyed 97% of one deployment's message bodies through the ordinary poll/act/acknowledge path, because the unacknowledged inbox was the only place a body ever existed.",
+		func(v Values) int { return v.CommBodyRetentionSec }, func(v *Values, n int) { v.CommBodyRetentionSec = n }, 0, 90*24*3600),
 	intField("comm_metadata_ttl_sec", "Inter-session comms", "Metadata retention (seconds)",
 		"How long a settled message's audit row survives. Bodies are deleted at acknowledgement regardless; this governs only the shell an operator can investigate.",
 		func(v Values) int { return v.CommMetadataTTLSec }, func(v *Values, n int) { v.CommMetadataTTLSec = n }, 60, 90*24*3600),
@@ -418,6 +426,8 @@ func DefaultsFromEnv() Values {
 		CommMaxBodyBytes:        64 * 1024,
 		CommMaxUnacked:          64,
 		CommMessageTTLSec:       24 * 3600,
+		CommUndeliveredTTLSec:   30 * 24 * 3600,
+		CommBodyRetentionSec:    24 * 3600,
 		CommMetadataTTLSec:      7 * 24 * 3600,
 		CommReplyDeadlineS:      3600,
 		CommPairingCodeTTLS:     900,

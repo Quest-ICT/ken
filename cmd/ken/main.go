@@ -864,6 +864,8 @@ func commLimits(s *settings.Snapshot) comm.Limits {
 		MaxBodyBytes:          s.CommMaxBodyBytes,
 		MaxUnackedPerChannel:  s.CommMaxUnacked,
 		MessageTTLSeconds:     s.CommMessageTTLSec,
+		UndeliveredTTLSeconds: s.CommUndeliveredTTLSec,
+		BodyRetentionSeconds:  s.CommBodyRetentionSec,
 		MetadataTTLSeconds:    s.CommMetadataTTLSec,
 		ReplyDeadlineSeconds:  s.CommReplyDeadlineS,
 		PairingCodeTTLSeconds: s.CommPairingCodeTTLS,
