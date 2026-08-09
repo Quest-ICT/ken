@@ -1062,8 +1062,18 @@ func trOr(tr *i18n.Manager, lang, key, fallback string) string {
 
 // settingsGroupKey maps a registry group display name to its i18n key
 // ("Rate limiting" -> "settings.group.rate_limiting").
+//
+// Hyphens collapse to underscores too, and that is a FIX rather than tidiness: the
+// only hyphenated group is "Inter-session comms", which derived
+// `settings.group.inter-session_comms` while all three bundles carried
+// `inter_session_comms`. The key never matched, so the Spanish and French headings
+// sat in the files unreachable and every operator saw the English one — silently,
+// because trOr falls back to the group's display name, which in English is
+// indistinguishable from success. Found by the test that asserts every group has a
+// heading; nothing else could see it, since the visible result was correct English.
 func settingsGroupKey(group string) string {
-	return "settings.group." + strings.ToLower(strings.ReplaceAll(group, " ", "_"))
+	s := strings.ToLower(group)
+	return "settings.group." + strings.NewReplacer(" ", "_", "-", "_").Replace(s)
 }
 
 func buildSettingsGroups(v settings.Values, tr *i18n.Manager, lang string) []settingsGroup {
