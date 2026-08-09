@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -885,11 +886,33 @@ func commLimits(s *settings.Snapshot) comm.Limits {
 // commRelevant is the changed-subset key for COMM settings: a settings edit
 // rebuilds the subsystem's limits only when one of these actually moved.
 func commRelevant(v settings.Values) string {
-	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%t|%d|%d|%d|%d|%d|%d|%d",
-		v.CommMaxBodyBytes, v.CommMaxUnacked, v.CommMessageTTLSec, v.CommMetadataTTLSec,
-		v.CommReplyDeadlineS, v.CommPairingCodeTTLS, v.CommPollWaitMaxSec, v.CommProvenanceWindowSec,
-		v.CommFilesEnabled, v.CommFileMaxMB, v.CommFileBudgetMB, v.CommFileMinFreeMB,
-		v.CommFileTTLSec, v.CommGrantTTLSec, v.CommEndpointIdleTTLSec, v.CommClaimLeaseSec)
+	// REFLECTED over every Comm* field rather than hand-listed, and that is the whole
+	// point of the change: the hand-written format string silently omitted
+	// CommUndeliveredTTLSec and CommBodyRetentionSec when they were added, so the
+	// console saved them, reported success, and the running store never heard about
+	// them. An operator setting comm_body_retention_sec=0 mid-incident — the exact
+	// remedy its own help text recommends — got no effect and no warning.
+	//
+	// The miss was invisible to TestCommLimitsMapsEverySetting, which guards the
+	// MAPPING and cannot see the change DETECTOR: both are hand-maintained lists of
+	// the same fields, and only one had a test. Reflection deletes the class rather
+	// than fixing the instance, so the next setting is included by existing.
+	//
+	// Every Comm* field is genuinely relevant — all 18 reach either comm.Limits or
+	// the poll-wait ceiling — so the prefix is the correct filter and not a
+	// convenient one. A future Comm* field that is NOT a live concern would make
+	// this over-trigger, which costs one redundant SetLimits call and never a
+	// missed one; that is the right direction to fail.
+	rv := reflect.ValueOf(v)
+	rt := rv.Type()
+	var b strings.Builder
+	for i := 0; i < rt.NumField(); i++ {
+		if !strings.HasPrefix(rt.Field(i).Name, "Comm") {
+			continue
+		}
+		fmt.Fprintf(&b, "%s=%v|", rt.Field(i).Name, rv.Field(i).Interface())
+	}
+	return b.String()
 }
 
 // registerCommCollectors exposes COMM gauges on the existing /metrics endpoint.

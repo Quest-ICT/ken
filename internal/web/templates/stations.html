@@ -290,9 +290,9 @@
           <td>{{.NameB}}</td>
           <td><span class="badge">{{.State}}</span></td>
           <td data-sort="{{.ApprovedAt}}">{{localtime .ApprovedAt}}</td>
-          <td data-sort="{{.LiveChannels}}">{{if .LiveChannels}}{{.LiveChannels}}{{else}}&mdash;{{end}}</td>
+          <td data-sort="{{.LiveChannels}}">{{if .KnownLive}}{{.LiveChannels}}{{else}}?{{end}}</td>
           <td>
-            {{if ne .State "revoked"}}
+            {{if or (ne .State "revoked") .LiveChannels}}
             <form class="inline" method="post" action="/stations/links/{{.LinkID}}/revoke"
                   data-confirm="{{$.T "stations.link_revoke_confirm" .NameA .NameB .LiveChannels}}">
               <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">

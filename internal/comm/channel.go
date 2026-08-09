@@ -266,16 +266,20 @@ WHERE channel_id=? AND state<>'revoked'`, channelID)
 }
 
 // openChannelsBetweenStations is the pair predicate shared by the count and the
-// revoke below. It matches on STATIONS rather than endpoints, and in both column
-// orders, for the same reason OpenLinkedChannel does: which seat a station took is
-// an accident of who opened the channel, and a replacement session on either side
-// must be found by the same query that found its predecessor.
+// revoke below. Both column orders are matched because which seat a station took is
+// an accident of who opened the channel.
+//
+// It reads the SNAPSHOT on the channel row, never a JOIN to the endpoint's current
+// station_id. Binding is mutable by an agent tool: an earlier version derived the
+// pair at query time, so a single comm_unbind — the path comm_unbind's own
+// description recommends — made a channel invisible to the revocation meant to end
+// it, while the console reported "0 live channels" and the sweep closed none. The
+// mirror case severed an UNRELATED link's traffic. Authorisation is a fact about the
+// past and must not be re-derived from state that has moved. See migration 0008.
 const openChannelsBetweenStations = `
   FROM channel c
-  JOIN endpoint ea ON ea.id = c.endpoint_a
-  JOIN endpoint eb ON eb.id = c.endpoint_b
  WHERE c.state='open'
-   AND ((ea.station_id=? AND eb.station_id=?) OR (ea.station_id=? AND eb.station_id=?))`
+   AND ((c.station_a=? AND c.station_b=?) OR (c.station_a=? AND c.station_b=?))`
 
 // CountOpenChannelsBetweenStations reports how much live traffic revoking a link
 // would end. It exists to be shown BEFORE the click: S6 asks for the blast radius
@@ -387,12 +391,7 @@ func (s *Store) OpenLinkedChannel(ctx context.Context, a, b *Endpoint, ownerActo
 		// instead of starting a parallel one.
 		var existing string
 		err := t.QueryRowContext(ctx, `
-SELECT c.channel_id
-  FROM channel c
-  JOIN endpoint ea ON ea.id = c.endpoint_a
-  JOIN endpoint eb ON eb.id = c.endpoint_b
- WHERE c.state='open'
-   AND ((ea.station_id=? AND eb.station_id=?) OR (ea.station_id=? AND eb.station_id=?))
+SELECT c.channel_id`+openChannelsBetweenStations+`
  LIMIT 1`, a.StationID, b.StationID, b.StationID, a.StationID).Scan(&existing)
 		if err == nil {
 			ch, _, cerr := s.channelByPublicID(ctx, t, existing)
@@ -408,9 +407,11 @@ SELECT c.channel_id
 			return err
 		}
 		res, err := t.ExecContext(ctx, `
-INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, opened_at, label)
-VALUES(?,?,?,?,?, 'open', strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?)`,
-			channelID, a.Owner.SpaceID, ownerActorID, a.ID, b.ID, nullStr(label))
+INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, opened_at, label,
+                    station_a, station_b)
+VALUES(?,?,?,?,?, 'open', strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?)`,
+			channelID, a.Owner.SpaceID, ownerActorID, a.ID, b.ID, nullStr(label),
+			a.StationID, b.StationID)
 		if err != nil {
 			return err
 		}

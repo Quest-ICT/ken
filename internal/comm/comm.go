@@ -117,9 +117,14 @@ type Limits struct {
 	// was not a safety net; it was the archive, and acking was the instruction to
 	// destroy the only copy.
 	BodyRetentionSeconds int
-	// MetadataTTLSeconds is how long a settled (acked/expired) message's metadata
-	// row survives after creation. Bodies are dropped at ack; this governs only
-	// the audit shell.
+	// MetadataTTLSeconds is how long a settled (acked/expired) message's row
+	// survives after creation.
+	//
+	// It is no longer only the audit shell. Bodies survive acknowledgement now, and
+	// a body that was NEVER DELIVERED cannot be reclaimed by BodyRetentionSeconds —
+	// retention measures from the settle time and an unread message has none — so
+	// this is the sole bound on that population. An operator raising it for a longer
+	// audit trail is also raising retained bytes.
 	MetadataTTLSeconds int
 	// ReplyDeadlineSeconds is the default deadline applied to a message that
 	// requires a response.

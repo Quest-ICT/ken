@@ -119,24 +119,35 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	// in front of the human BEFORE the click rather than discovered after it. Same
 	// bounded N+1 as the per-station detail above, and for the same reason.
 	//
-	// COMM off means no channels exist to count, not that the count is unknown: the
-	// field stays 0 and the template shows the plain confirmation. Faking a number
-	// here would be worse than omitting one.
+	// COUNTED FOR REVOKED LINKS TOO. Skipping them hid the single state this column
+	// exists to expose: a revocation whose channel sweep failed leaves the permission
+	// gone and the conversation running, and rendering that as an em-dash made the
+	// half-finished case look exactly like the finished one.
+	//
+	// KnownLive distinguishes "zero" from "not asked". With COMM off this package
+	// holds no comm handle, so the count is UNKNOWN — comm.db and every open channel
+	// in it outlive the server flag, and reporting 0 would assert a fact nobody
+	// checked. Two fields rather than one because a bare int cannot say "unknown".
 	type linkView struct {
 		store.StationLink
 		LiveChannels int
+		KnownLive    bool
 	}
 	linkViews := make([]linkView, 0, len(links))
 	for _, l := range links {
 		v := linkView{StationLink: l}
-		if a.comm != nil && l.State != "revoked" {
+		if a.comm != nil {
 			n, err := a.comm.CountOpenChannelsBetweenStations(ctx, l.StationA, l.StationB)
 			if err != nil {
+				// DEGRADE, never 500. comm.db is the EXPENDABLE database and this
+				// page is gated on the stations flag alone — tying the whole
+				// operator surface (pending requests, station keys, the
+				// cross-station task list) to a comm.db failure would hide a
+				// feature that is running perfectly well.
 				log.Printf("web: link live channels %s: %v", l.LinkID, err)
-				http.Error(w, "internal error", http.StatusInternalServerError)
-				return
+			} else {
+				v.LiveChannels, v.KnownLive = n, true
 			}
-			v.LiveChannels = n
 		}
 		linkViews = append(linkViews, v)
 	}
@@ -153,10 +164,15 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 //
 // Two writes, in this order and not the other: the link first, so the permission is
 // gone even if the channel sweep fails, then the channels. A failure after the link
-// write leaves a revoked permission with live traffic — visible, reported, and
-// fixable from the /comm console — whereas the reverse order could leave severed
-// traffic under a permission that still reads as active, which looks like a bug in
-// COMM rather than a half-finished revocation.
+// write leaves a revoked permission with live traffic.
+//
+// An earlier version of this comment claimed that state was "visible, reported, and
+// fixable", and all three were false: the page skipped the channel count for revoked
+// links, the template hid the button, and a retry short-circuited on ErrNotFound
+// BEFORE reaching the sweep. The half-finished revocation was invisible and
+// permanently unrecoverable from this page. It is now RETRYABLE — an already-revoked
+// link falls through to the sweep instead of erroring — which is what makes the
+// ordering argument true rather than merely plausible.
 //
 // S9's approval is per relationship, so its withdrawal is too. This is the operator
 // brake that a durable roster needs before it can replace a pairing code: a
@@ -182,25 +198,34 @@ func (a *app) handleStationLinkRevoke(w http.ResponseWriter, r *http.Request, se
 		flashRedirect(w, r, "/stations", "flash.station_link_revoke_failed", err.Error())
 		return
 	}
-	if err := a.store.RevokeStationLink(r.Context(), id); err != nil {
+	// ErrNotFound here means "already revoked" — StationLinkByID above proved the row
+	// exists. Falling through is deliberate: it is what makes a retry able to finish a
+	// sweep that failed the first time. Treating it as an error is what made the
+	// half-done state permanent.
+	if err := a.store.RevokeStationLink(r.Context(), id); err != nil && !errors.Is(err, store.ErrNotFound) {
 		flashRedirect(w, r, "/stations", "flash.station_link_revoke_failed", err.Error())
 		return
 	}
 
 	pair := link.NameA + " / " + link.NameB
 	closed := 0
-	if a.comm != nil {
-		n, err := a.comm.RevokeChannelsBetweenStations(r.Context(), link.StationA, link.StationB)
-		if err != nil {
-			// The permission is already gone; say so, and say what did NOT happen, so
-			// the operator knows to finish the job on /comm rather than assuming the
-			// whole action failed and retrying it.
-			log.Printf("web: revoke channels for link %s: %v", id, err)
-			flashRedirect(w, r, "/stations", "flash.station_link_revoked_channels_failed", pair)
-			return
-		}
-		closed = n
+	if a.comm == nil {
+		// COMM is off in THIS server, which says nothing about comm.db: open channels
+		// outlive the flag. Do not claim none were open — that is a fact nobody
+		// checked, and re-enabling COMM later would resume a conversation the
+		// operator was told had been fully withdrawn.
+		flashRedirect(w, r, "/stations", "flash.station_link_revoked_comm_off", pair)
+		return
 	}
+	n, err := a.comm.RevokeChannelsBetweenStations(r.Context(), link.StationA, link.StationB)
+	if err != nil {
+		// The permission is already gone; say so, and say what did NOT happen, so the
+		// operator knows to retry — which now works.
+		log.Printf("web: revoke channels for link %s: %v", id, err)
+		flashRedirect(w, r, "/stations", "flash.station_link_revoked_channels_failed", pair)
+		return
+	}
+	closed = n
 	// Two keys rather than one with a spliced count: flash carries a single argument,
 	// and a number formatted into the argument would arrive in the operator's language
 	// with an English "channels closed" glued to it. The exact count is on the page.

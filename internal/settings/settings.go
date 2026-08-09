@@ -225,7 +225,7 @@ var Fields = []Field{
 		"How long a message's TEXT survives after it is acknowledged or expires. ZERO restores the old behaviour of deleting the body the moment it is acknowledged — which destroyed 97% of one deployment's message bodies through the ordinary poll/act/acknowledge path, because the unacknowledged inbox was the only place a body ever existed.",
 		func(v Values) int { return v.CommBodyRetentionSec }, func(v *Values, n int) { v.CommBodyRetentionSec = n }, 0, 90*24*3600),
 	intField("comm_metadata_ttl_sec", "Inter-session comms", "Metadata retention (seconds)",
-		"How long a settled message's audit row survives. Bodies are deleted at acknowledgement regardless; this governs only the shell an operator can investigate.",
+		"How long a settled message's row survives after it was created. NOTE: since bodies now survive acknowledgement (see Body retention), this is also the ONLY bound on a body that was never delivered — retention cannot reclaim one, because a message nobody received has no settle time to measure from. Raising this for a longer audit trail multiplies retained undelivered bytes with it.",
 		func(v Values) int { return v.CommMetadataTTLSec }, func(v *Values, n int) { v.CommMetadataTTLSec = n }, 60, 90*24*3600),
 	intField("comm_reply_deadline_sec", "Inter-session comms", "Reply deadline (seconds)",
 		"Default deadline for a message that requires a response; past it the sender is told the reply is overdue instead of waiting forever.",

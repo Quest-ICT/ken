@@ -113,3 +113,110 @@ func TestRevokeChannelsBetweenStationsToleratesNothingToDo(t *testing.T) {
 		}
 	}
 }
+
+// AN AGENT MUST NOT BE ABLE TO HIDE ITS CHANNEL FROM THE OPERATOR'S REVOKE.
+//
+// The pair used to be derived by JOINing endpoint at query time, so it read the
+// endpoint's CURRENT binding rather than the one that authorised the channel. A
+// single comm_unbind — which comm_unbind's own tool description RECOMMENDS, and
+// which needs no voucher and no human — made the channel match nothing: the console
+// showed 0 live channels, the sweep closed 0, and the flash said "No channels were
+// open" while both sides kept talking under a withdrawn permission.
+//
+// This is the instructed path, not an attack, which is what made it serious.
+func TestUnbindingCannotHideAChannelFromRevocation(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	mk := func(tok, label, station, key string) *Endpoint {
+		t.Helper()
+		ep, _, err := st.RegisterEndpoint(ctx, owner(tok), label, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bindEndpoint(t, st, ep, station, key)
+	}
+	dev := mk("tok-dev", "dev", "stn_dev", "kens_dev")
+	prod := mk("tok-prod", "prod", "stn_prod", "kens_prod")
+
+	ch, err := st.OpenLinkedChannel(ctx, dev, prod, 1, "dev <-> prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// CONTROL: visible before the unbind, so a later zero cannot be blamed on setup.
+	if n, _ := st.CountOpenChannelsBetweenStations(ctx, "stn_dev", "stn_prod"); n != 1 {
+		t.Fatalf("setup: blast radius %d before unbind, want 1", n)
+	}
+
+	// The evasion, in one agent tool call.
+	if err := st.UnbindEndpointFromStation(ctx, dev.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.CountOpenChannelsBetweenStations(ctx, "stn_dev", "stn_prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("after comm_unbind the console shows %d live channels, want 1 — an agent hid its conversation from the operator's brake", n)
+	}
+	closed, err := st.RevokeChannelsBetweenStations(ctx, "stn_dev", "stn_prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed != 1 {
+		t.Fatalf("revoke closed %d, want 1 — the permission ended and the conversation did not", closed)
+	}
+	if _, err := st.Send(ctx, prod, ch.ChannelID, "still talking?", SendOpts{}); err == nil {
+		t.Fatal("the channel still carries traffic after its link was revoked")
+	}
+}
+
+// And the mirror: revoking one relationship must not sever ANOTHER one's traffic.
+//
+// With the pair derived from live bindings, rebinding an endpoint moved its existing
+// channels under a different pair — so infra's channel with prod became invisible to
+// infra/prod's own revoke AND was killed by revoking the unrelated dev/prod link.
+func TestRebindingDoesNotMoveAChannelUnderAnotherLink(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	mk := func(tok, label, station, key string) *Endpoint {
+		t.Helper()
+		ep, _, err := st.RegisterEndpoint(ctx, owner(tok), label, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bindEndpoint(t, st, ep, station, key)
+	}
+	infra := mk("tok-infra", "infra", "stn_infra", "kens_infra")
+	prod := mk("tok-prod", "prod", "stn_prod", "kens_prod")
+
+	ch, err := st.OpenLinkedChannel(ctx, infra, prod, 1, "infra <-> prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// infra's session ends and its endpoint is re-bound to a different station.
+	if err := st.UnbindEndpointFromStation(ctx, infra.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BindEndpointToStation(ctx, infra.EndpointID, "stn_dev", "kens_dev"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The channel still belongs to the pair that AUTHORISED it.
+	if n, _ := st.CountOpenChannelsBetweenStations(ctx, "stn_infra", "stn_prod"); n != 1 {
+		t.Fatalf("infra<->prod sees %d of its own channels after a rebind, want 1", n)
+	}
+	// And revoking the unrelated dev/prod link must not touch it.
+	closed, err := st.RevokeChannelsBetweenStations(ctx, "stn_dev", "stn_prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed != 0 {
+		t.Fatalf("revoking dev<->prod closed %d channel(s) belonging to infra<->prod", closed)
+	}
+	if _, err := st.Send(ctx, prod, ch.ChannelID, "unrelated traffic", SendOpts{}); err != nil {
+		t.Fatalf("an unrelated link's revoke severed this channel: %v", err)
+	}
+}
