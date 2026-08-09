@@ -337,10 +337,10 @@ func (a *app) handleStationKey(w http.ResponseWriter, r *http.Request, sess *sto
 		flashRedirect(w, r, "/stations", "flash.station_key_label_required", "")
 		return
 	}
-	scopes := []string{"station"}
-	if r.FormValue("locker") == "1" {
-		scopes = append(scopes, "station-locker")
-	}
+	// Both scopes, always. The locker is part of a station rather than an extra, and
+	// the server now gates it on `station` alone — station-locker is written only so
+	// the key's recorded scope list keeps describing what it can do.
+	scopes := []string{"station", "station-locker"}
 	key, err := a.store.IssueStationKey(r.Context(), sess.ActorID, r.PathValue("id"), label, scopes)
 	if err != nil {
 		flashRedirect(w, r, "/stations", "flash.station_key_failed", err.Error())

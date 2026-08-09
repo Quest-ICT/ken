@@ -599,17 +599,24 @@ func newServer(d Deps) *mcp.Server {
 	return s
 }
 
-// requireLocker adds the reserved second scope on top of a station. Separated so the
-// locker can be withheld from a key that should only keep notes and tasks.
+// requireLocker gates the locker on the STATION scope alone. The locker is part of
+// what a station IS, not an extra a key may be denied.
+//
+// It shipped as a separate withholdable scope, on the reasoning that a key which only
+// keeps notes and tasks should not also carry files. In practice that produced a
+// station whose capabilities depended on which key a session happened to be handed —
+// so "does this station have a locker" had no answer, only "does this key". A session
+// discovering the locker missing cannot tell an intentionally restricted key from a
+// misconfigured one, and the locker is exactly where a fresh session on a new machine
+// finds what it needs to reconstitute itself.
+//
+// ScopeStationLocker is NOT removed from the vocabulary: existing keys carry it, and
+// COMPATIBILITY.md reserves `station` and `station-locker` together precisely so they
+// can be merged later — "splitting a shipped scope is a MAJOR, merging two is free".
+// This is that merge. The constant stays so an old key's scope list still parses and
+// so nothing has to migrate.
 func requireLocker(ctx context.Context) (*principal, error) {
-	p, err := requireStation(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !p.Scopes[ScopeStationLocker] {
-		return nil, errors.New("this key lacks the station-locker scope")
-	}
-	return p, nil
+	return requireStation(ctx)
 }
 
 // hearsayFor computes the write-time hearsay marking (§7) — whether this session had

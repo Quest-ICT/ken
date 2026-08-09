@@ -17,6 +17,24 @@ same change — never "docs later".
 
 ### Changed
 
+- **The locker belongs to every station; it is no longer a withholdable scope.** The
+  server gates it on `station` alone. It shipped behind its own `station-locker` scope
+  so a key could keep notes and tasks without storing files — which made a station's
+  capabilities depend on which KEY a session happened to be handed, so "does this
+  station have a locker" had no answer, only "does this key". A session finding it
+  absent could not distinguish a deliberately restricted key from a misconfigured one,
+  and the locker is exactly where a fresh session on a new machine finds what it needs
+  to reconstitute itself.
+
+  `station-locker` stays in the vocabulary and is still written onto new keys, so an
+  existing key's scope list keeps describing what it can do and nothing migrates. This
+  is the merge `COMPATIBILITY.md` reserved the pair for — "splitting a shipped scope is
+  a MAJOR, merging two is free". The console's per-key locker checkbox is gone, and
+  `ken station key --locker` is accepted as a no-op that says so rather than failing a
+  script over a flag that now grants what is granted anyway.
+
+### Changed
+
 - **COMM and stations are CORE, on by default.** `KEN_COMM_ENABLED` and
   `KEN_STATION_ENABLED` no longer have to be set to `1` to switch a surface on; both
   default to **on** and the variables survive **inverted**, as opt-*outs*. `=0` (also

@@ -156,7 +156,6 @@ Stations — durable AI working identities; CORE, on by default (see docs/STATIO
                     a station is created and NAMED by a human; a session staffs it
                     create it, then mint its key:  ken station add --name prod-ops
                                                    ken station key --station prod-ops --label laptop
-                    (add --locker to that key for the file locker)
                     NOT ken token add: /station needs a kens_ key BOUND to a station,
                     which only ken station key mints
                     a token holds knowledge-base, comm, or station scopes — station and

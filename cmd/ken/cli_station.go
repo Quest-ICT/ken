@@ -69,7 +69,7 @@ func runStation(args []string) {
 		label := fs.String("label", "", "which machine this key is for, e.g. laptop (recommended)")
 		actor := fs.String("actor", "", "actor to mint under — MUST match this machine's comm token actor")
 		kind := fs.String("kind", "ai", "actor kind: ai|human. A session's credential is an ai actor, matching `ken token add`")
-		locker := fs.Bool("locker", false, "also grant the station-locker scope")
+		locker := fs.Bool("locker", false, "DEPRECATED and ignored — the locker is part of every station now")
 		_ = fs.Parse(args[1:])
 		if *name == "" {
 			die("--station is required")
@@ -82,9 +82,16 @@ func runStation(args []string) {
 		}
 		must(err)
 		actorID := mustStationActor(ctx, st, *actor, *kind)
-		scopes := []string{"station"}
+		// Both, always. The locker is part of what a station IS, and the server gates
+		// it on `station` alone; station-locker is written only so the key's recorded
+		// scope list keeps describing what it can do.
+		scopes := []string{"station", "station-locker"}
 		if *locker {
-			scopes = append(scopes, "station-locker")
+			// Kept as an accepted no-op rather than removed. It grants exactly what is
+			// granted anyway, so failing a script over it would break something for no
+			// difference in outcome — but silence would leave the operator believing a
+			// flag still selects something. Say it, then carry on.
+			fmt.Println("note: --locker is deprecated and ignored; every station key now reaches the locker.")
 		}
 		key, err := st.IssueStationKey(ctx, actorID, s.StationID, *label, scopes)
 		must(err)

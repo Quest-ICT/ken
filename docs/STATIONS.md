@@ -504,6 +504,15 @@ transfer collides on it, and every station is expected to have one.
 the reasoning that reserved `comm-file` beside `comm`: splitting a shipped scope later is a MAJOR,
 merging two is free.
 
+**That merge has now happened, and it is why the reservation was worth making.** The locker is gated
+on `station` alone: every station key reaches it. It shipped withholdable so a key could keep notes
+and tasks without storing files, and that turned out to make a station's capabilities depend on which
+KEY a session happened to be handed — so "does this station have a locker" had no answer, only "does
+this key". A session finding it absent could not tell a deliberately restricted key from a
+misconfigured one, and the locker is precisely where a fresh session on a new machine finds what it
+needs to reconstitute itself. `station-locker` stays in the vocabulary and is still written onto new
+keys, so an existing key's scope list keeps describing what it can do and nothing has to migrate.
+
 **The scope-mixing rule must be fixed in the same commit.** `station` is not in `validScopes` today, so
 nothing mints yet; the hazard is what happens the moment it is added. `checkScopeMix` buckets every
 non-comm scope as knowledge-base, so `station` would immediately be treated as a KB scope — allowing

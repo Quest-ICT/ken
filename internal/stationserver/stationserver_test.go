@@ -152,18 +152,41 @@ func TestInstructionsCarryTheRelaySentence(t *testing.T) {
 	}
 }
 
-// The locker is gated on its own reserved scope, so a key may keep notes and tasks
-// without being able to store files.
-func TestLockerRequiresItsOwnScope(t *testing.T) {
+// The locker belongs to the STATION, not to a key. Every station key reaches it.
+//
+// It shipped behind its own withholdable scope so a key could keep notes and tasks
+// without storing files. That made a station's capabilities depend on which key a
+// session happened to be handed, so "does this station have a locker" had no answer —
+// only "does this key" — and a session finding it absent could not tell a deliberately
+// restricted key from a misconfigured one. The locker is where a fresh session on a
+// new machine finds what it needs to reconstitute itself, which is the worst place for
+// that ambiguity.
+//
+// ScopeStationLocker is deliberately still in the vocabulary: existing keys carry it,
+// and COMPATIBILITY.md reserves the pair precisely so they can be merged ("splitting a
+// shipped scope is a MAJOR, merging two is free"). This asserts the merge in both
+// directions — a key WITHOUT the old scope now passes, and one carrying it still does.
+func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 	ctx := context.Background()
-	p := &principal{StationID: "s1", Scopes: map[string]bool{ScopeStation: true}}
-	c := context.WithValue(ctx, ctxKey{}, p)
-	if _, err := requireLocker(c); err == nil {
-		t.Fatal("the locker must require the station-locker scope")
+
+	// The case that used to be refused, and is the whole point of the change.
+	bare := &principal{StationID: "s1", Scopes: map[string]bool{ScopeStation: true}}
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, bare)); err != nil {
+		t.Fatalf("a station key without the legacy locker scope cannot reach the locker: %v", err)
 	}
-	p.Scopes[ScopeStationLocker] = true
-	if _, err := requireLocker(c); err != nil {
-		t.Fatalf("with the scope it should pass: %v", err)
+
+	// An existing key that carries the old scope must not regress.
+	legacy := &principal{StationID: "s1", Scopes: map[string]bool{ScopeStation: true, ScopeStationLocker: true}}
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, legacy)); err != nil {
+		t.Fatalf("a key carrying the legacy locker scope was refused: %v", err)
+	}
+
+	// CONTROL: the station gate itself still holds. Without this, "the locker accepts
+	// everything" would pass for the wrong reason — a locker reachable with no station
+	// at all is a different and worse bug than the one being fixed.
+	stationless := &principal{StationID: "", Scopes: map[string]bool{ScopeStation: true}}
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, stationless)); err == nil {
+		t.Fatal("a station-less key reached the locker — the locker now gates on nothing at all")
 	}
 }
 
