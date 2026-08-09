@@ -1109,14 +1109,52 @@ func (a *app) handleSettings(w http.ResponseWriter, r *http.Request, sess *store
 	a.renderSettings(w, r, sess, nil)
 }
 
-func (a *app) renderSettings(w http.ResponseWriter, r *http.Request, sess *store.Session, errs []string) {
+func (a *app) renderSettings(w http.ResponseWriter, r *http.Request, sess *store.Session, errs []settings.FieldError) {
 	if a.settings == nil {
 		http.NotFound(w, r)
 		return
 	}
+	lang := a.resolveLang(r)
 	a.render(w, r, sess, "settings", map[string]any{
-		"Groups": buildSettingsGroups(a.settings.Current().Values, a.i18n, a.resolveLang(r)), "Errors": errs,
+		"Groups": buildSettingsGroups(a.settings.Current().Values, a.i18n, lang), "Errors": renderFieldErrors(a.i18n, lang, errs),
 	})
+}
+
+// renderFieldErrors turns key-addressed validation failures into the sentences an
+// operator reads, resolving every field name the SAME way the form resolved it.
+//
+// This is the whole reason settings.FieldError carries keys instead of labels. Built
+// on the settings side out of f.Label, an error names the field as the Go registry
+// calls it, while the form beside it shows whatever the translation bundle says — so
+// the message pointed at a name that was nowhere on the page. In English that misnamed
+// 2 of 43 fields; in Spanish and French, 31 of 43.
+func renderFieldErrors(tr *i18n.Manager, lang string, errs []settings.FieldError) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+	label := func(key string) string {
+		for _, f := range settings.Fields {
+			if f.Key == key {
+				return trOr(tr, lang, "settings.field."+key+".label", f.Label)
+			}
+		}
+		return key
+	}
+	out := make([]string, 0, len(errs))
+	for _, e := range errs {
+		msg := e.Message
+		if e.Key != "" {
+			msg = strings.ReplaceAll(msg, "{0}", label(e.Key))
+		}
+		for i, ref := range e.Refs {
+			msg = strings.ReplaceAll(msg, "{"+strconv.Itoa(i+1)+"}", label(ref))
+		}
+		if !e.Standalone && e.Key != "" {
+			msg = label(e.Key) + ": " + msg
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 func (a *app) handleSettingsSave(w http.ResponseWriter, r *http.Request, sess *store.Session) {

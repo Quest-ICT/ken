@@ -347,15 +347,46 @@ func (l *Live) Load(ctx context.Context) error {
 }
 
 // Apply validates the submitted form, persists the diffs from default, and swaps
+// FieldError is a validation failure that names its field by KEY rather than by
+// label, because the two are not the same string on the operator's screen.
+//
+// The settings form resolves every label through the translation bundle, with the Go
+// registry text only as a fallback. A message built here out of f.Label therefore
+// names the field as the CODE calls it, not as the FORM shows it — which is how an
+// error came to say "Lower Lifetime after delivery first" on a page whose field was
+// labelled "Message lifetime". Carrying the key instead lets the renderer resolve
+// each name exactly as it rendered the form, in whatever language that was.
+//
+// Message may contain {0} for Key's label and {1}, {2}… for Refs', matching the
+// placeholder style the bundles already use. It contains no field names of its own.
+//
+// KNOWN LIMIT, stated rather than implied: the REASON text is still English. It comes
+// from Go errors returned by each field's Set, and translating those is a separate
+// piece of work. So a Spanish operator gets Spanish field names inside an English
+// sentence — which is strictly better than an English name they cannot find on the
+// page, and worse than the finished thing.
+type FieldError struct {
+	// Key is the field the operator must change.
+	Key string
+	// Refs are other fields the Message mentions, in {1}, {2}… order.
+	Refs []string
+	// Message is the reason, with {n} placeholders and no field names.
+	Message string
+	// Standalone means Message already names Key via {0}, so a renderer must not
+	// prefix it. A per-field error is the opposite: its Message is a bare reason and
+	// wants "<label>: " in front.
+	Standalone bool
+}
+
 // the new snapshot in live. Returns the resulting snapshot and any field errors
 // (on error nothing is persisted or applied).
-func (l *Live) Apply(ctx context.Context, form map[string]string, updater string) (*Snapshot, []string) {
+func (l *Live) Apply(ctx context.Context, form map[string]string, updater string) (*Snapshot, []FieldError) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	cand := l.defaults
 	cand.TLSMode = l.Current().TLSMode // read-only field keeps its runtime value
-	var errs []string
+	var errs []FieldError
 	upsert := map[string]string{}
 	var remove []string
 	for _, f := range Fields {
@@ -364,7 +395,12 @@ func (l *Live) Apply(ctx context.Context, form map[string]string, updater string
 		}
 		raw := form[f.Key] // absent (e.g. unchecked checkbox) -> ""
 		if err := f.Set(&cand, raw); err != nil {
-			errs = append(errs, f.Label+": "+err.Error())
+			// Key, never f.Label: the label here is the RAW registry string, and the
+			// form renders labels through the translation bundle. Naming the field
+			// from this side misnames it for anyone whose bundle says something else
+			// — which, before this, was 2 of 43 fields in English and 31 of 43 in
+			// Spanish and French.
+			errs = append(errs, FieldError{Key: f.Key, Message: err.Error()})
 			continue
 		}
 		// Removal is decided ONLY by equality to the default; a value that differs is
@@ -384,7 +420,9 @@ func (l *Live) Apply(ctx context.Context, form map[string]string, updater string
 		return l.Current(), errs
 	}
 	if err := l.store.SetSettings(ctx, upsert, remove, updater); err != nil {
-		return l.Current(), []string{"could not save: " + err.Error()}
+		// No Key: this is not about a field the operator typed, so a renderer must
+		// not try to label it.
+		return l.Current(), []FieldError{{Message: "could not save: " + err.Error(), Standalone: true}}
 	}
 	snap := buildSnapshot(cand)
 	l.swap(snap)
@@ -403,14 +441,30 @@ func (l *Live) Apply(ctx context.Context, form map[string]string, updater string
 // 30-day message TTL that was every value the form accepts below 30 days.
 //
 // Refuse and name the other field, so the operator can see what to change.
-func crossFieldErrors(v Values) []string {
-	var errs []string
+//
+// NAMING IT IS THE WHOLE POINT, AND THE FIRST VERSION GOT IT WRONG IN A WAY THAT
+// DEFEATED ITSELF. It wrote the labels as literal English taken from this file —
+// "Lower Lifetime after delivery first" — while the form renders labels through the
+// translation bundle. So it named a field that appeared nowhere on the operator's
+// screen, and the field they actually had to change was sitting directly above the
+// message under a different name. An error that names the wrong thing is the same
+// class of defect as one that fires on the wrong condition.
+//
+// Field names are therefore PLACEHOLDERS resolved by whoever renders this. {0} is
+// Key, {1} onward are Refs, and every one is looked up the way the form looks it up.
+func crossFieldErrors(v Values) []FieldError {
+	var errs []FieldError
 	if v.CommUndeliveredTTLSec > 0 && v.CommUndeliveredTTLSec < v.CommMessageTTLSec {
-		errs = append(errs, fmt.Sprintf(
-			"Lifetime before delivery (%ds) must be at least Lifetime after delivery (%ds) — "+
-				"a message would otherwise expire while it is still waiting to be picked up, before its own clock could start. "+
-				"Lower Lifetime after delivery first, then set this.",
-			v.CommUndeliveredTTLSec, v.CommMessageTTLSec))
+		errs = append(errs, FieldError{
+			Key:  "comm_undelivered_ttl_sec",
+			Refs: []string{"comm_message_ttl_sec"},
+			Message: fmt.Sprintf(
+				"{0} (%ds) must be at least {1} (%ds) — "+
+					"a message would otherwise expire while it is still waiting to be picked up, before its own clock could start. "+
+					"Lower {1} first, then set this.",
+				v.CommUndeliveredTTLSec, v.CommMessageTTLSec),
+			Standalone: true,
+		})
 	}
 	return errs
 }

@@ -282,8 +282,33 @@ func TestUndeliveredTTLBelowMessageTTLIsRefused(t *testing.T) {
 	if len(errs) == 0 {
 		t.Fatal("a backstop shorter than the post-delivery TTL was accepted")
 	}
-	if !strings.Contains(strings.Join(errs, " "), "Lifetime after delivery") {
-		t.Errorf("the refusal does not name the other field, so the operator cannot act on it: %v", errs)
+	// It must name the OTHER field so the operator can act — but by KEY, resolved by
+	// whoever renders it, never as a literal label from this file.
+	//
+	// This assertion was inverted until 2026-08-09. It required the message to CONTAIN
+	// the string "Lifetime after delivery", with a failure message reading "the
+	// operator cannot act on it" — and that literal is exactly what the operator could
+	// not act on, because the form renders labels through the translation bundle and
+	// was showing "Message lifetime" for that same field. The test was pinning the
+	// defect in place and describing it as the fix.
+	e := errs[0]
+	if e.Key != "comm_undelivered_ttl_sec" {
+		t.Errorf("the error is attributed to %q, not to the field the operator must change", e.Key)
+	}
+	if len(e.Refs) != 1 || e.Refs[0] != "comm_message_ttl_sec" {
+		t.Errorf("the refusal does not reference the other field by key, so a renderer cannot name it: %v", e.Refs)
+	}
+	if !strings.Contains(e.Message, "{0}") || !strings.Contains(e.Message, "{1}") {
+		t.Errorf("the message has no placeholders, so the field names cannot be resolved into the reader's language: %q", e.Message)
+	}
+	// The real regression guard: no registry label may be baked into the text. Any
+	// literal here is a name that is right in English, in this file, and wrong on the
+	// screen of anyone whose bundle says otherwise.
+	for _, f := range settings.Fields {
+		if f.Label != "" && strings.Contains(e.Message, f.Label) {
+			t.Errorf("the message hardcodes the label %q. That is the field name as the CODE calls it, "+
+				"not as the FORM shows it — the operator reads the bundle's name and cannot find this one.", f.Label)
+		}
 	}
 	// And NOTHING was persisted — a rejected form must not half-apply.
 	if snap.CommUndeliveredTTLSec == 604800 {

@@ -51,6 +51,42 @@ same change — never "docs later".
   identity checks are mutation-verified independently so neither can be silently
   covering for the other.
 
+### Fixed
+
+- **The settings console was teaching a data model the release had removed.** The form
+  resolves each field's label and help through the translation bundle FIRST, with the
+  Go registry text only as a fallback — so the bundle *overrides* the registry rather
+  than mirroring it. 1.6.0 renamed and rewrote registry entries and left the bundles
+  alone. Five fields drifted, seven entries; the worst was
+  `comm_metadata_ttl_sec.help`, which stated "message bodies are deleted at
+  acknowledgement regardless" — the exact behaviour that release existed to stop — as
+  current fact, in three languages. The fields *added* in 1.6.0 rendered correctly
+  precisely because nobody had translated them yet.
+
+  English `settings.field.*` entries are now **generated** from the registry
+  (`go run ./internal/i18n/i18nsync`), with a test that regenerates and diffs, so
+  English drift cannot be merged. Non-English entries carry a `#@src` fingerprint of
+  the English they were translated from; when the registry changes, the test fails
+  naming the key, the language and both texts. Nothing else can see this — a
+  translation is *supposed* to differ from its source, so no string comparison
+  distinguishes a good one from a stale one.
+
+- **Validation errors named fields as the code calls them, not as the form shows
+  them.** The refusal for an incoherent TTL pair said "Lower Lifetime after delivery
+  first" while the field on screen was labelled "Message lifetime", so the operator
+  was told to change something that appeared nowhere on their page. Errors now carry
+  the field *key* and are resolved at render time exactly as the form resolves it.
+  This misnamed 2 of 43 fields for an English operator and **31 of 43 for every
+  Spanish or French one**, since those bundles translate the labels and could never
+  match a literal English string. The reason text is still English — a known gap,
+  recorded in `docs/I18N.md` rather than implied away.
+
+- **Two settings group headings never resolved,** both invisible in English because the
+  lookup falls back to the group's display name. `Stations` had no key in any bundle;
+  `Inter-session comms` had one in all three that could not be reached, because the key
+  derivation collapsed spaces but not hyphens. Their Spanish and French headings had
+  been sitting in the files unused since they were written.
+
 ### Changed
 
 - **`comm_register` no longer binds to a station; use `comm_bind`.** Passing
