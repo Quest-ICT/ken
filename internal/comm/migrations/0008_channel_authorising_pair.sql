@@ -33,7 +33,27 @@
 -- correct-or-better answer than today; rows with an ALREADY-UNBOUND endpoint get
 -- NULL and stay invisible to link revocation, precisely as they are today. That is
 -- not a regression, and it cannot be fixed from inside the database because the
--- authorising binding was never written down. Operators can find them:
+-- authorising binding was never written down.
+--
+-- DO NOT TREAT A NULL PAIR AS A DEFECT TO CLEAN UP. Two completely different
+-- histories produce it and NOTHING DISTINGUISHES THEM:
+--
+--   (1) a station link authorised the channel, and revocation can no longer see it
+--       — the real defect, and rare;
+--   (2) no station link was ever involved. A channel opened with a PAIRING CODE
+--       between two unbound endpoints is the ordinary case and has no link to
+--       revoke, so nothing is wrong with it at all.
+--
+-- On the deployment this was written against, seven of nine open channels had a NULL
+-- pair and SIX of the seven were kind (2) — including the operator's own working
+-- channels. An earlier version of this comment told operators to close them, which
+-- would have severed the live estate. The distinction is unrecoverable: the
+-- authorising binding was never recorded, which is the whole reason this migration
+-- exists.
+--
+-- So the query below REPORTS; it does not prescribe. Only a row whose two stations
+-- genuinely hold a station_link is kind (1), and answering that needs ken.db, which
+-- this database cannot reach.
 --
 --     SELECT c.channel_id, ea.station_id, eb.station_id
 --       FROM channel c
@@ -41,8 +61,9 @@
 --       JOIN endpoint eb ON eb.id = c.endpoint_b
 --      WHERE c.state='open' AND (c.station_a IS NULL OR c.station_b IS NULL);
 --
--- Any row returned is a live conversation the stations console will report as
--- "0 channels" when its link is revoked. Close it from /comm.
+-- THE FIX FOR THE CLASS IS BINDING, NOT CLOSING. A NULL pair means an endpoint is
+-- not bound to a station; binding the inboxes removes most of these rows at the
+-- source and is what stations exist for.
 --
 -- Added rather than rebuilt: two nullable columns need no table rebuild, and
 -- entry into the NULL state is a data fact rather than a constraint to enforce.
