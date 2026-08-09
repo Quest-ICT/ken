@@ -15,6 +15,81 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-08-09
+
+### Changed
+- **Message lifetimes are anchored at DELIVERY, not at send.** A human works roughly eight hours a
+  day, so a session goes 16 h between polls on a weeknight, 64 h over a weekend and weeks over annual
+  leave. Against the shipped 24 h TTL — which ran from the moment a message was *sent* — that made
+  every message sent during a Friday shift dead before Monday, 2.67x the window, and it is what
+  killed a real 4 661-byte message sent on a Sunday. The clock ran during exactly the period in which
+  nobody could poll. An undelivered message now waits on a separate, longer backstop
+  (`comm_undelivered_ttl_sec`, 30 d); `comm_message_ttl_sec` measures the window *after* someone
+  picks it up. **The two compose**, so an operator who inflated the message TTL to survive the old
+  anchor should lower it before upgrading.
+- **Acknowledging a message no longer destroys its body.** The old rule kept a body only when the
+  message required a response, which destroyed 97% of one live deployment's bodies (153 of 159)
+  through the ordinary, instructed path: poll, act, acknowledge. The un-acknowledged inbox was not a
+  safety net — it was the only place a body ever existed. Retention is now uniform and governed by
+  `comm_body_retention_sec`; setting it to `0` restores the previous behaviour exactly.
+- **A message nobody ever read keeps its text when it expires.** The sender is told it expired;
+  keeping the words makes that a fact they can act on rather than a hole. A *delivered* message that
+  expires follows the ordinary retention rule — the recipient had it and did nothing.
+- **`ack_up_to_seq` no longer settles undelivered mail.** It matched `queued` as well as `delivered`,
+  so a cumulative acknowledgement could mark a message never shown to anyone. You cannot have
+  processed what you were never handed.
+- **`comm_poll` with a limit above the ceiling returns the ceiling** (100), not 50 — asking for
+  everything used to yield less than asking for exactly 100.
+- **`comm_send` reports what it overruled and what you have not read.** `ttl_clamped_from` appears
+  when the server shortened a requested lifetime; `waiting_for_you` appears when mail was already
+  waiting for the sender, as a prompt to poll and *reconsider* before the reply lands.
+- **The metadata purge is measured from when a message settled**, not from when it was created. Keyed
+  on creation the window was already spent before a long-lived message ever settled, which made
+  "expiry keeps the body of a message nobody read" unreachable under the shipped defaults. This also
+  retires the ordering rule an operator otherwise had to know: metadata TTL and message TTL are now
+  independent.
+
+### Added
+- **A station directory**, on both surfaces: `comm_directory` (`/comm`) and `station_directory`
+  (`/station`). Answers who you can see and who you can talk to right now. The `/station` mirror
+  closes a real gap — `station_link_request` needs a name and nothing on that surface would tell a
+  session one exists. `published` finally has a reader and now means exactly one thing: listed in the
+  directory.
+- **Link revocation from the console**, with the blast radius shown before the click and a new *Live
+  channels* column. Revoking a link now also ends the channels it authorised — `RevokeStationLink`
+  had no callers at all, while the UI promised "one click revokes it later".
+- Two settings: `comm_undelivered_ttl_sec` and `comm_body_retention_sec`. Setting the backstop below
+  the post-delivery TTL is **refused with a message naming the other field**, rather than silently
+  replaced.
+
+### Fixed
+- **`comm_open_channel` no longer leaks which stations exist.** Three refusals — unknown name, no
+  link, nobody staffing — were distinguishable, and the third echoed the *resolved* name, so guessing
+  `PROD` confirmed a station really called `prod`. All three now return one string.
+- **An agent could hide its channel from the operator's revoke.** The station pair was derived from
+  each endpoint's *current* binding, so a single `comm_unbind` — the path that tool's own description
+  recommends, needing no voucher and no human — made a channel invisible: the console showed 0 live
+  channels and the sweep closed none while both sides kept talking. Migration `0008` snapshots the
+  authorising pair on the channel row. A rebind can no longer move a channel under an unrelated link
+  either, which previously severed traffic the operator had not aimed at.
+- **`comm_channels` is station-scoped**, matching `comm_poll` and the membership check. A replacement
+  session could poll a predecessor's mail and reply to it while `comm_channels` reported zero
+  channels — able to act on a conversation it could not enumerate, which is worst for the takeover
+  case stations exist for.
+- **A half-finished link revocation is visible and retryable.** The count was skipped for revoked
+  links, the button was hidden, and a retry short-circuited before the channel sweep — so the one
+  state the new column exists to expose was invisible and permanently unrecoverable.
+- **A comm.db failure no longer takes down the whole stations console.** comm.db is the expendable
+  database and the page is gated on the stations flag alone; the channel count degrades to *unknown*
+  rather than a 500, and with COMM switched off it reports unknown instead of asserting that no
+  channels were open.
+- **The one agent-writable station field is capped** at 4 KiB. The directory tools carry it verbatim
+  into every peer's context, so an unbounded field was an unbounded write into other agents' working
+  memory; a 700 KiB self-description was accepted.
+- **Live settings changes reach the running COMM store.** The change detector that gates them omitted
+  both new settings, so the console would save, validate and report success while the process ignored
+  the value until restart.
+
 ## [1.5.5] — 2026-07-30
 
 ### Fixed
@@ -1312,6 +1387,7 @@ append-only and the curated head moves only on human promotion.
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
 [Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.5...HEAD
+[1.6.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.6.0
 [1.5.5]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.5
 [1.5.4]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.4
 [1.5.3]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.3
