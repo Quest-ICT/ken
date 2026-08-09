@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -129,10 +130,42 @@ ORDER BY COALESCE(last_activity_at, created_at) DESC`, spaceID)
 	return out, rows.Err()
 }
 
+// MaxSelfDescriptionBytes caps the one field an agent may write about itself.
+//
+// It was uncapped, and slice 2 made that dangerous rather than merely untidy: the
+// directory tools now carry this text verbatim into every peer's context, so an
+// unbounded field became an unbounded write into other agents' working memory. A
+// 700 KiB self-description was accepted and returned byte-identical to a different
+// station. Every sibling agent-writable payload is bounded — notebook pages at
+// 64 KiB, locker blobs at 256 KiB, task text at 512 B — and this one was reachable
+// only by the MCP body limit.
+//
+// 4 KiB is generous for "what I know and am responsible for" and small enough that
+// a directory listing many stations stays readable.
+const MaxSelfDescriptionBytes = 4 << 10
+
+// MaxSelfDescriptionTags bounds the tag list separately: the byte cap alone would
+// permit thousands of one-character tags.
+const MaxSelfDescriptionTags = 24
+
 // SetStationSelfDescription is the ONE station field an agent may write. It is stored in
 // columns whose names say the value is a claim, so a reader that flattens the result
 // still sees it marked (S8).
 func (s *Store) SetStationSelfDescription(ctx context.Context, stationID, about string, tags []string) error {
+	// REFUSE rather than truncate. A silently shortened self-description is a claim
+	// the station did not make, presented to peers as though it did.
+	if len(about) > MaxSelfDescriptionBytes {
+		return fmt.Errorf("%w: self-description is %d bytes, over the %d-byte cap — it is a summary for other stations, not a document",
+			ErrInvalid, len(about), MaxSelfDescriptionBytes)
+	}
+	if len(tags) > MaxSelfDescriptionTags {
+		return fmt.Errorf("%w: %d tags, over the %d-tag cap", ErrInvalid, len(tags), MaxSelfDescriptionTags)
+	}
+	for _, tag := range tags {
+		if len(tag) > 64 {
+			return fmt.Errorf("%w: a tag is %d bytes, over the 64-byte cap", ErrInvalid, len(tag))
+		}
+	}
 	tj, err := json.Marshal(tags)
 	if err != nil {
 		return err

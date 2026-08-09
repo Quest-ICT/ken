@@ -230,10 +230,26 @@ WHERE c.channel_id=?`, channelID).
 
 // ListChannels returns the channels an endpoint belongs to.
 func (s *Store) ListChannels(ctx context.Context, ep *Endpoint) ([]Channel, error) {
+	// STATION-SCOPED, matching Poll and ChannelFor. An endpoint bound to a station
+	// can RECEIVE on a channel its predecessor joined — that is the whole point of the
+	// station owning the inbox — so listing only channels this endpoint's own rowid
+	// sits on left a replacement session able to poll mail and reply to it while
+	// comm_channels reported ZERO channels. It could act on a conversation it could
+	// not enumerate, which is worst for the exact case stations exist for: a takeover.
+	//
+	// The three predicates must agree. They did not, and the drift was invisible
+	// because each is correct in isolation.
+	seatQ := `endpoint_a=?1 OR endpoint_b=?1`
+	args := []any{ep.ID}
+	if ep.StationID != "" {
+		seatQ = `endpoint_a IN (SELECT id FROM endpoint WHERE station_id=?2)
+              OR endpoint_b IN (SELECT id FROM endpoint WHERE station_id=?2)`
+		args = append(args, ep.StationID)
+	}
 	rows, err := s.R.QueryContext(ctx, `
 SELECT id, channel_id, space_id, owner_actor_id, endpoint_a, COALESCE(endpoint_b,0), state,
        created_at, COALESCE(opened_at,'')
-FROM channel WHERE endpoint_a=? OR endpoint_b=? ORDER BY created_at DESC`, ep.ID, ep.ID)
+FROM channel WHERE `+seatQ+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}

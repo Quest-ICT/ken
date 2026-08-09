@@ -376,6 +376,10 @@ func (l *Live) Apply(ctx context.Context, form map[string]string, updater string
 			upsert[f.Key] = f.Get(cand)
 		}
 	}
+	// CROSS-FIELD RULES. Per-field ranges cannot express "this one must exceed that
+	// one", so they run here, after every field has parsed and before anything is
+	// persisted.
+	errs = append(errs, crossFieldErrors(cand)...)
 	if len(errs) > 0 {
 		return l.Current(), errs
 	}
@@ -385,6 +389,30 @@ func (l *Live) Apply(ctx context.Context, form map[string]string, updater string
 	snap := buildSnapshot(cand)
 	l.swap(snap)
 	return snap, nil
+}
+
+// crossFieldErrors validates relationships between settings that no per-field range
+// can express.
+//
+// The one rule today is the one that bit an operator: an undelivered backstop BELOW
+// the post-delivery TTL is nonsense — mail would die before its real clock could
+// start — and the store used to handle it by silently substituting a default. The
+// console kept showing the operator's number while the running system used another,
+// which is the failure this project keeps finding: a remedy that is inert with
+// nothing to distinguish it from one that worked. On a deployment already running a
+// 30-day message TTL that was every value the form accepts below 30 days.
+//
+// Refuse and name the other field, so the operator can see what to change.
+func crossFieldErrors(v Values) []string {
+	var errs []string
+	if v.CommUndeliveredTTLSec > 0 && v.CommUndeliveredTTLSec < v.CommMessageTTLSec {
+		errs = append(errs, fmt.Sprintf(
+			"Lifetime before delivery (%ds) must be at least Lifetime after delivery (%ds) — "+
+				"a message would otherwise expire while it is still waiting to be picked up, before its own clock could start. "+
+				"Lower Lifetime after delivery first, then set this.",
+			v.CommUndeliveredTTLSec, v.CommMessageTTLSec))
+	}
+	return errs
 }
 
 func (l *Live) swap(s *Snapshot) {

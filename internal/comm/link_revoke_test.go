@@ -220,3 +220,66 @@ func TestRebindingDoesNotMoveAChannelUnderAnotherLink(t *testing.T) {
 		t.Fatalf("an unrelated link's revoke severed this channel: %v", err)
 	}
 }
+
+// A STATION SUCCESSOR MUST BE ABLE TO ENUMERATE THE MAIL IT CAN ALREADY READ.
+//
+// Poll and ChannelFor were widened to station scope when stations shipped;
+// ListChannels was not. So a replacement session could POLL a predecessor's channel
+// and REPLY on it while comm_channels reported zero channels — able to act on a
+// conversation it could not discover. Worst for the case stations exist for.
+func TestListChannelsIsStationScopedLikePollAndChannelFor(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+
+	mk := func(tok, label, station, key string) *Endpoint {
+		t.Helper()
+		ep, _, err := st.RegisterEndpoint(ctx, owner(tok), label, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bindEndpoint(t, st, ep, station, key)
+	}
+	first := mk("tok-a", "dev-v1", "stn_dev", "kens_a")
+	peer := mk("tok-b", "prod", "stn_prod", "kens_b")
+
+	ch, err := st.OpenLinkedChannel(ctx, first, peer, 1, "dev <-> prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, peer, ch.ChannelID, "for whoever is staffing dev", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The predecessor's session ends; a replacement binds to the SAME station.
+	successor := mk("tok-a", "dev-v2", "stn_dev", "kens_a")
+
+	// It can read the mail — this is the station inbox working as designed.
+	got, err := st.Poll(ctx, successor, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("the successor received %d messages, want 1 — the station inbox is broken and this test proves nothing", len(got))
+	}
+
+	// And it must be able to SEE the channel that mail arrived on.
+	list, err := st.ListChannels(ctx, successor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range list {
+		if c.ChannelID == ch.ChannelID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("comm_channels listed %d channels and none was the one the successor just polled — it can act on a conversation it cannot enumerate", len(list))
+	}
+
+	// CONTROL: an unrelated station sees nothing, so the widening is not "list everything".
+	stranger := mk("tok-c", "infra", "stn_infra", "kens_c")
+	if l, err := st.ListChannels(ctx, stranger); err != nil || len(l) != 0 {
+		t.Fatalf("an unrelated station lists %d channels (err=%v), want 0 — the predicate is too wide", len(l), err)
+	}
+}

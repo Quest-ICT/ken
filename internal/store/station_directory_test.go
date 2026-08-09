@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -112,4 +113,56 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 	}
 	_ = pub
 	_ = hidden
+}
+
+// The one agent-writable station field must be BOUNDED, because slice 2 made it flow
+// verbatim into every peer's context through the directory tools.
+//
+// It was uncapped. A 700 KiB self-description was accepted and returned byte-identical
+// to a different station — an unbounded write into other agents' working memory, from
+// the only field an agent controls. Every sibling payload is capped (notebook pages
+// 64 KiB, locker blobs 256 KiB, task text 512 B); this one was reachable only by the
+// MCP body limit.
+func TestSelfDescriptionIsCappedBecauseItReachesOtherAgents(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	actor, err := s.FindOrCreateActor(ctx, "human", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.CreateStation(ctx, 1, "verbose", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL: an ordinary self-description is accepted, so a later refusal cannot be
+	// blamed on the writer being broken.
+	if err := s.SetStationSelfDescription(ctx, st.StationID, "I run the backups.", []string{"ops"}); err != nil {
+		t.Fatalf("an ordinary self-description was refused: %v", err)
+	}
+
+	huge := strings.Repeat("x", MaxSelfDescriptionBytes+1)
+	if err := s.SetStationSelfDescription(ctx, st.StationID, huge, nil); err == nil {
+		t.Fatalf("a %d-byte self-description was accepted — it reaches every peer that lists the directory", len(huge))
+	}
+	// REFUSED, not truncated: a shortened description is a claim the station never made.
+	got, err := s.StationByID(ctx, st.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SelfDescribedAbout != "I run the backups." {
+		t.Fatalf("the refused write altered the stored value: %q", got.SelfDescribedAbout)
+	}
+
+	// Tags are bounded separately — the byte cap alone permits thousands of tiny tags.
+	many := make([]string, MaxSelfDescriptionTags+1)
+	for i := range many {
+		many[i] = "t"
+	}
+	if err := s.SetStationSelfDescription(ctx, st.StationID, "ok", many); err == nil {
+		t.Fatalf("%d tags were accepted", len(many))
+	}
+	if err := s.SetStationSelfDescription(ctx, st.StationID, "ok", []string{strings.Repeat("y", 65)}); err == nil {
+		t.Fatal("a 65-byte tag was accepted")
+	}
 }

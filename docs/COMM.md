@@ -38,7 +38,7 @@ The human's role is to *authorize* connections and to keep a brake within reach.
 Naming the non-goals first, because several of them are the reason the design looks the way it does.
 
 - **Not a chat system.** There is no presence, no typing indicator, no history to scroll. Message
-  bodies are deleted once the receiver has processed them.
+  bodies are deleted on a retention window after the message settles — not kept for browsing.
 - **Not a message broker.** No topics, no fan-out, no subscriptions, no durable log. A channel joins
   exactly two endpoints. When stations are in use those endpoints may each belong to a *station*, and
   the station's other readers can claim its mail — but delivery is still **claim-once**, never
@@ -124,8 +124,15 @@ session — not a send point and a receive point. Request/response is a property
   be explicit (§4.4).
 
 ### C5 — Content is ephemeral; metadata is not *(chosen: split the two lifetimes)*
-Acknowledging a message deletes its **body**. A slim **metadata row** — id, sequence, sender, flags,
-reply linkage, timestamps, size, content hash — survives until the exchange is complete or ages out.
+A body survives for `comm_body_retention_sec` after the message **settles** — is acknowledged, or
+expires — and is then deleted. A slim **metadata row** — id, sequence, sender, flags, reply linkage,
+timestamps, size, content hash — outlives it and ages out on `comm_metadata_ttl_sec`.
+
+> **Revised.** Acknowledging used to delete the body immediately unless the message required a
+> response. That destroyed 97% of one live deployment's bodies (153 of 159) through the ordinary,
+> instructed path — poll, act, acknowledge — because the un-acknowledged inbox was not a safety net,
+> it was the only place a body ever existed. Setting `comm_body_retention_sec` to `0` restores the
+> old behaviour exactly.
 
 - **Why:** deleting the whole record on ack (the original instinct, and the right instinct about
   *storage*) is mutually exclusive with request/response. With two requests outstanding and both
@@ -296,9 +303,15 @@ that — which is why prevention is stated first in the instructions and costs n
 ### 4.1 Lifecycle
 
 ```
-queued ──poll──▶ delivered ──ack──▶ processed ──▶ (body deleted; metadata retained)
+queued ──poll──▶ delivered ──ack──▶ processed ──▶ (body kept for the retention
+   │                  │                  │              window, then deleted;
+   │                  │                  │              metadata outlives it)
    │                  │                  │
-   └── TTL ───────────┴──────────────────┴──▶ expired  (sender is notified)
+   │                  └── TTL from DELIVERY ──▶ expired (body deleted; sender notified)
+   │
+   └── undelivered backstop ─────────────────▶ expired (BODY KEPT — nobody ever read it,
+                                                        so "expired" must not also mean
+                                                        "unknowable"; sender notified)
 ```
 
 Every transition is stamped by the **server** clock. Clients supply *relative* lifetimes
@@ -331,9 +344,11 @@ sole reader of its own mail and the original promise holds exactly.
 
 ### 4.3 Request/response
 
-A message with `requires_response` carries a server-computed reply deadline. Its body survives
-acknowledgement until it is answered or the deadline passes — a responder that crashed and recovered
-plausibly needs to re-read what it owes. When a deadline passes unanswered, the sweeper delivers a
+A message with `requires_response` is given a server-computed reply deadline **when it is first
+delivered** — not when it is sent, because a deadline that starts before the recipient can know the
+message exists is a deadline against the transport rather than against the peer. Its body follows the
+ordinary retention window like every other message; `requires_response` no longer governs retention
+at all. When a deadline passes unanswered, the sweeper delivers a
 **status message** to the requester through the ordinary poll path — `kind: "status"`, body
 `{"status":"reply_overdue","message_id":"…"}` — so a dead peer surfaces as a normal arrival rather
 than an indefinite wait. A message that expires unread notifies its sender the same way

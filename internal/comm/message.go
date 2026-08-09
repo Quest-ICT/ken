@@ -37,6 +37,31 @@ type Message struct {
 	// about an earlier message's fate (expired, reply_overdue). A peer cannot author
 	// a status row, so a receiver may trust the distinction.
 	Kind string
+
+	// The two fields below are TRANSIENT: Send populates them, and Poll and
+	// MessageByID leave them zero because they describe the act of sending rather
+	// than the row. They are here rather than in a separate result type so Send's
+	// signature — and every caller of it — stays unchanged.
+
+	// TTLClampedFrom is the ttl_seconds the caller ASKED for when the server gave it
+	// something shorter, and zero when nothing was overridden.
+	//
+	// Silent clamping is how a sender ends up believing a message will outlive an
+	// absence it will not: the result reported the resulting expires_at and never
+	// mentioned that the request had been overruled, so noticing required diffing a
+	// timestamp against a number you had to remember passing.
+	TTLClampedFrom int
+
+	// WaitingForYou is how many messages were already queued or delivered FOR THE
+	// SENDER on this channel at the moment of sending.
+	//
+	// A session that sends without reading what is already waiting answers a question
+	// its peer has often moved past — measured on this project: a reply that
+	// re-argued a point the peer had already conceded. The value of checking is not
+	// the read, it is the pause before sending; a non-zero count here is the prompt
+	// to take it. Send already computed this number for backpressure and discarded
+	// it, so it costs one extra aggregate over a scan that was happening anyway.
+	WaitingForYou int
 }
 
 // Redelivered reports whether the receiver has seen this message before. At-least-
@@ -92,6 +117,10 @@ func (s *Store) Send(ctx context.Context, ep *Endpoint, channelID, body string, 
 		undelivered = DefaultLimits().UndeliveredTTLSeconds
 	}
 	ttl := clampTTL(opts.TTLSeconds, undelivered)
+	clampedFrom := 0
+	if opts.TTLSeconds > 0 && opts.TTLSeconds != ttl {
+		clampedFrom = opts.TTLSeconds
+	}
 
 	var out *Message
 	err = s.tx(ctx, func(t *sql.Tx) error {
@@ -114,10 +143,14 @@ WHERE channel_id=? AND sender_endpoint=? AND idempotency_key=?`,
 		// Backpressure: cap un-acked depth per channel. Full-duplex has no
 		// turn-taking, so two auto-processing sessions could otherwise enter a
 		// reply loop that grows the database without bound.
-		var unacked int
+		// One scan, two aggregates: the channel total that bounds backpressure, and
+		// the SENDER's own share, which is what "you have mail waiting" means. The
+		// total was already being computed and thrown away.
+		var unacked, waitingForSender int
 		if err := t.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM message WHERE channel_id=? AND state IN ('queued','delivered')`, ch.ID).
-			Scan(&unacked); err != nil {
+SELECT COUNT(*), COUNT(*) FILTER (WHERE recipient_endpoint = ?)
+  FROM message WHERE channel_id=? AND state IN ('queued','delivered')`, ep.ID, ch.ID).
+			Scan(&unacked, &waitingForSender); err != nil {
 			return err
 		}
 		if unacked >= s.lim().MaxUnackedPerChannel {
@@ -183,19 +216,28 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,
 				return err
 			}
 			// Clearing the body here matters: a request acked BEFORE its reply arrived
-			// kept its body (Ack retains it precisely so a recovered responder can
-			// re-read what it owes), and Sweep's later pass only considers rows with
-			// replied_by IS NULL. Without this the answered request's body survived
-			// until the metadata purge, days past the point it was needed.
+			// The body is NOT blanked here any more, and the comment that used to
+			// justify blanking is why: it said Sweep's later pass "only considers
+			// rows with replied_by IS NULL", which was true of the OLD pass and is
+			// false of the retention pass that replaced it — that one has no
+			// replied_by predicate at all. So this line was silently bypassing
+			// BodyRetentionSeconds for exactly the messages a curator is most likely
+			// to want: the ones that got an answer.
+			//
+			// A rewritten pass left its dependant untouched, which is the same shape
+			// as a stale comment naming an enforcer that never existed. Retention now
+			// governs every settled body, with no side door.
 			if _, err := t.ExecContext(ctx, `
-UPDATE message SET replied_by=?,
-       body = CASE WHEN state='acked' THEN NULL ELSE body END
+UPDATE message SET replied_by=?
 WHERE id=? AND replied_by IS NULL`, newRow, replyToRow); err != nil {
 				return err
 			}
 		}
 
 		out, err = messageByID(ctx, t, messageID)
+		if out != nil {
+			out.TTLClampedFrom, out.WaitingForYou = clampedFrom, waitingForSender
+		}
 		return err
 	})
 	if isSeqCollision(err) {
@@ -700,7 +742,17 @@ WHERE requires_response=1 AND replied_by IS NULL AND kind='message' AND notified
 		// precisely the wait the delivery anchor exists to permit. An unread
 		// expired message therefore keeps its text until the metadata purge removes
 		// the whole row, which is bounded by MetadataTTLSeconds.
-		if r := s.lim().BodyRetentionSeconds; r > 0 {
+		// Runs at EVERY retention value including zero. Guarding on r > 0 meant an
+		// operator setting retention to 0 during a growth incident — the first remedy
+		// its own help text offers — got "blank at ack from now on" for new mail and
+		// "keep forever" for everything already retained, so the remedy provided no
+		// relief on the bytes that prompted it. At zero the window is `now`, which
+		// reclaims the backlog on the next sweep.
+		{
+			r := s.lim().BodyRetentionSeconds
+			if r < 0 {
+				r = 0
+			}
 			if _, err := t.ExecContext(ctx, `
 UPDATE message SET body=NULL
 WHERE body IS NOT NULL
@@ -721,12 +773,29 @@ WHERE body IS NOT NULL
 			}
 		}
 
-		// 3. Purge settled metadata past the retention window. Bodies are long gone;
-		//    this is the audit shell, bounded so comm.db cannot grow without limit.
+		// 3. Purge settled metadata past the retention window.
+		//
+		//    ANCHORED AT SETTLE TIME, not at creation. Keyed on created_at, the window
+		//    was already spent before a long-lived message ever settled: with the
+		//    shipped 30-day undelivered backstop and 7-day metadata TTL, a message
+		//    that expired unread was 23 days past the horizon the instant it got
+		//    there, so the very next sweep deleted it. That made "expiry keeps the
+		//    body of a message nobody read" — the whole point of not blanking on the
+		//    expiry path — a no-op under the default configuration. The property was
+		//    real; the defaults made it unreachable.
+		//
+		//    acked_at is the settle moment for an acked message; expires_at is the
+		//    settle moment for an expired one, since that is precisely when it
+		//    expired. Both columns already exist, so no migration.
+		//
+		//    This also RETIRES the ordering rule an operator previously had to know —
+		//    that metadata TTL must exceed the message TTL or the audit row vanishes
+		//    on settling. Measured from settle, the two are independent.
 		res, err = t.ExecContext(ctx, `
 DELETE FROM message
 WHERE state IN ('acked','expired')
-  AND created_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`, nowExpr(-s.lim().MetadataTTLSeconds))
+  AND COALESCE(acked_at, expires_at) <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`,
+			nowExpr(-s.lim().MetadataTTLSeconds))
 		if err != nil {
 			return err
 		}
@@ -843,7 +912,16 @@ func (s *Store) notifySender(ctx context.Context, t *sql.Tx, n notice) error {
 	// from the configured message TTL alone would make a very short TTL delete the
 	// notice in the same sweep that created it — the failure signal would vanish
 	// exactly where messages die fastest.
-	ttl := s.lim().MessageTTLSeconds
+	// Sized against the UNDELIVERED backstop, not the post-delivery TTL. A notice
+	// exists to tell a sender that their message died because nobody came for it, so
+	// it has to outlive the same absence — a notice stamped with the delivered window
+	// can expire before the peer whose silence it reports comes back. That was
+	// harmless while both numbers were one value; the delivery anchor split them, and
+	// this is the half that reports failures during absence.
+	ttl := s.lim().UndeliveredTTLSeconds
+	if m := s.lim().MessageTTLSeconds; m > ttl {
+		ttl = m
+	}
 	if ttl < minNoticeTTLSeconds {
 		ttl = minNoticeTTLSeconds
 	}

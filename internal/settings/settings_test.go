@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Quest-ICT/ken/internal/settings"
@@ -251,5 +252,41 @@ func TestRejectSlashZeroCIDR(t *testing.T) {
 		if _, errs := l.Apply(ctx, form, "admin"); len(errs) == 0 {
 			t.Fatalf("a /0 trusted-proxy (%s) must be rejected", bad)
 		}
+	}
+}
+
+// A backstop below the post-delivery TTL must be REFUSED, not silently replaced.
+//
+// The store used to substitute a default for this combination, so the console kept
+// showing the operator's number while the running system used another — inert remedy,
+// nothing to distinguish it from one that worked. On a deployment already running a
+// 30-day message TTL, that was every value the form accepts below 30 days.
+func TestUndeliveredTTLBelowMessageTTLIsRefused(t *testing.T) {
+	ctx := context.Background()
+	st := testStore(t)
+	l := settings.New(st, testDefaults)
+
+	// CONTROL: a coherent pair is accepted, so a later refusal is about the RULE and
+	// not about the form being broken.
+	ok := formFrom(l.Defaults())
+	ok["comm_message_ttl_sec"] = "3600"
+	ok["comm_undelivered_ttl_sec"] = "86400"
+	if _, errs := l.Apply(ctx, ok, "admin"); len(errs) > 0 {
+		t.Fatalf("a coherent pair was refused: %v", errs)
+	}
+
+	bad := formFrom(l.Defaults())
+	bad["comm_message_ttl_sec"] = "2592000" // 30 d, as the live deployment runs
+	bad["comm_undelivered_ttl_sec"] = "604800"
+	snap, errs := l.Apply(ctx, bad, "admin")
+	if len(errs) == 0 {
+		t.Fatal("a backstop shorter than the post-delivery TTL was accepted")
+	}
+	if !strings.Contains(strings.Join(errs, " "), "Lifetime after delivery") {
+		t.Errorf("the refusal does not name the other field, so the operator cannot act on it: %v", errs)
+	}
+	// And NOTHING was persisted — a rejected form must not half-apply.
+	if snap.CommUndeliveredTTLSec == 604800 {
+		t.Error("the rejected value was applied anyway")
 	}
 }

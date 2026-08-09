@@ -80,6 +80,14 @@ type sendOut struct {
 	Seq             int64  `json:"seq" jsonschema:"monotonic per channel and direction"`
 	ExpiresAt       string `json:"expires_at"`
 	ReplyDeadlineAt string `json:"reply_deadline_at,omitempty"`
+	// TTLClampedFrom appears only when the server overruled the ttl_seconds asked
+	// for. Omitted otherwise, so its presence IS the warning.
+	TTLClampedFrom int `json:"ttl_clamped_from,omitempty"`
+	// WaitingForYou appears only when mail was already waiting for the sender on this
+	// channel as the message went out. It is the prompt to poll and RECONSIDER — the
+	// value is in the pause, not the read: a message sent over an unread reply
+	// commonly answers a question the peer has moved past.
+	WaitingForYou int `json:"waiting_for_you,omitempty"`
 }
 
 type pollIn struct {

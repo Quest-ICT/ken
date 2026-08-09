@@ -470,7 +470,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name:        "comm_send",
-		Description: "Send one message to the peer on a channel. Bodies are atomic and size-capped — never chunk a large payload through this tool; a mebibyte of base64 costs hundreds of thousands of output tokens. Pass idempotency_key so a retry cannot deliver twice.",
+		Description: "Send one message to the peer on a channel. Bodies are atomic and size-capped — never chunk a large payload through this tool; a mebibyte of base64 costs hundreds of thousands of output tokens. Pass idempotency_key so a retry cannot deliver twice. IF THE RESULT CARRIES waiting_for_you, mail was already waiting for you when this went out: poll it and RECONSIDER what you just sent — the common cost is a message that answers a question your peer has already moved past. ttl_clamped_from appears when the server shortened the lifetime you asked for.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, sendOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
@@ -495,6 +495,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		w.notify(peer)
 		return nil, sendOut{
 			MessageID: m.MessageID, Seq: m.Seq, ExpiresAt: m.ExpiresAt, ReplyDeadlineAt: m.ReplyDeadlineAt,
+			TTLClampedFrom: m.TTLClampedFrom, WaitingForYou: m.WaitingForYou,
 		}, nil
 	})
 

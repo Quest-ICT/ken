@@ -16,8 +16,13 @@ UPDATE message
        first_delivered_at = CASE WHEN first_delivered_at IS NULL THEN NULL
             ELSE strftime('%Y-%m-%dT%H:%M:%fZ', first_delivered_at, ?) END,
        reply_deadline_at  = CASE WHEN reply_deadline_at IS NULL THEN NULL
-            ELSE strftime('%Y-%m-%dT%H:%M:%fZ', reply_deadline_at, ?) END
- WHERE message_id=?`, modifier, modifier, modifier, modifier, messageID)
+            ELSE strftime('%Y-%m-%dT%H:%M:%fZ', reply_deadline_at, ?) END,
+       -- acked_at MUST age too: it is what the retention pass measures from, so a
+       -- helper that moved every other clock but this one made retention silently
+       -- untestable — the message looked old and its settle time looked like now.
+       acked_at = CASE WHEN acked_at IS NULL THEN NULL
+            ELSE strftime('%Y-%m-%dT%H:%M:%fZ', acked_at, ?) END
+ WHERE message_id=?`, modifier, modifier, modifier, modifier, modifier, messageID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,5 +251,110 @@ func TestPollLimitAboveTheCeilingYieldsTheCeiling(t *testing.T) {
 	}
 	if len(got) != 100 {
 		t.Fatalf("poll(limit=1000) returned %d, want the ceiling of 100", len(got))
+	}
+}
+
+// THE SHIPPED DEFAULTS MUST ACTUALLY DELIVER THE PROPERTY.
+//
+// "Expiry keeps the body of a message nobody read" was true of the expiry pass and
+// false of the system: the metadata purge fired on created_at, so with the shipped
+// 30-day backstop and 7-day metadata TTL the row was 23 days past the purge horizon
+// the moment it expired, and the very next sweep deleted it body and all.
+//
+// TestExpiryKeepsTheBodyOfAMessageNobodyRead reaches the property by lowering limits,
+// which is exactly how a suite can certify something the shipped configuration never
+// does. This one changes NOTHING — DefaultLimits() throughout — so it fails if the
+// defaults stop delivering the promise.
+func TestUnreadBodySurvivesExpiryUnderShippedDefaults(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits()) // deliberately untouched
+	a, _, channelID := pair(t, st)
+
+	sent, err := st.Send(ctx, a, channelID, "nobody ever polled this", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Past the 30-day undelivered backstop, and therefore also far past the 7-day
+	// metadata window measured the OLD way.
+	age(t, st, sent.MessageID, "-31 days")
+
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.MessageByID(ctx, sent.MessageID)
+	if err != nil {
+		t.Fatalf("the row was purged the instant it expired, so nobody can learn what was lost: %v", err)
+	}
+	if m.State != "expired" {
+		t.Fatalf("state = %q, want expired", m.State)
+	}
+	if m.Body != "nobody ever polled this" {
+		t.Fatalf("under SHIPPED defaults the unread body did not survive expiry: %q", m.Body)
+	}
+
+	// CONTROL: the audit shell is still bounded — it goes once the metadata window
+	// has passed SINCE SETTLING, which is what makes this a delay and not a leak.
+	age(t, st, sent.MessageID, "-8 days")
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.MessageByID(ctx, sent.MessageID); err == nil {
+		t.Fatal("the row outlived the metadata window measured from settling — this is a leak, not a delay")
+	}
+}
+
+// A sender must be TOLD when the server overruled its ttl_seconds, and told that mail
+// is already waiting for it.
+//
+// Both facts were computed and discarded. Silent clamping is how a sender ends up
+// believing a message will outlive an absence it will not; and Send already counted
+// the channel's unacked depth for backpressure — the sender's own share was one
+// aggregate away over a scan that was happening regardless.
+func TestSendReportsClampingAndWaitingMail(t *testing.T) {
+	ctx := context.Background()
+	l := DefaultLimits()
+	l.MessageTTLSeconds = 60
+	l.UndeliveredTTLSeconds = 3600 // the ceiling a sender's request clamps against
+	st := newStore(t, l)
+	a, b, channelID := pair(t, st)
+
+	// CONTROL: a request INSIDE the ceiling is honoured and reported as unclamped, so
+	// a later non-zero cannot be the field simply always being set.
+	ok, err := st.Send(ctx, a, channelID, "modest", SendOpts{TTLSeconds: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok.TTLClampedFrom != 0 {
+		t.Errorf("an honoured ttl reported a clamp from %d", ok.TTLClampedFrom)
+	}
+	if ok.WaitingForYou != 0 {
+		t.Errorf("nothing is waiting for the sender, yet it reported %d", ok.WaitingForYou)
+	}
+
+	// Over the ceiling: the sender is told what it asked for, not left to diff a
+	// timestamp against a number it has to remember passing.
+	clamped, err := st.Send(ctx, a, channelID, "greedy", SendOpts{TTLSeconds: 365 * 24 * 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clamped.TTLClampedFrom != 365*24*3600 {
+		t.Errorf("ttl_clamped_from = %d, want the requested %d", clamped.TTLClampedFrom, 365*24*3600)
+	}
+
+	// Now mail is waiting for A: B replies, and A sends again without reading it.
+	if _, err := st.Send(ctx, b, channelID, "you should read this first", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	blind, err := st.Send(ctx, a, channelID, "sent without looking", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blind.WaitingForYou != 1 {
+		t.Fatalf("waiting_for_you = %d, want 1 — the sender got no prompt to poll and reconsider", blind.WaitingForYou)
+	}
+	// And it counts only the SENDER's mail, not the channel's total: A's own three
+	// messages to B are unacked too and must not inflate this.
+	if blind.WaitingForYou > 1 {
+		t.Fatalf("waiting_for_you = %d counted the channel total rather than the sender's share", blind.WaitingForYou)
 	}
 }

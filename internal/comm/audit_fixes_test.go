@@ -251,12 +251,29 @@ func TestAnsweredRequestBodyIsDropped(t *testing.T) {
 	if _, err := st.Send(ctx, b, channelID, "done", SendOpts{ReplyToMessageID: req.MessageID}); err != nil {
 		t.Fatal(err)
 	}
+	// AN ANSWERED REQUEST NOW FOLLOWS THE SAME RETENTION RULE AS EVERYTHING ELSE.
+	//
+	// It used to be blanked the instant a reply arrived, because requires_response was
+	// the ONLY thing that kept any body alive and an answered request no longer needed
+	// the carve-out. With retention governing every settled message uniformly, an
+	// early drop would make the answered request the single message type whose text
+	// dies sooner than its peers — and it is the one a curator reconstructing a
+	// decision is most likely to want, since it is the half that got an answer.
 	m, err := st.MessageByID(ctx, req.MessageID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Body != "" {
-		t.Fatalf("answered request kept its body: %q", m.Body)
+	if m.Body != "the request text" {
+		t.Fatalf("an answered request lost its body ahead of the retention window: %q", m.Body)
+	}
+	// And it IS reclaimed — retention is a delay, not an exemption. This is the half
+	// the old immediate-drop was really protecting, and it still holds.
+	age(t, st, req.MessageID, "-25 hours") // past the 24 h default retention
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := st.MessageByID(ctx, req.MessageID); m.Body != "" {
+		t.Fatalf("the answered request's body outlived its retention window: %q", m.Body)
 	}
 }
 
