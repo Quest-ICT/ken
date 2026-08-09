@@ -1,15 +1,17 @@
 # Ken — inter-session communication (COMM)
 
-> **Status: supported, off by default; feature-complete for text messaging and file exchange.**
-> Shipped in **1.2.0**. This document is its contract. Because COMM is opt-in and off by default, its
-> interface sits outside the byte-level SemVer contract (see [COMPATIBILITY.md](../COMPATIBILITY.md))
-> and evolves **additively** — supported, but not preview-frozen.
+> **Status: supported, CORE and on by default; feature-complete for text messaging and file exchange.**
+> Shipped in **1.2.0**, opt-in until the reversal recorded in C2. This document is its contract. Its
+> interface still sits outside the byte-level SemVer contract (see
+> [COMPATIBILITY.md](../COMPATIBILITY.md)) and evolves **additively** — no longer because it is
+> optional, but because the surface is **mid-redesign** and COMM v2 retires the channel itself (C2).
+> Supported, but not preview-frozen.
 >
-> **Built and verified end to end:** the schema and store layer (`internal/comm`), the six `comm_*`
+> **Built and verified end to end:** the schema and store layer (`internal/comm`), the twelve `comm_*`
 > tools on their own `/comm/mcp` endpoint (`internal/commserver`) with the `comm` scope and
 > dedicated-token enforcement, long-poll wakeups with a shutdown drain, the instruction section, the
 > human console at `/comm` (mint a pairing code, see endpoints and channels with pending counts, revoke
-> either), English, Spanish and French translations, and the `ken serve` wiring behind `KEN_COMM_ENABLED` with a
+> either), English, Spanish and French translations, and the `ken serve` wiring (on by default; `KEN_COMM_ENABLED=0` opts out) with a
 > one-minute sweeper. Two sessions can register, be paired by a human, exchange a message and
 > acknowledge it.
 >
@@ -85,16 +87,45 @@ migrations.
   keeps its boundary clean enough (own store, own migrations, `Deps` injection, no reach into KB
   internals beyond auth) that extraction stays a mechanical refactor.
 
-### C2 — Off by default *(chosen: opt-in)*
-COMM is disabled unless the operator turns it on. Its tools are **not registered** and its
-instruction section is **not appended** when off.
+### C2 — ~~Off by default~~ → **core, on by default** *(reversed; the opt-out variable stays)*
 
-- **Why:** a default Ken install must remain exactly the curated knowledge base the README promises —
-  no second operating loop in every agent's connect-time instructions, no message-bus surface on a
-  product whose value is curation. It also makes the contract exclusion *mechanical* rather than
-  documentary: COMPATIBILITY.md already excludes anything optional-and-off-by-default, so the
-  interface is genuinely free to evolve additively as the feature grows.
-- **Trade-off accepted:** one more thing to switch on, and a feature that fewer people will discover.
+**What was decided (1.2.0):** COMM is disabled unless the operator sets `KEN_COMM_ENABLED=1`. Its
+tools are **not registered** and its instruction section is **not appended** when off.
+
+- **The why, as recorded then:** a default Ken install must remain exactly the curated knowledge base
+  the README promises — no second operating loop in every agent's connect-time instructions, no
+  message-bus surface on a product whose value is curation. It also made the contract exclusion
+  *mechanical* rather than documentary: COMPATIBILITY.md already excluded anything
+  optional-and-off-by-default, so the interface was genuinely free to evolve additively.
+
+**What changed:** COMM and [stations](STATIONS.md) are now **core** — on by default. The variable
+survives **inverted**, as an opt-*out*: `KEN_COMM_ENABLED=0` (also `false`, `off`, `no`) turns COMM
+off, and an unrecognised or malformed value leaves it **on**, because a typo must never silently
+disable core functionality. `KEN_STATION_ENABLED` reads the same way, and the two remain
+**independent** — turning COMM off leaves stations fully working, because the station notebook and
+task list are valuable to a solo session with no peers (STATIONS.md S2).
+
+- **Why the reversal:** the premise stopped holding. COMM is not an extra bolted onto a knowledge
+  base; it is part of what Ken is. And an opt-in transport is off on *both* sides by default — a
+  two-sided feature (C7) buys nothing until the peer has switched it on too, so "a feature that fewer
+  people will discover" was not a mild cost here, it was most of the feature.
+- **Why the variable was KEPT rather than deleted:** Ken already has a runtime "COMM off" state — if
+  `comm.db` cannot be opened, COMM degrades to disabled on purpose (§5.3), so an expendable database
+  can never take the durable knowledge base down. Deleting the variable would not remove that state;
+  it would only remove the operator's *control* of it, which is their one remedy if COMM misbehaves in
+  production.
+- **What did NOT change, deliberately:** the contract exclusion. COMPATIBILITY.md still keeps the
+  `comm_*` and `station_*` surfaces outside the byte-level SemVer contract — but the justification is
+  no longer "optional-and-off-by-default", which is now false. The reason is that the COMM surface is
+  **mid-redesign**: the remaining planned work removes notice-messages, replaces pairing codes and
+  channel-pair addressing with rooms and name-addressed send, and retires the **channel** — the
+  central noun of §3, §4 and the tool table in §6. Promoting these surfaces into the contract now
+  would make that redesign a MAJOR bump, or force deprecated v1 aliases through a release cycle, for
+  no benefit. They are promoted when COMM v2 lands.
+- **Trade-off accepted:** what the original decision protected is now spent — every install carries
+  the COMM instruction section and tool surface whether or not there is a second session to talk to.
+  An operator who does not want that sets `KEN_COMM_ENABLED=0`, which is exactly why the variable was
+  kept.
 
 ### C3 — Pull with long-poll *(chosen: pull)*
 Sessions retrieve messages by calling `comm_poll`, which may park up to a bounded interval before
@@ -166,7 +197,7 @@ gives it to both sessions; each calls `comm_join` with it, and the channel exist
   the model is asked nicely. Channel establishment is where the same trick is available: agents talk
   freely inside a channel a human deliberately created.
 - **Stations refine this and do not weaken it — but the literal sentence changed, so it is restated
-  here rather than left to be discovered.** With [stations](STATIONS.md) enabled, a session staffing
+  here rather than left to be discovered.** With [stations](STATIONS.md), a session staffing
   one can call `comm_open_channel` and get a channel with **no pairing code and no human present at
   that moment**. The human decision did not disappear; it moved from the conversation to the
   *relationship*, and it happened earlier: someone approved a **link** between those two stations
@@ -283,9 +314,9 @@ to seconds; the session is still stalled until somebody is available.
 > rotation is logged with the curator who performed it, because a rotation nobody remembers doing is
 > the signal that matters.
 
-**Replacement — bind a fresh endpoint to the same station.** Requires [stations](STATIONS.md) enabled
-**and** the binding arranged in advance (S5): the lost session must have bound its endpoint to the
-station. A new session staffing that station calls `comm_register`, writes the new secret to disk,
+**Replacement — bind a fresh endpoint to the same station.** [Stations](STATIONS.md) are core and on
+by default, so what this still requires is the binding arranged in advance (S5): the lost session must
+have bound its endpoint to the station. A new session staffing that station calls `comm_register`, writes the new secret to disk,
 takes a voucher from `station_binding_voucher` naming that new `endpoint_id`, and redeems it with
 `comm_bind` — inheriting the station's unread mail, because the **station** owns the inbox (S4), and
 the dead endpoint's claims return to the unclaimed tail rather than stranding.
@@ -293,7 +324,8 @@ Where the two stations already hold an approved **link** (S9), it re-opens the c
 `comm_open_channel`: no pairing code, and no human in the loop at that moment. This is the only path
 that recovers without waiting for a person. *What it does not solve:* it recovers the **mailbox and
 the relationships, not the conversation** — the transcript was never Ken's to keep (S1) — and it does
-nothing for a session that was never bound, which is every session until an operator sets stations up.
+nothing for a session that was never bound: stations being core removed the operator's setup step, not
+the binding step, which the session itself must still have performed.
 
 **The honest summary.** A session that wrote its pair to disk recovers alone. A session bound to a
 station recovers alone. A session that did neither waits for a human, and no mechanism here changes
@@ -433,8 +465,8 @@ Eight tools, all `comm_*`, all requiring the `comm` scope (the two file tools ad
 the bearer token identifies a *machine*, so the endpoint pair is what identifies the *session* within
 it.
 
-Enable with `KEN_COMM_ENABLED=1`; the message database defaults to `<db dir>/comm/comm.db`
-(`KEN_COMM_DB`). Mint a **dedicated** token. There are **three** scope families — knowledge-base,
+On by default; opt out with `KEN_COMM_ENABLED=0` (C2). The message database defaults to
+`<db dir>/comm/comm.db` (`KEN_COMM_DB`). Mint a **dedicated** token. There are **three** scope families — knowledge-base,
 comm, and station — and the rule is not "one family per token" but which pairs may combine:
 knowledge-base scopes may not be mixed with either of the others, while `station` and `comm` MAY be
 held together, because a session legitimately staffs a post and talks from it. A token that could
@@ -450,7 +482,7 @@ ken token add --actor comm-dev --scopes comm
 | `comm_register` | Register this session as an endpoint; returns `endpoint_id` + one-time secret. Does NOT bind to a station — write the secret down, then use `comm_bind`. |
 | `comm_join` | Join a channel using a human-minted pairing code. Both sides call it. |
 | `comm_open_channel` | Open a channel with a station your human has already **linked** to yours — no pairing code. Refused without an approved link. |
-| `comm_bind` | Bind an endpoint you already have to a station, keeping its id, secret and channels. For sessions that were already running when stations were set up. |
+| `comm_bind` | Bind an endpoint you already have to a station, keeping its id, secret and channels. For a session that registered before it began staffing a station. |
 | `comm_channels` | List this endpoint's channels and their state. |
 | `comm_send` | Send one atomic message; optional `requires_response` / `reply_to` / idempotency key. |
 | `comm_poll` | Long-poll for unacknowledged messages across all of this endpoint's channels. |
@@ -465,8 +497,8 @@ Two surfaces exist alongside them:
   independent rate accounting, revocation is per-surface, and an operator can firewall or disable one
   without the other. It also carries no permissive CORS: the KB endpoint allows browser origins for a
   hosted connector, and COMM has no browser client.
-- **An instruction section**, appended to the server-delivered instructions only when COMM is
-  enabled, describing the loop (register → join → poll → act → acknowledge → reply) and the handling
+- **An instruction section**, appended to the server-delivered instructions whenever COMM is enabled
+  — which is by default (C2) — describing the loop (register → join → poll → act → acknowledge → reply) and the handling
   rules in §8.
 
 ### Scopes
@@ -548,7 +580,8 @@ the capability. COMM must be equally honest about where it does and does not hav
 
 **Enforced by the server:**
 
-- A channel exists only because a human minted a pairing code and both sessions used it (C7).
+- A channel exists only because a human authorized it: a pairing code both sessions used, or an
+  approved station **link** (C7). Stations are core, so the link path exists in a default install.
 - Sender identity is stamped server-side into every delivered envelope; a message cannot claim to be
   from another endpoint.
 - Message bodies are returned in a dedicated structured field, never spliced into prose, so content

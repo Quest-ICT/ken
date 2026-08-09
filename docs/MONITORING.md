@@ -67,9 +67,9 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
 - **Traffic** — `ken_http_requests_total{surface,outcome}`, `ken_http_request_duration_seconds`
   (**histogram** — request latency for the web surface; use `histogram_quantile(0.95, …)` for p95).
 - **MCP** — `ken_mcp_tool_calls_total{tool,outcome}` and `ken_mcp_tool_duration_seconds{tool}`
-  (**histogram**, per-tool handler latency) cover **every** MCP surface that is enabled: the `kb_*`
-  tools always, the `comm_*` tools when inter-session communication is on, and the `station_*` tools
-  when stations are. `comm_poll` is deliberately excluded from the latency histogram — it is a
+  (**histogram**, per-tool handler latency) cover **every** MCP surface that is mounted: `kb_*`,
+  `comm_*` and `station_*` are all core and on by default, so all three appear on a stock install —
+  a missing `comm_*` or `station_*` series means the surface was turned off, not that it is idle. `comm_poll` is deliberately excluded from the latency histogram — it is a
   long-poll, and a parked wait is not latency.
 - **No station-specific gauges exist**, and their absence is stated rather than left to be inferred:
   there is no equivalent of the `ken_comm_*` series counting stations, notebook bytes or open tasks.
@@ -77,7 +77,9 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
   wants — assets against their caps — is on the `/stations` console instead.
 - **Knowledge base** — `ken_kb_entries`, `ken_kb_versions`, `ken_kb_proposals_pending`,
   `ken_kb_embeddings` / `ken_kb_embeddable_versions`, `ken_users`, `ken_tokens_active`.
-- **Inter-session comms** (only when `KEN_COMM_ENABLED=1`; see [`COMM.md`](COMM.md)) —
+- **Inter-session comms** (on by default; absent only where COMM is off — an operator set
+  `KEN_COMM_ENABLED=0`, or `comm.db` could not be opened and COMM degraded to disabled; see
+  [`COMM.md`](COMM.md)) —
   `ken_comm_endpoints`, `ken_comm_channels_open`, `ken_comm_messages_unacked`,
   `ken_comm_message_bytes`, `ken_comm_poll_waiters`, `ken_comm_files`, `ken_comm_file_bytes`. COMM is deliberately **absent from
   `/health`**: that endpoint marks the whole service DOWN on any component failure, and an

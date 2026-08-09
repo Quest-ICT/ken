@@ -5,7 +5,9 @@ endpoint. This document is the contract: shapes here are stable API; change them
 *adding* optional fields, never by removing or retyping an existing one.
 
 - **Endpoint:** `https://<ken-host>/mcp` (TLS-only). **This document covers the knowledge-base
-  surface only.** Ken has two other MCP endpoints, both optional and both off by default, each with
+  surface only.** Ken has two other MCP endpoints, both **core and on by default** (each with an
+  independent opt-out — `KEN_COMM_ENABLED=0`, `KEN_STATION_ENABLED=0`; turning COMM off leaves
+  stations fully working), each with
   its own token family and its own contract document — a client registers Ken once per surface it
   uses, which is a security property rather than packaging taste (a knowledge-base token cannot send
   messages, and a comm token cannot write knowledge):
@@ -42,7 +44,7 @@ token up by `tokenId`, constant-time-compares `SHA-256(secret)`, and resolves it
 | `write-draft` | `kb_save` (create a new **draft** entry) |
 | `propose` | `kb_propose_enhancement`, `kb_flag_stale`, `kb_record_outcome` |
 | `curate` | promotion / reject — **reserved; required by no MCP tool.** Curation happens in the human web UI. |
-| `comm` / `comm-file` | a *separate*, opt-in surface (off by default) — see below. Never combined with the scopes above. |
+| `comm` / `comm-file` | a *separate* surface, core and on by default — see below. Never combined with the scopes above. |
 
 > **The standard agent token is `["read","write-draft","propose"]` — never `curate`.**
 > That exclusion *is* the curation gate: an AI can capture and enhance knowledge all day, but
@@ -57,13 +59,20 @@ it never collides with the `ken_` shape) and always resolves to the **same agent
 (*Connected apps (OAuth)*). Full setup and security model: [OAUTH.md](OAUTH.md).
 
 > **Inter-session communication is a different endpoint, and this document does not cover it.**
-> When the operator enables it, Ken also serves `comm_*` tools at `https://<ken-host>/comm/mcp` for
+> Ken also serves `comm_*` tools at `https://<ken-host>/comm/mcp` for
 > AI-session-to-AI-session messaging and file exchange. They require a **dedicated** token carrying
 > the `comm` (and, for files, `comm-file`) scope — a token may hold comm scopes or knowledge-base
-> scopes, never both, so a client registers Ken **twice**. That surface is **opt-in and off by
-> default**: because it is optional it sits outside the byte-level compatibility contract, which is
-> exactly why its contract lives in [COMM.md](COMM.md) rather than here. Nothing in this document
-> changes when it is enabled.
+> scopes, never both, so a client registers Ken **twice**. That surface is **core and on by
+> default**, with `KEN_COMM_ENABLED=0` kept as an opt-OUT: Ken already degrades to a "COMM off"
+> state when `comm.db` cannot be opened — on purpose, so an expendable database can never take the
+> durable knowledge base down — and removing the variable would not remove that state, only the
+> operator's control of it, which is their one remedy if COMM misbehaves in production. It still
+> sits **outside** the byte-level compatibility contract, but no longer because it is optional: the
+> surface is mid-redesign — notice-messages go, rooms and name-addressed send replace pairing codes
+> and channel-pair addressing, and the *channel*, the central noun of today's tools, is retired — so
+> promoting it now would buy a MAJOR bump, or a release cycle of deprecated v1 aliases, for no
+> benefit. It is promoted when that redesign (COMM v2) lands. That is why its contract lives in
+> [COMM.md](COMM.md) rather than here. Nothing in this document changes either way.
 
 **Errors.** Tool errors are returned as ordinary MCP tool errors — a `CallToolResult` with
 `isError: true` whose single text content item is the error **message string**. There is **no**

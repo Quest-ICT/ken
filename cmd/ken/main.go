@@ -143,16 +143,16 @@ Rate limiting (env; on by default — loopback + KEN_RATELIMIT_ALLOW_CIDRS + /he
   KEN_RATELIMIT_LOCKOUT_SEC  auto-block duration, seconds (default 900)
   KEN_RATELIMIT_ALLOW_CIDRS  extra always-allowed CIDRs (comma-separated)
 
-Inter-session communication (OFF unless enabled — see docs/COMM.md):
-  KEN_COMM_ENABLED  1 = expose the comm MCP endpoint at /comm/mcp + console at /comm (default off)
+Inter-session communication — CORE, on by default (see docs/COMM.md):
+  KEN_COMM_ENABLED  0 = do NOT expose the comm MCP endpoint at /comm/mcp + console at /comm (default ON)
   KEN_COMM_DB       message database path (default <db dir>/comm/comm.db; NOT backed up — it is expendable)
                     needs a DEDICATED token:  ken token add --actor comm-dev --scopes comm
                     (add comm-file to that token for file exchange: --scopes comm,comm-file)
                     a token may hold comm scopes or knowledge-base scopes, never both
                     file exchange is a separate live setting (Settings -> Inter-session comms)
 
-Stations — durable AI working identities (OFF unless enabled — see docs/STATIONS.md):
-  KEN_STATION_ENABLED  1 = expose the station MCP endpoint at /station/mcp + console at /stations (default off)
+Stations — durable AI working identities; CORE, on by default (see docs/STATIONS.md):
+  KEN_STATION_ENABLED  0 = do NOT expose the station MCP endpoint at /station/mcp + console at /stations (default ON)
                     a station is created and NAMED by a human; a session staffs it
                     create it, then mint its key:  ken station add --name prod-ops
                                                    ken station key --station prod-ops --label laptop
@@ -303,15 +303,24 @@ func runServe(args []string) {
 		log.Print("OAuth: authorization server ENABLED — discovery, dynamic client registration, and token endpoints are live (claude.ai custom connectors can authenticate).")
 	}
 
-	// Inter-session communication (docs/COMM.md) — OFF unless KEN_COMM_ENABLED.
-	// A default install stays exactly the curated knowledge base it advertises:
-	// with COMM off, no second database is created, no tools are registered, and
-	// no instruction section reaches any agent.
+	// Inter-session communication (docs/COMM.md) — CORE, on by default.
+	//
+	// It shipped opt-in so a default install stayed exactly the curated knowledge base
+	// the README advertised. That reasoning expired: stations depend on it for the
+	// hearsay marker, the operator console has a page for it, and a feature every
+	// deployment was expected to turn on was an option in name only.
+	//
+	// KEN_COMM_ENABLED=0 still turns it off, and that is deliberate rather than
+	// leftover. Ken ALREADY has a runtime "COMM off" state — an unopenable comm.db
+	// degrades into it just below, on purpose, so the durable knowledge base survives
+	// an expendable database. Removing the variable would not remove that state; it
+	// would only remove the operator's control over it, taking away the one remedy
+	// they have if COMM misbehaves in production.
 	//
 	// Opened BEFORE the MCP deps are built because the knowledge base's write path
 	// needs the hearsay check (docs/COMM.md §7), which reads this store.
 	var commStore *comm.Store
-	if os.Getenv("KEN_COMM_ENABLED") == "1" {
+	if commEnabled() {
 		// Every failure here DEGRADES rather than aborting: an unwritable directory
 		// or a corrupt comm.db must not take the durable knowledge base down with an
 		// expendable one. That is the whole point of "COMM may fail; the KB stays UP"
@@ -319,7 +328,7 @@ func runServe(args []string) {
 		// at the very first failure an operator is likely to hit.
 		commPath := envOr("KEN_COMM_DB", filepath.Join(filepath.Dir(*dbPath), "comm", "comm.db"))
 		if cs, err := openComm(commPath, commLimits(live.Current())); err != nil {
-			log.Printf("COMM: DISABLED — %v. The knowledge base is unaffected; fix the comm database or unset KEN_COMM_ENABLED.", err)
+			log.Printf("COMM: DISABLED — %v. The knowledge base is unaffected; fix the comm database, or set KEN_COMM_ENABLED=0 if you meant to run without it.", err)
 		} else {
 			defer cs.Close()
 			commStore = cs
@@ -366,10 +375,8 @@ func runServe(args []string) {
 			mcpHandler.SetCurationLangs(s.CurationLangSet)
 		}
 	})
-	// Inter-session communication (docs/COMM.md) — OFF unless KEN_COMM_ENABLED.
-	// A default install stays exactly the curated knowledge base it advertises:
-	// with COMM off, no second database is created, no tools are registered, and
-	// no instruction section reaches any agent.
+	// Inter-session communication (docs/COMM.md) — CORE, on by default; see above for
+	// why KEN_COMM_ENABLED=0 remains as an opt-OUT.
 	//
 	// Deliberately NOT registered with the health checker: that marks the whole
 	// service DOWN on any component failure and /health then returns 503, so a
@@ -454,11 +461,16 @@ func runServe(args []string) {
 	if i18nDir == "" {
 		i18nDir = filepath.Join(filepath.Dir(*dbPath), "i18n")
 	}
-	// Stations: durable, human-named working identities (docs/STATIONS.md). Gated on
-	// its OWN flag alone — never on KEN_COMM_ENABLED, because the notebook and the task
-	// list are valuable to a solo session with no peers (S2), and gating them behind a
-	// messaging feature they have nothing to do with would be the wrong dependency.
-	stationsEnabled := os.Getenv("KEN_STATION_ENABLED") == "1"
+	// Stations: durable, human-named working identities (docs/STATIONS.md) — CORE, on
+	// by default, with KEN_STATION_ENABLED=0 as an opt-OUT for the same reason COMM
+	// keeps one.
+	//
+	// STILL resolved independently of COMM, and that has not changed: the notebook and
+	// the task list are valuable to a solo session with no peers (S2), so stations must
+	// never be gated behind a messaging feature they have nothing to do with. Both
+	// being on by default makes the two flags look interchangeable; they are not, and
+	// KEN_COMM_ENABLED=0 must leave stations fully working.
+	stationsEnabled := stationsEnabledFlag()
 	if stationsEnabled {
 		sd := stationserver.Deps{Store: st, TokenLimiter: rlToken, Metrics: reg}
 		// The hearsay marker is keyed on the ACTOR, so it only works when COMM is on and
@@ -665,6 +677,20 @@ func mustOpenStore(dbPath string) *store.Store {
 	}
 	return st
 }
+
+// commEnabled and stationsEnabledFlag are the ONE place each surface's default lives.
+//
+// They exist to be observable. A test that writes envBoolDefault("KEN_COMM_ENABLED",
+// true) proves only that envBoolDefault returns its own argument — it re-derives the
+// default instead of reading it, so flipping the real call to false would leave that
+// test green and the surface silently off. Naming the decision means the test asks
+// the same function the server asks.
+func commEnabled() bool { return envBoolDefault("KEN_COMM_ENABLED", true) }
+
+// stationsEnabledFlag is separate from commEnabled and must stay separate: the
+// notebook and task list are valuable with no peers at all (STATIONS.md S2), so
+// stations are never gated behind messaging.
+func stationsEnabledFlag() bool { return envBoolDefault("KEN_STATION_ENABLED", true) }
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {

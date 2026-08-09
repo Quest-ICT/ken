@@ -41,17 +41,30 @@ type Deps struct {
 	I18n *i18n.Manager
 	// Comm, when set, mounts the inter-session communication console (/comm) —
 	// where a human mints the pairing codes that are the ONLY way a channel comes
-	// into existence, and revokes channels or endpoints. Nil (the default) hides
-	// the page and its nav entry entirely. Mirrors KEN_COMM_ENABLED; the comm MCP
-	// endpoint is mounted separately in main.go.
+	// into existence, and revokes channels or endpoints. Nil hides the page and its
+	// nav entry entirely.
+	//
+	// COMM is core and on by default, so main.go passes a live store unless the
+	// operator opted out with KEN_COMM_ENABLED=0 — or unless comm.db could not be
+	// opened, which degrades to nil on purpose so an expendable database cannot take
+	// the durable knowledge base down. Nil therefore means BOTH "switched off" and
+	// "failed to open", and the console cannot tell them apart; the server log says
+	// which. The comm MCP endpoint is mounted separately in main.go.
 	Comm *comm.Store
 	// StationsEnabled, when true, mounts the stations console (/stations) — where a
 	// human approves a session's request for a working identity and TYPES its name,
-	// which is the capability every station tool is denied. Mirrors
-	// KEN_STATION_ENABLED; the station MCP endpoint is mounted separately in main.go.
+	// which is the capability every station tool is denied. The station MCP endpoint
+	// is mounted separately in main.go.
 	//
-	// Independent of Comm on purpose: the notebook and task list need no peers, so a
-	// deployment may legitimately run stations with COMM off.
+	// Stations are core and on by default; main.go passes true unless the operator set
+	// KEN_STATION_ENABLED=0. This field stays an explicit bool rather than defaulting
+	// on, because the zero value belongs to whoever CONSTRUCTS Deps — tests build one
+	// deliberately without stations — and a library that turns a surface on because a
+	// caller forgot a field is worse than one that waits to be told.
+	//
+	// Independent of Comm on purpose, and MORE easily forgotten now that both default
+	// on: the notebook and task list need no peers, so KEN_COMM_ENABLED=0 must leave
+	// stations entirely working (S2).
 	StationsEnabled bool
 }
 

@@ -1,10 +1,16 @@
 # Ken — stations, notebooks and task lists
 
-> **Status: BUILT and supported; opt-in and OFF by default (`KEN_STATION_ENABLED`).** Written before
-> the code, the way [`COMM.md`](COMM.md) was, so the decisions were argued while they were still
-> cheap — then implemented against. Being off by default places it outside the byte-level
-> compatibility contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)) exactly as COMM is: supported,
-> but free to evolve additively.
+> **Status: BUILT, supported, and CORE — ON by default, with `KEN_STATION_ENABLED=0` as an opt-OUT
+> (S2).** Written before the code, the way [`COMM.md`](COMM.md) was, so the decisions were argued
+> while they were still cheap — then implemented against. The `station_*` surface still sits outside
+> the byte-level compatibility contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)), exactly as COMM
+> does — but **no longer because it is off by default**. It stays outside because the COMM surface
+> this design is wired into (S4's station-owned inbox, S9's links materializing channels) is
+> mid-redesign: the remaining planned work removes notice-messages, replaces pairing codes and
+> channel-pair addressing with rooms and name-addressed send, and retires the **channel** — the
+> central noun of the current tool surface. Promoting either surface now would make that redesign a
+> MAJOR bump, or push deprecated v1 aliases through a release cycle, for no benefit. Both are
+> promoted into the contract when that redesign ("COMM v2") lands; until then they evolve additively.
 >
 > **Built:** the schema and `kens_` station keys with the three-way scope split (S5); the notebook
 > with revisions (S10); the task list and its ordering contract (§11); the locker (S11); the
@@ -69,21 +75,39 @@ living in `ken.db` where the backup story already reaches.
   transcript. The tool description must say so, or a session will plan around a guarantee it does not
   have.
 
-### S2 — Off by default *(chosen: opt-in, `KEN_STATION_ENABLED`)*
+### S2 — REVERSED: stations are CORE and ON by default *(was: opt-in, off unless `KEN_STATION_ENABLED=1`)*
 
-- **Why:** the same reasoning as COMM's C2. A default install must remain exactly the curated
-  knowledge base the README promises — no extra operating loop in every agent's connect-time
+`KEN_STATION_ENABLED` survives **inverted**, as an opt-OUT: `0` / `false` / `off` / `no` turns the
+surface off, and a value Ken does not recognise leaves it **ON** — a typo must not silently disable
+core functionality.
+
+- **Why it was off:** the same reasoning as COMM's C2. A default install must remain exactly the
+  curated knowledge base the README promises — no extra operating loop in every agent's connect-time
   instructions, no extra credential family to reason about, no operator surface for a feature nobody
   asked for.
+- **Why that reversed:** the reasoning expired rather than being shown wrong. A surface every
+  deployment was expected to turn on is an option in name only, and the flag charged its cost to
+  exactly the sessions this design exists for — a station that is off is a session with no durable
+  memory and no task list, which is §11.1's decay with a switch in front of it.
+- **Why the variable was KEPT rather than deleted — and here, too, the COMM analogy is only partial.**
+  COMM already has a runtime "off" state that no edit can remove: an unopenable `comm.db` degrades
+  into it on purpose, so that an expendable database can never take the durable knowledge base down.
+  Deleting `KEN_COMM_ENABLED` would not delete that state, only the operator's *control* of it —
+  their one remedy if COMM misbehaves in production. Stations have no such degraded mode; their state
+  is in `ken.db`, which Ken cannot run without. The switch stays anyway, so an operator whose station
+  surface misbehaves has a remedy that is not "downgrade Ken".
 - **What the flag does and does not gate — stated precisely, because the COMM analogy does not
   transfer cleanly.** COMM creates `comm.db` lazily under its flag, so its tables genuinely do not
   exist when it is off. Stations put durable state in `ken.db`, whose migrations are unconditional —
   so **the tables ship and stay empty**. That is what `COMPATIBILITY.md`'s forward-compatible-schema
   rule permits, and an empty table costs a snapshot nothing. The flag gates the *tool surface*, the
   *connect-time instructions* and the *console page*.
-- **Trade-off accepted:** two opt-in subsystems. They are independent on purpose — stations work with
-  COMM **off** (a solo session with no peers still gets durable memory and a task list), and COMM
-  works with stations off, unchanged (§12).
+- **Trade-off accepted:** two flags that now default the same way and therefore read as one switch.
+  They are not one, and the independence is the older and more important half of this decision —
+  stations work with COMM **off** (a solo session with no peers still gets durable memory and a task
+  list), and COMM works with stations off, unchanged (§12). `KEN_COMM_ENABLED=0` must leave stations
+  entirely working; anything that gates the notebook or the task list behind messaging contradicts
+  this decision.
 
 ### S3 — Only a human creates, names, publishes, renames, archives or reassigns a station *(chosen: request → approve → name)*
 
@@ -257,9 +281,11 @@ for the console's staffed-now display.
 - **`last_briefed_at` lives in `ken.db`, and the lifetime argument is withdrawn for it deliberately.**
   It looks like churn but is not: it is touched only on the handful of rows a briefing actually
   displays, at most once per staffing session (§11.4) — not per task, not per message.
-  The alternative, putting it in `comm.db`, is unimplementable, because that file is opened only under
-  `KEN_COMM_ENABLED` — and S2 promises the task list works with COMM off. Aging-first surfacing is the
-  whole point of §11, so it cannot depend on the messaging subsystem.
+  The alternative, putting it in `comm.db`, is unimplementable, because that file is opened only when
+  COMM is running — which an operator may switch off with `KEN_COMM_ENABLED=0`, and which an
+  unopenable `comm.db` degrades out of on purpose — while S2 promises the task list works with COMM
+  off. Aging-first surfacing is the whole point of §11, so it cannot depend on the messaging
+  subsystem.
 - **The pointer rule:** every cross-database pointer this design adds runs from the **expendable** file
   to the **durable** one (`comm.endpoint.station_id → ken.station.station_id`), by opaque text id.
   Never the reverse: a dangling pointer in `comm.db` is a row to drop; one in `ken.db` would be
@@ -550,8 +576,8 @@ At every cap: **refuse, naming the cap in the message** (S12).
 
 ## 10. Operator surface
 
-A `/stations` console page, registered whenever `KEN_STATION_ENABLED` is set and gated on that flag
-alone — never on `KEN_COMM_ENABLED`, because stations work with COMM off:
+A `/stations` console page, registered unless the operator opted out with `KEN_STATION_ENABLED=0` and
+gated on that flag alone — never on `KEN_COMM_ENABLED`, because stations work with COMM off:
 
 - the **request queue** — station requests and link requests together, one approval model — each row
   showing requester, reason, and the `prompted_by_peer_traffic` badge;
@@ -768,13 +794,13 @@ rather than merely exist:
 
 ## 12. Migration — and the statements elsewhere that must change
 
-### Turning it on where sessions are already running
+### Adopting it where sessions are already running
 
 The order matters, and only the last step involves the sessions themselves:
 
-1. **Enable it**: `KEN_STATION_ENABLED=1`, restart. The schema was already there — migrations are
-   unconditional (S2) — so this adds the `/station/mcp` surface and the `/stations` console, nothing
-   else.
+1. **Nothing to enable.** Stations are core and on by default (S2): the upgrade exposes
+   `/station/mcp` and the `/stations` console unless the operator set `KEN_STATION_ENABLED=0`. The
+   schema was already there — migrations are unconditional — so that is all the upgrade adds.
 2. **Create a station per working identity, naming each one yourself**: `ken station add --name
    prod-ops`. Or leave this until a session asks with `station_request` and approve it in the console;
    either way a human types the name (S3).

@@ -428,11 +428,14 @@ can't do it, and Ken makes no external calls.
 
 ---
 
-## Inter-session communication (optional, off by default)
+## Inter-session communication (core, on by default)
 
-Separate from everything above. If your operator has enabled it, Ken also lets **two AI sessions hand
+Separate from everything above, and part of every Ken install: Ken also lets **two AI sessions hand
 work to each other** — one developing, one testing, one monitoring — instead of you copying context
-between them by hand.
+between them by hand. It is on by default. An operator can still turn it off (`KEN_COMM_ENABLED=0`),
+and Ken turns it off itself if the message database cannot be opened — an expendable database must
+never take the durable knowledge base down — so if the `comm_*` tools are absent, ask your operator
+rather than assuming a switch was never flipped.
 
 It is a **second registration**, not extra tools on this endpoint:
 

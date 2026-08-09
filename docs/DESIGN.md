@@ -137,10 +137,11 @@ and drop-in:** adding a language or fixing a string must not require a rebuild o
 single-binary deployment. **Scope:** human UI only — the AI/MCP surface and logs stay English (a machine
 contract, not end-user copy). Full reference: [`I18N.md`](I18N.md).
 
-### D9 — Inter-session communication: in-process, opt-in, ephemeral  *(chosen: embed)*
+### D9 — Inter-session communication: in-process, core, ephemeral  *(chosen: embed)*
 A second service on the same deployment: authenticated **session-to-session messaging** between AI
 sessions (same machine or not), as `internal/comm` inside the same binary, with its **own** SQLite file,
-its **own** MCP endpoint, its **own** `comm` scope, and **off by default**. Specified for 1.2.0;
+its **own** MCP endpoint, its **own** `comm` scope, and **on by default** (`KEN_COMM_ENABLED=0` opts
+out). Specified for 1.2.0;
 full contract in [`COMM.md`](COMM.md).
 - **Why it belongs in Ken at all:** the deployment already offers the two things such a service needs and
   are expensive to stand up twice — an authenticated endpoint every session already reaches, and a host
@@ -149,10 +150,21 @@ full contract in [`COMM.md`](COMM.md).
   knowledge is low-churn and **durable**. Separating the files keeps ephemeral WAL churn out of the
   replicated database and out of the KB's single writer; separating the endpoint and scope means a KB
   token cannot message and a comm token cannot write knowledge.
-- **Why off by default:** a default install must remain exactly the curated KB the README promises — no
-  second operating loop in every agent's connect-time instructions. It also makes the contract exclusion
-  mechanical rather than documentary, since [`../COMPATIBILITY.md`](../COMPATIBILITY.md) already excludes
-  optional-and-off-by-default surfaces.
+- **Why it is core now:** it shipped off by default so a default install stayed exactly the curated KB the
+  README promises — no second operating loop in every agent's connect-time instructions. That reasoning
+  expired: stations depend on COMM for the hearsay marker, the operator console carries a page for it, and
+  a feature every deployment was expected to turn on was an option in name only.
+- **Why the switch survives, inverted (`KEN_COMM_ENABLED=0`):** Ken already has a runtime "COMM off"
+  state — a `comm.db` that cannot be opened degrades to disabled *on purpose*, so an expendable database
+  can never take the durable knowledge base down. Deleting the variable would not remove that state, only
+  the operator's control of it, which is their one remedy if COMM misbehaves in production. An
+  unrecognised value leaves COMM **on**: a typo must not silently disable core functionality.
+- **The contract exclusion stays, for a different reason:** [`../COMPATIBILITY.md`](../COMPATIBILITY.md)
+  still keeps the `comm_*` surface outside the byte-level contract — no longer because it is optional, but
+  because it is **mid-redesign**. The remaining planned work removes notice-messages, replaces pairing
+  codes and channel-pair addressing with rooms and name-addressed send, and retires the **channel**, the
+  central noun of today's tools. Promoting the surface now would make that redesign a MAJOR bump, or push
+  deprecated v1 aliases through a release cycle, for no benefit. It is promoted when COMM v2 lands.
 - **Trade-off accepted, stated plainly:** a separate file isolates the KB's WAL and backups, **not** the
   disk, the process, or the readiness signal. Those require enforced rules (storage budget with a
   free-space floor, quotas that fail closed, recover-wrapped goroutines, comm deliberately absent from
@@ -348,7 +360,8 @@ self-extracting `.bin` installer (SELinux `restorecon`, opt-in firewall).
 **Human UI (deliberately minimal):** a **home dashboard** (KB stats + review queue + recent activity),
 search / a dedicated **Browse** page (filter by kind/category/staleness/lifecycle) / read, the **proposal queue
 with diff + Promote/Reject**, version history, `[[link]]` graph, token admin (incl. **Connected apps (OAuth)**
-when enabled). **No new-entry creation by the human, by design.** First-run
+when enabled), plus — core, so present by default — the **COMM console** (`/comm`) and the **stations
+console** (`/stations`). **No new-entry creation by the human, by design.** First-run
 wizard seeds the owner + DB/token secrets.
 
 ---
@@ -415,15 +428,15 @@ and makes channel establishment two-sided from day 1 — all cheap now, all MAJO
 
 **Built (git `main`, tests green):** MVP (MCP `kb_search`/`kb_get` + write path + promotion) · token/user CLI · human web UI · backup + deploy · flat-memory importer · **semantic embeddings** · **first-run wizard** · **v1 tools** (`kb_diff`, `kb_record_outcome`, `kb_recent_context`) · **in-process TLS/ACME** (`internal/webtls`) · **per-IP/per-token rate limiting** (`internal/ratelimit`, `internal/clientip`) · **web token admin** (`/tokens`) + **live editable settings** (`/settings`, `internal/settings` — rate limits/login/session/trusted-proxies/ACME-domains applied without a restart via an atomically-swapped snapshot) · **home dashboard** (`/` — KB stats + review queue + recent activity) + dedicated **Browse page** (`/browse`) · **server-delivered MCP instructions** (the operating loop shipped to clients in the `initialize` response) · **optional OAuth 2.1 authorization server** (off unless `KEN_OAUTH_ENABLED`; discovery + DCR + consent + token endpoints, connectors revocable from `/tokens`; migration `0008_oauth.sql`; see [`OAUTH.md`](OAUTH.md)) · **themeable + multilingual web UI** (dark/light
 self-contained design system, zero external requests; reloadable i18n with English, Spanish + French embedded and
-runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); decision **D8**). MCP surface = 8 tools.
+runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); decision **D8**). Knowledge-base MCP surface (`/mcp`) = 8 tools.
 
 **Implementation note — embeddings (revises D3's mechanism, not its intent):** rather than `sqlite-vec`/`vec0`, Ken stores embeddings in a plain `entry_embedding` BLOB table ([`migrations/0002_embeddings.sql`](../migrations/0002_embeddings.sql)) and computes cosine KNN **brute-force in Go**, fused into the FTS RRF query via a Go-built `VALUES` CTE. This needs no SQLite extension and is fine at single-user scale (the design's "flat, never ANN" stance). The `internal/embed` SPI keeps a hosted OpenAI-compatible provider and an offline hash provider; `ken embed backfill` populates vectors; `KEN_EMBED_*` configures it (off by default).
 
 **Resolved:** MCP tool prefix = `kb_*`; project renamed to `ken`; `git init` done; `Migrate()` applies all migrations (embeddings table always present, empty when unused).
 
-**Built — inter-session communication** (decision **D9**), shipping in 1.2.0 **off by
-default**: authenticated session-to-session messaging between AI sessions on the same or
-different machines. `internal/comm` (own SQLite file, own migrations) + `internal/commserver` (eight
+**Built — inter-session communication** (decision **D9**), shipped in 1.2.0 and now **core, on
+by default** (`KEN_COMM_ENABLED=0` opts out): authenticated session-to-session messaging between
+AI sessions on the same or different machines. `internal/comm` (own SQLite file, own migrations) + `internal/commserver` (eight
 `comm_*` tools on their own `/comm/mcp` endpoint, the `comm` and `comm-file` scopes, long-poll wakeups
 with a shutdown drain), a human console at `/comm` where the operator mints the pairing codes that are
 the only way a channel comes into existence, a live settings group, `ken_comm_*` metrics, and file
@@ -439,8 +452,9 @@ reason C-series decisions exist at all: the load-bearing choices (who owns a mes
 sessions staff one identity, what a credential revocation actually severs, where durable state may
 point) were cheap to argue on paper and would have been expensive to discover in code. That paid off
 literally — implementing against the written contract is what surfaced a sequence-numbering defect that
-would have made a cumulative acknowledge settle messages nobody had read. Opt-in and off by default,
-like COMM.
+would have made a cumulative acknowledge settle messages nobody had read. Core and on by default, like COMM —
+but resolved independently of it (`KEN_STATION_ENABLED=0` is stations' own opt-out, and turning COMM
+off leaves stations fully working): a notebook and a task list are worth having with no peers at all (S2).
 
 **Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5) · COMM console re-labelling + endpoint identity (COMM.md §12) · **client-side sortable listing tables** (below). *(All §1 security-priority items are now implemented.)*
 

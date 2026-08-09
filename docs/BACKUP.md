@@ -16,11 +16,12 @@ dump of the instance.
 > in 1.4.2.** Notebook pages and locker blobs are opaque content Ken does not inspect: it cannot look at
 > a blob and know it is a key. Sessions are instructed never to put a token, key or password there, and
 > the tool descriptions say so, but that is a documented expectation and **not a control Ken enforces**.
-> So the guarantee covers what Ken *hashes*, not what a session *wrote*. If you enable stations, a
-> snapshot may contain whatever the notebook and locker were given, verbatim — one more reason for
-> `KEN_AGE_RECIPIENT`, and a reason to read a station's locker in the console if you ever suspect one.
+> So the guarantee covers what Ken *hashes*, not what a session *wrote*. Stations are core and on by
+> default, so a snapshot may contain whatever the notebook and locker were given, verbatim — one more
+> reason for `KEN_AGE_RECIPIENT`, and a reason to read a station's locker in the console if you ever
+> suspect one.
 
-> **Inter-session communication (COMM) state is deliberately NOT backed up.** When COMM is enabled it
+> **Inter-session communication (COMM) state is deliberately NOT backed up.** COMM is on by default; it
 > keeps its own database and relayed files under `data/comm/`, and neither tier above covers them:
 > Litestream replicates one explicitly named path, and the snapshot script copies only the knowledge
 > base. That is the design, not an oversight — message traffic is expendable, and losing it costs an

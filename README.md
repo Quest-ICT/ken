@@ -43,16 +43,21 @@ for anything real, issue a scoped token with `ken token add`.)
 
 ## Status
 
-In production. All eight MCP tools — `kb_search`, `kb_get`, `kb_save`,
+In production. All eight knowledge-base MCP tools — `kb_search`, `kb_get`, `kb_save`,
 `kb_propose_enhancement`, `kb_flag_stale`, `kb_diff`, `kb_record_outcome`,
 `kb_recent_context` — are implemented, and the MCP server delivers its own usage
 instructions to connecting agents (no prompt-pasting needed). The web UI is
 complete: a home dashboard, search (with an `all` scope), a filterable **Browse**
 grid, entry + history, the proposal queue with promote/reject, agent-token and
-OAuth-connector management, first-run setup wizard, and live settings. It is a
+OAuth-connector management, the COMM console at `/comm` and the stations console at
+`/stations`, first-run setup wizard, and live settings. It is a
 **themeable** (dark/light) and **multilingual** (English, Spanish + French, with
 drop-in translations) design system that makes **zero external requests**. An optional
 **OAuth 2.1 authorization server** lets claude.ai add Ken as a custom connector.
+**Inter-session comms (COMM) and stations are core surfaces, on by default** —
+`KEN_COMM_ENABLED=0` and `KEN_STATION_ENABLED=0` opt out of either one
+independently, and stations keep working with COMM off because a notebook and a
+task list need no peers.
 Embeddings, health/metrics, in-process ACME TLS, and self-extracting release
 installers are built and tested.
 
@@ -62,15 +67,15 @@ installers are built and tested.
 - [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) — the AI-facing MCP tool contracts.
 - [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md) — how to make your AI use Ken (token strategy + the operating loop).
 - [docs/OAUTH.md](docs/OAUTH.md) — connect claude.ai as a custom connector (the optional OAuth server).
-- [docs/COMM.md](docs/COMM.md) — inter-session communication: let two AI sessions hand work to each other (**opt-in, off by default**).
-- [docs/STATIONS.md](docs/STATIONS.md) — stations: durable, human-named AI working identities with a notebook, a task list and a small file locker, which also become what COMM addresses so a peer relationship outlives the session that made it (**opt-in, off by default**).
+- [docs/COMM.md](docs/COMM.md) — inter-session communication: let two AI sessions hand work to each other (**core, on by default**; `KEN_COMM_ENABLED=0` opts out).
+- [docs/STATIONS.md](docs/STATIONS.md) — stations: durable, human-named AI working identities with a notebook, a task list and a small file locker, which also become what COMM addresses so a peer relationship outlives the session that made it (**core, on by default**; `KEN_STATION_ENABLED=0` opts out, independently of COMM — the notebook and task list work with COMM off).
 - [docs/I18N.md](docs/I18N.md) — the multilingual UI: add a language or override any string at runtime (drop-in `.properties`).
 - [docs/INSTALL.md](docs/INSTALL.md) — install / deploy (self-extracting `.bin`, systemd, TLS posture).
 - [docs/MONITORING.md](docs/MONITORING.md) — health, metrics, and the Grafana/Prometheus bundle.
 - [docs/REMOTE-UPGRADE.md](docs/REMOTE-UPGRADE.md) — the scoped, least-privilege remote-upgrade tooling.
 - [docs/BACKUP.md](docs/BACKUP.md) — backup & restore runbook.
 - [CHANGELOG.md](CHANGELOG.md) — release history.
-- [COMPATIBILITY.md](COMPATIBILITY.md) — what SemVer covers at 1.0 (stable MCP/CLI/env/token/schema surfaces).
+- [COMPATIBILITY.md](COMPATIBILITY.md) — what SemVer covers at 1.0 (stable MCP/CLI/env/token/schema surfaces); the `comm_*` and `station_*` tools stay outside it until the COMM v2 redesign lands.
 - [migrations/](migrations/) — the SQLite schema (source of truth; `0001_init.sql` … `0009_content_lang.sql`).
 
 ## Stack

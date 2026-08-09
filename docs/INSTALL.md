@@ -2,8 +2,10 @@
 
 Ken ships as a single static Go binary. On Linux it installs from a one-file
 self-extracting `.bin` (no dependencies beyond stock `bash`/`tar`/`gzip`), runs
-under systemd, and keeps everything in one SQLite database. There is **no
-external database, runtime or JVM** to provision.
+under systemd, and keeps the knowledge base in one SQLite database. There is **no
+external database, runtime or JVM** to provision. (Inter-session messaging is core
+rather than optional, and keeps its own expendable database beside it at
+`data/comm/comm.db` — deliberately outside the backups; see [`docs/BACKUP.md`](BACKUP.md).)
 
 - Reference layout after install: `/opt/ken/{current,releases,data,logs,backups}`
 - Service: `ken.service` (foreground under systemd) + `ken-snapshot.timer` (nightly backup)
@@ -181,6 +183,35 @@ URL when TLS is on, `http://<host>:8080/` only behind a TLS-terminating proxy):
    The secret is printed **once**. Point the MCP client at
    `http://<host>:8080/mcp` with the header `Authorization: Bearer <token>`.
    Scopes: `read`, `write-draft`, `propose`, `curate`.
+
+3. **Issue credentials for the other two MCP surfaces** — inter-session messaging
+   (COMM: `/comm/mcp`, console `/comm`) and stations (`/station/mcp`, console
+   `/stations`). Both are **core**: every install serves them unless you opt out. The
+   knowledge-base token above does not reach either, and mixing is refused when the
+   token is minted — `comm` and `station` scopes may share a token, neither may be
+   combined with the knowledge-base scopes:
+
+   ```sh
+   sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken \
+       token add --actor comm-dev --scopes comm         # add comm-file for file exchange
+   sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken \
+       station add --name prod-ops                      # a human names the station …
+   sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken \
+       station key --station prod-ops --label laptop    # … then mints its key (--locker adds the locker)
+   ```
+
+   A station key is bound to its station, so `ken token add` cannot mint one.
+
+   **Opting out:** `KEN_COMM_ENABLED=0` and `KEN_STATION_ENABLED=0` (a systemd drop-in,
+   as with OAuth below); any unrecognised value leaves the surface **on**, so a typo
+   cannot silently disable core functionality. They are independent — stations keep
+   working with COMM off, because the notebook and task list are worth having to a
+   session with no peers. The variables were kept rather than deleted because Ken
+   *already* has a runtime "COMM off" state: an unopenable `comm.db` degrades into it on
+   purpose, so an expendable database can never take the durable knowledge base down.
+   Deleting the variable would not remove that state — only the operator's control of
+   it, which is their one remedy if COMM misbehaves in production. Details:
+   [`docs/COMM.md`](COMM.md), [`docs/STATIONS.md`](STATIONS.md).
 
 ---
 

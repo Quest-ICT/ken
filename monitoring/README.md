@@ -48,7 +48,7 @@ scrape_configs:
 | `ken_memory_heap_bytes` | gauge | | Heap memory in use (bytes) |
 | `ken_http_requests_total` | counter | `surface`, `outcome` | Web requests by outcome class |
 | `ken_http_request_duration_seconds` | histogram | `surface` | Request latency, web surface (percentiles via `histogram_quantile`; `_sum`/`_count` give the mean) |
-| `ken_mcp_tool_calls_total` | counter | `tool`, `outcome` | MCP `kb_*` (and `comm_*`) calls (success/error) |
+| `ken_mcp_tool_calls_total` | counter | `tool`, `outcome` | MCP `kb_*`, `comm_*` and `station_*` calls (success/error) |
 | `ken_mcp_tool_duration_seconds` | histogram | `tool` | Per-tool handler latency (work time; the blocking `comm_poll` is excluded) |
 | `ken_auth_failures_total` | counter | `surface` | Rejected authentications (e.g. bad token) |
 | `ken_ratelimit_rejected_total` | counter | | 429 throttles |
@@ -70,8 +70,10 @@ scrape_configs:
 | `ken_db_connections_open` / `ken_db_connections_in_use` | gauge | `pool` | DB pool (reader/writer) |
 | `ken_db_wait_total` | counter | `pool` | DB pool waits |
 
-The `ken_comm_*` gauges appear **only when `KEN_COMM_ENABLED=1`** — absent series, not zeros,
-on a default install. COMM is deliberately absent from `/health` (which marks the whole service
+The `ken_comm_*` gauges appear whenever COMM is running, which on a default install it is — COMM
+is core, not opt-in. They are **absent series, not zeros**, when COMM is off: either an operator set
+`KEN_COMM_ENABLED=0`, or `comm.db` could not be opened and COMM degraded to disabled on purpose, so
+that an expendable database can never take the durable knowledge base down. COMM is deliberately absent from `/health` (which marks the whole service
 DOWN on any component failure), so these gauges are the only place a runaway channel shows up.
 
 Naming follows Prometheus conventions: counters end in `_total`; gauges carry no reserved

@@ -15,6 +15,38 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **COMM and stations are CORE, on by default.** `KEN_COMM_ENABLED` and
+  `KEN_STATION_ENABLED` no longer have to be set to `1` to switch a surface on; both
+  default to **on** and the variables survive **inverted**, as opt-*outs*. `=0` (also
+  `false`/`off`/`no`) turns a surface off; `=1` still means on, so a deployment that
+  opted in under the old meaning keeps working across the upgrade; an unrecognised
+  value leaves the surface **on**, because a typo must not silently disable core
+  functionality. The two remain independent — `KEN_COMM_ENABLED=0` leaves stations
+  fully working, since a notebook and a task list need no peers (STATIONS.md S2).
+
+  The opt-outs were kept rather than deleted. Ken already has a runtime "COMM off"
+  state: an unopenable `comm.db` degrades into it deliberately, so an expendable
+  database can never take the durable knowledge base down. Removing the variable would
+  not remove that state, only the operator's control of it — their one remedy if COMM
+  misbehaves in production.
+
+  The reversed decisions are recorded as reversals, not deleted: `COMM.md` C2 and
+  `STATIONS.md` S2 now state what was decided, what changed, and why. Both reasons
+  expired rather than being shown wrong — a surface every deployment was expected to
+  turn on is an option in name only.
+
+- **The `comm_*` and `station_*` surfaces stay OUTSIDE the byte-level compatibility
+  contract, for a new reason.** `COMPATIBILITY.md` excluded them for being
+  optional-and-off-by-default; that justification is gone, and the exclusion is not.
+  It now rests on the surface being **mid-redesign**: remaining work removes
+  notice-messages, replaces pairing codes and channel-pair addressing with rooms and
+  name-addressed send, and retires the channel — the central noun of the current tool
+  surface. Freezing now would make that redesign a MAJOR bump or force a release cycle
+  of deprecated aliases. **They are promoted into the contract when COMM v2 lands**,
+  which is stated in the document as the trigger rather than left implicit.
+
 ### Security
 
 - **The station binding voucher is now usable only by the endpoint it names.** As

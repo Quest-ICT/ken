@@ -23,7 +23,7 @@ and then the claim — not the reverse.
   existing one, is a MAJOR change. The controlled-vocabulary enums are part of the
   contract: entry `kind` (`user`/`feedback`/`project`/`reference`), version `state`,
   `staleness`, `lifecycle`, `link_type` (`relates`/`supersedes`/`refutes`/`depends_on`),
-  and token `scopes` (`read`/`write-draft`/`propose`/`curate`; the opt-in surfaces add
+  and token `scopes` (`read`/`write-draft`/`propose`/`curate`; the COMM and station surfaces add
   `comm`/`comm-file` and `station`/`station-locker`, which are outside this contract while
   those surfaces are).
 - **The CLI surface** — the `ken` subcommands and their flags (`serve`, `token`,
@@ -34,6 +34,9 @@ and then the claim — not the reverse.
   This includes **`KEN_SOURCE_URL`**, which sets the "Source" link a running instance
   shows: if you run a **modified** Ken, set it to your own repository — AGPL-3.0 §13
   requires a network service to offer *its own* Corresponding Source, not upstream's.
+  **`KEN_COMM_ENABLED` and `KEN_STATION_ENABLED` are the exception**, and they are excluded with
+  the surfaces they gate (below): both were inverted from opt-in switches into on-by-default
+  opt-OUTs — a change this bullet on its own would have made MAJOR.
 - **Credential prefixes & cookie format** — and they are not all the same kind of thing, so the
   contract is stated per prefix rather than as one list:
   - `ken_` — an API token presented as `Authorization: Bearer …` on `/mcp` and, when it carries the
@@ -61,10 +64,15 @@ and then the claim — not the reverse.
   messages.
 - **On-disk layout** beyond "your knowledge lives in `data/ken.db`" (snapshot
   filenames, `releases/<v>/` internals, etc.).
-- Anything documented as **optional-and-off-by-default** or **"Planned"**. This includes
-  the **inter-session communication surface** ([docs/COMM.md](docs/COMM.md)) — its `comm_*`
-  tools, endpoint ids, MCP endpoint path, and settings. COMM is a **supported** feature, but
-  because it is opt-in and off by default its interface is not part of the byte-level contract;
+- Anything documented as **optional-and-off-by-default** or **"Planned"**.
+- **The inter-session communication surface** ([docs/COMM.md](docs/COMM.md)) — its `comm_*`
+  tools, endpoint ids, MCP endpoint path, and settings. COMM is **core, on by default, and
+  supported**. It is excluded not for being optional — it is not, any more — but because the
+  surface is **mid-redesign**: the remaining planned work removes notice-messages, replaces
+  pairing codes and channel-pair addressing with rooms and name-addressed send, and **retires
+  the channel**, the central noun of the tool surface as it stands. Promoting it into the
+  contract now would make that redesign a MAJOR bump, or force a release cycle of deprecated v1
+  aliases for a shape nobody intends to keep, and buy a caller nothing in exchange. Until then
   it evolves **additively wherever it can**, and where it cannot the CHANGELOG says so plainly
   under **Changed**. "Additively" describes the habit, not a promise this document makes —
   reading it as a promise is how a surface gets frozen before its design has settled. A removed
@@ -78,6 +86,11 @@ and then the claim — not the reverse.
   `station` and `station-locker` are likewise reserved together, on the same reasoning: splitting
   a shipped scope is a MAJOR, merging two is free. The `kens_` prefix IS contract (above), because
   a credential's shape freezes the moment one is issued.
+
+  **The trigger for promotion is stated rather than open-ended: both surfaces enter the
+  byte-level contract when the COMM v2 redesign lands.** Stations are named here alongside COMM
+  because that redesign changes how COMM addresses a station, not because either surface is
+  optional.
 
 ## Deprecation policy
 
