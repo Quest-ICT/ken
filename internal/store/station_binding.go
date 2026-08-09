@@ -42,13 +42,40 @@ const VoucherTTL = 5 * time.Minute
 // voucher indirection was introduced to protect.
 var ErrVoucherInvalid = errors.New("binding voucher is not valid — it may be unknown, already used, or expired (they last a few minutes; ask /station for a fresh one)")
 
+// ErrVoucherNotYours is returned when a voucher is real and live but was issued to a
+// different actor than the one now presenting it.
+//
+// This is DISTINGUISHED from ErrVoucherInvalid, which deliberately collapses
+// unknown, used and expired into one string — so the difference needs defending, or
+// a later reader will "fix" it back by merging them.
+//
+// Collapsing those three protects a secret an attacker might GUESS. This one cannot
+// be reached by guessing: the caller must already hold a live 32-character voucher,
+// which means it was handed to them. Against that caller the distinction reveals one
+// bit — "the voucher is real, and you are not who it was for" — and they cannot act
+// on it, because the actor is what the check requires and it is not something they
+// can present.
+//
+// What the distinction buys is the entire diagnosis. An actor mismatch is a SETUP
+// error, not an attack: the station key was minted under a different actor than the
+// one holding the comm token, which is a configuration a deployment can sit in for
+// months without symptom. Reported as "voucher is not valid" it looks like an expiry
+// race, and the operator issues fresh vouchers forever, each failing identically.
+var ErrVoucherNotYours = errors.New("this binding voucher was issued to a different identity than the one presenting it — " +
+	"the station key that minted it belongs to a different actor than the comm token this endpoint registered under. " +
+	"Nothing is wrong with the voucher. Mint a station key under the actor that holds this endpoint's comm token " +
+	"(the /stations console lists which actor each key belongs to and whether it has a comm token) and try again")
+
 // IssueBindingVoucher mints a single-use voucher for a station. Called from the
 // station endpoint, where the caller has already proven possession of a station key.
 //
 // tokenID is recorded so revoking that key can later sever every endpoint it bound
 // (S6). Without it, revocation would stop future bindings but leave the leaked
 // capability running — which S6 calls theatre, correctly.
-func (s *Store) IssueBindingVoucher(ctx context.Context, stationID, tokenID string) (string, error) {
+//
+// actorID and spaceID are the identity the voucher is issued TO, and they are what
+// stops it being a bearer capability: see RedeemBindingVoucher and migration 0014.
+func (s *Store) IssueBindingVoucher(ctx context.Context, stationID, tokenID string, actorID, spaceID int64) (string, error) {
 	voucher, err := randBase62(32)
 	if err != nil {
 		return "", err
@@ -61,9 +88,9 @@ func (s *Store) IssueBindingVoucher(ctx context.Context, stationID, tokenID stri
 	// is replayable"; a plaintext voucher would have made that false the day it
 	// shipped.
 	_, err = s.W.ExecContext(ctx, `
-INSERT INTO station_binding_voucher(voucher_sha256, station_id, token_id, expires_at)
-VALUES(?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now', ?))`,
-		voucherHash(voucher), stationID, tokenID, fmt.Sprintf("+%d seconds", int(VoucherTTL.Seconds())))
+INSERT INTO station_binding_voucher(voucher_sha256, station_id, token_id, issued_to_actor, issued_in_space, expires_at)
+VALUES(?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now', ?))`,
+		voucherHash(voucher), stationID, tokenID, actorID, spaceID, fmt.Sprintf("+%d seconds", int(VoucherTTL.Seconds())))
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +109,23 @@ VALUES(?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now', ?))`,
 // Redemption is a conditional UPDATE rather than a read-then-write, so two
 // concurrent registrations racing on one voucher cannot both succeed: exactly one
 // UPDATE reports a row.
-func (s *Store) RedeemBindingVoucher(ctx context.Context, voucher, endpointID string) (stationID, tokenID string, err error) {
+//
+// byActor is the actor of the endpoint doing the redeeming, and it MUST match the
+// actor the voucher was issued to. Without this the voucher was a bearer capability:
+// redemption checked the hash, the single-use flag, the expiry and the station's
+// state, and nothing whatsoever about who was presenting it. Anything that came into
+// possession of the string — a transcript, a log, a message on a channel, scrollback
+// — could bind its own endpoint to the station's inbox and read the station's mail.
+// The operating rule "never send a voucher over COMM, never write it to a file" was
+// load-bearing security, enforced by a human remembering it.
+//
+// Matching the actor bounds the voucher's blast radius by the COMM TOKEN's. Two
+// sessions sharing an actor can still redeem each other's vouchers — but they share
+// the comm token, so either could already register an endpoint and do everything the
+// voucher grants. The residual is not a hole; it is the trust domain the actor
+// denotes. What is closed is redemption by a DIFFERENT identity, which is every case
+// where the leak leaves the machine.
+func (s *Store) RedeemBindingVoucher(ctx context.Context, voucher, endpointID string, byActor int64) (stationID, tokenID string, err error) {
 	tx, err := s.W.BeginTx(ctx, nil)
 	if err != nil {
 		return "", "", err
@@ -90,16 +133,41 @@ func (s *Store) RedeemBindingVoucher(ctx context.Context, voucher, endpointID st
 	defer func() { _ = tx.Rollback() }()
 
 	h := voucherHash(voucher)
+	// issued_to_actor=? is the whole fix. It also silently refuses every pre-0014
+	// row, whose issued_to_actor is NULL and so equals nothing — see migration 0014
+	// for why refusing those is deliberate rather than an oversight.
 	res, err := tx.ExecContext(ctx, `
 UPDATE station_binding_voucher
    SET redeemed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), redeemed_by_endpoint=?
  WHERE voucher_sha256=?
    AND redeemed_at IS NULL
-   AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`, endpointID, h)
+   AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   AND issued_to_actor=?`, endpointID, h, byActor)
 	if err != nil {
 		return "", "", err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
+		// Separate the setup error from the expiry race, INSIDE the transaction so
+		// the diagnosis reads the same snapshot the UPDATE just failed against.
+		//
+		// The read is for the error message only and never authorises anything: it
+		// runs exclusively on the path where the UPDATE already declined, so no
+		// outcome of it can bind an endpoint. A voucher redeemed legitimately between
+		// the two statements would be reported as a mismatch instead of as used —
+		// wrong words, right refusal.
+		var liveForAnother bool
+		if err := tx.QueryRowContext(ctx, `
+SELECT EXISTS(SELECT 1 FROM station_binding_voucher
+               WHERE voucher_sha256=?
+                 AND redeemed_at IS NULL
+                 AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                 AND issued_to_actor IS NOT NULL
+                 AND issued_to_actor<>?)`, h, byActor).Scan(&liveForAnother); err != nil {
+			return "", "", err
+		}
+		if liveForAnother {
+			return "", "", ErrVoucherNotYours
+		}
 		return "", "", ErrVoucherInvalid
 	}
 

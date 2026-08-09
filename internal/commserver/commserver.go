@@ -234,7 +234,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		// unbound.
 		out := registerOut{EndpointID: ep.EndpointID, EndpointSecret: secret}
 		if in.BindingVoucher != "" {
-			sid, keyID, rerr := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID)
+			sid, keyID, rerr := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID, ep.Owner.ActorID)
 			switch {
 			case rerr != nil:
 				out.BindingError = "not bound to a station: " + rerr.Error() +
@@ -272,7 +272,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			return nil, bindOut{}, errors.New("this endpoint is already bound to a station — an endpoint cannot move between stations, " +
 				"because it would carry the first station's unread mail into the second. Register a new endpoint if you need a different station")
 		}
-		sid, keyID, err := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID)
+		sid, keyID, err := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID, ep.Owner.ActorID)
 		if err != nil {
 			return nil, bindOut{}, err
 		}

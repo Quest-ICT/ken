@@ -244,6 +244,17 @@ func (s *Store) TouchStationActivity(ctx context.Context, stationID string) erro
 // StationKey is a row for the console's key list.
 type StationKey struct {
 	TokenID, StationID, Label, CreatedAt, LastUsedAt, RetiredAt, RevokedAt string
+
+	// The actor this key was minted under, and whether that same actor holds a live
+	// COMM token. Carried for DISPLAY, because the operator cannot otherwise see the
+	// one property that decides whether the key can bind an endpoint at all.
+	//
+	// A mismatch has no symptom until someone tries to bind: the key authenticates
+	// perfectly, every station tool works, and only redemption refuses — which is
+	// months later and in a different surface. Showing it next to the key turns an
+	// invisible misconfiguration into a visible one.
+	ActorKind, ActorName string
+	ActorHasComm         bool
 }
 
 // IssueStationKey mints a `kens_`-prefixed key. stationID may be empty: such a key can
@@ -255,13 +266,25 @@ type StationKey struct {
 // prompted_by_peer_traffic, and a marker that fails open without saying so is worse
 // than no marker (S5).
 //
-// THIS FUNCTION DOES NOT ENFORCE THAT, and neither does anything else. It records what
-// it is told. An earlier version of this comment said "the caller enforces that",
-// naming an enforcer that never existed — which cost a production operator real time,
-// because a contract comment asserting a guarantee is worse than silence: it stops the
-// reader looking. What the callers do instead is make the right actor the DEFAULT:
-// `ken station key` resolves the actor holding this deployment's comm token and says
-// which one it picked, and the console offers a picker that marks them.
+// THIS FUNCTION STILL DOES NOT ENFORCE THAT. It records what it is told. An earlier
+// version of this comment said "the caller enforces that", naming an enforcer that
+// never existed — which cost a production operator real time, because a contract
+// comment asserting a guarantee is worse than silence: it stops the reader looking.
+//
+// What changed in 0014: a mismatch is no longer silent everywhere. BINDING now
+// enforces it — RedeemBindingVoucher requires the redeeming endpoint's actor to be
+// the one the voucher was issued to, so a key minted under the wrong actor cannot
+// bind an endpoint and says so by name. That is a real check, and it is deliberately
+// NOT this function's: refusing at mint time would block the legitimate case of a
+// deployment that has no comm token yet, and stations run with COMM off by design.
+//
+// So the hearsay consequence above remains unenforced and silent — a mismatched key
+// authenticates perfectly and marks nothing — while the binding consequence is now
+// loud. Do not read the new check as covering both. What the callers still do is
+// make the right actor the DEFAULT: `ken station key` resolves the actor holding this
+// deployment's comm token and says which one it picked, the console offers a picker
+// that marks them, and the /stations key table now shows each key's actor and
+// whether it holds a comm token.
 func (s *Store) IssueStationKey(ctx context.Context, actorID int64, stationID, label string, scopes []string) (string, error) {
 	tokenID, err := randBase62(12)
 	if err != nil {
@@ -302,9 +325,14 @@ func (s *Store) RetireStationKey(ctx context.Context, tokenID string) error {
 // ones — a key nobody uses should be visible before it is a problem (§8).
 func (s *Store) ListStationKeys(ctx context.Context, stationID string) ([]StationKey, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT token_id, COALESCE(station_id,''), COALESCE(label,''), created_at,
-       COALESCE(last_used_at,''), COALESCE(retired_at,''), COALESCE(revoked_at,'')
-FROM api_token WHERE station_id=? ORDER BY created_at DESC`, stationID)
+SELECT t.token_id, COALESCE(t.station_id,''), COALESCE(t.label,''), t.created_at,
+       COALESCE(t.last_used_at,''), COALESCE(t.retired_at,''), COALESCE(t.revoked_at,''),
+       COALESCE(a.kind,''), COALESCE(a.display_name,''),
+       EXISTS(SELECT 1 FROM api_token c
+               WHERE c.actor_id=t.actor_id AND c.revoked_at IS NULL
+                 AND c.scopes LIKE '%"comm"%')
+FROM api_token t LEFT JOIN actor a ON a.id = t.actor_id
+WHERE t.station_id=? ORDER BY t.created_at DESC`, stationID)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +341,8 @@ FROM api_token WHERE station_id=? ORDER BY created_at DESC`, stationID)
 	for rows.Next() {
 		var k StationKey
 		if err := rows.Scan(&k.TokenID, &k.StationID, &k.Label, &k.CreatedAt,
-			&k.LastUsedAt, &k.RetiredAt, &k.RevokedAt); err != nil {
+			&k.LastUsedAt, &k.RetiredAt, &k.RevokedAt,
+			&k.ActorKind, &k.ActorName, &k.ActorHasComm); err != nil {
 			return nil, err
 		}
 		out = append(out, k)

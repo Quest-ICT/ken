@@ -171,6 +171,7 @@
               <tr>
                 <th data-col-key="label">{{$.T "stations.key_label"}}</th>
                 <th data-col-key="id">{{$.T "stations.key_id"}}</th>
+                <th data-col-key="actor">{{$.T "stations.key_actor"}}</th>
                 <th data-col-key="created">{{$.T "stations.key_created"}}</th>
                 <th data-col-key="used">{{$.T "stations.key_last_used"}}</th>
                 <th data-col-key="state">{{$.T "stations.key_state"}}</th>
@@ -182,6 +183,7 @@
               <tr>
                 <td>{{.Label}}</td>
                 <td class="mono">{{.TokenID}}</td>
+                <td>{{if .ActorName}}<span class="mono">{{.ActorKind}}:{{.ActorName}}</span>{{if not .ActorHasComm}} <span class="badge badge--warn" title="{{$.T "stations.key_actor_nocomm_help"}}">{{$.T "stations.key_actor_nocomm"}}</span>{{end}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
                 <td data-sort="{{.CreatedAt}}">{{localtime .CreatedAt}}</td>
                 <td data-sort="{{.LastUsedAt}}" title="{{$.T "stations.key_not_audited"}}">{{if .LastUsedAt}}{{localtime .LastUsedAt}}{{else}}<span class="muted">{{$.T "stations.key_unmeasured"}}</span>{{end}}</td>
                 <td>

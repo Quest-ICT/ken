@@ -160,13 +160,41 @@ single-use **binding voucher** that `comm_register` accepts.
   then no comm token to match — refusing would break the supported case to protect an unsupported
   one. What the tooling does instead is make the correct actor the DEFAULT and say which it chose:
   `ken station key` resolves the actor holding this deployment's comm token, names it, and refuses to
-  guess when several could apply; the console offers a picker that marks comm-token holders. Minting
-  under the wrong actor is still possible and still silent — the honest statement is that this is a
-  papercut the tooling steers around, not a boundary the server holds.
+  guess when several could apply; the console offers a picker that marks comm-token holders, and the
+  `/stations` key table names each key's actor and badges the ones holding no comm token.
   *(The original claim was false in a way that mattered: station keys were minted under a HUMAN actor
   while comm tokens default to `ai`, and `(kind, display_name)` is unique — so on any deployment
   following the documented setup the marker was permanently false, and the only shipped remedy was to
   mislabel an AI session's token as human.)*
+  **Since 1.7.0 the mismatch is no longer silent everywhere: BINDING enforces it** (below). Minting
+  under the wrong actor is still permitted and still silently defeats the hearsay marker — that half
+  remains a papercut the tooling steers around. Do not read the binding check as covering both.
+
+- **The voucher is bound to the identity that asked for it, and is not a bearer capability.**
+  Redemption requires the redeeming endpoint's `actor_id` to equal the actor the voucher was issued
+  to. *(As first shipped it required nothing of the redeemer at all: the hash, the single-use flag,
+  the expiry and the station's state were checked, and the holder was not. The string alone bound any
+  endpoint to the station's inbox, so "never send a voucher over COMM, never write it to a file" was
+  load-bearing security enforced by a human remembering it.)*
+  - **What this bounds:** the voucher's blast radius is now the COMM token's. Two sessions sharing an
+    actor can still redeem each other's vouchers — but they share the comm token, so either could
+    already register an endpoint and do everything the voucher grants. What is closed is redemption by
+    a *different* identity, which is every case where the leak leaves the machine. The operating rule
+    stays good hygiene; breaking it stops being catastrophic.
+  - **An actor mismatch is reported distinctly** (`ErrVoucherNotYours`), unlike unknown/used/expired
+    which are deliberately collapsed into one string. The collapse protects a secret an attacker might
+    guess; this case cannot be reached by guessing, since the caller must already hold a live 32-char
+    voucher. What the distinction buys is the diagnosis: a mismatch is a *setup* error a deployment
+    can sit in for months, and reported as "not valid" it reads as an expiry race, so the operator
+    mints fresh vouchers forever, each failing identically.
+  - **Vouchers issued before the column existed refuse rather than being grandfathered.** They carry a
+    NULL actor and the predicate compares with `=`, which is never true against NULL. Vouchers live
+    five minutes and an upgrade takes longer, so a voucher in flight across the restart is already
+    dead by arithmetic — honouring old rows would have left the bearer hole open inside the change
+    that closes it.
+  - **Space is recorded but not enforced**, because it cannot discriminate yet: the station principal
+    hardcodes space 1. Writing it now lets the check tighten to `(actor, space)` with no second
+    migration and no backfill that would have nothing truthful to write.
 
 ### S6 — Revocation severs; retirement does not *(chosen: two verbs, severing default)*
 

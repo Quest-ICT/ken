@@ -15,6 +15,57 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Security
+
+- **The station binding voucher is no longer a bearer capability.** Redemption checked
+  the voucher hash, the single-use flag, the expiry and the station's state — and
+  nothing at all about who was presenting it. The string alone bound any endpoint to
+  the station's inbox, where it could read the station's mail and take messages out of
+  another reader's poll. The only control was a human remembering the rule "never send
+  a voucher over COMM, never write it to a file"; that rule was load-bearing security.
+  Redemption now requires the redeeming endpoint's actor to be the actor the voucher
+  was issued to (migration `0014_voucher_holder`).
+
+  This bounds the voucher's blast radius by the COMM token's: two sessions sharing an
+  actor can still redeem each other's vouchers, but they share the comm token and
+  either could already register an endpoint and do everything the voucher grants. What
+  is closed is redemption by a *different* identity — every case where the leak leaves
+  the machine. The operating rule stays good hygiene; breaking it stops being
+  catastrophic.
+
+  Vouchers minted before the upgrade carry no issuing identity and are **refused**
+  rather than grandfathered. They live five minutes and an upgrade takes longer, so one
+  in flight across the restart is already dead by arithmetic — honouring them would
+  have left the hole open inside the change that closes it.
+
+  **There were no tests over vouchers at all.** Single-use, expiry, the archived-station
+  refusal and the bearer defect itself were all unasserted. There are now, including a
+  two-sided one that pins the same voucher failing for an intruder and succeeding for
+  its owner, so the refusal can only be about identity.
+
+### Added
+
+- **The `/stations` key table names each key's actor** and badges the ones whose actor
+  holds no COMM token. That property decides whether a key can bind an endpoint at all,
+  and until now it was invisible: a key under the wrong actor authenticates perfectly,
+  drives every station tool, and refuses only at binding — in a different surface,
+  possibly months later. `ActorsForStationKey` had existed since stations shipped with
+  no console caller, only a CLI one.
+
+### Fixed
+
+- **`waiting_for_you` counted mail the sender had already read.** The predicate counted
+  `queued` and `delivered`; `delivered` means the sender has been handed the message, so
+  the prompt's own advice — "poll it and reconsider what you just sent" — was advice
+  they had already taken. It fired on exactly the behaviour it exists to encourage: a
+  session that reads its mail before replying. Found in production, by the field firing
+  on this project's own dev session mid-reply.
+
+- **An actor mismatch on binding now reports as itself** rather than as "unknown,
+  already used, or expired". A mismatch is a setup error a deployment can sit in for
+  months with no symptom; reported as an expiry race, the operator mints fresh vouchers
+  forever, each failing identically.
+
 ## [1.6.0] — 2026-08-09
 
 ### Changed
