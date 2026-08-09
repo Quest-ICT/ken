@@ -284,10 +284,11 @@ to seconds; the session is still stalled until somebody is available.
 > the signal that matters.
 
 **Replacement — bind a fresh endpoint to the same station.** Requires [stations](STATIONS.md) enabled
-**and** the binding arranged in advance (S5): the lost session must have registered with a
-`binding_voucher`. A new session staffing that station takes a voucher from `station_binding_voucher`,
-calls `comm_register` with it, and inherits the station's unread mail — because the **station** owns
-the inbox (S4), and the dead endpoint's claims return to the unclaimed tail rather than stranding.
+**and** the binding arranged in advance (S5): the lost session must have bound its endpoint to the
+station. A new session staffing that station calls `comm_register`, writes the new secret to disk,
+takes a voucher from `station_binding_voucher` naming that new `endpoint_id`, and redeems it with
+`comm_bind` — inheriting the station's unread mail, because the **station** owns the inbox (S4), and
+the dead endpoint's claims return to the unclaimed tail rather than stranding.
 Where the two stations already hold an approved **link** (S9), it re-opens the channel with
 `comm_open_channel`: no pairing code, and no human in the loop at that moment. This is the only path
 that recovers without waiting for a person. *What it does not solve:* it recovers the **mailbox and
@@ -446,7 +447,7 @@ ken token add --actor comm-dev --scopes comm
 
 | Tool | Purpose |
 |---|---|
-| `comm_register` | Register this session as an endpoint; returns `endpoint_id` + one-time secret. Optionally redeems a `binding_voucher` to bind the endpoint to a station. |
+| `comm_register` | Register this session as an endpoint; returns `endpoint_id` + one-time secret. Does NOT bind to a station — write the secret down, then use `comm_bind`. |
 | `comm_join` | Join a channel using a human-minted pairing code. Both sides call it. |
 | `comm_open_channel` | Open a channel with a station your human has already **linked** to yours — no pairing code. Refused without an approved link. |
 | `comm_bind` | Bind an endpoint you already have to a station, keeping its id, secret and channels. For sessions that were already running when stations were set up. |

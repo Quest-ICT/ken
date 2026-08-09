@@ -203,7 +203,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			"WRITE THEM TO A FILE ON DISK NOW, before you do anything else (mode 0600, outside any git repo). " +
 			"Do not rely on remembering them: your context can be compacted at any time, silently. " +
 			"If you do lose the secret you are not stuck — ask your human to ROTATE it from Ken's web console, " +
-			"which keeps this endpoint and every channel it is in. Only a human can do that.",
+			"which keeps this endpoint and every channel it is in. Only a human can do that. If you are staffing a STATION, bind AFTER saving your secret: ask station_binding_voucher on /station for a voucher naming the endpoint_id you just received, then call comm_bind. Binding is deliberately not part of this call, so nothing about it can cost you the secret.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in registerIn) (*mcp.CallToolResult, registerOut, error) {
 		p := principalFrom(ctx)
 		if p == nil {
@@ -214,40 +214,14 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if err != nil {
 			return nil, registerOut{}, commError(err)
 		}
-		// Binding is a SECOND step rather than part of the insert, because the
-		// voucher lives in the durable database and this one does not. Redemption is
-		// what decides the station: the caller never names one, so it cannot ask to
-		// join a station it was not handed a voucher for.
+		// Registration mints a credential and stops. Binding is comm_bind's job.
 		//
-		// A failed redemption leaves a working UNBOUND endpoint rather than failing
-		// the registration. The session has a usable credential either way, and
-		// destroying it over a stale voucher would turn a retryable mistake into a
-		// lost secret — the exact failure this whole design exists to reduce.
-		//
-		// ONCE THE ENDPOINT EXISTS, THIS HANDLER MUST NOT RETURN AN ERROR. The MCP SDK
-		// discards structured output when a handler returns one — the caller receives
-		// the error text and nothing else — so failing here would destroy a one-time
-		// secret that has already been minted and can never be shown again. That is
-		// precisely the loss this whole design exists to prevent, and it would have
-		// been introduced by the change meant to fix it. A binding failure is
-		// therefore reported IN the result, and the endpoint is returned working but
-		// unbound.
+		// These were once one call, and the seam leaked: a failed binding could not be
+		// reported as an error without the SDK discarding the structured output that
+		// carried the one-time secret, so the handler grew a "succeeded but did not
+		// bind" result to avoid destroying a credential it had just minted. Splitting
+		// them removes the conflict instead of managing it.
 		out := registerOut{EndpointID: ep.EndpointID, EndpointSecret: secret}
-		if in.BindingVoucher != "" {
-			sid, keyID, rerr := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID, ep.Owner.ActorID)
-			switch {
-			case rerr != nil:
-				out.BindingError = "not bound to a station: " + rerr.Error() +
-					" — your endpoint_id and endpoint_secret above ARE valid; save them now, then ask /station for a fresh voucher and register again if you need binding"
-			default:
-				if berr := d.Comm.BindEndpointToStation(ctx, ep.EndpointID, sid, keyID); berr != nil {
-					out.BindingError = "not bound to a station: " + berr.Error() +
-						" — your endpoint_id and endpoint_secret above ARE valid; save them now"
-				} else {
-					out.StationID = sid
-				}
-			}
-		}
 		return nil, out, nil
 	})
 
@@ -326,7 +300,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if ep.StationID == "" {
 			return nil, directoryOut{}, errors.New("this endpoint is not bound to a station, so it has no vantage point " +
 				"from which to see one — the directory answers 'who may I see', and an unbound endpoint is not a 'who'. " +
-				"Get a voucher from station_binding_voucher on /station and register again")
+				"Ask station_binding_voucher on /station for a voucher naming this endpoint_id, then call comm_bind")
 		}
 		p := principalFrom(ctx)
 		list, err := d.Store.ListStationsVisibleTo(ctx, p.SpaceID, ep.StationID)
@@ -375,7 +349,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		}
 		if ep.StationID == "" {
 			return nil, openLinkedOut{}, errors.New("this endpoint is not bound to a station, so it has no relationships to spend — " +
-				"get a voucher from station_binding_voucher on /station and register again, or use a pairing code from your human")
+				"ask station_binding_voucher on /station for a voucher naming this endpoint_id and call comm_bind, or use a pairing code from your human")
 		}
 		p := principalFrom(ctx)
 		// ONE refusal for every unavailable target, and it is deliberate.
@@ -662,8 +636,8 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 				"only they can fix it and only from Ken's web console (/comm): if this endpoint is still listed there, ask " +
 				"them to ROTATE its secret — you keep your endpoint id and every channel, so nothing needs re-pairing. If it " +
 				"is gone, you need comm_register plus a fresh pairing code from them — UNLESS you staff a station, in which " +
-				"case take a voucher from station_binding_voucher on /station, call comm_register with it, and you inherit " +
-				"your station's mail with no code and no waiting. Write the new secret to a file on disk this time")
+				"case comm_register, WRITE THE NEW SECRET TO A FILE, then take a voucher from station_binding_voucher on " +
+				"/station naming that new endpoint_id and call comm_bind — you inherit your station's mail with no code and no waiting")
 		}
 		return nil, commError(err)
 	}

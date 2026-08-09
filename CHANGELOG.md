@@ -17,31 +17,59 @@ same change — never "docs later".
 
 ### Security
 
-- **The station binding voucher is no longer a bearer capability.** Redemption checked
-  the voucher hash, the single-use flag, the expiry and the station's state — and
-  nothing at all about who was presenting it. The string alone bound any endpoint to
-  the station's inbox, where it could read the station's mail and take messages out of
-  another reader's poll. The only control was a human remembering the rule "never send
-  a voucher over COMM, never write it to a file"; that rule was load-bearing security.
-  Redemption now requires the redeeming endpoint's actor to be the actor the voucher
-  was issued to (migration `0014_voucher_holder`).
+- **The station binding voucher is now usable only by the endpoint it names.** As
+  shipped, redemption checked the voucher hash, the single-use flag, the expiry and
+  the station's state — and nothing at all about who presented it. The string alone
+  bound any endpoint to the station's inbox, where it reads the station's mail and
+  takes messages out of another reader's poll. The only control was a human
+  remembering "never send a voucher over COMM, never write it to a file"; that rule
+  was load-bearing security.
 
-  This bounds the voucher's blast radius by the COMM token's: two sessions sharing an
-  actor can still redeem each other's vouchers, but they share the comm token and
-  either could already register an endpoint and do everything the voucher grants. What
-  is closed is redemption by a *different* identity — every case where the leak leaves
-  the machine. The operating rule stays good hygiene; breaking it stops being
-  catastrophic.
+  `station_binding_voucher` now takes the `endpoint_id` that will redeem it, and
+  redemption requires that exact endpoint (migration `0015_voucher_nominates_endpoint`).
+  Redeeming therefore needs that endpoint's own secret — a separate credential the
+  voucher does not carry — so a leaked voucher is inert in anyone else's hands.
+
+  **An interim fix keyed on the ACTOR instead, and the claim that accompanied it was
+  wrong.** It said a leaked voucher then granted nothing that the credential needed to
+  use it already granted. That is false: a comm token alone registers an *unbound*
+  endpoint, which can read no station's mail — binding is precisely the capability it
+  does not confer. `ken-prod-ops` found the consequence by measuring rather than
+  reading, on an estate where **six of eight stations share one actor**, because the
+  actor is per machine. The voucher had ended up with a *weaker* binding than the
+  per-station key that mints it. The actor check remains, as a setup guard rather than
+  the security property — it catches a station key minted under a different actor than
+  the machine's comm token, a misconfiguration with no other symptom until it silently
+  defeats the hearsay marker.
 
   Vouchers minted before the upgrade carry no issuing identity and are **refused**
   rather than grandfathered. They live five minutes and an upgrade takes longer, so one
-  in flight across the restart is already dead by arithmetic — honouring them would
-  have left the hole open inside the change that closes it.
+  in flight across the restart is already dead by arithmetic.
 
-  **There were no tests over vouchers at all.** Single-use, expiry, the archived-station
-  refusal and the bearer defect itself were all unasserted. There are now, including a
-  two-sided one that pins the same voucher failing for an intruder and succeeding for
-  its owner, so the refusal can only be about identity.
+  **There were no tests over vouchers at all** — not the bearer defect, not single-use,
+  expiry, or the archived-station refusal. There are now, each two-sided, and the two
+  identity checks are mutation-verified independently so neither can be silently
+  covering for the other.
+
+### Changed
+
+- **`comm_register` no longer binds to a station; use `comm_bind`.** Passing
+  `binding_voucher` to `comm_register` is now **refused with an error naming the
+  argument**, never ignored — a session working from an older flow is told, rather than
+  left holding an unbound endpoint it believes is bound. The COMM surface is outside
+  the byte-level compatibility contract (see `COMPATIBILITY.md`), so this is not a
+  MAJOR change; it is called out here because it is the one change in this release a
+  running session can notice.
+
+  Two reasons, and the second is the stronger. **A voucher passed to registration can
+  never name its redeemer**, because the endpoint does not exist yet — that path could
+  only ever have had the weaker guarantee, and shipping two strengths under one name is
+  worse than shipping one. And **registration had acquired a hazard from doing two
+  jobs**: it mints a secret shown exactly once, the MCP SDK discards structured output
+  when a handler returns an error, so a failed binding could destroy the credential it
+  had just created. That was worked around with a `binding_error` field reporting
+  failure without failing. Splitting the operations deletes the hazard instead of
+  guarding it, and gives the safer order: register, **write your secret down**, bind.
 
 ### Added
 

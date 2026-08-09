@@ -61,6 +61,23 @@ var ErrVoucherInvalid = errors.New("binding voucher is not valid — it may be u
 // one holding the comm token, which is a configuration a deployment can sit in for
 // months without symptom. Reported as "voucher is not valid" it looks like an expiry
 // race, and the operator issues fresh vouchers forever, each failing identically.
+// ErrVoucherNotForThisEndpoint is returned when a voucher is real and live but names
+// a different endpoint than the one redeeming it.
+//
+// Distinguished from ErrVoucherNotYours for a practical reason: the two demand
+// OPPOSITE responses. This one is fixed by asking for a voucher that names your
+// endpoint — a retry that works. An actor mismatch is fixed only by re-minting a
+// station key from the console, and retrying it forever is exactly what a collapsed
+// error causes.
+//
+// Safe to distinguish on the same reasoning as ErrVoucherNotYours: reaching this
+// requires already holding a live 32-character voucher, so it cannot be reached by
+// guessing, and the one bit it reveals — "real, but not for you" — is not actionable
+// by someone who cannot produce the named endpoint's secret.
+var ErrVoucherNotForThisEndpoint = errors.New("this binding voucher names a different endpoint than the one redeeming it. " +
+	"A voucher is minted FOR one endpoint and only that endpoint can use it, so a voucher that leaked or was meant " +
+	"for another session is useless here. Ask /station for a voucher naming THIS endpoint_id and redeem it with comm_bind")
+
 var ErrVoucherNotYours = errors.New("this binding voucher was issued to a different identity than the one presenting it — " +
 	"the station key that minted it belongs to a different actor than the comm token this endpoint registered under. " +
 	"Nothing is wrong with the voucher. Mint a station key under the actor that holds this endpoint's comm token " +
@@ -73,9 +90,23 @@ var ErrVoucherNotYours = errors.New("this binding voucher was issued to a differ
 // (S6). Without it, revocation would stop future bindings but leave the leaked
 // capability running — which S6 calls theatre, correctly.
 //
-// actorID and spaceID are the identity the voucher is issued TO, and they are what
-// stops it being a bearer capability: see RedeemBindingVoucher and migration 0014.
-func (s *Store) IssueBindingVoucher(ctx context.Context, stationID, tokenID string, actorID, spaceID int64) (string, error) {
+// forEndpoint is the ONE comm endpoint that may redeem this voucher, and it is what
+// stops the voucher being a bearer capability (migration 0015). actorID and spaceID
+// record the issuing identity and are checked too, but they are the SETUP guard, not
+// the security property — see RedeemBindingVoucher, which explains why both remain.
+//
+// forEndpoint is not validated here and cannot be: this is the durable store, the
+// endpoint lives in the expendable one (S7), and a foreign key across that boundary
+// is exactly what S7 forbids. A voucher naming an endpoint that does not exist is
+// simply a voucher nobody can redeem, which fails closed.
+func (s *Store) IssueBindingVoucher(ctx context.Context, stationID, tokenID, forEndpoint string, actorID, spaceID int64) (string, error) {
+	if forEndpoint == "" {
+		// Refused rather than defaulted. An empty nomination would mint a voucher
+		// whose redemption predicate can never match, so the session would receive a
+		// perfectly-formed credential that fails at the next call for no visible
+		// reason — the failure mode this whole design exists to reduce.
+		return "", fmt.Errorf("%w: a binding voucher must name the endpoint that will redeem it", ErrInvalid)
+	}
 	voucher, err := randBase62(32)
 	if err != nil {
 		return "", err
@@ -88,9 +119,9 @@ func (s *Store) IssueBindingVoucher(ctx context.Context, stationID, tokenID stri
 	// is replayable"; a plaintext voucher would have made that false the day it
 	// shipped.
 	_, err = s.W.ExecContext(ctx, `
-INSERT INTO station_binding_voucher(voucher_sha256, station_id, token_id, issued_to_actor, issued_in_space, expires_at)
-VALUES(?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now', ?))`,
-		voucherHash(voucher), stationID, tokenID, actorID, spaceID, fmt.Sprintf("+%d seconds", int(VoucherTTL.Seconds())))
+INSERT INTO station_binding_voucher(voucher_sha256, station_id, token_id, issued_to_actor, issued_in_space, issued_for_endpoint, expires_at)
+VALUES(?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now', ?))`,
+		voucherHash(voucher), stationID, tokenID, actorID, spaceID, forEndpoint, fmt.Sprintf("+%d seconds", int(VoucherTTL.Seconds())))
 	if err != nil {
 		return "", err
 	}
@@ -110,21 +141,35 @@ VALUES(?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now', ?))`,
 // concurrent registrations racing on one voucher cannot both succeed: exactly one
 // UPDATE reports a row.
 //
-// byActor is the actor of the endpoint doing the redeeming, and it MUST match the
-// actor the voucher was issued to. Without this the voucher was a bearer capability:
-// redemption checked the hash, the single-use flag, the expiry and the station's
-// state, and nothing whatsoever about who was presenting it. Anything that came into
-// possession of the string — a transcript, a log, a message on a channel, scrollback
-// — could bind its own endpoint to the station's inbox and read the station's mail.
-// The operating rule "never send a voucher over COMM, never write it to a file" was
-// load-bearing security, enforced by a human remembering it.
+// TWO checks, and they are not redundant. Do not remove either believing the other
+// covers it — they answer different questions and only one of them is security.
 //
-// Matching the actor bounds the voucher's blast radius by the COMM TOKEN's. Two
-// sessions sharing an actor can still redeem each other's vouchers — but they share
-// the comm token, so either could already register an endpoint and do everything the
-// voucher grants. The residual is not a hole; it is the trust domain the actor
-// denotes. What is closed is redemption by a DIFFERENT identity, which is every case
-// where the leak leaves the machine.
+//  1. endpointID must be the endpoint the voucher NAMED. This is the security
+//     property. Redeeming therefore requires that endpoint's own secret, which the
+//     voucher does not carry, so a leaked voucher is inert in anyone else's hands.
+//
+//  2. byActor must be the actor the voucher was issued to. This is the SETUP guard.
+//     It catches a station key minted under a different actor than the machine's comm
+//     token — a misconfiguration that otherwise has no symptom at all until it
+//     silently defeats the hearsay marker (see IssueStationKey). It is defence in
+//     depth for (1), never a substitute.
+//
+// The history matters, because check (2) shipped alone and was described as closing
+// the hole. It did not. As first written, redemption checked the hash, the single-use
+// flag, the expiry and the station's state, and nothing about the holder — anything
+// possessing the string could bind its own endpoint to the station's inbox, and the
+// only control was a human remembering "never send a voucher over COMM". Adding the
+// actor check narrowed that to "same actor", and the accompanying claim — that a
+// leaked voucher then grants nothing the comm token does not already grant — was
+// FALSE. A comm token alone registers an UNBOUND endpoint; it confers no station's
+// mail. Binding is precisely the capability it does not give.
+//
+// ken-prod-ops found the consequence by measuring rather than reading: six of their
+// eight stations share one actor, because the actor is per MACHINE. So the check
+// narrowed the credential to six sessions on one workstation, and the voucher held a
+// WEAKER binding than the per-station key that minted it. Check (1) is the fix, and
+// it is the reason binding no longer happens inside comm_register: registration has
+// no endpoint id yet, so a voucher passed there could never name one.
 func (s *Store) RedeemBindingVoucher(ctx context.Context, voucher, endpointID string, byActor int64) (stationID, tokenID string, err error) {
 	tx, err := s.W.BeginTx(ctx, nil)
 	if err != nil {
@@ -133,16 +178,18 @@ func (s *Store) RedeemBindingVoucher(ctx context.Context, voucher, endpointID st
 	defer func() { _ = tx.Rollback() }()
 
 	h := voucherHash(voucher)
-	// issued_to_actor=? is the whole fix. It also silently refuses every pre-0014
-	// row, whose issued_to_actor is NULL and so equals nothing — see migration 0014
-	// for why refusing those is deliberate rather than an oversight.
+	// Both predicates compare with `=`, so a NULL column can never match. That is how
+	// vouchers minted before 0014/0015 are refused rather than grandfathered: they
+	// carry NULL in the very columns that authorise redemption. Stated here because
+	// it is invisible at the call site and reads like an omission.
 	res, err := tx.ExecContext(ctx, `
 UPDATE station_binding_voucher
    SET redeemed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), redeemed_by_endpoint=?
  WHERE voucher_sha256=?
    AND redeemed_at IS NULL
    AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-   AND issued_to_actor=?`, endpointID, h, byActor)
+   AND issued_for_endpoint=?
+   AND issued_to_actor=?`, endpointID, h, endpointID, byActor)
 	if err != nil {
 		return "", "", err
 	}
@@ -155,18 +202,27 @@ UPDATE station_binding_voucher
 		// outcome of it can bind an endpoint. A voucher redeemed legitimately between
 		// the two statements would be reported as a mismatch instead of as used —
 		// wrong words, right refusal.
-		var liveForAnother bool
+		// One read, two causes, and they need OPPOSITE advice: a wrong endpoint means
+		// ask for a voucher naming yours, while a wrong actor means no voucher will
+		// ever work until a key is re-minted from the console. Collapsing them would
+		// send a session retrying forever against a setup it cannot fix by retrying.
+		var otherEndpoint, otherActor bool
 		if err := tx.QueryRowContext(ctx, `
-SELECT EXISTS(SELECT 1 FROM station_binding_voucher
-               WHERE voucher_sha256=?
-                 AND redeemed_at IS NULL
-                 AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                 AND issued_to_actor IS NOT NULL
-                 AND issued_to_actor<>?)`, h, byActor).Scan(&liveForAnother); err != nil {
+SELECT COALESCE(MAX(issued_for_endpoint IS NOT NULL AND issued_for_endpoint<>?), 0),
+       COALESCE(MAX(issued_to_actor     IS NOT NULL AND issued_to_actor    <>?), 0)
+  FROM station_binding_voucher
+ WHERE voucher_sha256=?
+   AND redeemed_at IS NULL
+   AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+			endpointID, byActor, h).Scan(&otherEndpoint, &otherActor); err != nil {
 			return "", "", err
 		}
-		if liveForAnother {
+		// Actor first when both are wrong: it is the cause that a retry cannot fix.
+		if otherActor {
 			return "", "", ErrVoucherNotYours
+		}
+		if otherEndpoint {
+			return "", "", ErrVoucherNotForThisEndpoint
 		}
 		return "", "", ErrVoucherInvalid
 	}

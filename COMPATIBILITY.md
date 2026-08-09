@@ -65,7 +65,12 @@ and then the claim — not the reverse.
   the **inter-session communication surface** ([docs/COMM.md](docs/COMM.md)) — its `comm_*`
   tools, endpoint ids, MCP endpoint path, and settings. COMM is a **supported** feature, but
   because it is opt-in and off by default its interface is not part of the byte-level contract;
-  it evolves **additively**. The `comm` and `comm-file` token scopes are **reserved** so that
+  it evolves **additively wherever it can**, and where it cannot the CHANGELOG says so plainly
+  under **Changed**. "Additively" describes the habit, not a promise this document makes —
+  reading it as a promise is how a surface gets frozen before its design has settled. A removed
+  or renamed tool argument is **rejected by name** rather than ignored, so a caller working from
+  an older flow is told rather than silently getting less than it asked for.
+  The `comm` and `comm-file` token scopes are **reserved** so that
   splitting them later is not a MAJOR.
 
   The same applies to the **station surface** ([docs/STATIONS.md](docs/STATIONS.md)) — its

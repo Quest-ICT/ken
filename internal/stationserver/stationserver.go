@@ -190,21 +190,23 @@ func newServer(d Deps) *mcp.Server {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "station_binding_voucher",
-		Description: "Get a short-lived voucher that binds a COMM endpoint to this station. Pass it to " +
-			"comm_register as binding_voucher on the /comm endpoint, THEN write the returned endpoint_id and " +
-			"endpoint_secret to a file on disk. Binding means the STATION owns the inbox: a later session " +
-			"staffing this station inherits the unread mail, so losing your endpoint stops being fatal. " +
-			"NEVER pass your station key to comm_register — that is what this voucher exists to avoid; it " +
+		Description: "Get a short-lived voucher that binds ONE named COMM endpoint to this station. " +
+			"THE ORDER MATTERS: call comm_register on /comm first, write the returned endpoint_id and " +
+			"endpoint_secret to a file on disk, and only then ask for a voucher naming that endpoint_id — " +
+			"then redeem it with comm_bind. Binding is no longer part of comm_register, so registering can " +
+			"never fail in a way that costs you the one-time secret. " +
+			"Binding means the STATION owns the inbox: a later session staffing this station inherits the " +
+			"unread mail, so losing your endpoint stops being fatal. " +
+			"NEVER pass your station key to a /comm tool — that is what this voucher exists to avoid; it " +
 			"expires in minutes and is good for exactly one binding. " +
-			"THE VOUCHER IS ITSELF A CREDENTIAL. It is redeemable ONLY by an endpoint registered under the " +
-			"same actor as this station key, so a peer cannot use one you leak — but a session sharing your " +
-			"comm token can. Never send it to a peer, never put it in a message, a file or a notebook page " +
-			"— use it yourself, immediately, and then it is spent. " +
+			"THE VOUCHER IS STILL A CREDENTIAL, but a narrow one: only the endpoint it names can redeem it, " +
+			"and that needs the endpoint's own secret, so a voucher you leak is inert in anyone else's hands. " +
+			"Use it yourself, immediately, and then it is spent. " +
 			"If redemption says the voucher was issued to a different identity, nothing is wrong with the " +
 			"voucher: this station key was minted under a different actor than your comm token. Tell your " +
 			"human — the /stations console names each key's actor — and do not retry, because a fresh " +
 			"voucher will fail identically.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ voucherIn) (*mcp.CallToolResult, voucherOut, error) {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in voucherIn) (*mcp.CallToolResult, voucherOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
 			return nil, voucherOut{}, err
@@ -223,7 +225,7 @@ func newServer(d Deps) *mcp.Server {
 		}
 		// p.TokenID, not anything the caller supplied: the voucher records which KEY
 		// asked, so revoking that key later severs the endpoints it bound (S6).
-		v, err := d.Store.IssueBindingVoucher(ctx, p.StationID, p.TokenID, p.ActorID, p.SpaceID)
+		v, err := d.Store.IssueBindingVoucher(ctx, p.StationID, p.TokenID, in.EndpointID, p.ActorID, p.SpaceID)
 		if err != nil {
 			return nil, voucherOut{}, err
 		}
@@ -232,6 +234,7 @@ func newServer(d Deps) *mcp.Server {
 			ExpiresInSec:   int(store.VoucherTTL.Seconds()),
 			StationID:      st.StationID,
 			StationName:    st.Name,
+			ForEndpoint:    in.EndpointID,
 		}, nil
 	})
 

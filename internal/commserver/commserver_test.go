@@ -327,18 +327,22 @@ func TestInstructionsTellTheModelWhereToKeepTheSecret(t *testing.T) {
 	}
 }
 
-// THE CRITICAL FINDING, pinned by driving the real endpoint over HTTP.
+// Registration mints a secret shown exactly once, and nothing in the call may put
+// that at risk. Driven over real HTTP, because the property is about what reaches
+// the CLIENT and only the transport can show it.
 //
-// comm_register mints a secret shown exactly once. The MCP SDK DISCARDS structured
-// output when a handler returns an error — the caller receives the error text and
-// NOTHING else — so returning an error after the endpoint exists destroys that
-// secret permanently. The first version of station binding did precisely that on a
-// stale voucher: it invented a brand-new way to lose an endpoint secret, inside the
-// change whose whole purpose was making that loss survivable.
+// This test once pinned something sharper: comm_register also REDEEMED a binding
+// voucher, and the MCP SDK discards structured output when a handler returns an
+// error, so a stale voucher destroyed the secret the handler had just minted — a
+// brand-new way to lose an endpoint, invented inside the change whose purpose was
+// making that loss survivable. The workaround was a binding_error field reporting
+// failure without failing.
 //
-// Driven through the real HTTP handler with a real token, because the property is
-// about what reaches the CLIENT, and only the transport can show that.
-func TestRegisterReturnsTheSecretEvenWhenBindingFails(t *testing.T) {
+// Binding then moved to comm_bind, and the hazard went with it: registration has
+// nothing left to fail at. What remains asserted here is the property that outlives
+// the fix — the secret always reaches the caller — plus the fact that the retired
+// argument is now REFUSED rather than ignored, which is the whole migration story.
+func TestRegisterAlwaysReturnsTheSecretAndRefusesARetiredVoucherArgument(t *testing.T) {
 	st := newKB(t)
 	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
 	if err != nil {
@@ -376,19 +380,31 @@ func TestRegisterReturnsTheSecretEvenWhenBindingFails(t *testing.T) {
 	call(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`)
 	call(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 
-	// A voucher that cannot possibly redeem — the stale-voucher case, which is the
-	// realistic one: a session asks for a voucher, talks to its human, and registers
-	// after the five-minute TTL has passed.
-	out := call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"comm_register","arguments":{"label":"dev","binding_voucher":"stale-and-unredeemable"}}}`)
-
+	// The ordinary call: a secret comes back, and it is the only thing that matters.
+	out := call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"comm_register","arguments":{"label":"dev"}}}`)
 	if !strings.Contains(out, "endpoint_secret") {
-		t.Fatalf("THE SECRET WAS DESTROYED by a failed binding — the endpoint exists in the database and nothing can ever authenticate as it.\nResponse: %s", out)
-	}
-	if !strings.Contains(out, "binding_error") {
-		t.Fatalf("a failed binding was not reported to the caller at all: %s", out)
+		t.Fatalf("registration returned no secret — the endpoint exists and nothing can ever authenticate as it.\nResponse: %s", out)
 	}
 	if strings.Contains(out, `"isError":true`) {
 		t.Fatalf("comm_register returned an error, which discards the structured result: %s", out)
+	}
+
+	// A session working from a stale transcript still passes binding_voucher. This
+	// MUST fail loudly. Silently ignoring it would leave the session holding an
+	// UNBOUND endpoint while believing it had bound — a station's mail going
+	// somewhere nobody is reading, with no error anywhere to say so.
+	stale := call(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"comm_register","arguments":{"label":"dev2","binding_voucher":"from-an-older-flow"}}}`)
+	if !strings.Contains(stale, `"isError":true`) {
+		t.Fatalf("comm_register ACCEPTED a binding_voucher argument that no longer does anything.\n"+
+			"The session believes it is bound to a station and is not, and nothing told it.\nResponse: %s", stale)
+	}
+	if strings.Contains(stale, "endpoint_secret") {
+		t.Fatalf("a rejected argument still minted an endpoint — the secret is in a response the caller will read as a failure: %s", stale)
+	}
+	// And the refusal must NAME the argument, or the session cannot tell which of its
+	// arguments the transport objected to.
+	if !strings.Contains(stale, "binding_voucher") {
+		t.Fatalf("the refusal does not name binding_voucher, so a session cannot work out what to drop: %s", stale)
 	}
 }
 

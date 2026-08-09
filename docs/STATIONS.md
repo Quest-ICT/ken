@@ -9,14 +9,13 @@
 > **Built:** the schema and `kens_` station keys with the three-way scope split (S5); the notebook
 > with revisions (S10); the task list and its ordering contract (§11); the locker (S11); the
 > `/station/mcp` surface (§6); the operator console at `/stations` (§10); `ken station
-> add|list|key|requests`; peer links, denials and their mute (S9); endpoint binding by voucher (S5);
+> add|list|key|requests`; peer links, denials and their mute (S9); endpoint binding by voucher (S5, S5a); `station_directory` and its published-or-linked visibility rule (S8);
 > the station-owned inbox with claim-once delivery and its lease (S4); severing on key revocation
 > (S6); and `comm_open_channel`, which opens a channel over an approved link with **no pairing code**.
 >
-> **Not built, and named here so no section reads as a promise it does not keep:** `station_directory`
-> (§6) — discovery is deferred until there are enough stations for a list to beat asking a human for a
-> name; per-station connect-time instructions (§13); and station-specific metrics, which do not exist
-> beyond the generic per-tool counters every MCP surface emits.
+> **Not built, and named here so no section reads as a promise it does not keep:** per-station
+> connect-time instructions (§13); and station-specific metrics, which do not exist beyond the generic
+> per-tool counters every MCP surface emits.
 >
 > Convention in this document: **S*n*** is a locked decision, **§*n*** is a section.
 
@@ -170,31 +169,57 @@ single-use **binding voucher** that `comm_register` accepts.
   under the wrong actor is still permitted and still silently defeats the hearsay marker — that half
   remains a papercut the tooling steers around. Do not read the binding check as covering both.
 
-- **The voucher is bound to the identity that asked for it, and is not a bearer capability.**
-  Redemption requires the redeeming endpoint's `actor_id` to equal the actor the voucher was issued
-  to. *(As first shipped it required nothing of the redeemer at all: the hash, the single-use flag,
-  the expiry and the station's state were checked, and the holder was not. The string alone bound any
-  endpoint to the station's inbox, so "never send a voucher over COMM, never write it to a file" was
-  load-bearing security enforced by a human remembering it.)*
-  - **What this bounds:** the voucher's blast radius is now the COMM token's. Two sessions sharing an
-    actor can still redeem each other's vouchers — but they share the comm token, so either could
-    already register an endpoint and do everything the voucher grants. What is closed is redemption by
-    a *different* identity, which is every case where the leak leaves the machine. The operating rule
-    stays good hygiene; breaking it stops being catastrophic.
-  - **An actor mismatch is reported distinctly** (`ErrVoucherNotYours`), unlike unknown/used/expired
-    which are deliberately collapsed into one string. The collapse protects a secret an attacker might
-    guess; this case cannot be reached by guessing, since the caller must already hold a live 32-char
-    voucher. What the distinction buys is the diagnosis: a mismatch is a *setup* error a deployment
-    can sit in for months, and reported as "not valid" it reads as an expiry race, so the operator
-    mints fresh vouchers forever, each failing identically.
-  - **Vouchers issued before the column existed refuse rather than being grandfathered.** They carry a
-    NULL actor and the predicate compares with `=`, which is never true against NULL. Vouchers live
-    five minutes and an upgrade takes longer, so a voucher in flight across the restart is already
-    dead by arithmetic — honouring old rows would have left the bearer hole open inside the change
-    that closes it.
+- **The voucher names the ONE endpoint that may redeem it.** `station_binding_voucher` takes an
+  `endpoint_id`; redemption requires that exact endpoint, so using a voucher demands that endpoint's
+  own secret — a separate credential the voucher does not carry. A leaked voucher is inert in
+  anyone else's hands. *(As first shipped it required nothing of the redeemer at all: hash,
+  single-use, expiry and station state were checked, the holder was not. "Never send a voucher over
+  COMM, never write it to a file" was load-bearing security enforced by a human remembering it.)*
+  - **An interim version keyed on the ACTOR, and its central claim was false.** It said a leaked
+    voucher then granted nothing the credential needed to use it already granted. A comm token alone
+    registers an **unbound** endpoint, which reads no station's mail; binding is exactly the
+    capability it does not confer. `ken-prod-ops` found the consequence by measuring their estate:
+    **six of eight stations share one actor**, because the actor is per MACHINE — right for the
+    hearsay marker, wrong for this. The voucher had a *weaker* binding than the per-station key that
+    mints it.
+  - **Both checks stay, and they are not redundant.** The endpoint is the security property; the
+    actor is the SETUP guard, catching a key minted under a different actor than the machine's comm
+    token — a misconfiguration with no symptom until it silently defeats the hearsay marker. Removing
+    either because "the other covers it" removes a different guarantee than the remover intends.
+  - **The endpoint id is safe as a tool argument precisely because it is not a credential.** It
+    NARROWS the voucher: naming an endpoint you do not control mints a voucher you cannot use. There
+    is nothing to gain by lying. This is the opposite of a `station_id` argument, which would widen —
+    which is why the station still comes from the header key alone.
+  - **Three refusals, deliberately distinct**, because each demands a different response: wrong
+    endpoint (ask for a voucher naming yours — a retry that works), wrong actor (re-mint a key from
+    the console — retrying never works), and unknown/used/expired (collapsed into one string, since
+    *those* protect a secret an attacker might guess). Reaching either identity refusal requires
+    already holding a live 32-character voucher, so neither can be reached by guessing.
+  - **Vouchers issued before the columns existed refuse rather than being grandfathered.** They carry
+    NULL where redemption authorises, and the predicate compares with `=`. Vouchers live five minutes
+    and an upgrade takes longer, so one in flight across the restart is already dead by arithmetic.
   - **Space is recorded but not enforced**, because it cannot discriminate yet: the station principal
-    hardcodes space 1. Writing it now lets the check tighten to `(actor, space)` with no second
-    migration and no backfill that would have nothing truthful to write.
+    hardcodes space 1. Writing it now lets the check tighten to `(endpoint, actor, space)` with no
+    further migration.
+
+### S5a — Binding is `comm_bind`, never `comm_register` *(chosen: one path, one guarantee)*
+
+Registration mints a credential and stops. To bind: **`comm_register` → write the secret to disk →
+`station_binding_voucher` naming that endpoint → `comm_bind`.**
+
+- **A voucher passed to registration cannot name its redeemer**, because the endpoint does not exist
+  yet. That path could only ever carry the weaker guarantee, and shipping two strengths under one
+  name is worse than shipping one.
+- **Registration had acquired a hazard from doing two jobs.** It mints a secret shown exactly once;
+  the MCP SDK discards structured output when a handler returns an error; so a failed binding
+  destroyed the credential the handler had just created. That was worked around with a
+  `binding_error` field — a "succeeded but did not bind" result existing only because two unrelated
+  operations shared one call. Splitting them deletes the hazard rather than guarding it.
+- **The forced order is the safe order.** Register, *save your secret*, then bind. The old
+  one-call flow encouraged binding before the secret was ever written down.
+- **The retired argument is REFUSED, not ignored.** The MCP SDK rejects unknown arguments by name, so
+  a session working from an older flow gets a hard error rather than an unbound endpoint it believes
+  is bound. Verified against the SDK, not assumed.
 
 ### S6 — Revocation severs; retirement does not *(chosen: two verbs, severing default)*
 
@@ -438,7 +463,7 @@ transfer collides on it, and every station is expected to have one.
 | Tool | Purpose |
 |---|---|
 | `station_me` | Who am I, my links, my counts — the briefing on demand. Sets `self_described_*`. |
-| `station_binding_voucher` | Exchange the header credential for a single-use voucher that `comm_register` redeems. |
+| `station_binding_voucher` | Exchange the header credential for a single-use voucher naming ONE endpoint, which `comm_bind` redeems. |
 | `station_request` | Ask the human to create a station. The only tool a station-less key may call. |
 | `station_directory` | **NOT BUILT.** Published stations plus those I have a link to. A session names a peer by the name its human uses; discovery is deferred until there are enough stations for a list to beat asking. |
 | `station_link_request` | Ask the human to approve a relationship: `to_station`, `reason` (human-only). |
@@ -759,10 +784,9 @@ The order matters, and only the last step involves the sessions themselves:
    prompt, never as a tool argument (S5). The session now has a notebook, a task list and a locker
    immediately; nothing further is required for those.
 5. **Only if you want the messaging half:** the session calls `station_binding_voucher` on `/station`
-   and passes the voucher to **`comm_bind`** on `/comm`. It keeps its endpoint id, its secret and
-   every channel it is in — adoption costs no re-pairing. `comm_register` also accepts a voucher, but
-   that is for a session registering for the FIRST time; an already-running session should bind in
-   place.
+   **naming its own `endpoint_id`**, and passes the voucher to **`comm_bind`** on `/comm`. It keeps its
+   endpoint id, its secret and every channel it is in — adoption costs no re-pairing. A session with no
+   endpoint yet calls `comm_register` first, writes the secret to disk, and then does the same.
 
 **What each step buys, so none of it is done on faith:** after step 4 a session has durable memory
 and a task list that survives it. After step 5 the STATION owns its inbox, so a replacement session
