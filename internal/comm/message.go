@@ -143,12 +143,23 @@ WHERE channel_id=? AND sender_endpoint=? AND idempotency_key=?`,
 		// Backpressure: cap un-acked depth per channel. Full-duplex has no
 		// turn-taking, so two auto-processing sessions could otherwise enter a
 		// reply loop that grows the database without bound.
-		// One scan, two aggregates: the channel total that bounds backpressure, and
-		// the SENDER's own share, which is what "you have mail waiting" means. The
-		// total was already being computed and thrown away.
+		// One scan, two aggregates over DIFFERENT state sets, and the difference is
+		// the point.
+		//
+		// Backpressure counts queued AND delivered, because both occupy the channel.
+		// The sender's prompt counts ONLY 'queued' — mail that has never been handed
+		// to them. 'delivered' means they have already been shown it; telling them to
+		// "poll it and reconsider" would be advice they have already taken, and the
+		// prompt fires on a session that read its mail, is mid-reply, and simply has
+		// not acked yet.
+		//
+		// Found within minutes of shipping, by the field firing on ME while I was
+		// replying to the very message it was counting. It is the same queued-versus-
+		// delivered distinction I argued for on the refusal design and then failed to
+		// apply to the warning I built alongside it.
 		var unacked, waitingForSender int
 		if err := t.QueryRowContext(ctx, `
-SELECT COUNT(*), COUNT(*) FILTER (WHERE recipient_endpoint = ?)
+SELECT COUNT(*), COUNT(*) FILTER (WHERE recipient_endpoint = ? AND state = 'queued')
   FROM message WHERE channel_id=? AND state IN ('queued','delivered')`, ep.ID, ch.ID).
 			Scan(&unacked, &waitingForSender); err != nil {
 			return err

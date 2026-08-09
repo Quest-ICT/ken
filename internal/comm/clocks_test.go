@@ -352,9 +352,24 @@ func TestSendReportsClampingAndWaitingMail(t *testing.T) {
 	if blind.WaitingForYou != 1 {
 		t.Fatalf("waiting_for_you = %d, want 1 — the sender got no prompt to poll and reconsider", blind.WaitingForYou)
 	}
-	// And it counts only the SENDER's mail, not the channel's total: A's own three
-	// messages to B are unacked too and must not inflate this.
+	// It counts only the SENDER's mail, not the channel's total: A's own messages to
+	// B are unacked too and must not inflate this.
 	if blind.WaitingForYou > 1 {
 		t.Fatalf("waiting_for_you = %d counted the channel total rather than the sender's share", blind.WaitingForYou)
+	}
+
+	// AND IT COUNTS ONLY MAIL NEVER SHOWN. Once A has polled, the prompt must stop:
+	// "poll it and reconsider" is advice already taken, and a session that has read
+	// its mail and is mid-reply has simply not acked yet. This fired on the author
+	// within minutes of shipping, while replying to the very message it counted.
+	if _, err := st.Poll(ctx, a, 10); err != nil {
+		t.Fatal(err)
+	}
+	informed, err := st.Send(ctx, a, channelID, "sent having read it", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if informed.WaitingForYou != 0 {
+		t.Fatalf("waiting_for_you = %d after the sender polled — a read-but-unacked message is not waiting to be read", informed.WaitingForYou)
 	}
 }
