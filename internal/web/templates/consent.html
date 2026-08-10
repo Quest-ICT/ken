@@ -51,6 +51,19 @@
       <li class="perm-no"><svg viewBox="0 0 24 24" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span><b>{{.T "consent.perm_never_lead"}}</b> {{.T "consent.perm_never_rest"}}</span></li>
     </ul>
 
+    {{if .Data.Actors}}
+    <h2 class="h3" style="margin:var(--sp-5) 0 var(--sp-3)">{{.T "consent.write_as_heading"}}</h2>
+    <div class="field">
+      <select class="input" name="write_as" title="{{.T "consent.write_as_help"}}">
+        <option value="">{{.T "consent.write_as_default"}}</option>
+        {{range .Data.Actors}}
+        <option value="{{.ID}}">{{.Kind}}:{{.Name}}{{if .HasComm}} &mdash; {{$.T "consent.write_as_has_comm"}}{{end}}</option>
+        {{end}}
+      </select>
+      <span class="help">{{.T "consent.write_as_help"}}</span>
+    </div>
+    {{end}}
+
     <div class="btn-row" style="margin-top:var(--sp-5)">
       <button class="btn btn--primary btn--lg" type="submit" name="decision" value="approve" title="{{.T "consent.approve_title"}}" style="flex:1">{{.T "consent.approve"}}</button>
       <button class="btn btn--ghost btn--lg" type="submit" name="decision" value="deny" title="{{.T "consent.deny_title"}}" style="flex:1">{{.T "consent.deny"}}</button>

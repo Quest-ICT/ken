@@ -83,8 +83,16 @@ func (a *app) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	if u, err := url.Parse(p.RedirectURI); err == nil && u.Host != "" {
 		redirHost = u.Host
 	}
+	// Offered so the operator can point this connector at the actor that holds their
+	// comm token. A failure here must not block consent — the picker is an
+	// improvement to provenance, not a precondition for connecting.
+	actors, err := a.store.ActorsWithCommStatus(r.Context())
+	if err != nil {
+		log.Printf("web: oauth consent actors: %v", err)
+	}
 	a.render(w, r, sess, "consent", map[string]any{
 		"CSRF":         sess.CSRF,
+		"Actors":       actors,
 		"ClientName":   clientDisplayName(client),
 		"RedirectHost": redirHost,
 		"RedirectURI":  p.RedirectURI,
@@ -122,8 +130,25 @@ func (a *app) handleOAuthAuthorizeDecision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// One shared 'ai' actor per client name authors this connector's MCP writes.
-	connActor, err := a.store.FindOrCreateActor(r.Context(), "ai", clientDisplayName(client))
+	// WHICH ACTOR THIS CONNECTOR WRITES AS, AND WHY A HUMAN CHOOSES IT.
+	//
+	// It used to be fixed: one 'ai' actor per client display name, invented here. That
+	// silently disabled the hearsay marker for everything the connector ever wrote.
+	// viaComm asks whether THIS ACTOR recently received inter-session traffic
+	// (mcpserver/server.go); COMM traffic arrives under the actor a `comm` token was
+	// minted with; an actor named after a client's self-reported name is never that
+	// actor. So a session that read a peer's message and then saved what it learned
+	// through the connector produced via_comm=NULL — and an absent badge is
+	// indistinguishable from a checked-and-clean one.
+	//
+	// Letting the operator point the connector at an existing agent actor closes it.
+	// The marker then fires whenever that actor has recent peer traffic, which
+	// OVER-reports on a shared actor — and over-reporting is the correct bias, stated
+	// where the marker was designed: a false negative silently launders hearsay into
+	// the knowledge base, a false positive only asks a human to check a source.
+	//
+	// Blank keeps the old behaviour, so an operator who does not care is unaffected.
+	connActor, err := a.resolveConnectorActor(r, client)
 	if err != nil {
 		log.Printf("web: oauth connector actor: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -227,6 +252,28 @@ func isPlainHost(h string) bool {
 // name, trimmed and length-bounded. It is SELF-REPORTED (open DCR lets any client
 // pick any name), so it must never be presented as a trust signal; an empty name
 // defaults to a deliberately neutral label rather than anything claude.ai-looking.
+// resolveConnectorActor picks the actor a connector's writes are authored under.
+//
+// The form field is an actor id the operator selected from live actors; anything
+// unparseable or absent falls back to the historical behaviour of an actor named
+// after the client. It is validated against the actor table rather than trusted,
+// because a forged id here would attribute a connector's writes to someone else —
+// and authorship is the field a human reads when deciding whether to promote.
+func (a *app) resolveConnectorActor(r *http.Request, client *store.OAuthClient) (int64, error) {
+	if v := strings.TrimSpace(r.FormValue("write_as")); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil && id > 0 {
+			ok, err := a.store.ActorExists(r.Context(), id)
+			if err != nil {
+				return 0, err
+			}
+			if ok {
+				return id, nil
+			}
+		}
+	}
+	return a.store.FindOrCreateActor(r.Context(), "ai", clientDisplayName(client))
+}
+
 func clientDisplayName(c *store.OAuthClient) string {
 	name := ""
 	if c != nil {

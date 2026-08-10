@@ -168,7 +168,7 @@ func mustStationActor(ctx context.Context, st *store.Store, name, kind string) i
 		return id
 	}
 
-	cands, err := st.ActorsForStationKey(ctx)
+	cands, err := st.ActorsWithCommStatus(ctx)
 	must(err)
 	var withComm []store.ActorCandidate
 	for _, c := range cands {
@@ -202,7 +202,7 @@ func mustStationActor(ctx context.Context, st *store.Store, name, kind string) i
 
 // actorTable renders the candidates so an operator can pick without a second command.
 func actorTable(ctx context.Context, st *store.Store) string {
-	cands, err := st.ActorsForStationKey(ctx)
+	cands, err := st.ActorsWithCommStatus(ctx)
 	if err != nil {
 		return "  (could not list actors: " + err.Error() + ")"
 	}

@@ -103,6 +103,55 @@ same change — never "docs later".
 
 ### Fixed
 
+- **The hearsay marker could never fire for anything written through an OAuth
+  connector.** `viaComm` asks whether *this actor* recently received inter-session
+  traffic. An OAuth grant's authoring actor was created here from the connector's
+  self-reported display name, while COMM traffic arrives under the actor a `comm`
+  token was minted with — different rows, by construction, always. So a session that
+  read a peer's message and then saved what it learned through the connector produced
+  `via_comm=NULL`, and an absent badge is indistinguishable from a checked-and-clean
+  one.
+
+  This is the surface a human uses from mobile and from Claude chat, and — confirmed
+  from inside a Claude Code session — the connector reaches Claude Code too, alongside
+  any locally-added registration. The marker was not merely unreliable there; it was
+  structurally incapable of firing.
+
+  The consent screen now lets the approving human choose **which identity the
+  connector authors as**, offering live actors with the ones holding a messaging token
+  marked — the same question, and now the same candidate list, as "which actor is this
+  station key minted under". Leaving it on the default reproduces the old behaviour
+  exactly. A chosen id is validated against the actor table rather than trusted, since
+  authorship is what a human reads when deciding whether to promote.
+
+  Pointing several machines at one actor makes the marker **over**-report, and that is
+  the correct bias, stated where the marker was designed: a false negative silently
+  launders hearsay into the knowledge base, a false positive only asks a human to
+  check a source.
+
+  **Entries already written through a connector keep `via_comm=NULL` and cannot be
+  repaired** — nothing recorded what those sessions had been reading. The fix is
+  forward-looking, and that limit is stated rather than implied.
+
+- **A tool handler acted as whoever opened the MCP session, not as the caller.** The
+  go-sdk binds a session to the *initialize* request's context, so anything a handler
+  read from context was frozen at connect. Demonstrated through the real HTTP handler:
+  a `kb_save` presented with token B, on a session opened by token A, was written with
+  **A** as `author_actor_id` and returned 200. Ken records that field on every version
+  and a human reads it when promoting, so the durable record carried false provenance
+  with nothing on the page to say so. Fixed at the tool-registration wrapper, the only
+  place the SDK exposes a per-call header.
+
+  `/station/mcp` has the same defect and the same fix is still pending. `/comm/mcp`
+  does not — its identity arrives as tool arguments, which is per-call by
+  construction.
+
+- **MCP sessions never expired.** Every handler passed nil options, and the SDK's zero
+  `SessionTimeout` means idle sessions are never closed. Set to 30 minutes on the
+  knowledge-base surface.
+
+### Fixed
+
 - **The settings console was teaching a data model the release had removed.** The form
   resolves each field's label and help through the translation bundle FIRST, with the
   Go registry text only as a fallback — so the bundle *overrides* the registry rather
