@@ -11,7 +11,7 @@
 # already needed a follow-up fix for the file MODE (world-readable 0644; 1.2.1) and
 # a second for the TIMESTAMP (local, unmarked, six hours off the nightly's UTC —
 # which sent a production operator chasing a non-existent clock fault). Encryption
-# was the third: the nightly age-encrypts, the pre-upgrade path wrote plaintext.
+# was the third: the two paths disagreed about naming and mode.
 # Three fixes to the same shape of defect — the rollback path not doing something
 # the nightly path already did — is a sign the policy should live in ONE place. It
 # does now: the callers own their control flow, this file owns the policy.
@@ -31,73 +31,83 @@ ken_snapshot_stamp() {
     date -u +%Y%m%dT%H%M%SZ
 }
 
-# ken_snapshot_secure <raw_path> [age_recipient] — lock down a freshly written
-# plaintext snapshot, then encrypt it if (and only if) a recipient is given.
+# ken_snapshot_secure <path> [group] — apply the file-permission policy to a freshly
+# written snapshot and echo its final path.
 #
-# The caller has just written a plaintext snapshot at <raw_path> (via
-# `ken backup snapshot --out`). This function takes it from there:
+# IT NO LONGER ENCRYPTS. Ken used to age-encrypt here when KEN_AGE_RECIPIENT was set,
+# and that is retired: Ken writes a compressed, unencrypted snapshot at 0600 and stops.
+# Transport, destination and at-rest protection belong to whoever moves the file.
 #
-#   * Lock the mode down IMMEDIATELY — before any encryption step — so a full copy of
-#     the database is never even briefly world-readable. `ken backup snapshot` writes at
-#     the caller's umask (root's is 0644), and a mode travels with COPIES: an off-box
-#     backup of the backups dir would otherwise carry a world-readable DB wherever it
-#     lands. Default is 0600 (owner only). With a <group> (KEN_BACKUP_GROUP) it is 0640
-#     owned by that group instead — see ken_snapshot_lock below for why that exists.
-#   * No recipient  -> leave the plaintext (0600), warn that it is UNENCRYPTED, print
-#     its path on stdout, return 0. (A snapshot exists; the operator simply has not
-#     opted into encryption. Same stance the nightly always took.)
-#   * Recipient set -> age-encrypt to "<raw>.age" (0600) and remove the plaintext
-#     ONLY after a successful encrypt; print the .age path, return 0. If `age` is not
-#     installed, or encryption fails, remove the plaintext (and any partial .age) and
-#     return 1 — FAIL CLOSED: an operator who asked for encryption never gets a
-#     plaintext copy left behind instead. No snapshot is kept in that case.
+# Vlad's ruling, and the reasoning is worth keeping because it reverses an earlier one:
+# the age layer cost him days of production trouble across three sessions for a property
+# he was not buying, Ken is not designed to hold national-security material, and the
+# operator — instructed clearly — owns the handling. Encryption on this box also made the
+# archive incompressible AND undedupable, so removing it is what let compression happen
+# at all: ciphertext shares no bytes with yesterday's ciphertext.
 #
-# Contract: stdout = final snapshot path on success (nothing on failure); stderr =
-# diagnostics; return 0 = a snapshot is present, 1 = an intended encryption did not
-# happen and nothing was kept. The caller decides what a 1 means for it (the nightly
-# exits non-zero so systemd flags the run; the installer warns and proceeds, because
-# a missing rollback point must never abort an upgrade).
+# The name is kept: what it secures is now the mode, which is the half that was always
+# unconditional.
 ken_snapshot_secure() {
     _kss_raw="$1"
-    _kss_recipient="${2:-}"
-    _kss_group="${3:-}"
-    _kss_enc="$_kss_raw.age"
+    _kss_group="${2:-}"
 
     if [ ! -f "$_kss_raw" ]; then
-        echo "snapshot: expected plaintext snapshot at $_kss_raw is missing" >&2
+        echo "snapshot: expected snapshot at $_kss_raw is missing" >&2
         return 1
     fi
 
-    # ALWAYS 0600 first, with no group. A plaintext snapshot that is about to be
-    # encrypted is an INTERMEDIATE, and must never be widened to the backup group: doing
-    # so would expose the cleartext database to that group for the whole `age` run — and
-    # permanently if the encrypt is interrupted. Only the FINAL artifact gets the group.
-    ken_snapshot_lock "$_kss_raw" ""
+    ken_snapshot_lock "$_kss_raw" "$_kss_group"
+    printf '%s\n' "$_kss_raw"
+    return 0
+}
 
-    if [ -z "$_kss_recipient" ]; then
-        # No encryption: the plaintext IS the final artifact, so it takes the group.
-        ken_snapshot_lock "$_kss_raw" "$_kss_group"
-        echo "snapshot: WARNING: KEN_AGE_RECIPIENT not set — snapshot left UNENCRYPTED at $_kss_raw" >&2
-        printf '%s\n' "$_kss_raw"
-        return 0
-    fi
+# ken_prune_pre_upgrade <dir> <keep_count> <keep_days> — bound the rollback points the
+# installer leaves behind, keeping whichever floor preserves MORE.
+#
+# These were never pruned by anything. ken-snapshot.sh's retention globs `ken-*.db*`,
+# which cannot match `pre-upgrade-*` — they share no prefix — so a rollback point was
+# kept forever and every upgrade added one. Measured on the live deployment: nine files,
+# 19.6 MB, 30% of the entire archive, the oldest dating from the day the box was built.
+#
+# WHY BOTH FLOORS, and it is not belt-and-braces. ken-prod-ops measured the real upgrade
+# cadence and BOTH degenerate cases occurred inside thirteen days:
+#
+#   burst    four upgrades in one day. Keeping the newest three evicts the point taken
+#            before that day started — the one you want when the day is what broke it.
+#   drought  255 hours with no upgrade. A seven-day age bound alone would have deleted
+#            every rollback point, leaving none at the moment of the next upgrade.
+#
+# So a file survives if it is among the newest N *or* younger than D days. Neither
+# condition alone is safe and both conditions are ordinary.
+#
+# Deletion is by mtime order via `ls -1t`, matching the nightly policy directly above it
+# rather than parsing the timestamp out of the filename — a name is a claim, an mtime is
+# what the filesystem observed.
+ken_prune_pre_upgrade() {
+    _kpu_dir="$1"
+    _kpu_keep="${2:-3}"
+    _kpu_days="${3:-7}"
 
-    if ! command -v age >/dev/null 2>&1; then
-        echo "snapshot: ERROR: a recipient is set but 'age' is not installed — removing plaintext, no snapshot kept" >&2
-        rm -f "$_kss_raw"
-        return 1
-    fi
+    [ -d "$_kpu_dir" ] || return 0
 
-    if age -r "$_kss_recipient" -o "$_kss_enc" "$_kss_raw"; then
-        ken_snapshot_lock "$_kss_enc" "$_kss_group"
-        rm -f "$_kss_raw"   # drop the plaintext ONLY after a confirmed encrypt
-        printf '%s\n' "$_kss_enc"
-        return 0
-    fi
+    # Everything OLDER than the age floor is a deletion candidate; everything younger is
+    # kept outright. -mtime +N is "more than N days old", which is the floor we want.
+    _kpu_old="$(find "$_kpu_dir" -maxdepth 1 -type f -name 'pre-upgrade-*' -mtime "+$_kpu_days" 2>/dev/null)"
+    [ -n "$_kpu_old" ] || return 0
 
-    echo "snapshot: ERROR: age encryption failed — removing plaintext, no snapshot kept" >&2
-    rm -f "$_kss_raw" "$_kss_enc"
-    return 1
+    # Of those, still keep the newest $_kpu_keep overall — the count floor, which is what
+    # survives a drought where EVERY file is older than the age bound.
+    _kpu_keepers="$(ls -1t "$_kpu_dir"/pre-upgrade-* 2>/dev/null | head -n "$_kpu_keep")"
+
+    printf '%s\n' "$_kpu_old" | while IFS= read -r _kpu_f; do
+        [ -n "$_kpu_f" ] || continue
+        # Keep it if it is one of the newest N.
+        if printf '%s\n' "$_kpu_keepers" | grep -Fxq "$_kpu_f"; then
+            continue
+        fi
+        rm -f "$_kpu_f"
+    done
+    return 0
 }
 
 # ken_snapshot_lock <path> [group] — apply the snapshot file-permission policy.
@@ -158,10 +168,11 @@ ken_env_value() {
 # ken_env_value_from_unit_files <VAR> <file…> — pull VAR from REAL `Environment=`
 # assignment lines in the given unit files, used only on a non-systemd host (no
 # systemctl). The anchor `^[[:space:]]*Environment=` is what makes this safe: it SKIPS a
-# `#`-commented line, so the bundled unit's placeholder example
-# (`# Environment=KEN_AGE_RECIPIENT=…`) is never harvested as a bogus value — the defect
-# that would otherwise make a default-config pre-upgrade snapshot fail closed and delete
-# itself. Optional leading indent and quotes (as `systemctl edit` writes) are tolerated.
+# `#`-commented line, so a placeholder the unit documents by example
+# (`# Environment=KEN_BACKUP_GROUP=…`) is never harvested as a live value. That defect
+# was real once: a commented example read as a real setting made a default-config
+# pre-upgrade snapshot fail closed and delete itself. Optional leading indent and quotes
+# (as `systemctl edit` writes) are tolerated.
 # Prints the last value found, or nothing.
 ken_env_value_from_unit_files() {
     _kev_var="$1"
@@ -171,5 +182,3 @@ ken_env_value_from_unit_files() {
 }
 
 # Back-compat wrappers for the recipient, the original callers of the above.
-ken_recipient_from_env()        { ken_env_value "${1:-}" KEN_AGE_RECIPIENT; }
-ken_recipient_from_unit_files() { ken_env_value_from_unit_files KEN_AGE_RECIPIENT "$@"; }

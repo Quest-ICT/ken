@@ -44,53 +44,24 @@ echo "# ken_snapshot_stamp"
 s="$(ken_snapshot_stamp)"
 [[ "$s" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] && ok "UTC-Z, sortable, filename-safe: $s" || no "stamp format" "$s"
 
-echo "# ken_snapshot_secure — leak safety"
-# no recipient -> kept 0600, path on stdout, rc0, UNENCRYPTED warning
+echo "# ken_snapshot_secure — mode policy (encryption retired)"
+# Ken no longer encrypts. The helper locks the mode and echoes the final path; every
+# `age` case below this line was deleted with the feature rather than left skipped,
+# because a skipped test for a removed feature reads as coverage forever.
 f="$T/a.db"; echo d > "$f"; chmod 644 "$f"
-out="$(ken_snapshot_secure "$f" "" 2>"$T/e")"; rc=$?
+out="$(ken_snapshot_secure "$f" 2>"$T/e")"; rc=$?
 { [ "$rc" = 0 ] && [ -f "$f" ] && [ "$out" = "$f" ] && [ "$(stat -c%a "$f")" = 600 ]; } \
-    && ok "no-recipient: kept, 0600, stdout, rc0" || no "no-recipient" "rc=$rc out=$out"
-grep -q UNENCRYPTED "$T/e" && ok "no-recipient: warns UNENCRYPTED" || no "no-recipient warn" "$(cat "$T/e")"
+    && ok "secure(): kept, 0600, stdout, rc0" || no "secure()" "rc=$rc out=$out"
 
-# recipient + age OK -> plaintext gone, .age 0600, stdout=.age, rc0
-mkbin "$T/ok" ok; f="$T/b.db"; echo d > "$f"
-out="$(PATH="$T/ok:$PATH" ken_snapshot_secure "$f" "age1x" 2>/dev/null)"; rc=$?
-{ [ "$rc" = 0 ] && [ ! -f "$f" ] && [ -f "$f.age" ] && [ "$out" = "$f.age" ] && [ "$(stat -c%a "$f.age")" = 600 ]; } \
-    && ok "encrypt-ok: plaintext gone, .age 0600" || no "encrypt-ok" "rc=$rc out=$out"
+# The UNENCRYPTED warning is GONE. It fired on what is now the intended and only
+# configuration, and a warning that fires when nothing is wrong trains people to ignore
+# warnings -- after which the next real one lands in a channel nobody reads.
+grep -qi "UNENCRYPTED" "$T/e" && no "secure(): still warns about encryption" "$(cat "$T/e")" \
+    || ok "secure(): no warning on the normal path"
 
-# recipient + age MISSING -> fail closed: plaintext removed, rc1, nothing kept
-mkdir -p "$T/noage"; for c in date chmod rm cat; do ln -s "$(command -v "$c")" "$T/noage/$c"; done
-f="$T/c.db"; echo d > "$f"
-out="$(PATH="$T/noage" ken_snapshot_secure "$f" "age1x" 2>/dev/null)"; rc=$?
-{ [ "$rc" = 1 ] && [ ! -f "$f" ] && [ ! -f "$f.age" ] && [ -z "$out" ]; } \
-    && ok "age-missing: fail closed, no plaintext left" || no "age-missing" "rc=$rc"
-
-# recipient + age FAILS (writes partial then exits 1) -> plaintext + partial removed, rc1
-mkbin "$T/fail" fail; f="$T/d.db"; echo d > "$f"
-PATH="$T/fail:$PATH" ken_snapshot_secure "$f" "age1x" >/dev/null 2>&1; rc=$?
-{ [ "$rc" = 1 ] && [ ! -f "$f" ] && [ ! -f "$f.age" ]; } \
-    && ok "encrypt-fail: plaintext + partial removed" || no "encrypt-fail" "rc=$rc"
-
-# missing raw -> rc1
-ken_snapshot_secure "$T/nope.db" "" >/dev/null 2>&1; rc=$?
-[ "$rc" = 1 ] && ok "missing-raw: rc1" || no "missing-raw" "rc=$rc"
-
-echo "# ken_recipient_from_env — systemctl show -p Environment parsing"
-eq "empty env -> empty"          "$(ken_recipient_from_env 'Environment=KEN_HOME=/x KEN_DB=/y')" ""
-eq "recipient first -> value"    "$(ken_recipient_from_env 'Environment=KEN_AGE_RECIPIENT=age1FIRST KEN_HOME=/x')" "age1FIRST"
-eq "recipient later -> value"    "$(ken_recipient_from_env 'Environment=KEN_HOME=/x KEN_AGE_RECIPIENT=age1LATER')" "age1LATER"
-eq "no Environment -> empty"     "$(ken_recipient_from_env '')" ""
-
-echo "# ken_recipient_from_unit_files — comment-safe file parsing (the harvest regression)"
-printf '# Environment=KEN_AGE_RECIPIENT=age1yourpublickey...\n' > "$T/comment.conf"
-eq "commented example -> EMPTY (never harvested)" "$(ken_recipient_from_unit_files "$T/comment.conf")" ""
-printf '[Service]\nEnvironment="KEN_AGE_RECIPIENT=age1drop"\n' > "$T/drop.conf"
-eq "real drop-in (quoted) -> value" "$(ken_recipient_from_unit_files "$T/drop.conf")" "age1drop"
-printf 'Environment=KEN_AGE_RECIPIENT=age1plain\n' > "$T/plain.conf"
-eq "real unquoted -> value" "$(ken_recipient_from_unit_files "$T/plain.conf")" "age1plain"
-printf '# Environment=KEN_AGE_RECIPIENT=age1example...\nEnvironment=KEN_AGE_RECIPIENT=age1real\n' > "$T/both.conf"
-eq "comment + real -> only the real" "$(ken_recipient_from_unit_files "$T/both.conf")" "age1real"
-eq "missing files -> empty" "$(ken_recipient_from_unit_files "$T/none1.conf" "$T/none2.conf")" ""
+# missing file -> rc1
+ken_snapshot_secure "$T/nope.db" >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && ok "missing-file: rc1" || no "missing-file" "rc=$rc"
 
 echo "# ken_snapshot_lock — the file-permission policy (0600 default, 0640 + group opt-in)"
 # Default: no group -> 0600, exactly as every prior release.
@@ -112,29 +83,42 @@ ken_snapshot_lock "$f" "no-such-group-$$" 2>"$T/gerr"
 eq "unknown group -> stays 0600" "$(stat -c%a "$f")" "600"
 grep -q "could not put" "$T/gerr" && ok "unknown group warns" || no "unknown group warn" "$(cat "$T/gerr")"
 
-# The group flows through the real securing path too (plaintext and encrypted).
+# The group flows through the real securing path.
 f="$T/g4.db"; echo d > "$f"
-ken_snapshot_secure "$f" "" "$mygrp" >/dev/null 2>&1
-eq "secure(): plaintext honours group" "$(stat -c%a "$f")" "640"
-f="$T/g5.db"; echo d > "$f"
-PATH="$T/ok:$PATH" ken_snapshot_secure "$f" "age1x" "$mygrp" >/dev/null 2>&1
-eq "secure(): .age honours group" "$(stat -c%a "$f.age")" "640"
+ken_snapshot_secure "$f" "$mygrp" >/dev/null 2>&1
+eq "secure(): honours group" "$(stat -c%a "$f")" "640"
 
-# THE CRITICAL ONE: when a snapshot is going to be ENCRYPTED, the intermediate plaintext
-# must NEVER be widened to the backup group -- that would expose the cleartext database to
-# that group for the whole `age` run, and permanently if the encrypt were interrupted.
-f="$T/g6.db"; echo d > "$f"
-mkdir -p "$T/spy"
-cat > "$T/spy/age" <<SPY
-#!/usr/bin/env bash
-o=""; i=""; while [ \$# -gt 0 ]; do case "\$1" in -o) o="\$2"; shift 2;; -r) shift 2;; *) i="\$1"; shift;; esac; done
-stat -c%a "\$i" > "$T/plaintext_mode_during_encrypt"   # what the mode was WHILE encrypting
-cp "\$i" "\$o"
-SPY
-chmod +x "$T/spy/age"
-PATH="$T/spy:$PATH" ken_snapshot_secure "$f" "age1x" "$mygrp" >/dev/null 2>&1
-eq "plaintext stays 0600 during encryption" "$(cat "$T/plaintext_mode_during_encrypt" 2>/dev/null)" "600"
-eq "only the .age gets the group" "$(stat -c%a "$f.age")" "640"
+echo "# ken_prune_pre_upgrade — two floors, whichever keeps more"
+# ken-snapshot.sh's nightly glob is `ken-*.db*`, which cannot match `pre-upgrade-*`, so
+# these were kept forever: ken-prod-ops measured nine of them at 30% of the archive.
+P="$T/prune"; mkdir -p "$P"
+mkfile() { : > "$P/$1"; touch -d "$2" "$P/$1"; }
+
+# A DROUGHT: every file older than the age floor. The count floor must still keep 3.
+for i in 1 2 3 4 5; do mkfile "pre-upgrade-old$i.db.gz" "$((20 + i)) days ago"; done
+ken_prune_pre_upgrade "$P" 3 7
+n="$(ls -1 "$P"/pre-upgrade-* 2>/dev/null | wc -l)"
+eq "drought: count floor keeps 3 when all are old" "$n" "3"
+
+# A BURST: five upgrades today. The age floor must keep ALL of them, because the one you
+# want after a bad day is the point taken BEFORE that day's work started.
+rm -f "$P"/pre-upgrade-*
+for i in 1 2 3 4 5; do mkfile "pre-upgrade-burst$i.db.gz" "now"; done
+ken_prune_pre_upgrade "$P" 3 7
+n="$(ls -1 "$P"/pre-upgrade-* 2>/dev/null | wc -l)"
+eq "burst: age floor keeps all 5 despite a count of 3" "$n" "5"
+
+# CONTROL: it must actually delete something, or both results above pass vacuously.
+rm -f "$P"/pre-upgrade-*
+for i in 1 2 3 4 5 6; do mkfile "pre-upgrade-mix$i.db.gz" "$((i * 10)) days ago"; done
+ken_prune_pre_upgrade "$P" 3 7
+n="$(ls -1 "$P"/pre-upgrade-* 2>/dev/null | wc -l)"
+eq "mixed: prunes down to the count floor" "$n" "3"
+
+# And it must never touch a nightly.
+: > "$P/ken-20260810T000000Z.db.gz"; touch -d "90 days ago" "$P/ken-20260810T000000Z.db.gz"
+ken_prune_pre_upgrade "$P" 1 1
+[ -f "$P/ken-20260810T000000Z.db.gz" ] && ok "never deletes a nightly" || no "nightly deleted" "gone"
 
 echo "# ken_env_value — generalized to any variable (KEN_BACKUP_DIR, KEN_BACKUP_GROUP)"
 eq "env: backup dir"   "$(ken_env_value 'Environment=KEN_HOME=/x KEN_BACKUP_DIR=/srv/snaps' KEN_BACKUP_DIR)" "/srv/snaps"
@@ -145,28 +129,12 @@ eq "unit file: backup dir" "$(ken_env_value_from_unit_files KEN_BACKUP_DIR "$T/b
 printf '# Environment=KEN_BACKUP_GROUP=example\n' > "$T/bg.conf"
 eq "unit file: commented group ignored" "$(ken_env_value_from_unit_files KEN_BACKUP_GROUP "$T/bg.conf")" ""
 
-echo "# template invariant — the shipped unit must never yield a recipient"
+echo "# template invariant — the shipped unit's mode policy"
 UNIT="$REPO/deploy/ken-snapshot.service"
 if [ -f "$UNIT" ]; then
-    # The invariant that actually matters, asserted through the REAL parser: whatever
-    # the template says (it documents the drop-in shape, placeholder included), running
-    # our extractor over the shipped file must yield NOTHING. This is what stops the
-    # commented example being harvested as a live recipient — the defect that would make
-    # a default-config pre-upgrade snapshot fail closed and delete itself.
-    got="$(ken_recipient_from_unit_files "$UNIT")"
-    [ -z "$got" ] && ok "shipped unit yields no recipient via the parser" \
-        || no "template yields a recipient" "[$got] — the example must stay commented"
+    # What remains of this section after encryption was retired. The recipient-parser
+    # invariants went with the feature: there is no recipient for the template to leak,
+    # and a test asserting the absence of a removed thing is coverage theatre.
     grep -qE '^UMask=0077' "$UNIT" && ok "unit sets UMask=0077 (snapshot born 0600)" \
         || no "unit missing UMask=0077" "a dump would sit world-readable until the chmod"
-    # Belt and braces: no placeholder may LOOK like a real age key (age1 + bech32 tail),
-    # so a future naive parser cannot mistake it for one either.
-    plausible="$(grep -hoE 'age1[a-z0-9]{8,}' "$UNIT" 2>/dev/null | head -1 || true)"
-    [ -z "$plausible" ] && ok "no realistic-looking age key in the template" \
-        || no "template carries a realistic key" "[$plausible] — use an obvious placeholder"
-else
-    ok "deploy/ken-snapshot.service not present (skipped)"
 fi
-
-echo ""
-printf 'RESULT: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]

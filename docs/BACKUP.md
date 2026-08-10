@@ -18,7 +18,7 @@ dump of the instance.
 > the tool descriptions say so, but that is a documented expectation and **not a control Ken enforces**.
 > So the guarantee covers what Ken *hashes*, not what a session *wrote*. Stations are core and on by
 > default, so a snapshot may contain whatever the notebook and locker were given, verbatim — one more
-> reason for `KEN_AGE_RECIPIENT`, and a reason to read a station's locker in the console if you ever
+> reason to read a station's locker in the console if you ever
 > suspect one.
 
 > **Inter-session communication (COMM) state is deliberately NOT backed up.** COMM is on by default; it
@@ -38,14 +38,14 @@ durability path — so it is treated as non-negotiable, in three tiers.
 | Tier | Mechanism | RPO | Purpose |
 |---|---|---|---|
 | 1 | **Litestream → S3-compatible** (`configs/litestream.yml`) | ~1 s | Primary DR; continuous WAL shipping |
-| 2 | **Nightly snapshot** (`scripts/ken-snapshot.sh` via the timer) — encrypted **only if** you set `KEN_AGE_RECIPIENT` | 24 h | Named "give me last Tuesday" restore points |
+| 2 | **Nightly snapshot** (`scripts/ken-snapshot.sh` via the timer) — compressed, `0600`, not encrypted | 24 h | Named "give me last Tuesday" restore points |
 | 3 | Off-box copy of the snapshots (any file sync) | — | Last resort |
 
 **Encryption is opt-in and OFF by default — on both off-box tiers.** Out of the box, tier 2 writes a
 plaintext `.db` at mode `0600` (with a warning in the journal), and tier 1 replicates unencrypted
 unless you uncomment the `age:` block in `configs/litestream.yml` or enable bucket SSE. Check what you
 have right now — `ls -l /opt/ken/backups`: a bare `.db` is a full plaintext copy of the knowledge base,
-`.db.age` is encrypted.
+`.db.gz` is compressed; `ken backup verify` reads it directly.
 
 **Why this matters: `0600` protects the file on this box, and nowhere else.** That mode is enforced by
 this host's kernel for this filesystem. The file's *contents* travel with every copy; its *protection*
@@ -70,48 +70,45 @@ ken backup verify   /tmp/ken-….db                                  # integrity
 ```
 
 `snapshot` runs `VACUUM INTO` (safe on the live DB) and then verifies the result;
-it fails loudly on corruption. The nightly `ken-snapshot.sh` wraps this, age-encrypts
+it fails loudly on corruption. The nightly `ken-snapshot.sh` wraps this, compresses
 the output, and prunes to `KEN_BACKUP_KEEP` (default 14).
+
+**Pre-upgrade rollback points are pruned separately, and until 1.8.0 they were not pruned at all.**
+The nightly retention globs `ken-*`, which cannot match `pre-upgrade-*` — they share no prefix — so
+every upgrade left one behind permanently. On the deployment that found it, nine had accumulated:
+19.6 MB, 30% of the whole archive, the oldest dating from the day the box was built.
+
+They now survive if they are among the newest `KEEP_PRE_UPGRADE` (default 3) **or** younger than
+`KEEP_PRE_UPGRADE_DAYS` (default 7) — whichever keeps more. Both floors are needed and both failure
+modes were measured on a real deployment inside one thirteen-day window: a count alone fails during a
+BURST (four upgrades in a day evicts the point taken before that day's work began, which is the one
+you want when that day is what broke things), and an age bound alone fails during a DROUGHT (255 hours
+passed with no upgrade, which would have left none at all).
 
 Naming and securing are shared, not duplicated. `scripts/ken-snapshot-lib.sh` is the one
 home for the snapshot **stamp** (UTC, `…T…Z` — self-describing and time-sortable) and the
-**secure** step (chmod `0600`, then age-encrypt when a recipient is set, removing the
+**secure** step (chmod `0600`, and the backup group when one is set, removing the
 plaintext only after a confirmed encrypt). Both the nightly snapshot **and the installer's
 pre-upgrade snapshot** (`backups/pre-upgrade-<UTC-Z>.db`, taken before an upgrade flips the
 `current` symlink) go through it, so the two can never drift on timezone, mode, or
-encryption. The pre-upgrade snapshot is age-encrypted whenever you have set a recipient for
+compression. The pre-upgrade snapshot is compressed exactly like a nightly, for
 the nightlies; it is exempt from nightly retention and kept as a rollback point.
 
 ## Restore
 
 > **Staging plaintext:** `ken backup snapshot` and `ken backup verify` write `0600` themselves, so a
-> hand-run snapshot is owner-only wherever you put it. `age -d` does **not** — it creates its output at
+> hand-run snapshot is owner-only wherever you put it. `gunzip` does **not** — it creates its output at
 > your umask. When you decrypt to a scratch path below, run `umask 077` first (or decrypt into a `0700`
 > directory), so the decrypted knowledge base is not left world-readable in `/tmp`.
 
-**Before you start:** the restore host needs the `age` binary **and** your escrowed private key
-(`age.key`) — neither lives on the Ken server. A nightly is `ken-<stamp>.db.age`; the rollback point
-the installer takes before an upgrade is `pre-upgrade-<stamp>.db.age` (or `.db` if you have not
-enabled encryption).
+**Before you start:** a nightly is `ken-<stamp>.db.gz`; the rollback point the installer takes before
+an upgrade is `pre-upgrade-<stamp>.db.gz`. Both are gzip, and `ken backup verify` reads either
+directly — it detects compression from the file's own magic bytes, so a snapshot that was renamed, or
+handed over without an extension, still verifies.
 
-**From a snapshot (tier 2/3):**
-```sh
-systemctl stop ken
-cd /opt/ken/data
-mv ken.db ken.db.pre-restore 2>/dev/null || true     # keep the outgoing file until the new one verifies
-rm -f ken.db-wal ken.db-shm                          # stale sidecars belong to the OLD db — drop them FIRST
-
-# encrypted snapshot (umask first: age creates its output at your umask):
-umask 077
-age -d -i /path/to/age.key -o /tmp/ken-restore.db /opt/ken/backups/ken-<stamp>.db.age
-# plaintext snapshot (the default if you never set a recipient):
-# cp /opt/ken/backups/ken-<stamp>.db /tmp/ken-restore.db
-
-/opt/ken/current/bin/ken backup verify /tmp/ken-restore.db     # MUST pass BEFORE it goes live
-install -o ken -g ken -m 0600 /tmp/ken-restore.db /opt/ken/data/ken.db
-systemctl start ken
-# only once the service is healthy:
-# shred -u /tmp/ken-restore.db /opt/ken/data/ken.db.pre-restore
+```bash
+# decompress if you want a plain .db to work with (verify does not require this):
+gunzip -c /opt/ken/backups/ken-<stamp>.db.gz > /tmp/ken-restore.db
 ```
 
 Why the shape: never decrypt straight onto `data/ken.db` — a wrong key or a truncated transfer would
@@ -145,101 +142,6 @@ curl -s -H "Authorization: Bearer $TOKEN" ... kb_search '{"query":"anything"}'  
 The in-DB append-only version history (`entry_version` + `curation_event`) is
 included in every snapshot, so a restore brings back the full curated history and
 every superseded/rejected/refuted version — nothing is lost that promotion earned.
-
-## Encryption: turning it on
-
-Do these in order. **Step 1 before step 3 is not cosmetic — getting it backwards costs you your
-backups.**
-
-**1. Install `age` on the server — first.**
-
-```sh
-sudo apt install age      # Debian/Ubuntu
-sudo dnf install age      # Fedora; RHEL/Rocky/Alma: enable EPEL first
-sudo -u ken age --version # must succeed AS THE SERVICE USER — the timer runs as `ken`
-```
-
-Install it system-wide (`/usr/bin` or `/usr/local/bin`). `ken-snapshot.service` runs with
-`ProtectHome=true`, so a binary under any `/home` path is invisible to it.
-
-> **This step fails closed.** If `KEN_AGE_RECIPIENT` is set but `age` is missing (or the encrypt
-> fails), the snapshot step **deletes the plaintext and keeps nothing** — deliberately, so a snapshot
-> you asked to have encrypted is never left behind in the clear instead. The run exits non-zero and
-> `ken-snapshot.service` is marked failed, but **there is no snapshot for that night.** Setting the
-> recipient before installing `age` does not downgrade you to plaintext backups — it silently gives
-> you *no* backups until you notice.
-
-**2. Generate the keypair on your workstation — never on the Ken host.**
-
-```sh
-age-keygen -o age.key     # prints the public recipient (age1…)
-chmod 600 age.key
-age-keygen -y age.key     # re-print the recipient later, straight from the key file
-```
-
-`age.key` is the **private identity**. It must never exist on the box it protects — a disk image, a
-stolen disk, or your own off-box sync would otherwise carry both the ciphertext and its key. Escrow it
-(password manager, sealed secret, offline media) and record *where*. Copy only the `age1…` line to the
-server.
-
-> **The one rule: if you lose `age.key`, every encrypted snapshot is permanently unrecoverable.** That
-> standing responsibility is the entire cost of turning this on. Escrow it *before* step 3.
-
-**3. Put the PUBLIC recipient on the snapshot unit — as a drop-in.**
-
-```sh
-sudo systemctl edit ken-snapshot.service
-#   [Service]
-#   Environment=KEN_AGE_RECIPIENT=age1…
-sudo systemctl daemon-reload
-systemctl show ken-snapshot.service -p Environment   # read back what is actually in force
-```
-
-The recipient is public — it is safe on the box; it can only encrypt, never decrypt. Two constraints:
-
-- Use `systemctl edit` (a drop-in under `…/ken-snapshot.service.d/`) — **do not edit
-  `/etc/systemd/system/ken-snapshot.service` itself.** The installer regenerates that unit on every
-  upgrade, so a direct edit is silently overwritten and your nightlies revert to plaintext. Drop-ins
-  survive. (The `[Service]` header is required; without it systemd logs "Assignment outside of
-  section. Ignoring." and discards the line.)
-- It must be a real **`Environment=`** line **on `ken-snapshot.service`**. That unit's environment is
-  also what the installer reads to decide whether to encrypt the **pre-upgrade** snapshot, and it does
-  not expand `EnvironmentFile=`. A recipient hidden in an `EnvironmentFile=`, or set on `ken.service`,
-  still encrypts the nightlies but leaves every pre-upgrade snapshot in plaintext.
-
-**4. Prove it worked — don't wait for 03:30.**
-
-```sh
-sudo systemctl start ken-snapshot.service
-sudo systemctl status ken-snapshot.service      # must be success, not failed
-sudo journalctl -u ken-snapshot.service -n 20 --no-pager
-sudo ls -l /opt/ken/backups                     # newest file must end in .db.age
-```
-
-| Journal line | Meaning |
-|---|---|
-| `[ken-snapshot] wrote …/ken-<stamp>.db.age` | Encrypted. Good. |
-| `WARNING: KEN_AGE_RECIPIENT not set — snapshot left UNENCRYPTED (0600)` | The drop-in is not being read — recheck step 3. |
-| `ERROR: a recipient is set but 'age' is not installed — … no snapshot kept` | Do step 1, then re-run. **You have no snapshot from this run.** |
-| `ERROR: age encryption failed — … no snapshot kept` | Bad recipient string, or no write room. Same: nothing was kept. |
-
-**5. Prove the key opens it — the first night, and every quarter.**
-
-A wrong-but-valid recipient (a colleague's key, an old keypair, a key whose private half was never
-saved) encrypts happily and forever; age's header gives you no way to tell from the file. Run this on
-the machine that holds `age.key` — it needs `age` installed too:
-
-```sh
-scp ken@host:/opt/ken/backups/ken-<stamp>.db.age .
-umask 077                                                # age honours the umask; ken's own writes do not need it
-age -d -i age.key -o /tmp/drill.db ken-<stamp>.db.age    # proves the KEY matches
-/opt/ken/current/bin/ken backup verify /tmp/drill.db     # proves the PLAINTEXT is a sound DB
-shred -u /tmp/drill.db
-```
-
-If `age -d` says `no identity matched any of the recipients`, every snapshot you hold is unopenable:
-fix the recipient now and take a fresh one — the old ones are lost. Re-run this drill after any
-recipient change. **A key you have never decrypted with is not a backup.**
 
 ## Pulling snapshots off the box (tier 3) without root
 
@@ -295,8 +197,8 @@ sudo -u kenpull cat /opt/ken/backups/ken-*.db* > /dev/null && echo "pull account
 > installed unit on every later upgrade, so an ordinary scoped `ken-upgrade` preserves it indefinitely
 > and never needs the flag again.
 
-> **Use the installer flag for this one — not a `systemctl edit` drop-in.** Unlike `KEN_AGE_RECIPIENT`
-> (which the snapshot script consumes on its own), the backup group also needs the **directory** made
+> **Use the installer flag for this one — not a `systemctl edit` drop-in.** Unlike the other snapshot
+> variables, which the script consumes on its own, the backup group also needs the **directory** made
 > setgid, and only the installer does that. Setting `KEN_BACKUP_GROUP` in a drop-in alone leaves the
 > directory `0750 ken:ken`, so new snapshots never inherit the group, the service account cannot
 > `chgrp` into a group it does not belong to, and every run falls back to `0600` with a warning —
@@ -319,61 +221,23 @@ nightly timer and the pre-upgrade snapshot — set it and the whole archive move
 Both settings are written into `ken-snapshot.service` and re-discovered on upgrade, so re-running the
 installer never relocates an existing archive or drops the group.
 
-### Rotating the recipient, and old snapshots
+### What the operator owns
 
-A snapshot can only ever be opened with the key it was encrypted to, and nothing in the file says
-which one that is. So:
+Ken writes a compressed snapshot at `0600` and stops. **Everything after that is yours:**
+transport, destination, retention there, and who can read it. Ken makes no attempt to
+protect the file once it leaves the box, and does not encrypt it.
 
-- **Keep every retired private key** until the last snapshot encrypted to it is gone. Nightlies age
-  out in `KEN_BACKUP_KEEP` days (default 14), but `pre-upgrade-*` files are **exempt from retention**
-  and can be years old — check `ls /opt/ken/backups` before destroying an old identity.
-- `age -d` accepts repeated `-i` flags, so you can hand it every identity you hold:
-  `age -d -i age-2026.key -i age-2025.key -o … <file>.age`.
-- After rotating, take one snapshot immediately (`systemctl start ken-snapshot.service`) and run the
-  drill above against it with the **new** key.
+That is a deliberate scope, not an omission. Ken is built to hold a knowledge base and
+its working state, not national-security material, and encryption on this box bought
+little while costing a great deal: it made the archive **incompressible and
+undedupable**, since ciphertext shares no bytes with yesterday's ciphertext. Removing it
+is what allowed the 68% saving above to exist at all.
 
-> **Holding an archive of snapshots taken before 1.4.1? Upgrade FIRST, then handle them.** Until 1.4.1
-> session ids were stored in the clear, so a pre-1.4.1 snapshot contains cookies that were replayable
-> against the live server. Migration `0011` clears the session table — which means **upgrading makes
-> every cookie embedded in those old snapshots point at a row that no longer exists.** They become
-> inert. Do it in the other order — re-encrypting or shipping the archive off-box first, then upgrading
-> — and you spend effort carefully protecting a live credential. (Found in production while preparing
-> exactly that migration of an old archive.)
+**What a stolen snapshot yields:** every entry and its full revision history, every
+station notebook, task and locker. Passwords, tokens and endpoint secrets are stored as
+verifiers and are **not** replayable. Treat the file as though it were the knowledge it
+contains, because it is.
 
-### Retiring plaintext snapshots: the order is the whole procedure
-
-Turning encryption on does not retire the plaintext files already on disk, and deleting them is the
-step people get wrong. Do all three, in this order:
-
-1. **Upgrade to 1.4.1 or later.** Migration `0011` clears the session table and defuses the replayable
-   cookies in every pre-1.4.1 snapshot, per the note above.
-2. **Decrypt and verify one encrypted snapshot off-box**, on the machine holding the private key — the
-   drill under *Encryption: turning it on*. Check integrity **and** entry count against what the server
-   reported at write time.
-3. **Only then destroy the plaintext**, with `shred` rather than `rm`.
-
-**Step 2 before step 3 is the one that matters, and it is not obvious.** Until an encrypted snapshot
-has actually been decrypted and read, the encrypted archive is a *hypothesis* — a wrong recipient, a
-lost key or a truncated transfer all produce files that look perfectly healthy in `ls`. The plaintext
-copies are, at that moment, your only backups known to be readable. Deleting them first means giving
-up a proven backup for an unproven one, and you discover which it was during a restore, which is the
-worst possible time.
-
-Doing 3 before 1 is the other trap: you carefully shred files whose most sensitive content — a live
-session cookie — the upgrade would have made worthless anyway, and you keep the exposure alive in the
-meantime.
-
-> Production ran exactly this sequence to retire 18 plaintext snapshots (11 nightly, 7 pre-upgrade,
-> oldest 2026-07-21) after enabling encryption. The ordering rule is theirs; it is written here because
-> the reasoning is invisible once the outcome looks routine.
-
-**Upgrading from 1.2.x?** Before 1.3.0 the pre-upgrade snapshot was always written in plaintext (with
-a local, unmarked timestamp), even on hosts with encrypted nightlies. Those files are full copies of
-the knowledge base and retention never prunes them:
-
-```sh
-ls -l /opt/ken/backups/pre-upgrade-*.db     # any plain .db here is unencrypted
-```
-
-Encrypt the one you want to keep as a rollback point (`age -r age1… -o <f>.db.age <f>.db`, then
-`shred -u <f>.db`), delete the rest — and check whether your tier-3 sync already copied them off-box.
+**A reasonable path, offered as an example rather than a requirement:** pull it over a
+private link to a host you control, keep it on a filesystem only that host's operator can
+read, and verify a restore periodically rather than assuming one works.

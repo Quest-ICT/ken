@@ -660,24 +660,24 @@ fi
 if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then
     # Name and secure it through the SAME shared policy as the nightly snapshot: a
     # UTC-Z stamp (self-describing, sorts in time order — not the old local, unmarked
-    # stamp that read six hours off the nightlies), 0600 mode, and age-encryption when
-    # the operator has configured a recipient for their backups. `ken_snapshot_stamp`
-    # and `_ken_unit_env` are read-only, so they run outside `run`; the snapshot
-    # write and `ken_snapshot_secure` (which touch the disk) go through it, so
-    # --dry-run only prints them.
-    _presnap="$BACKUPS/pre-upgrade-$(ken_snapshot_stamp).db"
-    _recipient="$(_ken_unit_env KEN_AGE_RECIPIENT)"
-    log "pre-upgrade snapshot -> $_presnap${_recipient:+ (age-encrypted)}"
+    # stamp that read six hours off the nightlies) and 0600 mode. `ken_snapshot_stamp`
+    # is read-only, so it runs outside `run`; the snapshot write and
+    # `ken_snapshot_secure` (which touch the disk) go through it, so --dry-run only
+    # prints them.
+    #
+    # `.db.gz`: the extension is what selects compression, so this rollback point is
+    # compressed exactly like a nightly, and `ken backup verify` reads it directly.
+    # There is no longer an age step — Ken writes a compressed snapshot at 0600 and
+    # stops, and what happens to the file afterwards belongs to whoever moves it.
+    _presnap="$BACKUPS/pre-upgrade-$(ken_snapshot_stamp).db.gz"
+    log "pre-upgrade snapshot -> $_presnap"
     # umask 077 for the same reason the snapshot unit sets UMask=0077: a mode applied
     # after the bytes are written leaves a window. It wraps the SECURING step as well as
-    # the dump, so the .age `age` produces is 0600 from creation too, not 0644-then-fixed.
+    # the dump, so the artifact is 0600 from creation rather than 0644-then-fixed.
     if (umask 077; run env KEN_DB="$DATA/ken.db" "$LINK/bin/ken" backup snapshot --out "$_presnap"); then
-        # Best-effort, and FAIL CLOSED on encryption: if a recipient is set but the
-        # encrypt cannot happen, ken_snapshot_secure removes the plaintext and returns
-        # non-zero — we warn and proceed rather than leave a plaintext DB copy the
-        # operator asked to have encrypted. A missing rollback point never aborts an
-        # upgrade; the live DB is untouched either way.
-        (umask 077; run ken_snapshot_secure "$_presnap" "$_recipient" "$BACKUP_GROUP") \
+        # Best-effort. A missing rollback point never aborts an upgrade; the live DB is
+        # untouched either way.
+        (umask 077; run ken_snapshot_secure "$_presnap" "$BACKUP_GROUP") \
             || warn "pre-upgrade snapshot could not be secured (see above) — continuing; your live DB is untouched"
     else
         warn "pre-upgrade snapshot failed — continuing; your live DB is untouched"
@@ -847,8 +847,7 @@ Backups (design decision: backup is the only durability path)
        (lose it and every encrypted snapshot is unrecoverable)
     3. systemctl edit ken-snapshot.service
          [Service]
-         Environment=KEN_AGE_RECIPIENT=age1yourpublickey...
-    4. systemctl start ken-snapshot.service && ls -l $BACKUPS   # expect a .db.age
+    4. systemctl start ken-snapshot.service && ls -l $BACKUPS   # expect a .db.gz
 
   Also consider Litestream (continuous ~1s-RPO replication) — see docs/BACKUP.md
   and configs/litestream.yml. Snapshots land in $BACKUPS.

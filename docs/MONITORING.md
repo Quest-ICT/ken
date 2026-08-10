@@ -139,9 +139,8 @@ curl -s http://127.0.0.1:8080/health
 ## The backup blind spot (watch systemd, not `/metrics`)
 
 Ken's metrics cover the **running server**; they say nothing about whether last night's **snapshot**
-happened. That gap matters because the snapshot step **fails closed** — if `KEN_AGE_RECIPIENT` is set
-but `age` is missing or the encrypt fails, the plaintext is deleted and **no snapshot is kept for that
-run** (see [BACKUP.md](BACKUP.md#encryption-turning-it-on)). The run exits non-zero and systemd marks
+happened. That gap matters because a snapshot run that fails leaves **no snapshot for that run** (see
+[BACKUP.md](BACKUP.md)). The run exits non-zero and systemd marks
 `ken-snapshot.service` failed, but nothing pages you: the shipped units carry no `OnFailure=`.
 
 So watch it at the systemd layer:
@@ -150,7 +149,7 @@ So watch it at the systemd layer:
 systemctl is-failed ken-snapshot.service          # "failed" = a run kept nothing
 systemctl list-timers ken-snapshot.timer          # last run / next run
 journalctl -u ken-snapshot.service -n 20 --no-pager
-ls -lt /opt/ken/backups | head                    # newest snapshot: is it recent, and .db.age?
+ls -lt /opt/ken/backups | head                    # newest snapshot: is it recent, and .db.gz?
 ```
 
 Two low-effort ways to make a failure loud, either is enough:

@@ -309,8 +309,8 @@ but it is no longer part of the guard — no CAS, no `rows_affected=0` reconcili
 
 **Backup (two tiers; no git fallback under D5, so verification is mandatory):**
 1. **Litestream → S3-compatible bucket** (B2 / R2 / MinIO), continuous WAL shipping, ~1 s RPO. Primary DR.
-2. **Nightly `VACUUM INTO 'snapshot.db'`** as a named restore point — age-encrypted **when the operator
-   sets `KEN_AGE_RECIPIENT`** (opt-in; the shipped default writes plaintext at `0600`).
+2. **Nightly `VACUUM INTO 'snapshot.db'`** as a named restore point — gzip-compressed, `0600`, and not
+   encrypted. Transport, destination and at-rest protection belong to whoever moves the file.
 
 Never `cp` a live WAL DB (torn file). **Restore verification before "good":** `PRAGMA integrity_check`, FTS5
 self-check, `COUNT(vec)==COUNT(entries)` parity, a canary MATCH (+ KNN when vectors on), and count/`MAX(rev)`

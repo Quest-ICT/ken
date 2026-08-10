@@ -293,17 +293,16 @@ sudo systemctl restart ken
 ```
 
 Before it flips the symlink, the installer takes a **pre-upgrade snapshot** of the
-live database into `backups/pre-upgrade-<UTC-Z>.db` — the same naming and securing
-policy as the nightly snapshot (`scripts/ken-snapshot-lib.sh`): mode `0600`, and
-**age-encrypted** (`.db.age`) whenever you have configured a recipient for the
-nightlies (see below). It is best-effort — a snapshot failure never aborts the
-upgrade, and your live DB is untouched — and it is exempt from nightly retention,
-so it stays as a rollback point until you remove it.
+live database into `backups/pre-upgrade-<UTC-Z>.db.gz` — the same naming and securing
+policy as the nightly snapshot (`scripts/ken-snapshot-lib.sh`): gzip-compressed, mode
+`0600`, not encrypted. It is best-effort — a snapshot failure never aborts the upgrade,
+and your live DB is untouched.
 
-> **If you need that rollback database, and you encrypt:** `pre-upgrade-<stamp>.db.age` can only be
-> opened with your escrowed private key, which by design is **not on this box**. Rolling back the
-> *code* (the symlink flip above) needs nothing extra; restoring the *database* needs the key in hand
-> — so keep it reachable. See [BACKUP.md → Restore](BACKUP.md#restore).
+> **These are pruned, and until 1.8.0 they were not.** A rollback point survives if it is among the
+> newest `KEEP_PRE_UPGRADE` (default 3) **or** younger than `KEEP_PRE_UPGRADE_DAYS` (default 7) —
+> whichever keeps more. Before that, the nightly retention globbed `ken-*` and could not match
+> `pre-upgrade-*`, so every upgrade left one behind permanently. See
+> [BACKUP.md](BACKUP.md) for why both floors are needed.
 
 ---
 
@@ -402,10 +401,7 @@ Ken has no git mirror, so backups are non-negotiable — and are set up for you:
      snapshot is permanently unrecoverable.
 
   ```sh
-  sudo systemctl edit ken-snapshot.service   # a drop-in: survives upgrades, and the installer reads it
-  # [Service]
-  # Environment=KEN_AGE_RECIPIENT=age1yourpublickey...
-  sudo systemctl start ken-snapshot.service && ls -l /opt/ken/backups   # confirm a .db.age appeared
+  sudo systemctl start ken-snapshot.service && ls -l /opt/ken/backups   # confirm a .db.gz appeared
   ```
 
 - **Pulling snapshots off the box without root.** Snapshots default to `0600` owned by the `nologin`

@@ -17,6 +17,39 @@ same change — never "docs later".
 
 ### Changed
 
+- **Snapshots are gzip-compressed and no longer encrypted.** `ken backup snapshot --out
+  X.gz` writes a compressed artifact; `ken backup verify` reads it directly, detecting
+  compression from the file's own magic bytes so a snapshot that was renamed — or handed
+  over without an extension — still verifies. Compression is selected by the extension
+  rather than a flag, because two scripts pass a path and then operate on it and a
+  snapshot that landed somewhere else would break both silently.
+
+  **68% off every artifact**, measured on the live deployment by `ken-prod-ops`:
+  4,521,984 bytes raw against 1,484,578 gzipped. Nothing in this path compressed before,
+  and `age` does not — ciphertext is incompressible, which is also why the archive could
+  never deduplicate. Over two weeks their database grew 3.2 MB while the archive grew
+  **46.9 MB**: the multiplier the backup applied was always the dominant term.
+
+  **The `age` layer is retired**, along with `KEN_AGE_RECIPIENT`. Ken writes a compressed
+  snapshot at `0600` and stops; transport, destination and at-rest protection belong to
+  whoever moves the file. Removing it is what let compression exist at all.
+
+- **Pre-upgrade rollback points are pruned, and until now nothing pruned them.** The
+  nightly retention globs `ken-*`, which cannot match `pre-upgrade-*` — they share no
+  prefix — so every upgrade left one behind permanently. `ken-prod-ops` measured nine:
+  19.6 MB, **30% of the entire archive**, the oldest from the day the box was built.
+
+  A rollback point now survives if it is among the newest `KEEP_PRE_UPGRADE` (default 3)
+  **or** younger than `KEEP_PRE_UPGRADE_DAYS` (default 7) — whichever keeps more. Both
+  floors are required and both failure modes were measured inside one thirteen-day
+  window: a count alone fails during a **burst** (four upgrades in a day evicts the point
+  taken before that day's work began, which is the one you want when that day is what
+  broke things), and an age bound alone fails during a **drought** (255 hours with no
+  upgrade would have left none at all).
+
+
+### Changed
+
 - **Nothing in Ken is optional any more.** `KEN_COMM_ENABLED`, `KEN_STATION_ENABLED`
   and `KEN_OAUTH_ENABLED` are gone. The first two were opt-in, then briefly opt-outs;
   the third defaulted to **off**, which meant a fresh install could not be connected
