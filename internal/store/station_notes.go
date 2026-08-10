@@ -284,3 +284,95 @@ SELECT (SELECT COUNT(*) FROM station_task WHERE station_id=?
 		stationID, writtenAt, writtenAt, stationID, writtenAt).Scan(&activitiesSince)
 	return writtenAt, activitiesSince, err
 }
+
+// PendingPromotion is a station's request that a human convert a notebook page into
+// knowledge, joined to enough of the page for the human to decide without leaving the
+// console.
+type PendingPromotion struct {
+	PromotionID string
+	StationID   string
+	StationName string
+	NoteKey     string
+	NoteRev     int
+	NoteTitle   string
+	NoteBody    string
+	CurrentRev  int  // the page's rev NOW; differs from NoteRev when it moved since
+	Hearsay     bool // the page was written while its station was receiving peer traffic
+	CreatedAt   string
+}
+
+// ListPendingPromotions returns the promotion requests waiting on a human.
+//
+// THIS IS THE READER station_promotion NEVER HAD. `station_note_promote` has been
+// writing rows since stations shipped, its tool description told every session it
+// "asks your human to convert a page", and nothing anywhere read the table — no store
+// function, no route, no template. Every request a session ever filed went into a
+// drawer nobody could open, and the session was told it had asked.
+//
+// The page body is joined in because the decision cannot be made without it, and a
+// console that shows a request but not its content just moves the dead end.
+//
+// CurrentRev is carried separately from NoteRev on purpose: a page can move after a
+// promotion is requested, and a human converting stale material into durable knowledge
+// is exactly the outcome the curation gate exists to prevent. The console can then say
+// so rather than silently showing the latest text under an older request.
+func (s *Store) ListPendingPromotions(ctx context.Context, spaceID int64) ([]PendingPromotion, error) {
+	rows, err := s.R.QueryContext(ctx, `
+SELECT p.promotion_id, p.station_id, st.name, p.note_key, p.note_rev,
+       COALESCE(n.title,''), COALESCE(n.body,''), COALESCE(n.rev,0),
+       COALESCE(p.hearsay_at_write,0), p.created_at
+  FROM station_promotion p
+  JOIN station st ON st.station_id = p.station_id
+  LEFT JOIN station_note n ON n.station_id = p.station_id AND n.key = p.note_key
+ WHERE p.state='pending' AND st.space_id=?
+ ORDER BY p.created_at ASC`, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PendingPromotion
+	for rows.Next() {
+		var p PendingPromotion
+		if err := rows.Scan(&p.PromotionID, &p.StationID, &p.StationName, &p.NoteKey, &p.NoteRev,
+			&p.NoteTitle, &p.NoteBody, &p.CurrentRev, &p.Hearsay, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ResolvePromotion closes a request as converted or discarded.
+//
+// It records the DECISION and never performs it. Converting a page into knowledge is a
+// kb_save, and routing it through here would let a console button write curated
+// content — which is the one thing the whole design withholds. entrySlug is recorded
+// when the human has one, so the trail says which entry a page became.
+//
+// Guarded on state='pending' so a double-click cannot re-decide a settled request, and
+// so two console tabs cannot race to opposite answers.
+func (s *Store) ResolvePromotion(ctx context.Context, promotionID, state, entrySlug string) error {
+	if state != "converted" && state != "discarded" {
+		return fmt.Errorf("%w: promotion state must be converted or discarded, got %q", ErrInvalid, state)
+	}
+	res, err := s.W.ExecContext(ctx, `
+UPDATE station_promotion
+   SET state=?, decided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), entry_slug=NULLIF(?,'')
+ WHERE promotion_id=? AND state='pending'`, state, entrySlug, promotionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CountPendingPromotions is the console's badge source.
+func (s *Store) CountPendingPromotions(ctx context.Context, spaceID int64) (int, error) {
+	var n int
+	err := s.R.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM station_promotion p JOIN station st ON st.station_id=p.station_id
+ WHERE p.state='pending' AND st.space_id=?`, spaceID).Scan(&n)
+	return n, err
+}

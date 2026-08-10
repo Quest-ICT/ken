@@ -63,6 +63,17 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Promotion requests: a station asking a human to turn a notebook page into
+	// knowledge. station_note_promote has written these since stations shipped and
+	// NOTHING read them — no store function, no route, no template — so every request
+	// a session filed went into a drawer nobody could open, while the tool told the
+	// session it had asked.
+	promotions, err := a.store.ListPendingPromotions(ctx, spaceForSession)
+	if err != nil {
+		log.Printf("web: pending promotions: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	// blocked_on defaults to `human` because that is the question this page answers:
 	// what is waiting on ME. Any other value is opt-in via the query string.
@@ -153,7 +164,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	}
 
 	a.render(w, r, sess, "stations", map[string]any{
-		"Stations": views, "Requests": requests, "Links": linkViews,
+		"Stations": views, "Requests": requests, "Links": linkViews, "Promotions": promotions,
 		"Tasks": tasks, "Archived": archived,
 		"BlockedOn": r.URL.Query().Get("blocked_on"),
 		"NewKey":    newKey,
@@ -494,4 +505,40 @@ func (a *app) handleStationLocker(w http.ResponseWriter, r *http.Request, _ *sto
 	w.Header().Set("Content-Disposition", "attachment; filename="+strconv.Quote(blob.Name))
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(blob.Bytes)
+}
+
+// handlePromotionResolve closes a station's promotion request as converted or
+// discarded.
+//
+// IT RECORDS THE DECISION AND NEVER PERFORMS IT. Converting a notebook page into
+// knowledge is a kb_save; routing it through a console button would let this page
+// write curated content, which is the single capability the whole design withholds.
+// The human reads the page here, decides, and does the conversion by the ordinary
+// path — this only closes the loop so the request stops waiting and the station can
+// see it was answered.
+func (a *app) handlePromotionResolve(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody) // before checkCSRF, which parses the form
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	state := "discarded"
+	if r.FormValue("decision") == "converted" {
+		state = "converted"
+	}
+	err := a.store.ResolvePromotion(r.Context(), r.PathValue("id"), state, strings.TrimSpace(r.FormValue("slug")))
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// Already decided — a second tab, or a double click. Not an error worth a page.
+		flashRedirect(w, r, "/stations", "flash.promotion_already_decided", "")
+	case err != nil:
+		log.Printf("web: resolve promotion: %v", err)
+		flashRedirect(w, r, "/stations", "flash.promotion_failed", err.Error())
+	default:
+		flashRedirect(w, r, "/stations", "flash.promotion_"+state, "")
+	}
 }

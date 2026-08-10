@@ -15,6 +15,31 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **`station_note_promote` asked a human who could never be asked.** The tool has
+  written `station_promotion` rows since stations shipped, and its description told
+  every session it "asks your human to convert a page" — while nothing read the table.
+  No store function, no route, no template. Every request a session filed went into a
+  drawer nobody could open, and the session was told it had asked.
+
+  `/stations` now shows pending requests with the page's own text, since the decision
+  cannot be made without it, and closes each as **converted** or **discarded**. Two
+  warnings are surfaced that the schema had always recorded and nobody could see: the
+  page was written while its station was receiving peer traffic, and the page has
+  changed since the request was made — a human converting stale material into durable
+  knowledge is exactly what the curation gate exists to prevent.
+
+  **The console records the decision and never performs it.** Converting a page is a
+  `kb_save`; routing it through a button would let this page write curated content,
+  which is the one capability the whole design withholds. An optional entry slug is
+  recorded so the trail runs from the note to the knowledge.
+
+  This is the third instance of one shape in a week — a flag with no reader
+  (`published`), a store function with no caller (`RevokeStationLink`), and now a table
+  with neither.
+
+
 ### Changed
 
 - **Snapshots are gzip-compressed and no longer encrypted.** `ken backup snapshot --out

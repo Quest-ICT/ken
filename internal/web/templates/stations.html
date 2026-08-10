@@ -1,5 +1,28 @@
 {{define "title"}}{{.T "stations.tab"}}{{end}}
 {{define "content"}}
+    {{if .Data.Promotions}}
+    <section class="card card--pad">
+      <h2 class="h3">{{.T "stations.promotions_heading"}}</h2>
+      <p class="muted">{{.T "stations.promotions_lede"}}</p>
+      {{range .Data.Promotions}}
+      <div class="promotion">
+        <p><strong>{{.StationName}}</strong> &middot; <span class="mono">{{.NoteKey}}</span>
+          {{if .Hearsay}}<span class="badge badge--warn" title="{{$.T "stations.promotions_hearsay_help"}}">{{$.T "stations.promotions_hearsay"}}</span>{{end}}
+          {{if ne .CurrentRev .NoteRev}}<span class="badge badge--warn" title="{{$.T "stations.promotions_moved_help"}}">{{$.T "stations.promotions_moved"}}</span>{{end}}
+        </p>
+        {{if .NoteTitle}}<p><em>{{.NoteTitle}}</em></p>{{end}}
+        <pre class="note-body">{{.NoteBody}}</pre>
+        <form method="post" action="/stations/promotions/{{.PromotionID}}/resolve">
+          <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+          <input class="input" name="slug" placeholder="{{$.T "stations.promotions_slug_placeholder"}}" title="{{$.T "stations.promotions_slug_help"}}">
+          <button class="btn" type="submit" name="decision" value="converted" title="{{$.T "stations.promotions_converted_help"}}">{{$.T "stations.promotions_converted"}}</button>
+          <button class="btn btn--ghost" type="submit" name="decision" value="discarded" title="{{$.T "stations.promotions_discard_help"}}">{{$.T "stations.promotions_discard"}}</button>
+        </form>
+      </div>
+      {{end}}
+    </section>
+    {{end}}
+
 <div class="page-head">
   <p class="eyebrow">{{.T "stations.eyebrow"}}</p>
   <h1 class="h1">{{.T "stations.heading"}}</h1>
