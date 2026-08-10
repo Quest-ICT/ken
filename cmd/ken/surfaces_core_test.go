@@ -1,95 +1,128 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
-// surface pairs a variable with THE FUNCTION THE SERVER ACTUALLY CALLS.
+// NO PART OF KEN IS OPTIONAL. This asserts that nothing can switch a feature off.
 //
-// This indirection is the entire point of the file. The first version of these tests
-// asserted envBoolDefault(key, true) — which passes the expected default in as an
-// argument, and therefore proves only that envBoolDefault returns what it was given.
-// Changing main.go to default either surface OFF would have left every test here
-// green while a default install served neither one.
+// The history is the argument. COMM and stations shipped behind KEN_COMM_ENABLED
+// and KEN_STATION_ENABLED, opt-in and off by default. They were then made core with
+// the variables INVERTED into opt-outs, which felt like the careful choice and was
+// not: it left every document, every tool description and every session instruction
+// hedging about a feature that might be missing, and Ken then shipped a release whose
+// COMM instruction still opened "opt-in; off by default" — false the moment it was
+// released, in the one place read by a machine on every connection. A switch nobody
+// is expected to use still costs a hedge everywhere, and hedges rot.
 //
-// It is the same shape as a totality guard that guards the mapping instead of the
-// detector, and as an oracle test where every call failed at authentication so all
-// the refusals matched for the wrong reason. Both of those shipped in this project.
-// A test has to ask the question the server asks, not a question shaped like it.
-type surface struct {
-	env string
-	on  func() bool
-}
-
-func surfaces() []surface {
-	return []surface{
-		{"KEN_COMM_ENABLED", commEnabled},
-		{"KEN_STATION_ENABLED", stationsEnabledFlag},
+// KEN_OAUTH_ENABLED was worse: it defaulted to OFF, and OAuth is how a human registers
+// Ken once on their account and reaches it from every client. A fresh install could
+// not be connected the documented way until the operator found a variable nothing
+// pointed them at.
+//
+// This is a SOURCE test rather than a behavioural one because there is no behaviour
+// left to observe — that is the point. What can regress is someone reintroducing a
+// gate, and the only way to catch that is to look for it.
+func TestNoFeatureCanBeSwitchedOff(t *testing.T) {
+	// Retired gates. Reintroducing any of these means a feature became optional again.
+	retired := []string{
+		"KEN_COMM_ENABLED",
+		"KEN_STATION_ENABLED",
+		"KEN_OAUTH_ENABLED",
 	}
-}
 
-// COMM and stations are CORE: a default install gets both without asking.
-//
-// They shipped opt-in, so a plain `ken serve` was the curated knowledge base and
-// nothing else. That reasoning expired — stations read COMM for the hearsay marker,
-// the operator console carries a page for each, and every deployment was expected to
-// switch them on, which makes an option in name only.
-//
-// This test exists because the default IS the behaviour now. Nothing else observes
-// it: the wiring reads an environment variable that is absent on every developer
-// machine and in CI, so a flipped default produces a green suite and a server that
-// quietly serves neither surface.
-func TestCommAndStationsAreOnWithoutAnyEnvironment(t *testing.T) {
-	for _, s := range surfaces() {
-		t.Setenv(s.env, "")
-		if !s.on() {
-			t.Errorf("%s unset resolves to OFF — a default install would serve neither the MCP endpoint nor the console, and no other test would notice", s.env)
-		}
+	src := readGoSources(t, ".")
+	if len(src) < 4 {
+		t.Fatalf("only %d Go sources read from cmd/ken — the scan is finding nothing and this test proves nothing", len(src))
 	}
-}
 
-// The opt-out is kept deliberately, so it has to keep working.
-//
-// Ken ALREADY has a runtime "COMM off" state: an unopenable comm.db degrades into it
-// on purpose, so an expendable database cannot take the durable knowledge base down.
-// Deleting the variable would not remove that state — only the operator's control of
-// it, which is their one remedy if COMM misbehaves in production.
-func TestEitherSurfaceCanStillBeTurnedOff(t *testing.T) {
-	for _, s := range surfaces() {
-		for _, off := range []string{"0", "false", "off", "no"} {
-			t.Setenv(s.env, off)
-			if s.on() {
-				t.Errorf("%s=%q did not turn the surface off — an operator who needs it down has no way to put it down", s.env, off)
+	// Looks for a READ, not a mention. The invariant is that nothing consults a feature
+	// gate — not that the name may never appear. Ken records reversals rather than
+	// deleting them, so the comments explaining why these variables are gone contain
+	// the very strings this test hunts, and a test that cannot tell an explanation from
+	// a use would force the explanation out. That is backwards: the comment is why the
+	// next person does not reintroduce it.
+	reads := func(body, gate string) bool {
+		for _, form := range []string{
+			`os.Getenv("` + gate + `")`,
+			`envBoolDefault("` + gate + `"`,
+			`envTrue("` + gate + `")`,
+			`envOr("` + gate + `"`,
+		} {
+			if strings.Contains(body, form) {
+				return true
 			}
 		}
-		// Existing deployments set these to "1" to switch the surfaces ON under the
-		// old meaning. That must keep working: an upgrade turning a surface off
-		// because its unit file says the old thing would be the worst possible way to
-		// deliver "this is now core".
-		t.Setenv(s.env, "1")
-		if !s.on() {
-			t.Errorf("%s=1 turned the surface off — every deployment that opted IN under the old meaning would lose it on upgrade", s.env)
-		}
-		// A typo must not silently disable a core surface. Failing OPEN is right
-		// precisely because these are no longer optional: ignoring a malformed value
-		// costs a surface that stays up, honouring it costs a feature that vanishes
-		// for a reason the operator cannot see.
-		t.Setenv(s.env, "yes-please")
-		if !s.on() {
-			t.Errorf("%s with an unrecognised value turned the surface off — a typo must not disable core functionality", s.env)
+		return false
+	}
+
+	for name, body := range src {
+		for _, gate := range retired {
+			if reads(body, gate) {
+				t.Errorf("%s READS %s.\n"+
+					"That variable was removed because no part of Ken is optional. If a feature needs to be\n"+
+					"absent, every doc, tool description and connect-time instruction has to hedge about it —\n"+
+					"and Ken has already shipped a release whose instruction text hedged about this exact\n"+
+					"variable, incorrectly, to every session that connected.", name, gate)
+			}
 		}
 	}
 }
 
-// The two are independent, and both defaulting to on is exactly when that gets
-// forgotten. STATIONS.md S2 is explicit: the notebook and the task list are valuable
-// to a solo session with no peers, so stations must never be gated behind a messaging
-// feature they have nothing to do with.
-func TestTurningCommOffLeavesStationsOn(t *testing.T) {
-	t.Setenv("KEN_COMM_ENABLED", "0")
-	t.Setenv("KEN_STATION_ENABLED", "")
-	if commEnabled() {
-		t.Fatal("setup: COMM did not turn off, so this test cannot discriminate")
+// The degraded state is NOT a switch, and removing the switches must not have removed
+// it. An unopenable comm.db has to leave the knowledge base running: that is what makes
+// "COMM may fail; the KB stays UP" true rather than aspirational, and it is the one
+// path by which COMM is legitimately absent at runtime.
+//
+// Asserted on the source for the same reason as above — the alternative is a test that
+// corrupts a database file to watch a log line, which is slow, flaky, and tests the
+// SQLite driver more than it tests Ken.
+func TestAnUnopenableCommDatabaseDegradesRatherThanAborting(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !stationsEnabledFlag() {
-		t.Error("disabling COMM also disabled stations — the notebook and task list are not a messaging feature (S2)")
+	s := string(body)
+
+	if !strings.Contains(s, "COMM: DEGRADED") {
+		t.Error("main.go no longer logs a DEGRADED line for an unopenable comm.db — an operator whose messaging is down has nothing to find")
 	}
+	// The failure path must not be fatal — log.Fatal there would let an expendable
+	// database take the durable knowledge base down with it.
+	//
+	// Asserted on the CALL, not by scanning nearby lines. The first version searched
+	// the 400 characters before the log line for "log.Fatal" and failed, because the
+	// comment immediately above it explains that a log.Fatal there would be wrong. That
+	// is the same use-versus-explanation confusion as the gate scan above, made twice
+	// in one file: a source test that cannot tell code from prose about code will
+	// eventually force the prose out, and the prose is what stops the regression.
+	if !strings.Contains(s, `log.Printf("COMM: DEGRADED`) {
+		t.Error("the unopenable-comm.db path does not report through log.Printf — if it aborts instead, " +
+			"an expendable database takes the durable knowledge base down with it")
+	}
+}
+
+// readGoSources returns every non-test Go file in a directory, keyed by name.
+func readGoSources(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[n] = string(b)
+	}
+	return out
 }

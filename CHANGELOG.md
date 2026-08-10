@@ -15,6 +15,46 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **Nothing in Ken is optional any more.** `KEN_COMM_ENABLED`, `KEN_STATION_ENABLED`
+  and `KEN_OAUTH_ENABLED` are gone. The first two were opt-in, then briefly opt-outs;
+  the third defaulted to **off**, which meant a fresh install could not be connected
+  the documented way — one registration on the account, reachable from every client —
+  until the operator found a variable nothing pointed them at.
+
+  A switch nobody is expected to use still costs a hedge in every document, every tool
+  description and every connect-time instruction, and hedges rot: 1.7.0 shipped a COMM
+  instruction opening "opt-in; off by default", false the moment it was released, in
+  the one place read by a machine on every connection rather than by a human once.
+
+  **The degraded state is not a switch and it stays.** An unopenable `comm.db` still
+  leaves messaging unavailable while the knowledge base runs — that is what makes "COMM
+  may fail; the KB stays UP" true rather than aspirational. What is removed is the
+  operator's ability to *choose* it. `nil` now means exactly one thing, which is a
+  small win: the console no longer has two indistinguishable causes to report.
+
+### Added
+
+- **Every session is now told it has no clock.** Delivered in the knowledge-base
+  instruction block, so it reaches sessions that never touch messaging or stations —
+  a session writing "this was fixed a few weeks ago" into an entry commits a drifting
+  number to the durable record, in the same confident voice as the measured figures
+  beside it, and the human promoting it cannot see which is which.
+
+  The wording was chosen by trial rather than by taste. Three drafts, each handed to
+  fresh agents as their connect-time instruction along with tasks that invite an
+  unmeasured time claim; every draft that ran produced an agent that went and read a
+  clock. One reported what it would otherwise have written — *"a couple of hours and
+  the logs go back about two weeks"* — and added that "about two weeks" would have been
+  roughly right **by luck**, with no way to know that from the inside.
+
+  Two failure modes the trials exposed are answered explicitly, because drafts that
+  only forbade unmeasured *durations* did not catch them: a claim with the number
+  hidden ("recently", "long-standing"), and a real timestamp welded to an unverified
+  assumption about the interval.
+
+
 ## [1.7.0] — 2026-08-10
 
 ### Changed

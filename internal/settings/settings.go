@@ -47,10 +47,9 @@ type Values struct {
 	// set consumers read is derived into Snapshot.CurationLangSet.
 	CurationLangs string
 
-	// Inter-session communication (COMM) limits. COMM is CORE and on by default; an
-	// operator who sets KEN_COMM_ENABLED=0 leaves these inert, since that choice is
-	// restart-level (it decides whether a second database is opened at all).
-	// Everything here applies live on top of whichever way that resolved.
+	// Inter-session communication (COMM) limits. COMM is always on and cannot be
+	// switched off; these apply live. They are inert only in the degraded case where
+	// comm.db could not be opened at all, which is a failure rather than a choice.
 	//
 	// They are bounds on an EPHEMERAL subsystem that shares a disk with the durable
 	// knowledge base, so the defaults are deliberately conservative: the failure

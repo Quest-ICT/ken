@@ -143,16 +143,14 @@ Rate limiting (env; on by default — loopback + KEN_RATELIMIT_ALLOW_CIDRS + /he
   KEN_RATELIMIT_LOCKOUT_SEC  auto-block duration, seconds (default 900)
   KEN_RATELIMIT_ALLOW_CIDRS  extra always-allowed CIDRs (comma-separated)
 
-Inter-session communication — CORE, on by default (see docs/COMM.md):
-  KEN_COMM_ENABLED  0 = do NOT expose the comm MCP endpoint at /comm/mcp + console at /comm (default ON)
+Inter-session communication — always on, not optional (see docs/COMM.md):
   KEN_COMM_DB       message database path (default <db dir>/comm/comm.db; NOT backed up — it is expendable)
                     needs a DEDICATED token:  ken token add --actor comm-dev --scopes comm
                     (add comm-file to that token for file exchange: --scopes comm,comm-file)
                     a token may hold comm scopes or knowledge-base scopes, never both
                     file exchange is a separate live setting (Settings -> Inter-session comms)
 
-Stations — durable AI working identities; CORE, on by default (see docs/STATIONS.md):
-  KEN_STATION_ENABLED  0 = do NOT expose the station MCP endpoint at /station/mcp + console at /stations (default ON)
+Stations — durable AI working identities; always on, not optional (see docs/STATIONS.md):
                     a station is created and NAMED by a human; a session staffs it
                     create it, then mint its key:  ken station add --name prod-ops
                                                    ken station key --station prod-ops --label laptop
@@ -261,12 +259,17 @@ func runServe(args []string) {
 	metricsToken := os.Getenv("KEN_METRICS_TOKEN")
 	metricsAllow := clientip.ParseCIDRs(os.Getenv("KEN_METRICS_CIDRS"))
 
-	// Optional OAuth 2.1 authorization server (off unless KEN_OAUTH_ENABLED),
+	// OAuth 2.1 authorization server — always mounted,
 	// so claude.ai can add ken as a remote-MCP "custom connector" (OAuth-only on
 	// personal accounts). publicBaseURL is the canonical https origin used verbatim
 	// as the issuer + in every discovery URL: the configured ACME domain when set
 	// (stable, request-independent), else derived from the request.
-	oauthEnabled := envBoolDefault("KEN_OAUTH_ENABLED", false)
+	// OAuth is not optional and never should have been. It is how a human registers Ken
+	// ONCE on their account and reaches it from every client afterwards — the only
+	// credential path that needs no per-machine token and no client restart. Defaulting
+	// it OFF meant a fresh install could not be connected the documented way until the
+	// operator found a variable nothing pointed them at.
+	oauthEnabled := true
 	publicBaseURL := func(r *http.Request) string {
 		host := r.Host
 		scheme := "http"
@@ -309,17 +312,20 @@ func runServe(args []string) {
 	// hearsay marker, the operator console has a page for it, and a feature every
 	// deployment was expected to turn on was an option in name only.
 	//
-	// KEN_COMM_ENABLED=0 still turns it off, and that is deliberate rather than
-	// leftover. Ken ALREADY has a runtime "COMM off" state — an unopenable comm.db
-	// degrades into it just below, on purpose, so the durable knowledge base survives
-	// an expendable database. Removing the variable would not remove that state; it
-	// would only remove the operator's control over it, taking away the one remedy
-	// they have if COMM misbehaves in production.
+	// THERE IS NO SWITCH. Ken shipped this opt-in, then briefly kept KEN_COMM_ENABLED
+	// as an opt-OUT; both are gone. No part of Ken is optional — a feature an operator
+	// can be missing is a feature every doc, every instruction and every session has to
+	// hedge about, and Ken has already shipped stale hedges about exactly this.
+	//
+	// The DEGRADED state below is a different thing and it stays: an unopenable comm.db
+	// leaves commStore nil, on purpose, so an expendable database can never take the
+	// durable knowledge base down. What is removed is the operator's ability to CHOOSE
+	// that state, not the state itself.
 	//
 	// Opened BEFORE the MCP deps are built because the knowledge base's write path
 	// needs the hearsay check (docs/COMM.md §7), which reads this store.
 	var commStore *comm.Store
-	if commEnabled() {
+	{
 		// Every failure here DEGRADES rather than aborting: an unwritable directory
 		// or a corrupt comm.db must not take the durable knowledge base down with an
 		// expendable one. That is the whole point of "COMM may fail; the KB stays UP"
@@ -327,7 +333,7 @@ func runServe(args []string) {
 		// at the very first failure an operator is likely to hit.
 		commPath := envOr("KEN_COMM_DB", filepath.Join(filepath.Dir(*dbPath), "comm", "comm.db"))
 		if cs, err := openComm(commPath, commLimits(live.Current())); err != nil {
-			log.Printf("COMM: DISABLED — %v. The knowledge base is unaffected; fix the comm database, or set KEN_COMM_ENABLED=0 if you meant to run without it.", err)
+			log.Printf("COMM: DEGRADED — %v. The knowledge base is unaffected and stays up; messaging is unavailable until the comm database opens. This is a failure, not a setting: nothing turns COMM off.", err)
 		} else {
 			defer cs.Close()
 			commStore = cs
@@ -374,8 +380,8 @@ func runServe(args []string) {
 			mcpHandler.SetCurationLangs(s.CurationLangSet)
 		}
 	})
-	// Inter-session communication (docs/COMM.md) — CORE, on by default; see above for
-	// why KEN_COMM_ENABLED=0 remains as an opt-OUT.
+	// Inter-session communication (docs/COMM.md) — always on; commStore is nil only
+	// when comm.db could not be opened, which degrades rather than disables.
 	//
 	// Deliberately NOT registered with the health checker: that marks the whole
 	// service DOWN on any component failure and /health then returns 503, so a
@@ -461,15 +467,13 @@ func runServe(args []string) {
 		i18nDir = filepath.Join(filepath.Dir(*dbPath), "i18n")
 	}
 	// Stations: durable, human-named working identities (docs/STATIONS.md) — CORE, on
-	// by default, with KEN_STATION_ENABLED=0 as an opt-OUT for the same reason COMM
-	// keeps one.
+	// by default. There is no KEN_STATION_ENABLED any more, as there is no switch for
+	// anything else.
 	//
-	// STILL resolved independently of COMM, and that has not changed: the notebook and
-	// the task list are valuable to a solo session with no peers (S2), so stations must
-	// never be gated behind a messaging feature they have nothing to do with. Both
-	// being on by default makes the two flags look interchangeable; they are not, and
-	// KEN_COMM_ENABLED=0 must leave stations fully working.
-	stationsEnabled := stationsEnabledFlag()
+	// The independence from COMM that S2 insisted on is now STRUCTURAL rather than
+	// contingent: no flag exists that could couple them, and stations keep working when
+	// commStore is nil because comm.db failed to open.
+	stationsEnabled := true
 	if stationsEnabled {
 		sd := stationserver.Deps{Store: st, TokenLimiter: rlToken, Metrics: reg}
 		// The hearsay marker is keyed on the ACTOR, so it only works when COMM is on and
@@ -676,20 +680,6 @@ func mustOpenStore(dbPath string) *store.Store {
 	}
 	return st
 }
-
-// commEnabled and stationsEnabledFlag are the ONE place each surface's default lives.
-//
-// They exist to be observable. A test that writes envBoolDefault("KEN_COMM_ENABLED",
-// true) proves only that envBoolDefault returns its own argument — it re-derives the
-// default instead of reading it, so flipping the real call to false would leave that
-// test green and the surface silently off. Naming the decision means the test asks
-// the same function the server asks.
-func commEnabled() bool { return envBoolDefault("KEN_COMM_ENABLED", true) }
-
-// stationsEnabledFlag is separate from commEnabled and must stay separate: the
-// notebook and task list are valuable with no peers at all (STATIONS.md S2), so
-// stations are never gated behind messaging.
-func stationsEnabledFlag() bool { return envBoolDefault("KEN_STATION_ENABLED", true) }
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {

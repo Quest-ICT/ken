@@ -5,8 +5,9 @@
 // internal/web (it needs the human session); MCP access-token validation lives in
 // the store (ValidateOAuthAccessToken) so the hot path never imports this package.
 //
-// The whole feature is inert unless the operator sets KEN_OAUTH_ENABLED — main.go
-// only mounts these handlers when it is on. Purpose: let claude.ai add Ken as a
+// Always mounted — OAuth is how a human registers Ken ONCE on their account and
+// reaches it from every client afterwards, so it is not something to be missing.
+// Purpose: let claude.ai add Ken as a
 // remote-MCP "custom connector" (OAuth-only on personal accounts). A connector
 // authenticated this way gets the standard agent capability set (read |
 // write-draft | propose) — never curate; curation stays human-only in the web UI.

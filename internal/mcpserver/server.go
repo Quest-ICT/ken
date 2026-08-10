@@ -332,6 +332,8 @@ The loop:
 - Save vs enhance what you learned: same problem with a better answer → kb_propose_enhancement (a new rev on the same slug). A different problem that merely shares vocabulary → kb_save (needs a fresh dedup_check_token) plus a 'relates' link. Write triggers (symptoms a future agent would type) and applies_to well; give an honest confidence.
 - Flag stale (kb_flag_stale) when a dependency moved or a fact changed. You can flag; you can never assert freshness.
 
+You have no clock. STOP before any claim about time — how long it took, how old it is, how far back it goes, whether it is still current — and read one: 'date -u', or the timestamp already in front of you (created_at, an mtime, the value your own query keyed on). Wall time between tool calls registers as nothing, so an unread duration was not estimated, it was generated, drifting toward whatever the sentence wanted; the errors run UPWARD, so calibration cannot fix this — only reading. 'Recently' and 'long-standing' are the same claim with the number hidden. A measured endpoint does not license a claim about the span. Write absolute times: Ken cannot tell a measured figure from a generated one, and neither can your curator.
+
 Belongs in Ken: durable, reusable knowledge — solved problems, pitfalls/gotchas, caveats, design decisions with rationale and trade-offs, verified facts. NOT transient session state, secrets, or chatter.`
 
 // buildInstructions returns the AI-facing instructions, appending a curation-

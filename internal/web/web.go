@@ -33,7 +33,7 @@ type Deps struct {
 	// TTL read live values, and enables the /settings admin page.
 	Settings *settings.Live
 	// OAuthEnabled mounts the interactive OAuth consent flow (/oauth/authorize)
-	// and the Connectors management section. Mirrors KEN_OAUTH_ENABLED; the
+	// and the Connectors management section. Always true from main.go; the
 	// stateless discovery/token endpoints are mounted separately in main.go.
 	OAuthEnabled bool
 	// I18n provides the reloadable UI translations. If nil, a Manager with the
@@ -45,26 +45,25 @@ type Deps struct {
 	// nav entry entirely.
 	//
 	// COMM is core and on by default, so main.go passes a live store unless the
-	// operator opted out with KEN_COMM_ENABLED=0 — or unless comm.db could not be
-	// opened, which degrades to nil on purpose so an expendable database cannot take
-	// the durable knowledge base down. Nil therefore means BOTH "switched off" and
-	// "failed to open", and the console cannot tell them apart; the server log says
-	// which. The comm MCP endpoint is mounted separately in main.go.
+	// comm.db could not be opened, which degrades to nil on purpose so an expendable
+	// database cannot take the durable knowledge base down. Nil now means exactly one
+	// thing — FAILED TO OPEN — because nothing switches COMM off any more, which is a
+	// small win: the console no longer has two indistinguishable causes to report.
+	// The comm MCP endpoint is mounted separately in main.go.
 	Comm *comm.Store
 	// StationsEnabled, when true, mounts the stations console (/stations) — where a
 	// human approves a session's request for a working identity and TYPES its name,
 	// which is the capability every station tool is denied. The station MCP endpoint
 	// is mounted separately in main.go.
 	//
-	// Stations are core and on by default; main.go passes true unless the operator set
-	// KEN_STATION_ENABLED=0. This field stays an explicit bool rather than defaulting
+	// Stations are always on; main.go passes true unconditionally. This field stays an
+	// explicit bool rather than defaulting
 	// on, because the zero value belongs to whoever CONSTRUCTS Deps — tests build one
 	// deliberately without stations — and a library that turns a surface on because a
 	// caller forgot a field is worse than one that waits to be told.
 	//
-	// Independent of Comm on purpose, and MORE easily forgotten now that both default
-	// on: the notebook and task list need no peers, so KEN_COMM_ENABLED=0 must leave
-	// stations entirely working (S2).
+	// Independent of Comm on purpose (S2): the notebook and task list need no peers, so
+	// stations keep working when Comm is nil because comm.db failed to open.
 	StationsEnabled bool
 }
 
