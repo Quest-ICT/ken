@@ -76,11 +76,21 @@ type Handler struct {
 
 // NewHTTPHandler builds the comm endpoint: a streamable-HTTP MCP server wrapped in
 // comm-only bearer auth.
+// sessionTimeout closes an MCP session that has gone quiet. A working conversation
+// calls far more often than this; a session left open by a closed laptop or a crashed
+// client is gone within the half hour rather than never. It is a backstop, not an
+// authorization control — the middleware re-authenticates every HTTP request.
+const sessionTimeout = 30 * time.Minute
+
 func NewHTTPHandler(d Deps) *Handler {
 	h := &Handler{w: newWaiters()}
 	h.SetMaxPollWait(d.MaxPollWaitSeconds)
 	srv := newServer(d, h)
-	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	// Idle sessions are closed. Comfortably longer than the longest possible parked
+	// comm_poll (capped at 30 s server-side), so a session waiting on mail is never the
+	// thing that times out — only one whose client has gone away.
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
 	h.Handler = authMiddleware(d.Store, d.TokenLimiter, d.Metrics, inner)
 	return h
 }

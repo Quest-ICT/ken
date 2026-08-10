@@ -121,6 +121,12 @@ func (h *Handler) SetLimits(task store.StationTaskLimits, note store.StationNote
 
 // NewHTTPHandler builds the endpoint: a streamable-HTTP MCP server wrapped in
 // station-only bearer auth.
+// sessionTimeout closes an MCP session that has gone quiet. A working conversation
+// calls far more often than this; a session left open by a closed laptop or a crashed
+// client is gone within the half hour rather than never. It is a backstop, not an
+// authorization control — the middleware re-authenticates every HTTP request.
+const sessionTimeout = 30 * time.Minute
+
 func NewHTTPHandler(d Deps) *Handler {
 	if d.TaskLimits.MaxOpen == 0 {
 		d.TaskLimits = store.DefaultStationTaskLimits()
@@ -135,7 +141,11 @@ func NewHTTPHandler(d Deps) *Handler {
 	h.SetLimits(d.taskLim(), d.noteLim(), d.lockerLim())
 	d.limits = func() *limits { return h.lim.Load() }
 	srv := newServer(d)
-	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	// Idle sessions are closed. The SDK's zero value means "never", which is what
+	// passing nil asked for: a connection opened once stayed open, and authorized from
+	// the handler's point of view, for as long as the client held it.
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
+		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
 	h.Handler = authMiddleware(d.Store, d.TokenLimiter, d.Metrics, inner)
 	return h
 }
@@ -188,7 +198,7 @@ func newServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-station", Version: "1"},
 		&mcp.ServerOptions{Instructions: instructions})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_binding_voucher",
 		Description: "Get a short-lived voucher that binds ONE named COMM endpoint to this station. " +
 			"THE ORDER MATTERS: call comm_register on /comm first, write the returned endpoint_id and " +
@@ -238,7 +248,7 @@ func newServer(d Deps) *mcp.Server {
 		}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_link_request",
 		Description: "Ask your human to let this station talk to another one. An approved link is a standing " +
 			"relationship: either side can then open a channel when it needs one, with no pairing code. The reason " +
@@ -273,7 +283,7 @@ func newServer(d Deps) *mcp.Server {
 		}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_me",
 		Description: "Your briefing: who you are staffing, open tasks (named), handoff staleness, and what is " +
 			"waiting on your human. Call it FIRST in every session, and relay what it says to your human in words — " +
@@ -292,7 +302,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, out, err
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_directory",
 		Description: "List the stations you can see and which you already hold a link to. Use this before " +
 			"station_link_request so you ask for a real name rather than a guess: nothing else on this surface " +
@@ -336,7 +346,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, out, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_request",
 		Description: "Ask your human to create a station for you. You supply a PURPOSE and may suggest a name; " +
 			"your human types the real name when they approve. This is the only tool a key with no station may call.",
@@ -357,7 +367,7 @@ func newServer(d Deps) *mcp.Server {
 	})
 
 	// --- notebook -----------------------------------------------------------
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_note_list",
 		Description: "Your notebook's page keys, titles, tags, sizes and when each changed. Never bodies — " +
 			"read the one you need. Working state only: durable lessons belong in the knowledge base.",
@@ -378,7 +388,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, out, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "station_note_read",
 		Description: "Read one notebook page.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, noteOut, error) {
@@ -394,7 +404,7 @@ func newServer(d Deps) *mcp.Server {
 			Rev: n.Rev, Bytes: n.Bytes, UpdatedAt: n.UpdatedAt}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_note_write",
 		Description: "Append to or replace a notebook page. Keep the 'handoff' page current AS YOU GO — a handoff " +
 			"written only when you know you are leaving is never written. Pass if_rev when you have read the page and " +
@@ -422,7 +432,7 @@ func newServer(d Deps) *mcp.Server {
 			Rev: n.Rev, Bytes: n.Bytes, UpdatedAt: n.UpdatedAt}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_note_promote",
 		Description: "Ask your human to turn a notebook page into a knowledge-base entry. This does NOT write " +
 			"knowledge: it queues the page for them to review and convert. Use it when a working note has proven " +
@@ -441,7 +451,7 @@ func newServer(d Deps) *mcp.Server {
 	})
 
 	// --- tasks --------------------------------------------------------------
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_task_add",
 		Description: "Record something outstanding. Add the MOMENT you say \"we should\" — adding late means not " +
 			"adding. blocked_on is required: self = you can act now; human = it cannot move until your human does or " +
@@ -462,7 +472,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, taskAddOut{Task: taskViewOf(*t), NearMatches: taskViews(near)}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_task_list",
 		Description: "Your tasks, ordered: overdue first, then what is blocked on your human, then whatever has " +
 			"gone longest without being raised. A pure query — reading it does not count as raising anything.",
@@ -478,7 +488,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, taskListOut{Tasks: taskViews(ts), Total: total, Shown: len(ts)}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_task_close",
 		Description: "Close finished tasks — several at once. Do this the moment a thing is done, not at the end " +
 			"of the session. A resolution line is required: the record of what happened is the point.",
@@ -491,7 +501,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, countOut{Count: n}, err
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_task_defer",
 		Description: "Push a task out to a date, with a reason. Deliberately more work than closing it — deferring " +
 			"is legitimate, deferring silently and repeatedly is how a list rots. The count is shown back to you.",
@@ -504,7 +514,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, okOut{OK: err == nil}, err
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_task_drop",
 		Description: "Abandon tasks that are no longer worth doing, with a reason. Refused for anything blocked on " +
 			"your human unless they decided it themselves — their commitments are theirs to abandon. If something has " +
@@ -518,7 +528,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, countOut{Count: n}, err
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "station_task_reopen",
 		Description: "Reopen closed or dropped tasks — a decision to drop is sometimes wrong.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskReopenIn) (*mcp.CallToolResult, countOut, error) {
@@ -531,7 +541,7 @@ func newServer(d Deps) *mcp.Server {
 	})
 
 	// --- locker -------------------------------------------------------------
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_locker_list",
 		Description: "Files stored against this station — names, sizes, digests. The locker is for what a fresh " +
 			"session on another machine needs to reconstitute you: memory and instruction files, conventions. Never secrets.",
@@ -552,7 +562,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, out, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name: "station_locker_put",
 		Description: "Store a small text file against this station. NEVER put a token, key or password here — Ken " +
 			"cannot tell, your human can read it, and it goes into every backup.",
@@ -569,7 +579,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, lockerMeta{Name: e.Name, Bytes: e.SizeBytes, SHA256: e.SHA256, ContentType: e.ContentType}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "station_locker_get",
 		Description: "Read one file back from the locker.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, lockerGetOut, error) {
@@ -584,7 +594,7 @@ func newServer(d Deps) *mcp.Server {
 		return nil, lockerGetOut{Name: e.Name, Body: string(e.Bytes), Bytes: e.SizeBytes, SHA256: e.SHA256}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "station_locker_delete",
 		Description: "Remove a file from the locker.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, okOut, error) {
@@ -693,20 +703,70 @@ func taskViewOf(t store.StationTask) taskView {
 	}
 }
 
-func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
+// addTool registers a tool and wraps it with the caller's identity and timing.
+//
+// THE IDENTITY WRAP IS WHY A HANDLER KNOWS WHO IS CALLING IT. The go-sdk binds a
+// session to the INITIALIZE request's context (`server.Connect(req.Context(), …)` in
+// mcp/streamable.go), so requireStation and principalFrom read a principal fixed when
+// the connection opened, not the one that authenticated this call. The middleware
+// authenticates every HTTP request and puts a principal in that request's context; the
+// handler never sees it, because the handler runs on the connection's context.
+//
+// Demonstrated on the knowledge-base surface before being fixed there: a kb_save
+// presented with token B, on a session opened by token A, was written with A as
+// author_actor_id. Stations carry the same defect for a different reason — a station
+// key is per station, so a stale principal means a handler acting on the wrong
+// STATION's notebook, tasks and locker.
+//
+// req.Extra.Header is the only per-call channel the SDK offers, so the principal is
+// re-derived once per tool call and every existing requireStation call site keeps
+// working while finally meaning what it always claimed.
+func addTool[In, Out any](s *mcp.Server, d Deps, t *mcp.Tool,
 	h func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) {
-	handler := h
-	if reg != nil {
-		name := t.Name
-		handler = func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
-			start := time.Now()
-			res, out, err := h(ctx, req, in)
-			reg.RecordMCP(name, err == nil)
-			// Nothing on this endpoint blocks, so every tool's duration is real work
-			// time and all of them are bucketed — unlike comm_poll, which parks.
-			reg.RecordMCPDuration(name, time.Since(start))
-			return res, out, err
+	name := t.Name
+	reg := d.Metrics
+	handler := func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		ctx = withCaller(ctx, d.Store, req)
+		if reg == nil {
+			return h(ctx, req, in)
 		}
+		start := time.Now()
+		res, out, err := h(ctx, req, in)
+		reg.RecordMCP(name, err == nil)
+		// Nothing on this endpoint blocks, so every tool's duration is real work
+		// time and all of them are bucketed — unlike comm_poll, which parks.
+		reg.RecordMCPDuration(name, time.Since(start))
+		return res, out, err
 	}
 	mcp.AddTool(s, t, handler)
+}
+
+// withCaller replaces the connection-time principal with the one presented on THIS
+// call, when the transport can tell us.
+//
+// Falls back to the context principal when there is no per-call evidence: an
+// in-process transport with no HTTP behind it, a request with no bearer, or a key that
+// no longer authenticates. That cannot admit anyone — the middleware has already
+// rejected unauthenticated requests before the SDK sees them, so arriving here means a
+// valid station key was presented on this request.
+func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) context.Context {
+	if st == nil || req == nil || req.Extra == nil || req.Extra.Header == nil {
+		return ctx
+	}
+	tok := bearerFromHeader(req.Extra.Header)
+	if tok == "" {
+		return ctx
+	}
+	sp, err := st.AuthenticateStationKey(ctx, tok)
+	if err != nil || sp == nil || !hasScope(sp.Scopes, ScopeStation) {
+		return ctx
+	}
+	scopes := map[string]bool{}
+	for _, s := range sp.Scopes {
+		scopes[s] = true
+	}
+	return context.WithValue(ctx, ctxKey{}, &principal{
+		ActorID: sp.ActorID, TokenID: sp.TokenID, SpaceID: 1,
+		StationID: sp.StationID, Scopes: scopes,
+	})
 }

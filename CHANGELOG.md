@@ -217,13 +217,16 @@ same change — never "docs later".
   with nothing on the page to say so. Fixed at the tool-registration wrapper, the only
   place the SDK exposes a per-call header.
 
-  `/station/mcp` has the same defect and the same fix is still pending. `/comm/mcp`
-  does not — its identity arrives as tool arguments, which is per-call by
-  construction.
+  **Now fixed on `/station/mcp` too**, where it is worse in kind: a station key *is*
+  the station, so a stale principal meant one post writing into another's notebook,
+  closing another's tasks, and reading another's locker — the three things stations
+  exist to keep separate. `/comm/mcp` never had it: its identity arrives as tool
+  arguments, which is per-call by construction.
 
 - **MCP sessions never expired.** Every handler passed nil options, and the SDK's zero
-  `SessionTimeout` means idle sessions are never closed. Set to 30 minutes on the
-  knowledge-base surface.
+  `SessionTimeout` means idle sessions are never closed. Now 30 minutes on all three
+  surfaces — comfortably longer than the longest parked `comm_poll`, so a session
+  waiting on mail is never what times out.
 
 ### Fixed
 
