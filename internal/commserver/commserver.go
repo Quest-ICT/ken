@@ -152,7 +152,7 @@ func (h *Handler) ParkedWaiters() int { return h.w.parked() }
 // change behaviour in the common case, which is worth having, and docs/COMM.md is
 // explicit that the enforced boundary is the human-approved channel rather than
 // this text.
-const instructions = `Ken COMM — inter-session messaging between AI sessions (opt-in; off by default).
+const instructions = `Ken COMM — inter-session messaging between AI sessions.
 
 You talk to ANOTHER AI session over a channel a human authorized. Loop:
 - comm_register once per session, then IMMEDIATELY WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK (mode 0600, outside any git repo) before doing anything else. Every other tool needs both, and the secret is shown once — nothing you can call will ever show it again. Do not trust your context to hold it: context compaction is routine and silent, and re-reading your file after one is cheaper than the alternative. If you HAVE lost it, you are not stuck — ask your human to rotate that endpoint's secret from Ken's web console (/comm); rotating keeps your endpoint id and every channel you are in, so you carry on where you left off. Only a human can do that, which is why you must ask rather than retry.
