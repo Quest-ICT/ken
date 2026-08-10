@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-08-10
+
 ### Changed
 
 - **The locker belongs to every station; it is no longer a withholdable scope.** The
@@ -1600,7 +1602,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.5.5...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.7.0
 [1.6.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.6.0
 [1.5.5]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.5
 [1.5.4]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.4
