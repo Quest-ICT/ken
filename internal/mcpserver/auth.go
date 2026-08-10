@@ -164,11 +164,15 @@ func (t *touchThrottle) maybe(ctx context.Context, st *store.Store, tokenID stri
 	st.TouchToken(ctx, tokenID)
 }
 
-func bearerToken(r *http.Request) string {
-	h := r.Header.Get("Authorization")
+func bearerToken(r *http.Request) string { return bearerFromHeader(r.Header) }
+
+// bearerFromHeader is split out because the per-call identity fix (see addTool) has
+// only a header to work from, never a *http.Request.
+func bearerFromHeader(h http.Header) string {
+	v := h.Get("Authorization")
 	const prefix = "Bearer "
-	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
-		return strings.TrimSpace(h[len(prefix):])
+	if len(v) > len(prefix) && strings.EqualFold(v[:len(prefix)], prefix) {
+		return strings.TrimSpace(v[len(prefix):])
 	}
 	return ""
 }

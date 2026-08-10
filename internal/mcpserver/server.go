@@ -59,22 +59,71 @@ type Deps struct {
 // each call increments the per-tool metric (tool name + success/error). Using a
 // helper (rather than wrapping at each call site) keeps the registration sites
 // unchanged apart from the extra argument.
-func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
+// addTool registers a tool and wraps it with the two things every handler needs and
+// none of them should have to remember: the caller's identity, and timing.
+//
+// THE IDENTITY WRAP IS NOT DECORATION — it is the only reason a handler sees who is
+// actually calling it. The go-sdk binds a session to the INITIALIZE request's context
+// (`server.Connect(req.Context(), …)` in mcp/streamable.go), so anything a handler
+// reads from its context was fixed when the connection opened. Ken's middleware
+// authenticates every HTTP request and puts a principal in that request's context —
+// and the handler never sees it, because the handler runs on the connection's context.
+//
+// Demonstrated, not theorised: a kb_save presented with token B on a session opened by
+// token A was written with A as author_actor_id. Ken records that field on every
+// version and a human reads it when deciding whether to promote, so the durable record
+// carried false provenance with nothing on the page to say so.
+//
+// The fix belongs HERE rather than in ~40 call sites: req.Extra.Header is the only
+// per-call channel the SDK offers, and re-deriving the principal once per tool call
+// leaves principalFrom / requireScope / requireStation working unchanged while
+// meaning what they always claimed to.
+func addTool[In, Out any](s *mcp.Server, d Deps, t *mcp.Tool,
 	h func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) {
-	handler := h
-	if reg != nil {
-		name := t.Name
-		handler = func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
-			start := time.Now()
-			res, out, err := h(ctx, req, in)
-			reg.RecordMCP(name, err == nil)
-			// Every kb_* tool is a bounded request/response, so the handler duration
-			// is clean work-time latency — none of them block.
-			reg.RecordMCPDuration(name, time.Since(start))
-			return res, out, err
+	name := t.Name
+	reg := d.Metrics
+	handler := func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		ctx = withCaller(ctx, d.Store, req)
+		if reg == nil {
+			return h(ctx, req, in)
 		}
+		start := time.Now()
+		res, out, err := h(ctx, req, in)
+		reg.RecordMCP(name, err == nil)
+		// Every kb_* tool is a bounded request/response, so the handler duration
+		// is clean work-time latency — none of them block.
+		reg.RecordMCPDuration(name, time.Since(start))
+		return res, out, err
 	}
 	mcp.AddTool(s, t, handler)
+}
+
+// withCaller replaces the connection-time principal with the one presented on THIS
+// call, when the transport can tell us.
+//
+// Falls back to the existing context principal in three cases, all of which mean "no
+// per-call evidence available": a transport with no HTTP request behind it (in-process
+// tests), a request carrying no bearer, and a bearer that no longer authenticates.
+//
+// THAT LAST FALLBACK IS DELIBERATE AND NARROW. It cannot admit anyone: the middleware
+// has already rejected unauthenticated requests with 401 before the SDK sees them, so
+// reaching here at all means a valid credential was presented on this request. Failing
+// open to the connection principal rather than erroring keeps a transient store
+// hiccup from turning into a tool failure, and the honest limit is that a credential
+// revoked mid-session is still stopped by the middleware, not by this.
+func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) context.Context {
+	if st == nil || req == nil || req.Extra == nil || req.Extra.Header == nil {
+		return ctx
+	}
+	tok := bearerFromHeader(req.Extra.Header)
+	if tok == "" {
+		return ctx
+	}
+	p, err := authenticate(ctx, st, tok)
+	if err != nil || p == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxKey{}, p)
 }
 
 // viaComm reports whether the caller should have its authored version marked as
@@ -330,7 +379,7 @@ func NewServer(d Deps) *mcp.Server {
 		Version: version.Version,
 	}, &mcp.ServerOptions{Instructions: buildInstructions(d.CurationLangs)})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_search",
 		Description: "Search the knowledge base. Returns ranked, token-light summaries (no bodies) — your default first move; follow up with kb_get. Also returns a dedup_check_token required by kb_save.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, searchOut, error) {
@@ -356,7 +405,7 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, out, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_get",
 		Description: "Fetch full entries by slug (max 10). response_format 'concise' (default) returns the curated head body; 'detailed' adds provenance.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getIn) (*mcp.CallToolResult, getOut, error) {
@@ -374,7 +423,7 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, getOut{Entries: entries, Missing: missing}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_save",
 		Description: "Create a NEW draft entry. Requires a dedup_check_token from a recent kb_search (enforces search-before-save). If a close match already exists, prefer kb_propose_enhancement instead.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in saveIn) (*mcp.CallToolResult, saveOut, error) {
@@ -403,7 +452,7 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, saveOut{Slug: r.Slug, RevNo: r.RevNo, State: r.State, Lifecycle: r.Lifecycle}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_propose_enhancement",
 		Description: "Append an enhancement (a new immutable version) to an existing entry. Never overwrites the curated head; a human promotes it later.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in proposeIn) (*mcp.CallToolResult, proposeOut, error) {
@@ -430,7 +479,7 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, proposeOut{Slug: r.Slug, RevNo: r.RevNo, State: r.State, Warning: r.Warning}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_flag_stale",
 		Description: "Flag an entry as possibly stale (a dependency moved, a fact changed). Raises a concern; it does not assert freshness (that is a curation act).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in flagIn) (*mcp.CallToolResult, flagOut, error) {
@@ -451,7 +500,7 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, flagOut{Slug: in.Slug, Staleness: st}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_diff",
 		Description: "Field-by-field diff of two revisions of an entry (rev_a vs rev_b) — e.g. compare a superseded version with the curated head.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in diffIn) (*mcp.CallToolResult, diffOut, error) {
@@ -469,7 +518,7 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, out, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_record_outcome",
 		Description: "Report whether a fetched entry actually resolved your problem: helped | didnt-apply | was-wrong. 'was-wrong' flags the entry stale for human review. This feeds the self-curating signal — use it after acting on an entry.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in outcomeIn) (*mcp.CallToolResult, outcomeOut, error) {
@@ -488,7 +537,7 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, outcomeOut{Slug: in.Slug, Recorded: true, Staleness: st}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
+	addTool(s, d, &mcp.Tool{
 		Name:        "kb_recent_context",
 		Description: "A compact briefing of entries recently added or curated (default last 14 days) — call it once to warm up a fresh session without a specific query.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in recentIn) (*mcp.CallToolResult, recentOut, error) {
@@ -532,10 +581,29 @@ type Handler struct {
 
 // NewHTTPHandler builds the /mcp Handler: the streamable-HTTP MCP server wrapped
 // in bearer auth (which also does CORS + the OAuth 401 challenge).
+// sessionTimeout closes an MCP session that has gone quiet.
+//
+// The SDK's zero value means "never close", which is what every Ken handler asked
+// for by passing nil options: a session opened once stayed open, and stayed
+// authorized from the handler's point of view, for as long as the client kept the
+// connection — whatever happened to the credential that opened it.
+//
+// 30 minutes is chosen against how these sessions are actually used. A working
+// conversation makes a call every few minutes at worst, so it never trips; a session
+// left open by a closed laptop or a crashed client is gone within the half hour
+// rather than never. It is a backstop, not an authorization control — the middleware
+// re-authenticates every HTTP request — so it can afford to be generous.
+const sessionTimeout = 30 * time.Minute
+
+// maxReasonableSessionTimeout exists only so the test asserting sessionTimeout is set
+// cannot be satisfied by a value so large it means "never" in a longer costume.
+const maxReasonableSessionTimeout = 24 * time.Hour
+
 func NewHTTPHandler(d Deps) *Handler {
 	h := &Handler{d: d}
 	h.ptr.Store(NewServer(d))
-	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return h.ptr.Load() }, nil)
+	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return h.ptr.Load() },
+		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
 	h.Handler = authMiddleware(d.Store, newTouchThrottle(), d.TokenLimiter, d.Metrics, d.ResourceMetadataURL, inner)
 	return h
 }
