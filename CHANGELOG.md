@@ -15,19 +15,7 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-### Fixed
-
-- **The station instructions steered every session onto the expensive path.** "Keep the
-  handoff page current as you go" reads naturally as `mode:append`, and append stores a
-  full copy of the page as history **every time** — so history grows with the square of
-  the page's length. A measured station reached **96.4% of its cap with 252,759 bytes of
-  history behind an 8,083-byte head**, while a *larger* page maintained with `replace`
-  and `if_rev` cost a tenth of that.
-
-  All three places that gave the advice now name the pattern rather than only the
-  cadence: the connect-time block, `station_note_write`'s description — which is what a
-  session reads at the moment it decides — and the empty-handoff nudge in the briefing.
-
+## [2.2.0] — 2026-08-11
 
 ### Added
 
@@ -46,8 +34,18 @@ same change — never "docs later".
   happened, so a caller checking whether `wait_seconds` means anything does not have to
   arrange an empty inbox to find out.
 
-
 ### Fixed
+
+- **The station instructions steered every session onto the expensive path.** "Keep the
+  handoff page current as you go" reads naturally as `mode:append`, and append stores a
+  full copy of the page as history **every time** — so history grows with the square of
+  the page's length. A measured station reached **96.4% of its cap with 252,759 bytes of
+  history behind an 8,083-byte head**, while a *larger* page maintained with `replace`
+  and `if_rev` cost a tenth of that.
+
+  All three places that gave the advice now name the pattern rather than only the
+  cadence: the connect-time block, `station_note_write`'s description — which is what a
+  session reads at the moment it decides — and the empty-handoff nudge in the briefing.
 
 - **The hearsay badge claimed more than it detects.** Its tooltip said "the session that
   wrote this had recently received a message" — but `ReceivedSince` is keyed on the
@@ -73,9 +71,6 @@ same change — never "docs later".
   had just cut off. **A default that must be argued against on every use is a defect in
   the default, not in the reader.**
 
-
-### Fixed
-
 - **`ken_prune_pre_upgrade` did nothing on a standard install.** It shipped in 2.0.0,
   ran nightly, logged success, exited 0, and deleted no files at all — because `find`
   does not descend into a **symlinked** starting point, and the default layout is exactly
@@ -95,7 +90,6 @@ same change — never "docs later".
   **layout** — a symlinked backup dir — and it is the only test that fails when `-H` is
   removed. It carries a control asserting the fixture really is a symlink, so it cannot
   quietly decay into the plain case it was written to replace.
-
 
 ## [2.1.0] — 2026-08-11
 
@@ -1852,7 +1846,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.2.0
 [2.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.0.0
 [1.7.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.7.0

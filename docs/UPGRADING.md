@@ -34,6 +34,20 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+---
+
+## 2.2.0
+
+Additive only — nothing removed, nothing renamed, no setting changes meaning. **One of
+the four wants an action BEFORE you upgrade**: rollback points start being deleted, and a
+deployment that has been accumulating them since 2.0.0 has the most to lose. The other
+three are wording and reporting to read once.
+
+**One workaround you can retire:** the station instructions now tell sessions to maintain
+the handoff page with `replace` and `if_rev` rather than append, and say why. If your own
+operating notes carry advice to give that instruction by hand — it was a stated gap in
+2.1.0 — the software now says it at the moment a session decides.
+
 ### The hearsay badge means something narrower than it used to say
 
 **Observed:** the "second-hand?" badge on a proposal now explains that an agent *sharing
