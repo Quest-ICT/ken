@@ -97,7 +97,23 @@ and then the claim — not the reverse.
 
 ## Deprecation policy
 
-A stable surface slated for removal is first **deprecated** — kept working, with a note
-in [CHANGELOG.md](CHANGELOG.md) — for at least one MINOR release before it is removed in
-the next MAJOR. A security fix may make an immediate exception where remaining
-backward-compatible would keep users exposed.
+**There is no deprecation cycle, and this is a deliberate reversal.** An earlier version of
+this section promised that a stable surface slated for removal would be kept working for at
+least one MINOR release before being removed in the next MAJOR.
+
+Ken is developed to be installed **fresh**. Backward compatibility does not constrain the
+design: when a change is better made by breaking something, it is broken and the version
+takes the MAJOR bump the rules above require. Carrying a surface through a release cycle
+solely to avoid that bump costs real work on a project with one deployment, and it produces
+exactly the hedges this project keeps finding rotted — a variable nobody reads, a flag with
+no effect, an instruction describing a behaviour that stopped years ago.
+
+**What is owed instead is a written record.** Every break is added to
+[docs/UPGRADING.md](docs/UPGRADING.md) **in the change that causes it**, saying what an
+operator will observe and what to do first; at release time that list is verified against
+the diff and sent to whoever runs a deployment. Upgrade tooling is parallel work rather
+than part of the feature.
+
+A MAJOR bump is therefore ordinary here, not a failure. What is NOT acceptable is a break
+that is silent: a retired setting still present in a config should say so at runtime where
+it can, and a release that discards data says so before it is installed.

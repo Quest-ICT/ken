@@ -15,6 +15,24 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **Backward compatibility no longer constrains development, and the deprecation cycle is
+  withdrawn.** Ken is developed to be installed fresh. When a change is better made by
+  breaking something it is broken, and the version takes the MAJOR bump the rules already
+  required — a MAJOR bump is ordinary here, not a failure.
+
+  What is owed instead is [`docs/UPGRADING.md`](docs/UPGRADING.md): every break recorded
+  **in the change that causes it**, saying what an operator will observe and what to do
+  first, verified against the diff at release time and sent to whoever runs a deployment.
+  A list assembled afterwards from commit messages is a list of the breaks somebody
+  remembered.
+
+  What this does not license is a **silent** break. A retired setting still present in a
+  config should say so at runtime where it can, and a release that discards data says so
+  before it is installed.
+
+
 ## [2.0.0] — 2026-08-11
 
 **MAJOR because four `KEN_*` variables were removed and the snapshot artifact was
