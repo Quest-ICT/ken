@@ -34,6 +34,26 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### A snapshot can now contain plaintext credentials
+
+**Observed:** stations gain a **vault** — a place a session is *told* to put tokens, keys and
+passwords. Values are stored unencrypted in `ken.db`, so they are in every snapshot, in the clear.
+
+**Do first:** decide whether that is a trade you want **before** your sessions start using it, and
+re-read `docs/BACKUP.md`, whose guarantee changed in the same release. Until now every secret in
+`ken.db` was a verifier — Argon2id hashes, hashed token secrets — and a credential reaching a snapshot
+meant a session had ignored its instructions. A deployment using the vault has replayable credentials
+in every backup **by design**.
+
+`/stations` lists what each vault holds — names, sizes, read counts, never values — so you can see what
+a snapshot of yours would carry without revealing anything to find out. If the trade is wrong for you,
+the answer is not to use the vault: there is no setting that makes those values safe inside a file
+somebody else can read.
+
+**Why not encrypted:** the key would live in the same database, so lock and key travel together and the
+encryption protects nobody who can read the file — while inviting you to relax a control that is not
+there. Stating the boundary beats simulating it.
+
 ---
 
 ## 2.2.0

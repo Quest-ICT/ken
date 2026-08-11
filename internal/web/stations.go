@@ -33,12 +33,12 @@ import (
 const stationsPageSize = 200
 
 func (a *app) handleStations(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.renderStations(w, r, sess, "")
+	a.renderStations(w, r, sess, "", nil)
 }
 
 // renderStations draws the console. newKey, when non-empty, is a just-minted station
 // key shown ONCE — only its hash is stored, so it can never be shown again.
-func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store.Session, newKey string) {
+func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store.Session, newKey string, revealed *store.StationVaultEntry) {
 	if !a.stationsEnabled {
 		http.NotFound(w, r)
 		return
@@ -97,6 +97,16 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		store.Station
 		Usage *store.StationUsage
 		Keys  []store.StationKey
+		// Vault is metadata only — ListStationVault cannot return a value, so no
+		// rendering mistake here can spill one. A secret reaches this page only
+		// through handleStationVaultReveal, which logs the read.
+		Vault      []store.StationVaultEntry
+		VaultReads []store.StationVaultRead
+		VaultTotal int
+		// Which names have something to restore. Asked of the store rather than
+		// inferred from rev, which is wrong in both directions — see
+		// StationVaultRecoverableNames.
+		Recoverable map[string]bool
 	}
 	views := make([]stationView, 0, len(stations))
 	for _, s := range stations {
@@ -112,7 +122,29 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		views = append(views, stationView{Station: s, Usage: usage, Keys: keys})
+		vault, err := a.store.ListStationVault(ctx, s.StationID)
+		if err != nil {
+			log.Printf("web: station vault %s: %v", s.StationID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		// The retained trail plus the TRUE total. They differ once the log has been
+		// pruned, and the template shows both — "the last 20 of 2,318" is a bound an
+		// operator can reason about; "20 reads" would be a lie.
+		reads, total, err := a.store.StationVaultReads(ctx, s.StationID, vaultReadsShown)
+		if err != nil {
+			log.Printf("web: station vault reads %s: %v", s.StationID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		recoverable, err := a.store.StationVaultRecoverableNames(ctx, s.StationID)
+		if err != nil {
+			log.Printf("web: station vault history %s: %v", s.StationID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		views = append(views, stationView{Station: s, Usage: usage, Keys: keys,
+			Vault: vault, VaultReads: reads, VaultTotal: total, Recoverable: recoverable})
 	}
 
 	// Task rows already carry StationName — the cross-station query joins it — so the
@@ -168,6 +200,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		"Tasks": tasks, "Archived": archived,
 		"BlockedOn": r.URL.Query().Get("blocked_on"),
 		"NewKey":    newKey,
+		"Revealed":  revealed,
 	})
 }
 
@@ -357,7 +390,7 @@ func (a *app) handleStationKey(w http.ResponseWriter, r *http.Request, sess *sto
 		flashRedirect(w, r, "/stations", "flash.station_key_failed", err.Error())
 		return
 	}
-	a.renderStations(w, r, sess, key)
+	a.renderStations(w, r, sess, key, nil)
 }
 
 // handleStationKeyRetire stops a key binding new endpoints without touching live ones.
@@ -541,4 +574,81 @@ func (a *app) handlePromotionResolve(w http.ResponseWriter, r *http.Request, ses
 	default:
 		flashRedirect(w, r, "/stations", "flash.promotion_"+state, "")
 	}
+}
+
+// vaultReadsShown bounds what the console renders per station. The store keeps more
+// (station_vault_read_log) and the per-secret count is exact regardless, so this is a
+// display choice rather than a retention one — and the template states it, because a
+// truncated list that does not say it is truncated is the notebook's silent pruning
+// wearing a different hat.
+const vaultReadsShown = 20
+
+// vaultLimits reads the live bounds, falling back to the defaults when settings are
+// unwired (tests). The console needs them because revealing a secret is a READ, and a
+// read prunes the audit log to its configured length.
+func (a *app) vaultLimits() store.StationVaultLimits {
+	if a.settings == nil {
+		return store.DefaultStationVaultLimits()
+	}
+	v := a.settings.Current().Values
+	return store.StationVaultLimits{
+		MaxSecretBytes:    v.StationVaultSecretKiB << 10,
+		MaxEntries:        v.StationVaultEntries,
+		MaxHistoryPerName: v.StationVaultHistoryRev,
+		MaxReadLog:        v.StationVaultReadLog,
+	}
+}
+
+// handleStationVaultReveal shows one secret to the human who owns the instance, and
+// LOGS that it did — the same trail a station_vault_get call lands in, marked 'console'.
+//
+// A POST, and the value is rendered straight into the response rather than redirected
+// to. Both halves matter. A GET would put the reveal in browser history and one prefetch
+// away from firing without a human deciding to, and the read would be recorded as
+// deliberate — corrupting the only record that makes a vault worth keeping. Passing the
+// value through flashRedirect would put the secret itself in a URL, which is the same
+// mistake with extra steps.
+func (a *app) handleStationVaultReveal(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	e, err := a.store.GetStationVaultSecret(r.Context(), a.vaultLimits(), r.PathValue("id"),
+		strings.TrimSpace(r.FormValue("name")), "console", "", sess.ActorID)
+	if err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_vault_reveal_failed", err.Error())
+		return
+	}
+	a.renderStations(w, r, sess, "", e)
+}
+
+// handleStationVaultRestore brings a secret back to its previous value — the console
+// half of "every vault write is reversible".
+//
+// Deliberately a HUMAN action with no station-side equivalent: a session that has just
+// destroyed something by mistake is not the party to decide what to put back, and the
+// station surface offers no restore tool for the same reason.
+func (a *app) handleStationVaultRestore(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	if _, err := a.store.RestoreStationVaultSecret(r.Context(), r.PathValue("id"),
+		strings.TrimSpace(r.FormValue("name")), "", sess.ActorID); err != nil {
+		flashRedirect(w, r, "/stations", "flash.station_vault_restore_failed", err.Error())
+		return
+	}
+	flashRedirect(w, r, "/stations", "flash.station_vault_restored", r.FormValue("name"))
 }

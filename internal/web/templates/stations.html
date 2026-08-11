@@ -34,6 +34,21 @@
   <p class="live-checked" data-live-refresh="{{len .Data.Requests}}">{{.T "status.last_checked"}} <time data-live-checked></time></p>
 </div>
 
+{{if .Data.Revealed}}
+<!-- One-time reveal. Rendered into THIS response and never into a URL, so the value is
+     not in browser history, a proxy log or a bookmark. Reloading the page loses it,
+     which is correct: getting it back is another logged read. -->
+<div class="card card--accent" style="margin-bottom:var(--sp-5)">
+  <div class="card__head"><h2 class="h3">{{.T "stations.vault_revealed"}}</h2></div>
+  <div class="card__body">
+    <p class="help">{{.T "stations.vault_revealed_help"}}</p>
+    <p><span class="mono">{{.Data.Revealed.Name}}</span></p>
+    <p><code class="mono" style="font-size:1.15rem;letter-spacing:.04em">{{.Data.Revealed.Secret}}</code></p>
+    <p class="help">{{.T "stations.vault_revealed_logged"}}</p>
+  </div>
+</div>
+{{end}}
+
 {{if .Data.NewKey}}
 <!-- One-time key reveal. Only the hash is stored, so this is the single moment the
      secret exists in readable form — same contract as a pairing code or an API token. -->
@@ -239,6 +254,76 @@
             </div>
             <button class="btn" type="submit" title="{{$.T "stations.key_mint_help"}}">{{$.T "stations.key_mint"}}</button>
           </form>
+
+          <!-- VAULT. Metadata only: the view model is ListStationVault, which cannot
+               return a value, so no rendering mistake here can spill one. A secret
+               reaches this page through exactly one path — the reveal POST below — and
+               that path writes an audit row. -->
+          <details class="vault">
+            <summary title="{{$.T "stations.vault_help"}}">{{$.T "stations.vault"}} ({{len .Vault}})</summary>
+            <p class="help">{{$.T "stations.vault_lede"}}</p>
+            {{if .Vault}}
+            <table class="table" data-listing-table="ken.stations.vault.{{.StationID}}">
+              <thead>
+                <tr>
+                  <th data-col-key="name">{{$.T "stations.vault_name"}}</th>
+                  <th data-col-key="note">{{$.T "stations.vault_note"}}</th>
+                  <th data-col-key="bytes">{{$.T "stations.vault_bytes"}}</th>
+                  <th data-col-key="reads">{{$.T "stations.vault_reads"}}</th>
+                  <th data-col-key="updated">{{$.T "stations.vault_updated"}}</th>
+                  <th data-nosort>{{$.T "stations.col_actions"}}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{$sid := .StationID}}
+                {{$rec := .Recoverable}}
+                {{range .Vault}}
+                <tr>
+                  <td class="mono">{{.Name}}
+                    {{if .DeletedAt}}<span class="badge badge--plain" title="{{$.T "stations.vault_deleted_help"}}">{{$.T "stations.vault_deleted"}}</span>{{end}}
+                  </td>
+                  <td>{{if .Note}}{{.Note}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
+                  <td data-sort="{{.SizeBytes}}">{{.SizeBytes}} B</td>
+                  <td data-sort="{{.ReadCount}}">{{.ReadCount}}</td>
+                  <td data-sort="{{.UpdatedAt}}">{{localtime .UpdatedAt}} <span class="muted">r{{.Rev}}</span></td>
+                  <td>
+                    <div class="inline">
+                      {{if not .DeletedAt}}
+                      <form method="post" action="/stations/{{$sid}}/vault/reveal">
+                        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                        <input type="hidden" name="name" value="{{.Name}}">
+                        <button class="btn btn--sm" type="submit" title="{{$.T "stations.vault_reveal_help"}}">{{$.T "stations.vault_reveal"}}</button>
+                      </form>
+                      {{end}}
+                      {{if index $rec .Name}}
+                      <form method="post" action="/stations/{{$sid}}/vault/restore">
+                        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                        <input type="hidden" name="name" value="{{.Name}}">
+                        <button class="btn btn--sm btn--ghost" type="submit" title="{{$.T "stations.vault_restore_help"}}">{{$.T "stations.vault_restore"}}</button>
+                      </form>
+                      {{end}}
+                    </div>
+                  </td>
+                </tr>
+                {{end}}
+              </tbody>
+            </table>
+
+            <!-- The read trail, and HOW MUCH OF IT THIS IS. The per-secret counts above
+                 are exact; this list is bounded. Saying so is the difference between a
+                 bound and a silent truncation. -->
+            {{if .VaultReads}}
+            <p class="help">{{$.T "stations.vault_trail"}} &mdash;
+              {{if gt .VaultTotal (len .VaultReads)}}{{$.T "stations.vault_trail_bounded"}} {{len .VaultReads}} / {{.VaultTotal}}{{else}}{{.VaultTotal}}{{end}}
+            </p>
+            <ul class="plain">
+              {{range .VaultReads}}
+              <li class="help"><span class="mono">{{.Name}}</span> &middot; {{.Via}} &middot; {{localtime .ReadAt}}</li>
+              {{end}}
+            </ul>
+            {{end}}
+            {{end}}
+          </details>
 
           <!-- publish / archive -->
           <div class="inline">

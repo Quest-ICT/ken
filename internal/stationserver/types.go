@@ -198,6 +198,51 @@ type lockerGetOut struct {
 	SHA256 string `json:"sha256"`
 }
 
+// --- vault ---------------------------------------------------------------
+//
+// vaultMeta is what every surface EXCEPT a read is allowed to see. There is no
+// `secret` field on it by construction rather than by discipline: a listing that
+// could carry a value would eventually carry one.
+type vaultMeta struct {
+	Name      string `json:"name"`
+	Note      string `json:"note,omitempty"`
+	Bytes     int    `json:"bytes"`
+	SHA256    string `json:"sha256"`
+	Rev       int    `json:"rev"`
+	ReadCount int    `json:"read_count"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+	// Non-empty means this name is a tombstone. The value is still recoverable from the
+	// console, which is why the field says when rather than whether.
+	DeletedAt string `json:"deleted_at,omitempty"`
+}
+type vaultListOut struct {
+	Secrets []vaultMeta `json:"secrets"`
+}
+type vaultPutIn struct {
+	Name   string `json:"name" jsonschema:"required; a flat label, never a path"`
+	Secret string `json:"secret" jsonschema:"required; the credential itself"`
+	Note   string `json:"note,omitempty" jsonschema:"what this is and where it came from — shown to your human INSTEAD of the value"`
+}
+type vaultPutOut struct {
+	vaultMeta
+	// HistoryDropped is how many recoverable older values this write pushed out of the
+	// bound. Non-zero is worth repeating to your human: those values are gone.
+	HistoryDropped int `json:"history_dropped,omitempty"`
+}
+type vaultGetIn struct {
+	Name string `json:"name" jsonschema:"required"`
+}
+type vaultGetOut struct {
+	Name   string `json:"name"`
+	Secret string `json:"secret"`
+	Note   string `json:"note,omitempty"`
+	Bytes  int    `json:"bytes"`
+	SHA256 string `json:"sha256"`
+	// ReadCount includes this read. It is here so a session can notice a secret being
+	// read far more often than its own use explains.
+	ReadCount int `json:"read_count"`
+}
+
 type countOut struct {
 	Count int `json:"count"`
 }

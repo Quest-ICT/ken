@@ -501,7 +501,7 @@ func runServe(args []string) {
 				return out, nil
 			}
 		}
-		sd.TaskLimits, sd.NoteLimits, sd.LockerLimits = stationLimits(live.Current())
+		sd.TaskLimits, sd.NoteLimits, sd.LockerLimits, sd.VaultLimits = stationLimits(live.Current())
 		stationHandler := stationserver.NewHTTPHandler(sd)
 		// Live: an operator lowering a station cap is usually reacting to something
 		// already growing, which is the worst case for "applies at the next restart".
@@ -987,7 +987,7 @@ func openComm(path string, limits comm.Limits) (*comm.Store, error) {
 // KiB rather than bytes in the settings, because these are the numbers an operator
 // reasons about in a backup conversation — "four megabytes of notebook per station"
 // is a sentence, "4194304" is not.
-func stationLimits(s *settings.Snapshot) (store.StationTaskLimits, store.StationNoteLimits, store.StationLockerLimits) {
+func stationLimits(s *settings.Snapshot) (store.StationTaskLimits, store.StationNoteLimits, store.StationLockerLimits, store.StationVaultLimits) {
 	return store.StationTaskLimits{
 			MaxOpen:               s.StationMaxOpenTasks,
 			MaxTextBytes:          s.StationTaskTextBytes,
@@ -1003,15 +1003,22 @@ func stationLimits(s *settings.Snapshot) (store.StationTaskLimits, store.Station
 		store.StationLockerLimits{
 			MaxBlobBytes:  s.StationLockerBlobKiB << 10,
 			MaxTotalBytes: s.StationLockerTotalKiB << 10,
+		},
+		store.StationVaultLimits{
+			MaxSecretBytes:    s.StationVaultSecretKiB << 10,
+			MaxEntries:        s.StationVaultEntries,
+			MaxHistoryPerName: s.StationVaultHistoryRev,
+			MaxReadLog:        s.StationVaultReadLog,
 		}
 }
 
 // stationRelevant is the changed-subset key for station settings, so an unrelated
 // edit (a rate limit, a TLS field) does not churn the live bounds.
 func stationRelevant(v settings.Values) string {
-	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%d",
+	return fmt.Sprintf("%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
 		v.StationNotePageKiB, v.StationNoteRevisionKiB, v.StationNotebookKiB,
 		v.StationLockerBlobKiB, v.StationLockerTotalKiB,
 		v.StationMaxOpenTasks, v.StationTaskTextBytes, v.StationTaskDetailBytes,
-		v.StationTaskListLimit)
+		v.StationTaskListLimit,
+		v.StationVaultSecretKiB, v.StationVaultEntries, v.StationVaultHistoryRev, v.StationVaultReadLog)
 }

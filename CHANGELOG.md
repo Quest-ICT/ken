@@ -15,6 +15,42 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **The station vault — somewhere for a credential to live.** `station_vault_list` / `_put` / `_get` /
+  `_delete`, plus a console surface at `/stations`. The locker's own text says *"NEVER put a token, key
+  or password here"*, which was correct and left a station with **nowhere to put one at all** — and a
+  prohibition with no alternative is advice a session eventually has to break.
+
+  It is the locker's sibling and differs everywhere it matters: a listing **never** returns a value,
+  every read is **logged** (a session's `_get` and a human's console reveal land in the same trail,
+  distinguished by which one it was), and **nothing is destroyed** — an overwrite keeps the previous
+  value and a delete is a tombstone the console can restore.
+
+  **Values are stored unencrypted, and that is the design rather than a gap.** Encrypting them needs a
+  key, the key would live in the same `ken.db`, and lock and key would travel together in every backup —
+  protecting nobody who can read the file while inviting an operator to relax a control that is not
+  there. So the boundary is stated instead of simulated: confidentiality is the host and the backup.
+  `docs/BACKUP.md` is corrected in the same change, because its promise that "no credential Ken stores
+  is replayable" becomes false the day this ships, and an operator who designed a backup chain around
+  that sentence has to be told rather than left to discover it.
+
+  Restore is **console-only with no station tool**: a session that has just destroyed something by
+  mistake is not the party to decide what goes back.
+
+  Four settings under Stations, with the audit trail bounded like everything else — but the per-secret
+  read COUNT is kept exactly, so the console says "the last 20 of 2,318" rather than presenting 20 as
+  the whole story. That is S12's fail-loud rule applied to an audit log, and a deliberate refusal of
+  the notebook's silent revision pruning.
+
+- **A test that every template string exists in English.** `T` returns the KEY when a lookup misses,
+  which is right at runtime and invisible to every other test: the page renders, the handler returns
+  200, the suite is green, and the console shows `stations.vault_help` to the operator. The settings
+  registry has had a drift test since 2.0.0; the templates, where most visible text lives, had none.
+  Written after this release's own console section would have shipped twenty-two raw keys with a clean
+  test run.
+
+
 ## [2.2.0] — 2026-08-11
 
 ### Added

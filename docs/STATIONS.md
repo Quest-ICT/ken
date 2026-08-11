@@ -367,6 +367,9 @@ preferences, paths, conventions.
   Notebook pages and locker blobs are opaque content Ken does not inspect; whatever an operator or an
   agent puts there is in the snapshot verbatim.* Both sentences land together or the guarantee is
   false the day this ships.
+- **The rule now has an answer, which it did not when it was written.** "Never a credential here" left a
+  station with nowhere to put one at all, and a prohibition with no alternative is advice a session
+  eventually has to break. S13 is where credentials go.
 
 ### S12 — Caps are a backup decision; refuse, never evict *(chosen: bounded, fail-loud)*
 
@@ -386,6 +389,50 @@ every off-box copy.
   contract.
 
 ---
+
+### S13 — The vault is the credential store, and it does not pretend to be encrypted *(chosen: plaintext, audited, reversible)*
+
+The locker's sibling, and the answer to what S11 forbids. A station may hold credentials — tokens, keys,
+passwords, connection strings — in `station_vault_*`, which is a different thing from the locker in every
+way that matters.
+
+| | locker | vault |
+|---|---|---|
+| holds | opaque blobs | small text credentials |
+| listing shows | metadata, bytes fetchable | metadata only, **never a value** |
+| reads | unaudited | **every read logged**, station and console alike |
+| delete | destructive | **tombstone**, value recoverable |
+| overwrite | destructive | previous value kept |
+
+**Why the values are stored in plaintext, which is the decision most worth arguing with.** Encrypting
+them needs a key; the key would live in the same `ken.db`; lock and key would then travel together in
+every backup. The encryption would protect nobody who can read the file, while inviting an operator to
+relax a control that is not there. So the boundary is **stated instead of simulated**: confidentiality
+comes from the host and the backup, and `BACKUP.md` says so in the same change — its "no credential Ken
+stores is replayable" sentence is now split between what Ken **mints** (verifiers, not replayable) and
+what a session **puts in a vault** (plaintext, replayable, by design).
+
+This followed an explicit instruction, after age-encrypted snapshots cost real production pain: security
+is not a functional concern of Ken, and *"a non-encrypted database up to the backup point"* is preferred
+to a key-management problem that buys nothing.
+
+**Why every write is reversible.** The condition attached to storing secrets at all was that doing so
+"does not modify them or at least it is reversible". `station_locker_delete` destroys; the vault must
+not. An update pushes the previous value into a bounded history and a delete is a tombstone, so a
+session that overwrites the wrong name costs its human a click rather than the credential. **Restore is
+console-only and has no station tool** — a session that has just destroyed something by mistake is not
+the party to decide what goes back.
+
+**Why reads are audited.** A secret store whose reads are invisible cannot answer the only question
+worth asking after something leaks. The trail is bounded like everything else here, and the per-secret
+read COUNT is kept exactly, so the console says *"the last 20 of 2,318"* rather than presenting 20 as
+the whole story — S12's fail-loud rule applied to an audit log, and a deliberate refusal of the
+notebook's silent revision pruning.
+
+**What it is not.** Not a KMS, not multi-user, not private from the human who owns the instance — they
+can read every value from `/stations`, and that read is logged like any other. The operating model this
+sits in has exactly one human per instance (see `docs/DESIGN.md`); a second person with console access
+is outside the threat model rather than defended against.
 
 ## 3. Model
 
@@ -491,12 +538,13 @@ transfer collides on it, and every station is expected to have one.
 | `station_me` | Who am I, my links, my counts — the briefing on demand. Sets `self_described_*`. |
 | `station_binding_voucher` | Exchange the header credential for a single-use voucher naming ONE endpoint, which `comm_bind` redeems. |
 | `station_request` | Ask the human to create a station. The only tool a station-less key may call. |
-| `station_directory` | **NOT BUILT.** Published stations plus those I have a link to. A session names a peer by the name its human uses; discovery is deferred until there are enough stations for a list to beat asking. |
+| `station_directory` | Published stations plus those I have a link to. A session names a peer by the name its human uses; discovery is deferred until there are enough stations for a list to beat asking. |
 | `station_link_request` | Ask the human to approve a relationship: `to_station`, `reason` (human-only). |
 | `station_note_list` / `_read` / `_write` | Keys, titles, sizes; one page; `append`/`replace` with `if_rev`. |
 | `station_note_promote` | Open a pending promotion for the human to convert (S10). |
 | `station_task_add` / `_list` / `_close` / `_drop` / `_defer` | §11.8. Closing is the cheapest verb, deliberately. |
-| `station_locker_*` | `list` and `put` shipped; `get` and `delete` are the console's job today (§10). Bounded; refuses over cap rather than evicting (S12). |
+| `station_locker_*` | `list`, `put`, `get`, `delete`. Bounded; refuses over cap rather than evicting (S12). |
+| `station_vault_*` | `list`, `put`, `get`, `delete` — credentials, which the locker forbids (S13). Listing never returns a value; every `get` is logged; `delete` is reversible from the console. |
 
 ### Scopes
 
@@ -566,6 +614,10 @@ multiplier from S12.
 | revision history per page | 256 KiB, pruned oldest-first | an undo buffer, not an archive (S12's carve-out) |
 | notebook per station | 4 MiB of **head revisions** | ~60 full pages; history is bounded separately above |
 | locker blob / total | 256 KiB / 2 MiB | memory and instruction files, not payloads |
+| vault secret | 8 KiB | a PEM private key fits; anything larger is a file, and files go in the locker |
+| secrets per station | 64 | a vault this full is holding something that belongs elsewhere |
+| vault versions per secret | 16, pruned oldest-first, **and the write reports what it dropped** | what makes an overwrite reversible; at 0 an overwrite is final |
+| vault reads retained | 500 per station | the trail is bounded; the per-secret read COUNT is exact regardless, so the console can say "the last 20 of 2,318" |
 | open tasks per station | 500 | a longer list is not being worked |
 | task `text` / `resolution` | 512 B each | one line, by construction |
 | task `detail` + `context` | 4 KiB | a task needing more than this is a notebook page with a plan |
@@ -593,6 +645,11 @@ gated on that flag alone — never on `KEN_COMM_ENABLED`, because stations work 
 - **name the station at approval**, and publish/unpublish;
 - per-station **asset usage against the caps**, with notebook, task and locker views (locker with
   download);
+- the **vault** (S13) — names, notes, sizes, revision and **read count**, never values. One reveal
+  button per secret, which is a POST and shows the value once in the response rather than redirecting
+  with it in a URL; the reveal lands in the same read trail a session's `station_vault_get` does,
+  marked `console`. Deleted secrets stay listed as recoverable tombstones with a restore control, and
+  the trail states how much of itself it is showing when it has been pruned;
 - the **cross-station task view** §11.8 requires — every open task in the space, ordered by the §11.5
   contract, `blocked_on` filtering to `human` by default, station name as a column, archived stations
   marked, and the `hearsay_at_write` badge shown exactly as S9 badges a peer-prompted request. This is

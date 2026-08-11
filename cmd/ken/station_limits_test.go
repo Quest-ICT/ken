@@ -17,10 +17,12 @@ func TestStationLimitsMapsEverySetting(t *testing.T) {
 		StationLockerBlobKiB: 14, StationLockerTotalKiB: 15,
 		StationMaxOpenTasks: 16, StationTaskTextBytes: 17,
 		StationTaskDetailBytes: 18, StationTaskListLimit: 19,
+		StationVaultSecretKiB: 20, StationVaultEntries: 21,
+		StationVaultHistoryRev: 22, StationVaultReadLog: 23,
 	}
-	task, note, locker := stationLimits(&settings.Snapshot{Values: v})
+	task, note, locker, vault := stationLimits(&settings.Snapshot{Values: v})
 
-	for _, got := range []any{task, note, locker} {
+	for _, got := range []any{task, note, locker, vault} {
 		rv := reflect.ValueOf(got)
 		for i := 0; i < rv.NumField(); i++ {
 			if rv.Field(i).IsZero() {
@@ -38,5 +40,15 @@ func TestStationLimitsMapsEverySetting(t *testing.T) {
 	}
 	if locker.MaxTotalBytes != 15<<10 {
 		t.Errorf("locker total = %d bytes, want %d", locker.MaxTotalBytes, 15<<10)
+	}
+	if vault.MaxSecretBytes != 20<<10 {
+		t.Errorf("vault secret = %d bytes, want %d", vault.MaxSecretBytes, 20<<10)
+	}
+	// The vault's COUNTS are not sizes and must NOT be shifted. A KiB conversion applied
+	// to "how many secrets" would turn a 64-entry cap into 65,536, which reads as working
+	// and is the same class of error as a missing shift, in the other direction.
+	if vault.MaxEntries != 21 || vault.MaxHistoryPerName != 22 || vault.MaxReadLog != 23 {
+		t.Errorf("a vault COUNT was converted as if it were a size: entries=%d history=%d readlog=%d, want 21/22/23",
+			vault.MaxEntries, vault.MaxHistoryPerName, vault.MaxReadLog)
 	}
 }

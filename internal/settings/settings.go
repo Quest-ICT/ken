@@ -104,6 +104,10 @@ type Values struct {
 	StationTaskTextBytes   int
 	StationTaskDetailBytes int
 	StationTaskListLimit   int
+	StationVaultSecretKiB  int
+	StationVaultEntries    int
+	StationVaultHistoryRev int
+	StationVaultReadLog    int
 }
 
 // Snapshot is Values plus the derived objects consumers read.
@@ -287,6 +291,18 @@ var Fields = []Field{
 	intField("station_locker_total_kib", "Stations", "Locker per station (KiB)",
 		"Total locker storage one station may use. Everything here lands verbatim in your backups, and Ken cannot inspect it.",
 		func(v Values) int { return v.StationLockerTotalKiB }, func(v *Values, n int) { v.StationLockerTotalKiB = n }, 16, 65536),
+	intField("station_vault_secret_kib", "Stations", "Vault secret size (KiB)",
+		"The largest single credential a station may store. A PEM private key fits; anything larger is a file, and files belong in the locker.",
+		func(v Values) int { return v.StationVaultSecretKiB }, func(v *Values, n int) { v.StationVaultSecretKiB = n }, 1, 256),
+	intField("station_vault_entries", "Stations", "Secrets per station",
+		"How many credentials one station may hold. Everything here is stored UNENCRYPTED and travels in every backup — the protection is the machine and the backup, not Ken.",
+		func(v Values) int { return v.StationVaultEntries }, func(v *Values, n int) { v.StationVaultEntries = n }, 1, 1000),
+	intField("station_vault_history_rev", "Stations", "Vault versions kept per secret",
+		"How many superseded values stay recoverable after an overwrite or a delete. This is what makes a vault write reversible; at 0 an overwrite is final.",
+		func(v Values) int { return v.StationVaultHistoryRev }, func(v *Values, n int) { v.StationVaultHistoryRev = n }, 0, 200),
+	intField("station_vault_read_log", "Stations", "Vault reads kept per station",
+		"How many read records the audit trail retains. The per-secret read COUNT is exact regardless, so lowering this shortens the trail without hiding how often something was read.",
+		func(v Values) int { return v.StationVaultReadLog }, func(v *Values, n int) { v.StationVaultReadLog = n }, 10, 100000),
 	intField("station_max_open_tasks", "Stations", "Open tasks per station",
 		"How many tasks a station may have open at once. A list longer than this is not being worked, and refusing is more honest than letting it grow.",
 		func(v Values) int { return v.StationMaxOpenTasks }, func(v *Values, n int) { v.StationMaxOpenTasks = n }, 10, 5000),
@@ -540,6 +556,10 @@ func DefaultsFromEnv() Values {
 		StationTaskTextBytes:   512,
 		StationTaskDetailBytes: 4096,
 		StationTaskListLimit:   50,
+		StationVaultSecretKiB:  8,
+		StationVaultEntries:    64,
+		StationVaultHistoryRev: 16,
+		StationVaultReadLog:    500,
 	}
 	// Clamp env-provided values so a bad env can't silently disable the limiter or overflow.
 	if v.IPPerMin <= 0 {

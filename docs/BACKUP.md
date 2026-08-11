@@ -5,12 +5,23 @@ Ken's data lives in one SQLite file (`data/ken.db` + its `-wal`/`-shm` sidecars)
 **What is in a snapshot.** A snapshot is a byte-complete copy of the knowledge base: every entry and
 every superseded revision (including proposals a human never promoted), the full curation history
 (`entry_version` + `curation_event`), embeddings, the human curator accounts, and the agent/MCP token
-records. **No credential Ken *stores* is replayable:** passwords are Argon2id hashes, API-token secrets
-are stored hashed (station keys included), and web-session ids are stored as a SHA-256 of the cookie (so
-a captured session cannot be replayed either — fixed in 1.4.1; before that, a snapshot taken while a
-curator was logged in did carry a usable session). What a snapshot still *is*: the entire content of your
-knowledge base plus the list of who has access to it. Treat one snapshot file as equivalent to a full
-dump of the instance.
+records — **and, since the station vault shipped, any credential a session deliberately stored there,
+in the clear.**
+
+**Every credential Ken MINTS is stored as a verifier and is not replayable:** passwords are Argon2id
+hashes, API-token secrets are stored hashed (station keys included), and web-session ids are stored as a
+SHA-256 of the cookie (so a captured session cannot be replayed either — fixed in 1.4.1; before that, a
+snapshot taken while a curator was logged in did carry a usable session).
+
+**Every credential a session PUTS IN THE VAULT is stored as plaintext and is replayable by anyone
+holding the file.** That is the vault's stated design, not an oversight: encrypting it would need a key,
+the key would live in the same database, and lock and key would travel together in every snapshot — so
+the encryption would protect nobody who can read the file while inviting you to relax a control that was
+never there. The confidentiality boundary for those values is **this file and the machine it sits on**.
+
+What a snapshot still *is*: the entire content of your knowledge base, the list of who has access to it,
+and whatever your sessions have put in their vaults. Treat one snapshot file as equivalent to a full
+dump of the instance **plus its credentials**.
 
 > **The wording is "credential Ken stores", and the narrowing is deliberate — it arrived with stations
 > in 1.4.2.** Notebook pages and locker blobs are opaque content Ken does not inspect: it cannot look at
@@ -20,6 +31,14 @@ dump of the instance.
 > default, so a snapshot may contain whatever the notebook and locker were given, verbatim — one more
 > reason to read a station's locker in the console if you ever
 > suspect one.
+>
+> **The vault made this explicit rather than incidental.** Until it shipped, every secret in ken.db was a
+> verifier, and a credential landing in a snapshot was a session ignoring its instructions. The vault is
+> the place a session is *told* to put credentials, so a deployment using it has plaintext secrets in
+> every snapshot **by design**. `/stations` lists what each vault holds — names, sizes and read counts,
+> never values — so you can see what a snapshot of yours would carry without revealing anything to find
+> out. If that is not a trade you want, the answer is not to use the vault; there is no configuration
+> that makes those values safe inside a file somebody else can read.
 
 > **Inter-session communication (COMM) state is deliberately NOT backed up.** COMM is on by default; it
 > keeps its own database and relayed files under `data/comm/`, and neither tier above covers them:
@@ -234,9 +253,11 @@ undedupable**, since ciphertext shares no bytes with yesterday's ciphertext. Rem
 is what allowed the 68% saving above to exist at all.
 
 **What a stolen snapshot yields:** every entry and its full revision history, every
-station notebook, task and locker. Passwords, tokens and endpoint secrets are stored as
-verifiers and are **not** replayable. Treat the file as though it were the knowledge it
-contains, because it is.
+station notebook, task and locker, **and every station vault in plaintext**. Passwords,
+tokens and endpoint secrets that KEN mints are stored as verifiers and are **not**
+replayable; credentials a session stored in a vault are, because that is what a vault is
+for. Treat the file as though it were the knowledge it contains **and the credentials it
+carries**, because it is both.
 
 **A reasonable path, offered as an example rather than a requirement:** pull it over a
 private link to a host you control, keep it on a filesystem only that host's operator can

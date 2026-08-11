@@ -58,6 +58,7 @@ type Deps struct {
 	TaskLimits   store.StationTaskLimits
 	NoteLimits   store.StationNoteLimits
 	LockerLimits store.StationLockerLimits
+	VaultLimits  store.StationVaultLimits
 
 	// limits reads the live bundle. Set by NewHTTPHandler; nil in tests that build a
 	// server directly, where the starting values stand.
@@ -84,6 +85,12 @@ func (d Deps) lockerLim() store.StationLockerLimits {
 	}
 	return d.LockerLimits
 }
+func (d Deps) vaultLim() store.StationVaultLimits {
+	if d.limits != nil {
+		return d.limits().Vault
+	}
+	return d.VaultLimits
+}
 
 // Handler is the station MCP endpoint.
 type Handler struct {
@@ -101,12 +108,13 @@ type limits struct {
 	Task   store.StationTaskLimits
 	Note   store.StationNoteLimits
 	Locker store.StationLockerLimits
+	Vault  store.StationVaultLimits
 }
 
 // SetLimits applies new bounds live. Zero-valued members keep their defaults, so a
 // partially-filled struct cannot silently set a cap to zero — which for a retention
 // bound would mean "prune everything".
-func (h *Handler) SetLimits(task store.StationTaskLimits, note store.StationNoteLimits, locker store.StationLockerLimits) {
+func (h *Handler) SetLimits(task store.StationTaskLimits, note store.StationNoteLimits, locker store.StationLockerLimits, vault store.StationVaultLimits) {
 	if task.MaxOpen == 0 {
 		task = store.DefaultStationTaskLimits()
 	}
@@ -116,7 +124,10 @@ func (h *Handler) SetLimits(task store.StationTaskLimits, note store.StationNote
 	if locker.MaxBlobBytes == 0 {
 		locker = store.DefaultStationLockerLimits()
 	}
-	h.lim.Store(&limits{Task: task, Note: note, Locker: locker})
+	if vault.MaxSecretBytes == 0 {
+		vault = store.DefaultStationVaultLimits()
+	}
+	h.lim.Store(&limits{Task: task, Note: note, Locker: locker, Vault: vault})
 }
 
 // NewHTTPHandler builds the endpoint: a streamable-HTTP MCP server wrapped in
@@ -137,8 +148,11 @@ func NewHTTPHandler(d Deps) *Handler {
 	if d.LockerLimits.MaxBlobBytes == 0 {
 		d.LockerLimits = store.DefaultStationLockerLimits()
 	}
+	if d.VaultLimits.MaxSecretBytes == 0 {
+		d.VaultLimits = store.DefaultStationVaultLimits()
+	}
 	h := &Handler{}
-	h.SetLimits(d.taskLim(), d.noteLim(), d.lockerLim())
+	h.SetLimits(d.taskLim(), d.noteLim(), d.lockerLim(), d.vaultLim())
 	d.limits = func() *limits { return h.lim.Load() }
 	srv := newServer(d)
 	// Idle sessions are closed. The SDK's zero value means "never", which is what
@@ -193,8 +207,18 @@ NOTEBOOK — working state, not knowledge:
 - station_note_promote does not write knowledge; it asks your human to convert a page.
 
 LOCKER — the non-secret half of a working identity: memory and instruction files, tool
-preferences, conventions. NEVER a token, key or password. Ken cannot inspect a blob and
-know it is a secret, so this rule is yours to keep.
+preferences, conventions. NEVER a token, key or password — those go in the VAULT, which
+exists for exactly that. Ken cannot inspect a blob and know it is a secret, so this rule
+is yours to keep.
+
+VAULT — where a credential belongs: station_vault_put / _get / _list / _delete. Three
+things about it are worth knowing rather than discovering:
+- Values are stored UNENCRYPTED and travel in every backup. The protection is the machine
+  and the backup, not Ken. This is a deliberate decision, not a gap — a key kept beside
+  the ciphertext protects nobody who can read the file.
+- Every READ is logged and shows up in your human's console with the name and the time.
+- Nothing is destroyed. An overwrite keeps the previous value and a delete is reversible,
+  so a mistake here costs your human a click rather than the credential.
 
 Your human reads all of it. Nothing here is private from them.`
 
@@ -607,6 +631,85 @@ func newServer(d Deps) *mcp.Server {
 			return nil, okOut{}, err
 		}
 		err = d.Store.DeleteStationLockerBlob(ctx, p.StationID, in.Name)
+		return nil, okOut{OK: err == nil}, err
+	})
+
+	// --- vault --------------------------------------------------------------
+	//
+	// The locker's sibling, and the answer to what its own text forbids. Gated on the
+	// same station scope for the same reason: a station either has a vault or it does
+	// not, and "does this key carry one" is not a question a session can act on.
+	addTool(s, d, &mcp.Tool{
+		Name: "station_vault_list",
+		Description: "Secrets held for this station — names, notes, digests and how often each has been read. " +
+			"NEVER values: reading one is a separate, logged call. Entries marked with deleted_at are recoverable.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, vaultListOut, error) {
+		p, err := requireLocker(ctx)
+		if err != nil {
+			return nil, vaultListOut{}, err
+		}
+		es, err := d.Store.ListStationVault(ctx, p.StationID)
+		if err != nil {
+			return nil, vaultListOut{}, err
+		}
+		out := vaultListOut{Secrets: make([]vaultMeta, 0, len(es))}
+		for _, e := range es {
+			out.Secrets = append(out.Secrets, vaultMeta{Name: e.Name, Note: e.Note, Bytes: e.SizeBytes,
+				SHA256: e.SHA256, Rev: e.Rev, ReadCount: e.ReadCount, UpdatedAt: e.UpdatedAt, DeletedAt: e.DeletedAt})
+		}
+		return nil, out, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name: "station_vault_put",
+		Description: "Store a credential against this station — a token, key, password or connection string. This is " +
+			"where those belong; the LOCKER is not. Two things to know rather than discover: your human can read " +
+			"anything here from the console, and it is stored unencrypted, so the protection is the machine and the " +
+			"backup rather than Ken. Writes are reversible — an overwrite keeps the previous value.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultPutIn) (*mcp.CallToolResult, vaultPutOut, error) {
+		p, err := requireLocker(ctx)
+		if err != nil {
+			return nil, vaultPutOut{}, err
+		}
+		e, dropped, err := d.Store.PutStationVaultSecret(ctx, d.vaultLim(), p.StationID, in.Name, in.Secret, in.Note, p.TokenID, p.ActorID)
+		if err != nil {
+			return nil, vaultPutOut{}, err
+		}
+		return nil, vaultPutOut{
+			vaultMeta:      vaultMeta{Name: e.Name, Note: e.Note, Bytes: e.SizeBytes, SHA256: e.SHA256, Rev: e.Rev},
+			HistoryDropped: dropped,
+		}, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name: "station_vault_get",
+		Description: "Read one secret back. THIS CALL IS LOGGED — the name, the time and your identity appear in your " +
+			"human's console, which is the point of keeping credentials here rather than in a file. Use the value; " +
+			"do not repeat it into the conversation unless you have to.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, vaultGetOut, error) {
+		p, err := requireLocker(ctx)
+		if err != nil {
+			return nil, vaultGetOut{}, err
+		}
+		e, err := d.Store.GetStationVaultSecret(ctx, d.vaultLim(), p.StationID, in.Name, "station", p.TokenID, p.ActorID)
+		if err != nil {
+			return nil, vaultGetOut{}, err
+		}
+		return nil, vaultGetOut{Name: e.Name, Secret: e.Secret, Note: e.Note,
+			Bytes: e.SizeBytes, SHA256: e.SHA256, ReadCount: e.ReadCount}, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name: "station_vault_delete",
+		Description: "Retire a secret. It stops being readable immediately and stays RECOVERABLE from your human's " +
+			"console — deliberately unlike station_locker_delete, which destroys. Rotating a credential is a put, not " +
+			"a delete then a put.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, okOut, error) {
+		p, err := requireLocker(ctx)
+		if err != nil {
+			return nil, okOut{}, err
+		}
+		err = d.Store.DeleteStationVaultSecret(ctx, d.vaultLim(), p.StationID, in.Name, p.TokenID, p.ActorID)
 		return nil, okOut{OK: err == nil}, err
 	})
 

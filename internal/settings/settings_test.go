@@ -37,6 +37,10 @@ var testDefaults = settings.Values{
 	StationTaskTextBytes:   512,
 	StationTaskDetailBytes: 4096,
 	StationTaskListLimit:   50,
+	StationVaultSecretKiB:  8,
+	StationVaultEntries:    64,
+	StationVaultHistoryRev: 16,
+	StationVaultReadLog:    500,
 }
 
 func testStore(t *testing.T) *store.Store {
