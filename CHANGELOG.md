@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-08-11
+
 ### Added
 
 - **`comm_channels` reports how many messages are waiting for you**, counted without
@@ -1768,7 +1770,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.1.0
 [2.0.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.0.0
 [1.7.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.7.0
 [1.6.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.6.0

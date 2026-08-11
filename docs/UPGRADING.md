@@ -34,6 +34,14 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+*Nothing yet.*
+
+---
+
+## 2.1.0
+
+Additive only — nothing removed, nothing renamed, no setting changes meaning.
+
 ### `comm_channels` gained a `pending` field
 
 **Observed:** the result now carries a per-channel count of messages waiting for you.
