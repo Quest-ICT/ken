@@ -55,10 +55,10 @@
     <h2 class="h3" style="margin:var(--sp-5) 0 var(--sp-3)">{{.T "consent.write_as_heading"}}</h2>
     <div class="field">
       <select class="input" name="write_as" title="{{.T "consent.write_as_help"}}">
-        <option value="">{{.T "consent.write_as_default"}}</option>
         {{range .Data.Actors}}
-        <option value="{{.ID}}">{{.Kind}}:{{.Name}}{{if .HasComm}} &mdash; {{$.T "consent.write_as_has_comm"}}{{end}}</option>
+        <option value="{{.ID}}"{{if .HasComm}} selected{{end}}>{{.Kind}}:{{.Name}}{{if .HasComm}} &mdash; {{$.T "consent.write_as_has_comm"}}{{end}}</option>
         {{end}}
+        <option value="">{{.T "consent.write_as_default"}}</option>
       </select>
       <span class="help">{{.T "consent.write_as_help"}}</span>
     </div>

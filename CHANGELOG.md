@@ -17,6 +17,33 @@ same change — never "docs later".
 
 ### Fixed
 
+- **The hearsay badge claimed more than it detects.** Its tooltip said "the session that
+  wrote this had recently received a message" — but `ReceivedSince` is keyed on the
+  ACTOR, and an actor covers every session on a machine. `ken-prod-ops` measured eight
+  endpoints under one actor on the live deployment, so the badge means *an agent under
+  this identity was talking recently*, not *this writer relayed something*. The wording
+  now says what was observed and names the gap; the label keeps its question mark, which
+  was always doing the hedging the tooltip failed to.
+
+  It also means the badge is nearly always on where several sessions share a machine —
+  and a badge that is never absent carries no information. Narrowing it to the writing
+  session needs the knowledge-base and messaging identities to be the same one, which is
+  the one-identity work.
+
+- **The consent picker defaulted to the identity that cannot be marked.** Actors holding
+  a messaging token now come first and the first is pre-selected; "a new identity named
+  after this application" moved to the bottom.
+
+  Prod's grant chain is the evidence: `id=7` was approved with the picker on its first
+  option, resolving straight back to the dead actor, and `id=8` was the corrected retry.
+  The option text was accurate and its help said plainly that marking would never happen
+  — it was simply first, on a screen someone was clicking through to restore access they
+  had just cut off. **A default that must be argued against on every use is a defect in
+  the default, not in the reader.**
+
+
+### Fixed
+
 - **`ken_prune_pre_upgrade` did nothing on a standard install.** It shipped in 2.0.0,
   ran nightly, logged success, exited 0, and deleted no files at all — because `find`
   does not descend into a **symlinked** starting point, and the default layout is exactly

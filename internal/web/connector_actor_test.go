@@ -173,3 +173,64 @@ func registerTestClient(t *testing.T, st *store.Store, ctx context.Context) (*st
 	}
 	return st.OAuthClientByID(ctx, id)
 }
+
+// The DEFAULT must be the answer that works, not the one that is easiest to reach.
+//
+// This exists because an honest default still caught a careful operator.
+// ken-prod-ops recorded the grant chain: id=7 was approved with the picker left on its
+// first option — "A new identity named after this application" — which resolved
+// straight back to the actor whose hearsay marker is dead. The option text was accurate
+// and its help said plainly that marking would never happen; it was simply first on a
+// screen someone was clicking through to restore access they had just cut off.
+//
+// So the ordering changed rather than the wording: actors holding a messaging token
+// come first and the first of them is pre-selected, and "a new identity" moved to the
+// bottom. A default that has to be argued against on every use is a defect in the
+// default, not in the reader.
+func TestTheConsentPickerDefaultsToAnActorThatCanBeMarked(t *testing.T) {
+	st, ctx, cli, base := oauthHarness(t)
+
+	// One actor with a messaging token, one without — the real shape of a deployment.
+	withComm, err := st.FindOrCreateActor(ctx, "ai", "claude@thisbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.IssueToken(ctx, withComm, []string{"comm"}, "this machine"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.FindOrCreateActor(ctx, "human", "vlad"); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := registerTestClient(t, st, ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := get(t, cli, base+"/oauth/authorize?response_type=code&client_id="+client.ClientID+
+		"&redirect_uri="+url.QueryEscape(client.RedirectURIs[0])+
+		"&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&state=xyz")
+
+	sel := strings.Index(page, `name="write_as"`)
+	if sel < 0 {
+		t.Fatal("the consent screen offers no authoring identity at all")
+	}
+	block := page[sel:]
+	if end := strings.Index(block, "</select>"); end > 0 {
+		block = block[:end]
+	}
+
+	// The pre-selected option must be a real actor, never the blank fallback.
+	marked := strings.Index(block, "selected")
+	if marked < 0 {
+		t.Fatal("no option is pre-selected, so the browser picks the first one — which is how a connector ends up authoring under an identity whose marker can never fire")
+	}
+	if strings.Contains(block[:marked], `value=""`) {
+		t.Fatal("the blank 'new identity' option comes before the pre-selected one — it is again the path of least resistance")
+	}
+
+	// CONTROL: the fallback is still offered. Removing the choice would be a different
+	// change, and an operator who genuinely wants a fresh identity must still get one.
+	if !strings.Contains(block, `value=""`) {
+		t.Fatal("the 'new identity' option is gone entirely — this was a reordering, not a removal")
+	}
+}
