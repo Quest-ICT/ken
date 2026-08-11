@@ -58,6 +58,13 @@ type channelView struct {
 	State     string `json:"state"`
 	Open      bool   `json:"open"`
 	CreatedAt string `json:"created_at"`
+	// Pending is how many messages are QUEUED for you here — never delivered, never
+	// clocked. It exists so checking before you send is a look rather than a delivery;
+	// comm_poll is the only alternative and it hands you the messages.
+	//
+	// Queued only. A delivered-but-unacked message has already been shown to you, so
+	// counting it would be telling you to go and read something you have.
+	Pending int `json:"pending" jsonschema:"messages waiting for you on this channel, counted without delivering them. Above zero means poll before you send"`
 }
 
 type channelsOut struct {

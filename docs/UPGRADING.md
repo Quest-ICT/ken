@@ -34,7 +34,14 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
-*Nothing yet.*
+### `comm_channels` gained a `pending` field
+
+**Observed:** the result now carries a per-channel count of messages waiting for you.
+Purely additive — nothing is removed and no existing field changes meaning.
+
+**Do first:** nothing. Listed because the connect-time instructions now tell every
+session to consult it before sending, so a client that pins or validates the tool's
+output shape will see a field it did not expect.
 
 ---
 

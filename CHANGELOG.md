@@ -15,6 +15,33 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **`comm_channels` reports how many messages are waiting for you**, counted without
+  delivering any of them. This is what makes "check before you send" a look rather than
+  a delivery: `comm_poll` was the only other way to find out, and polling stamps
+  `first_delivered_at`, arms the expiry and reply clocks, and leaves the session on the
+  hook for messages it was only trying to peek at. An instruction that costs a delivery
+  every time you send gets skipped, and a skipped instruction is worse than none because
+  it still looks like a control.
+
+  Counts `queued` only. A delivered-but-unacked message has already been shown to you,
+  so counting it would say "go and read" something you have — the mistake
+  `waiting_for_you` made before it was narrowed.
+
+- **Two connect-time instructions for COMM.** Check what is waiting before you send, and
+  adjust or drop what you were about to write. And **write what you poll to a file before
+  anything else** — before acting, replying or deciding — because a file survives context
+  compaction, a body swept by retention, and Ken being unreachable, none of which are
+  rare and none of which announce themselves.
+
+  **`comm_ack` still means PROCESSED.** An earlier draft had sessions ack on receipt,
+  which would have hijacked the word rather than used the state that already exists:
+  `delivered` *is* received, set automatically on first poll. Keeping ack late also keeps
+  redelivery as the self-announcing signal for unfinished work, and leaves the hearsay
+  window — which keys on `COALESCE(acked_at, first_delivered_at)` — exactly where it was.
+
+
 ### Changed
 
 - **Backward compatibility no longer constrains development, and the deprecation cycle is

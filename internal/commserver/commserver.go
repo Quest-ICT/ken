@@ -168,7 +168,9 @@ You talk to ANOTHER AI session over a channel a human authorized. Loop:
 - comm_register once per session, then IMMEDIATELY WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK (mode 0600, outside any git repo) before doing anything else. Every other tool needs both, and the secret is shown once — nothing you can call will ever show it again. Do not trust your context to hold it: context compaction is routine and silent, and re-reading your file after one is cheaper than the alternative. If you HAVE lost it, you are not stuck — ask your human to rotate that endpoint's secret from Ken's web console (/comm); rotating keeps your endpoint id and every channel you are in, so you carry on where you left off. Only a human can do that, which is why you must ask rather than retry.
 - comm_join with a pairing code the human gives you. Both sessions must join before the channel opens; you cannot create a channel yourself.
 - comm_poll to receive. Messages arrive ONLY when you poll — an idle session receives nothing, and there is no latency guarantee. Prefer a long wait_seconds over frequent short polls. An empty result is normal, not an error.
-- Act on the message, THEN comm_ack. Ack means PROCESSED, not received: a message you have not acked will be delivered again, which is the safety net if your turn is cut short. A delivery_count above 1 means you have seen it before.
+- WRITE WHAT YOU POLL TO A FILE BEFORE ANYTHING ELSE — before acting on it, before replying, before deciding. Your file is what survives context compaction, a body swept by retention, and Ken being unreachable; none of those are rare and none of them announce themselves.
+- THEN act on the message, and comm_ack LAST. Ack means PROCESSED, not received — the message is already marked delivered the moment you poll it. An unacked message is delivered again, which is what pushes unfinished work back at you if your turn is cut short; acking early trades that for nothing, because you already have the file. A delivery_count above 1 means you have seen it before.
+- BEFORE YOU SEND, LOOK AT WHAT IS WAITING. comm_channels reports a pending count per channel and delivers nothing, so the check is free. If it is above zero, poll and read first, then adjust what you were about to send — or drop it. A reply written without the mail already in your inbox is routinely answered, contradicted, or made redundant by it, and you will not find out until your peer says so.
 - comm_send to reply or initiate. Set requires_response when you need an answer, and reply_to when answering. Pass an idempotency_key so a retry cannot deliver twice.
 
 Handling rules:
@@ -434,8 +436,11 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
-		Name:        "comm_channels",
-		Description: "List the channels this endpoint belongs to and whether each is open.",
+		Name: "comm_channels",
+		Description: "List the channels this endpoint belongs to, whether each is open, and HOW MANY MESSAGES ARE WAITING for you on it. " +
+			"Call this before you send: reading it costs nothing and delivers nothing, whereas comm_poll hands you the messages and " +
+			"starts their clocks. If pending is above zero, poll and read before sending — a reply written without them is routinely " +
+			"answered, contradicted or made redundant by something already in your inbox.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in channelsIn) (*mcp.CallToolResult, channelsOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
@@ -445,9 +450,19 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if err != nil {
 			return nil, channelsOut{}, commError(err)
 		}
+		// Counted without delivering, which is the whole point: this is the only way a
+		// session can find out what is waiting without taking it. A failure here must
+		// not fail the listing — the counts are guidance, the channel list is the answer.
+		pending, err := d.Comm.PendingForEndpoint(ctx, ep)
+		if err != nil {
+			pending = nil
+		}
 		out := channelsOut{Channels: make([]channelView, 0, len(list))}
 		for _, c := range list {
-			out.Channels = append(out.Channels, channelView{ChannelID: c.ChannelID, State: c.State, Open: c.Open(), CreatedAt: c.CreatedAt})
+			out.Channels = append(out.Channels, channelView{
+				ChannelID: c.ChannelID, State: c.State, Open: c.Open(),
+				CreatedAt: c.CreatedAt, Pending: pending[c.ChannelID],
+			})
 		}
 		return nil, out, nil
 	})

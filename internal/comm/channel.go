@@ -528,3 +528,54 @@ SELECT id FROM endpoint
 	}
 	return s.endpointByRowID(ctx, id)
 }
+
+// PendingForEndpoint counts the messages waiting for an endpoint on each open channel,
+// WITHOUT delivering any of them.
+//
+// This exists so "check what is waiting before you send" can be a LOOK rather than a
+// delivery. comm_poll is the only other way to find out, and polling takes delivery: it
+// stamps first_delivered_at, arms the expiry and reply clocks, and hands the session
+// messages it is then on the hook to handle. An instruction that costs a delivery every
+// time you send is an instruction that gets skipped — and a skipped instruction is worse
+// than none, because it still looks like a control.
+//
+// Counts 'queued' only, not 'delivered'. A delivered-but-unacked message has already
+// been shown to this session; telling it to "go and read what is waiting" would be
+// telling it to re-read something it has. That is the same distinction that made
+// waiting_for_you fire on mail its recipient had already replied to.
+func (s *Store) PendingForEndpoint(ctx context.Context, ep *Endpoint) (map[string]int, error) {
+	// TWO COLUMNS ARE CALLED channel_id AND THEY ARE NOT THE SAME THING.
+	// channel.channel_id is the opaque server-minted TEXT id a session sees;
+	// message.channel_id is an INTEGER foreign key to channel.id (0001_init.sql:84
+	// vs :153). Joining them by name compares an integer to a string, matches nothing,
+	// and returns zero for every channel — which is indistinguishable from an empty
+	// inbox, so a caller believes it. The join is on c.id; only the SELECT emits the
+	// public id.
+	//
+	// Plain `?` with the id repeated, never `?N`: message.go:207 records that mixing
+	// numbered and auto-assigned placeholders renumbers the auto-assigned ones and binds
+	// the wrong values silently.
+	rows, err := s.R.QueryContext(ctx, `
+SELECT c.channel_id, COUNT(m.id)
+  FROM channel c
+  LEFT JOIN message m
+    ON m.channel_id = c.id
+   AND m.recipient_endpoint = ?
+   AND m.state = 'queued'
+ WHERE c.state='open' AND (c.endpoint_a = ? OR c.endpoint_b = ?)
+ GROUP BY c.channel_id`, ep.ID, ep.ID, ep.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
