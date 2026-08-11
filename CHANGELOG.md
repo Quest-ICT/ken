@@ -15,6 +15,29 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ken_prune_pre_upgrade` did nothing on a standard install.** It shipped in 2.0.0,
+  ran nightly, logged success, exited 0, and deleted no files at all — because `find`
+  does not descend into a **symlinked** starting point, and the default layout is exactly
+  that: `KEN_HOME` is `/opt/ken/current`, and `current/backups` is a symlink to
+  `/opt/ken/backups`.
+
+  The `ls -1t` line two lines below it worked throughout, because shell globs *do* follow
+  symlinks. The two lines look equivalent and are not, which is why reading the function
+  never showed it.
+
+  Found by `ken-prod-ops` **counting rollback points across an upgrade** — 9 → 10 → 10,
+  expected 3 — rather than by inspection. A prune that deletes nothing is byte-identical
+  to a prune with nothing to delete.
+
+  The fix is `-H`. The lesson is the test: all three original fixtures pass against the
+  broken code, because they built a plain temp directory. The new one reproduces the
+  **layout** — a symlinked backup dir — and it is the only test that fails when `-H` is
+  removed. It carries a control asserting the fixture really is a symlink, so it cannot
+  quietly decay into the plain case it was written to replace.
+
+
 ## [2.1.0] — 2026-08-11
 
 ### Added

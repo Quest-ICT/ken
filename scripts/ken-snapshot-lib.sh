@@ -92,7 +92,22 @@ ken_prune_pre_upgrade() {
 
     # Everything OLDER than the age floor is a deletion candidate; everything younger is
     # kept outright. -mtime +N is "more than N days old", which is the floor we want.
-    _kpu_old="$(find "$_kpu_dir" -maxdepth 1 -type f -name 'pre-upgrade-*' -mtime "+$_kpu_days" 2>/dev/null)"
+    #
+    # -H IS LOAD-BEARING AND ITS ABSENCE WAS INVISIBLE. find does not descend into a
+    # SYMLINKED starting point, and the default layout is exactly that: BACKUP_DIR is
+    # $KEN_HOME/backups, KEN_HOME is /opt/ken/current, and current/backups is a symlink
+    # to /opt/ken/backups. Without -H this returned nothing, the guard below fired, and
+    # the function deleted nothing — on every standard install.
+    #
+    # It shipped that way in 2.0.0. ken-prod-ops caught it by COUNTING the rollback
+    # points before and after (9 -> 10 -> 10, expected 3) rather than by reading the
+    # code, because a prune that deletes nothing is byte-identical to a prune with
+    # nothing to delete: the run logs success and exits 0 either way.
+    #
+    # The `ls -1t` keepers line below needs no such flag, because shell globs DO follow
+    # symlinks. The two lines look equivalent and are not, which is why reading the
+    # function does not reveal the bug — only running it against the real layout does.
+    _kpu_old="$(find -H "$_kpu_dir" -maxdepth 1 -type f -name 'pre-upgrade-*' -mtime "+$_kpu_days" 2>/dev/null)"
     [ -n "$_kpu_old" ] || return 0
 
     # Of those, still keep the newest $_kpu_keep overall — the count floor, which is what

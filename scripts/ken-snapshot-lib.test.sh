@@ -115,6 +115,29 @@ ken_prune_pre_upgrade "$P" 3 7
 n="$(ls -1 "$P"/pre-upgrade-* 2>/dev/null | wc -l)"
 eq "mixed: prunes down to the count floor" "$n" "3"
 
+# THE CASE THAT SHIPPED BROKEN: a SYMLINKED backup directory, which is the DEFAULT
+# layout. BACKUP_DIR is $KEN_HOME/backups, KEN_HOME is /opt/ken/current, and
+# current/backups is a symlink to /opt/ken/backups.
+#
+# find does not descend into a symlinked start point, so without -H this pruned nothing
+# on every standard install — while the fixtures above, built in a plain temp dir,
+# passed forever. ken-prod-ops found it by counting rollback points across an upgrade
+# (9 -> 10 -> 10, expected 3), not by reading the code.
+#
+# The lesson is the fixture, not the flag: it has to reproduce the LAYOUT, not just the
+# inputs. Everything above this line was a correct test of the wrong shape.
+REAL="$T/real-backups"; mkdir -p "$REAL"
+LINKED="$T/home/backups"; mkdir -p "$T/home"; ln -s "$REAL" "$LINKED"
+for i in 1 2 3 4 5; do : > "$REAL/pre-upgrade-sym$i.db.gz"; touch -d "$((20 + i)) days ago" "$REAL/pre-upgrade-sym$i.db.gz"; done
+ken_prune_pre_upgrade "$LINKED" 3 7
+n="$(ls -1 "$REAL"/pre-upgrade-* 2>/dev/null | wc -l)"
+eq "symlinked backup dir: prunes to the count floor" "$n" "3"
+
+# CONTROL: prove the fixture is actually a symlink, or the assertion above is just the
+# plain-directory case wearing a different path.
+[ -L "$LINKED" ] && ok "the fixture directory really is a symlink" \
+    || no "fixture is not a symlink" "the case that shipped broken is not being tested"
+
 # And it must never touch a nightly.
 : > "$P/ken-20260810T000000Z.db.gz"; touch -d "90 days ago" "$P/ken-20260810T000000Z.db.gz"
 ken_prune_pre_upgrade "$P" 1 1

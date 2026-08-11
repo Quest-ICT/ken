@@ -34,7 +34,21 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
-*Nothing yet.*
+### Pre-upgrade rollback points actually get pruned now
+
+**Observed:** on a standard install the 2.0.0 pruning never ran, so these files kept
+accumulating exactly as before. After this release they start being deleted — down to
+the newest `KEEP_PRE_UPGRADE` (3) or those younger than `KEEP_PRE_UPGRADE_DAYS` (7),
+whichever keeps more.
+
+**Do first:** if you have been relying on an old `pre-upgrade-*` file, copy it out. This
+is the 2.0.0 warning arriving a release late, and it lands harder because a deployment
+that upgraded to 2.0.0 or 2.1.0 has kept accumulating in the meantime.
+
+**Why it did nothing:** `find` does not descend into a symlinked starting point, and the
+default layout is symlinked — `KEN_HOME` is `/opt/ken/current` and `current/backups`
+points at `/opt/ken/backups`. A prune that deletes nothing logs success and exits 0, so
+it read as working.
 
 ---
 
