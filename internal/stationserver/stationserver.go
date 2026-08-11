@@ -181,8 +181,12 @@ TASKS — the list exists because pending things decay out of a conversation:
   owes — that is theirs to abandon, not yours.
 
 NOTEBOOK — working state, not knowledge:
-- Keep the 'handoff' page current as you go. A handoff written only when you know you are
-  leaving is never written, because sessions rarely get notice.
+- Keep the 'handoff' page current as you go — with mode='replace' and if_rev, NOT append.
+  A handoff written only when you know you are leaving is never written, because sessions
+  rarely get notice. But append stores a full copy of the page as history EVERY time, so
+  history grows with the square of the page: one measured station reached 96% of its cap
+  with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained
+  by replace cost a tenth of that.
 - The routing rule: would a session on a DIFFERENT station, months from now, want this?
   Then it is kb_save / kb_propose_enhancement in the knowledge base, not a notebook page.
   The notebook is for what only this post needs, only for now.
@@ -406,7 +410,7 @@ func newServer(d Deps) *mcp.Server {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_note_write",
-		Description: "Append to or replace a notebook page. Keep the 'handoff' page current AS YOU GO — a handoff " +
+		Description: "Append to or replace a notebook page. Keep the 'handoff' page current AS YOU GO, rewriting it with mode='replace' and if_rev rather than appending — append keeps a full copy of the page per revision, so history grows with the SQUARE of its length and silently prunes your oldest revisions — a handoff " +
 			"written only when you know you are leaving is never written. Pass if_rev when you have read the page and " +
 			"are overwriting it, so a second session staffing this station cannot be silently clobbered. " +
 			"NEVER put a token, key or password here — Ken cannot tell, your human can read it, and it goes into " +
@@ -668,7 +672,7 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 	}
 	switch {
 	case activities < 0:
-		out.Handoff = "no handoff page yet — write one as you go, not on the way out"
+		out.Handoff = "no handoff page yet — write one as you go, not on the way out, and keep it with mode='replace' rather than append"
 	case activities == 0:
 		out.Handoff = "handoff current (written " + writtenAt + ")"
 	default:

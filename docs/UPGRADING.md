@@ -34,6 +34,36 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### The hearsay badge means something narrower than it used to say
+
+**Observed:** the "second-hand?" badge on a proposal now explains that an agent *sharing
+this entry's identity* was recently in contact with another session — not that this
+writer relayed anything. Nothing about which entries carry the badge changes; only what
+it claims.
+
+**Do first:** re-read any promotion decision you made on the strength of that badge. One
+identity typically covers every session on a machine — a live deployment was measured
+with eight endpoints under one — so the badge has always flagged the machine, and its
+old wording invited a stronger reading than the data supports.
+
+### The consent screen pre-selects a different authoring identity
+
+**Observed:** re-approving an OAuth connector now pre-selects the first identity holding
+a messaging token, instead of defaulting to "a new identity named after this
+application". That option is still offered, at the bottom of the list.
+
+**Do first:** nothing, but read the picker rather than clicking past it. The old default
+was accurate and clearly labelled and still caught a careful operator, which is why it
+moved.
+
+### `comm_poll` results gained two fields
+
+**Observed:** `wait_seconds_granted` and `wait_clamped_from`. Purely additive.
+
+**Do first:** nothing. Listed because a client pinning the tool's output shape will see
+fields it did not expect — and because if you have been passing a large `wait_seconds`,
+these will show you it was never honoured.
+
 ### Pre-upgrade rollback points actually get pruned now
 
 **Observed:** on a standard install the 2.0.0 pruning never ran, so these files kept

@@ -15,6 +15,20 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **The station instructions steered every session onto the expensive path.** "Keep the
+  handoff page current as you go" reads naturally as `mode:append`, and append stores a
+  full copy of the page as history **every time** — so history grows with the square of
+  the page's length. A measured station reached **96.4% of its cap with 252,759 bytes of
+  history behind an 8,083-byte head**, while a *larger* page maintained with `replace`
+  and `if_rev` cost a tenth of that.
+
+  All three places that gave the advice now name the pattern rather than only the
+  cadence: the connect-time block, `station_note_write`'s description — which is what a
+  session reads at the moment it decides — and the empty-handoff nudge in the briefing.
+
+
 ### Added
 
 - **`comm_poll` reports the wait it actually granted.** `wait_seconds_granted` is what
