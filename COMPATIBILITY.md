@@ -34,9 +34,12 @@ and then the claim — not the reverse.
   This includes **`KEN_SOURCE_URL`**, which sets the "Source" link a running instance
   shows: if you run a **modified** Ken, set it to your own repository — AGPL-3.0 §13
   requires a network service to offer *its own* Corresponding Source, not upstream's.
-  **`KEN_COMM_ENABLED` and `KEN_STATION_ENABLED` are the exception**, and they are excluded with
-  the surfaces they gate (below): both were inverted from opt-in switches into on-by-default
-  opt-OUTs — a change this bullet on its own would have made MAJOR.
+  **2.0.0 removed four of them** — `KEN_COMM_ENABLED`, `KEN_STATION_ENABLED`,
+  `KEN_OAUTH_ENABLED` and `KEN_AGE_RECIPIENT` — which is exactly why 2.0.0 is a MAJOR
+  release rather than a carve-out. An earlier version of this bullet excused the first two
+  as "excluded with the surfaces they gate". That excuse is withdrawn: exempting variables
+  one at a time until the rule covers nothing is how a compatibility promise stops meaning
+  anything, and the honest move was to take the version bump the rule asks for.
 - **Credential prefixes & cookie format** — and they are not all the same kind of thing, so the
   contract is stated per prefix rather than as one list:
   - `ken_` — an API token presented as `Authorization: Bearer …` on `/mcp` and, when it carries the

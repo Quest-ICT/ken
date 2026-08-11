@@ -15,6 +15,26 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-08-11
+
+**MAJOR because four `KEN_*` variables were removed and the snapshot artifact was
+renamed.** `COMPATIBILITY.md` says removing one is MAJOR; an earlier draft excused two of
+them as exceptions, and that excuse is withdrawn here rather than extended. Exempting
+variables one at a time until the rule covers nothing is how a compatibility promise
+stops meaning anything.
+
+**Read this before upgrading:**
+
+- **`KEN_AGE_RECIPIENT` is retired and snapshots are no longer encrypted.** If you set
+  it, your snapshots become compressed plaintext at `0600`. The snapshot run now says so
+  on every run rather than letting you find out from a file listing. Encryption,
+  transport and destination are yours; see `BACKUP.md`.
+- **The snapshot artifact is renamed** from `ken-<stamp>.db[.age]` to
+  `ken-<stamp>.db.gz`, and the pre-upgrade rollback point likewise. **Anything that
+  selects backups by name, decrypts them, or restores them needs updating first.**
+- **`KEN_COMM_ENABLED`, `KEN_STATION_ENABLED` and `KEN_OAUTH_ENABLED` are gone.** All
+  three surfaces are always on. Setting them has no effect.
+
 ### Fixed
 
 - **`station_note_promote` asked a human who could never be asked.** The tool has
@@ -1703,7 +1723,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.0.0
 [1.7.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.7.0
 [1.6.0]: https://github.com/Quest-ICT/ken/releases/tag/v1.6.0
 [1.5.5]: https://github.com/Quest-ICT/ken/releases/tag/v1.5.5

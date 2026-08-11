@@ -42,6 +42,16 @@ if [ ! -d "$BACKUP_DIR" ]; then
   mkdir -p "$BACKUP_DIR"
   chmod 0750 "$BACKUP_DIR"
 fi
+# A retired variable must not go quiet. An operator who set KEN_AGE_RECIPIENT asked for
+# encrypted snapshots; from 2.0.0 they get compressed plaintext instead. That is the
+# intended behaviour and it is still a change they did not make, so it is said out loud
+# once per run rather than discovered from a file listing months later.
+if [ -n "${KEN_AGE_RECIPIENT:-}" ]; then
+  echo "[ken-snapshot] NOTE: KEN_AGE_RECIPIENT is set but RETIRED in 2.0.0 — Ken no longer encrypts snapshots." >&2
+  echo "[ken-snapshot]       This snapshot is compressed plaintext at 0600. Encryption, transport and" >&2
+  echo "[ken-snapshot]       destination are now yours; see docs/BACKUP.md. Unset the variable to silence this." >&2
+fi
+
 RAW="$BACKUP_DIR/ken-$(ken_snapshot_stamp).db.gz"
 
 # Consistent copy + mandatory integrity check (fails loudly on corruption).
