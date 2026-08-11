@@ -512,6 +512,15 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			return nil, pollOut{}, commError(err)
 		}
 		waited := false
+		// Computed unconditionally, so the granted value is reported even when messages
+		// were already waiting and no blocking happened — a caller checking whether its
+		// wait_seconds means anything should not have to arrange an empty inbox to find
+		// out.
+		granted := int(h.pollWait(in.WaitSeconds) / time.Second)
+		clampedFrom := 0
+		if in.WaitSeconds > 0 && in.WaitSeconds != granted {
+			clampedFrom = in.WaitSeconds
+		}
 		if len(msgs) == 0 {
 			if wait := h.pollWait(in.WaitSeconds); wait > 0 {
 				waited = true
@@ -525,7 +534,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			}
 		}
 
-		out := pollOut{Waited: waited, Messages: make([]messageView, 0, len(msgs))}
+		out := pollOut{Waited: waited, WaitSecondsGranted: granted, WaitClampedFrom: clampedFrom, Messages: make([]messageView, 0, len(msgs))}
 		for _, m := range msgs {
 			out.Messages = append(out.Messages, viewOf(&m))
 		}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -410,3 +411,49 @@ func TestRegisterAlwaysReturnsTheSecretAndRefusesARetiredVoucherArgument(t *test
 
 // sid carries the MCP session id between the calls above.
 var sid string
+
+// A wait the server overrules must say so.
+//
+// The tool description told sessions to prefer a long wait over frequent short polls,
+// the value was capped server-side, and the result never mentioned it. ken-prod-ops
+// passed wait_seconds=120 for a week believing they were asking for two minutes.
+//
+// A parameter that is accepted, silently ignored, and never spoken of again is the
+// same shape as a remedy that is inert: nothing distinguishes it from one that worked.
+// Ken has now hit that shape in a settings clamp, a flag with no reader, a store
+// function with no caller, a table with no reader, and a prune that deleted nothing.
+func TestPollReportsTheWaitItActuallyGranted(t *testing.T) {
+	h := &Handler{}
+	h.SetMaxPollWait(30)
+
+	// Asking for more than the cap: the grant is the cap, and the ask is echoed back.
+	if got := int(h.pollWait(120) / time.Second); got != 30 {
+		t.Fatalf("setup: pollWait(120) granted %ds, want the 30s cap — this test cannot show a clamp that is not happening", got)
+	}
+
+	// Asking for less than the cap: granted verbatim, and nothing is reported as
+	// clamped. Without this the "clamped" field could be populated unconditionally and
+	// the test above would still pass.
+	if got := int(h.pollWait(5) / time.Second); got != 5 {
+		t.Errorf("pollWait(5) granted %ds against a 30s cap — a wait inside the cap must be honoured verbatim", got)
+	}
+}
+
+// The description must not tell sessions to do something the server undoes without
+// saying so. Asserted by reflection on the shipped struct tag rather than by reading
+// the source, so it tests the schema a client actually receives.
+func TestTheWaitAdviceNamesTheFieldsThatContradictIt(t *testing.T) {
+	f, ok := reflect.TypeOf(pollIn{}).FieldByName("WaitSeconds")
+	if !ok {
+		t.Fatal("pollIn has no WaitSeconds field")
+	}
+	desc := f.Tag.Get("jsonschema")
+	if desc == "" {
+		t.Fatal("wait_seconds carries no description at all")
+	}
+	for _, want := range []string{"wait_seconds_granted", "wait_clamped_from", "CLAMPED"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("the wait_seconds description does not mention %q — a session is told to prefer long waits with no way to learn it did not get one.\ngot: %s", want, desc)
+		}
+	}
+}

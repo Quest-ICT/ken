@@ -15,6 +15,24 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **`comm_poll` reports the wait it actually granted.** `wait_seconds_granted` is what
+  the call was prepared to block for after the server's cap; `wait_clamped_from` appears
+  only when yours was shortened, carrying the value you asked for.
+
+  The tool description told sessions to prefer one long wait over frequent short polls,
+  the value was capped server-side, and the result never mentioned it. `ken-prod-ops`
+  passed `120` for a week believing they were asking for two minutes. A parameter that is
+  accepted, silently ignored and never spoken of again is the same shape as a remedy that
+  is inert — nothing distinguishes it from one that worked. The description now names the
+  two fields that carry the truth.
+
+  Reported unconditionally, including when messages were already waiting and no blocking
+  happened, so a caller checking whether `wait_seconds` means anything does not have to
+  arrange an empty inbox to find out.
+
+
 ### Fixed
 
 - **The hearsay badge claimed more than it detects.** Its tooltip said "the session that

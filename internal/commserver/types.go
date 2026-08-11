@@ -100,7 +100,7 @@ type sendOut struct {
 type pollIn struct {
 	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
 	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
-	WaitSeconds    int    `json:"wait_seconds,omitempty" jsonschema:"optional; how long to block waiting for a message. Clamped server-side. Use a long wait rather than frequent short polls — a parked call costs one request no matter how long it waits. Pass -1 to return immediately"`
+	WaitSeconds    int    `json:"wait_seconds,omitempty" jsonschema:"optional; how long to block waiting for a message. CLAMPED server-side, and the result tells you what you actually got: wait_seconds_granted is the real wait, and wait_clamped_from appears when yours was shortened. Prefer one long wait over frequent short polls — a parked call costs one request however long it waits. Pass -1 to return immediately"`
 	Limit          int    `json:"limit,omitempty" jsonschema:"optional; max messages to return (default 50)"`
 }
 
@@ -133,6 +133,18 @@ type messageView struct {
 type pollOut struct {
 	Messages []messageView `json:"messages"`
 	Waited   bool          `json:"waited" jsonschema:"true if this call blocked before returning. An empty messages list is a NORMAL result, not an error"`
+	// WaitClampedFrom appears only when the server shortened the wait that was asked
+	// for, and it carries the ORIGINAL request so the caller can see the gap.
+	//
+	// It exists because the advice and the behaviour disagreed in silence. The tool
+	// description says to prefer a long wait over frequent short polls; the value is
+	// capped server-side and the result never mentioned it. ken-prod-ops passed 120 for
+	// a week believing they were asking for two minutes. A parameter that is accepted,
+	// ignored, and never spoken of again is the same shape as a setting whose remedy is
+	// inert: nothing distinguishes it from one that worked.
+	WaitClampedFrom int `json:"wait_clamped_from,omitempty" jsonschema:"present only when the server shortened your wait_seconds; the value you asked for. The wait actually granted is wait_seconds_granted"`
+	// WaitSecondsGranted is what the server actually waited, whenever it waited at all.
+	WaitSecondsGranted int `json:"wait_seconds_granted,omitempty" jsonschema:"how long this call was prepared to block, in seconds, after the server's cap was applied"`
 }
 
 type ackIn struct {
