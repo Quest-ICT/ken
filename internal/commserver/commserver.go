@@ -298,7 +298,12 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_directory",
-		Description: "List the stations you can see and which of them you can talk to right now. " +
+		Description: "List the stations you can see, the ROOMS you are in, and how far a broadcast would reach. " +
+			"Address a room with comm_send{to_room: room_id}, or every station you share a room with using " +
+			"to_room:\"all\" — rooms need no pairing code and no link, because your human already decided who is in one. " +
+			"A room's `pending` is a count and delivers nothing, so checking it before you speak costs nothing. " +
+			"`roster_epoch` changes whenever a membership does: if it has moved since you were told about a room, " +
+			"the room you were told about is not the room that exists now. " +
 			"Use this INSTEAD OF guessing names: comm_open_channel refuses every unavailable target " +
 			"identically and on purpose, so probing it tells you nothing. 'linked' true means a human " +
 			"has approved the relationship and you can open a channel immediately; 'linked' false means " +
@@ -327,6 +332,36 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		out := directoryOut{
 			Stations: make([]directoryEntry, 0, len(list)),
 			YouAre:   stationLabel(ctx, d, ep.StationID),
+			Rooms:    []directoryRoom{},
+		}
+
+		// ROOMS, which is what makes them self-service. Without this a session can be
+		// IN a room and have no way to learn its id, so the feature would work only
+		// when a human pasted the id into the conversation.
+		//
+		// Member party keys are resolved to station NAMES here rather than passed
+		// through: this is the surface a session reads before deciding whether to say
+		// something to a group, and "prod-ops, infra, dev" answers that question where
+		// three opaque ids do not.
+		myParty := "s:" + ep.StationID
+		if rooms, err := d.Comm.RoomsFor(ctx, myParty); err != nil {
+			return nil, directoryOut{}, commError(err)
+		} else {
+			for _, r := range rooms {
+				dr := directoryRoom{RoomID: r.RoomID, Pending: r.Pending, Members: []string{}}
+				for _, pk := range r.Members {
+					if id, ok := strings.CutPrefix(pk, "s:"); ok {
+						dr.Members = append(dr.Members, stationLabel(ctx, d, id))
+					}
+				}
+				out.Rooms = append(out.Rooms, dr)
+			}
+		}
+		if n, err := d.Comm.BroadcastAudience(ctx, myParty); err == nil {
+			out.BroadcastReaches = n
+		}
+		if e, err := d.Store.RosterEpoch(ctx); err == nil {
+			out.RosterEpoch = e
 		}
 		for _, st := range list {
 			e := directoryEntry{

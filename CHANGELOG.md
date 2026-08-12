@@ -44,8 +44,16 @@ same change — never "docs later".
   refused rather than returned with a message id — an audience of zero is the outcome
   hardest to notice.
 
+  `comm_directory` reports the rooms you are in, each with its members by NAME and a
+  pending count that delivers nothing, plus how far a broadcast would reach right now
+  and the `roster_epoch` the answer describes. Without that a session could be *in* a
+  room with no way to learn its id, and the feature would work only when a human pasted
+  one into the conversation.
+
   Not included, deliberately: **no scrollback**. A station added today sees nothing sent
-  before it joined. Membership is snapshotted at send.
+  before it joined; one removed keeps what it was already sent. Membership is
+  snapshotted at send, and rewriting an audience afterwards would mean an inbox changed
+  because of something that happened later.
 
 
 ### Changed

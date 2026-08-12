@@ -434,6 +434,31 @@ can read every value from `/stations`, and that read is logged like any other. T
 sits in has exactly one human per instance (see `docs/DESIGN.md`); a second person with console access
 is outside the threat model rather than defended against.
 
+### S14 — A room is a human-filled set of stations; an agent cannot enlarge its own audience *(chosen: console-only membership, derived broadcast)*
+
+Rooms give a station many-party addressing without giving it a way to widen who hears it.
+
+- **Membership is console-only.** There is no tool that creates a room, adds a member or joins one.
+  A session that wants a room asks its human in words. This is the same withheld-capability trick as
+  the curation gate and as C7's pairing code: the property holds because the capability does not
+  exist, not because the model is asked nicely.
+- **Rooms live in `ken.db`.** A membership list is a human decision, and `comm.db` is expendable
+  (S7). `comm.db` keeps a derived mirror so `Send` can check membership inside its own writer
+  transaction — a check anywhere else is advisory, because a human can remove a station between an
+  outer check and the insert. The mirror is replaced wholesale, never synced incrementally: a missed
+  removal would leave a station able to send to a room it was taken out of, which is the failure that
+  fails OPEN.
+- **Broadcast is derived, not granted.** `to_room:"all"` reaches the union of the rooms this station
+  is already in — exactly the set it could have addressed one room at a time. A station in three of
+  those rooms receives ONE copy.
+- **One body, N deliveries.** Each recipient owns its own state, redelivery count and reply deadline;
+  the body is stored once, charged once against every bound, and survives until the LAST recipient
+  has settled. Blanking when the first acks would rebuild the 97%-of-bodies defect from a new cause.
+- **No scrollback, and it is stated in the console rather than left to be discovered.** A station
+  added today sees nothing sent before it joined; one removed keeps what it was already sent. The
+  audience is decided at send time, and rewriting it afterwards would mean an inbox changed because
+  of something that happened later.
+
 ## 3. Model
 
 **Station** — `{station_id (opaque text), space_id, name (human, unique per space), purpose (human),

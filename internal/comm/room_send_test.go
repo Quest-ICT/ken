@@ -290,3 +290,111 @@ func TestBroadcastingWithNoAudienceIsRefusedDistinctly(t *testing.T) {
 		t.Errorf("%d message rows written for a refused broadcast", n)
 	}
 }
+
+// A SESSION MUST BE ABLE TO DISCOVER ITS OWN ROOMS. Without this, being in a room is
+// only useful when a human pastes the id into the conversation, which is a workaround
+// wearing a feature's clothes.
+func TestAStationCanDiscoverTheRoomsItIsInAndWhatIsWaiting(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	if err := st.ReplaceRoomMirror(ctx, map[string][]string{
+		"ops":   {"s:st-alpha", "s:st-beta"},
+		"other": {"s:st-gamma", "s:st-delta"},
+	}, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	rooms, err := st.RoomsFor(ctx, "s:st-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rooms) != 1 || rooms[0].RoomID != "ops" {
+		t.Fatalf("alpha sees %+v, want only the room it is in", rooms)
+	}
+	if len(rooms[0].Members) != 2 {
+		t.Fatalf("room members = %v, want both", rooms[0].Members)
+	}
+	if rooms[0].Pending != 0 {
+		t.Errorf("pending = %d on an empty room", rooms[0].Pending)
+	}
+
+	// Something arrives, and the count sees it WITHOUT delivering it — the property
+	// that makes "check before you speak" free rather than a delivery.
+	if _, err := st.SendToRoom(ctx, beta, "ops", "before you send", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	rooms, err = st.RoomsFor(ctx, "s:st-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rooms[0].Pending != 1 {
+		t.Fatalf("pending = %d after one message, want 1", rooms[0].Pending)
+	}
+	var state string
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT state FROM delivery WHERE party_key='s:st-alpha'`).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "queued" {
+		t.Fatalf("counting moved the message to %q — the directory delivered mail it was only asked to count", state)
+	}
+
+	// CONTROL: a real poll DOES deliver it, so the assertion above is about counting
+	// rather than about the message being unreachable.
+	got, err := st.Poll(ctx, alpha, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("polled %d messages, want 1", len(got))
+	}
+
+	// AND IT COUNTS QUEUED ONLY. A delivered-but-unacked message has already been shown
+	// to this session, so counting it would tell them to go and read something they are
+	// holding — the exact mistake waiting_for_you made when it fired on mail its
+	// recipient had already replied to.
+	//
+	// Added after a mutation that widened the count to ('queued','delivered') survived:
+	// the test checked pending only while the message was still queued, so both versions
+	// agreed at the one moment it looked.
+	rooms, err = st.RoomsFor(ctx, "s:st-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rooms[0].Pending != 0 {
+		t.Fatalf("pending = %d after the message was DELIVERED and not yet acked, want 0 — "+
+			"the directory is telling a session to go and read mail it is already holding", rooms[0].Pending)
+	}
+}
+
+// The reach a session is SHOWN must be the reach a broadcast would actually get, or the
+// directory promises something the send refuses.
+func TestTheAdvertisedBroadcastReachMatchesWhatSendingWouldDo(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	if err := st.ReplaceRoomMirror(ctx, map[string][]string{
+		"ops":     {"s:st-alpha", "s:st-beta", "s:st-gamma"},
+		"deploys": {"s:st-alpha", "s:st-beta"},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	advertised, err := st.BroadcastAudience(ctx, "s:st-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.Broadcast(ctx, alpha, "hello everyone", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if advertised != m.Recipients {
+		t.Fatalf("the directory advertised a reach of %d and the broadcast delivered %d — "+
+			"a session cannot plan against a number that is not the one it gets", advertised, m.Recipients)
+	}
+	if advertised != 2 {
+		t.Errorf("reach = %d, want 2 (beta counted once despite two shared rooms)", advertised)
+	}
+}

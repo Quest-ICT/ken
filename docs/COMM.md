@@ -204,6 +204,18 @@ gives it to both sessions; each calls `comm_join` with it, and the channel exist
   (S9), which is a durable row in `ken.db` that the agent cannot write. So "an agent cannot conjure a
   channel" remains true — an unlinked pair is refused, and the only way to become linked is a human
   clicking approve. What is no longer true is "a human mints a code for every conversation".
+- **ROOMS refine it a second time, in the same direction, and the sentence changes again.** A room is
+  a set of stations a human named and filled in the console; a member addresses it with
+  `comm_send{to_room}` and reaches everyone at once, and `to_room:"all"` reaches every station it
+  shares a room with. No pairing code, no link, no human present at that moment. **The invariant
+  holds and is worth restating precisely: an agent cannot enlarge its own audience.** There is no
+  tool that creates a room, adds a member, or joins one — those are console-only, deliberately, and
+  broadcast reaches exactly the union of rooms a human already put this station in. So the capability
+  is still *withheld* rather than requested politely, which is the property C7 exists to preserve.
+- **What a room is NOT:** there is no scrollback and no late-join replay. Membership is snapshotted
+  at send, so a station added today sees nothing sent yesterday, and a station removed keeps the mail
+  it was already sent — the audience was decided when each message was written, and rewriting it
+  afterwards would mean an inbox changed because of something that happened later.
 - **Second reason:** both-sides-join is also what keeps the multi-user future additive (§10) — a
   unilateral "A opens a channel to B" would have to *tighten* into an accept flow later, which is a
   breaking change.

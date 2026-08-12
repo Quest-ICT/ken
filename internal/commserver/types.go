@@ -242,6 +242,31 @@ type directoryOut struct {
 	// YouAre names the asking station, because a session that has just been handed a
 	// list of names needs to know which one it is before it addresses anybody.
 	YouAre string `json:"you_are,omitempty"`
+	// Rooms this station is in. Without this a session can BE in a room and have no
+	// way to learn its id — the room would be usable only if a human pasted the id
+	// into the conversation, which is not a feature, it is a workaround.
+	Rooms []directoryRoom `json:"rooms"`
+	// BroadcastReaches is how many stations to_room:"all" would go to right now. Zero
+	// means a broadcast would be refused, and saying so here costs nothing and saves a
+	// session from discovering it by being turned down.
+	BroadcastReaches int `json:"broadcast_reaches"`
+	// RosterEpoch is the generation of the membership this answer describes. It appears
+	// on delivered messages too, so a session holding a standing instruction about a
+	// room can tell that the room it was told about is no longer the room that exists.
+	RosterEpoch int64 `json:"roster_epoch,omitempty"`
+}
+
+// directoryRoom is one room, from the asking station's point of view.
+//
+// Members are STATION NAMES rather than ids: this is the surface a session reads before
+// deciding whether to say something to a group, and "prod-ops, infra, dev" answers that
+// question where three opaque ids do not. The room_id is what it addresses with.
+type directoryRoom struct {
+	RoomID  string   `json:"room_id"`
+	Members []string `json:"members"`
+	// Pending is how many messages in this room are waiting for you. Same contract as
+	// comm_channels' count: reading it delivers nothing and starts no clock.
+	Pending int `json:"pending"`
 }
 
 type openLinkedIn struct {
