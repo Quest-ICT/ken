@@ -34,10 +34,85 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
-> **This release is a MAJOR bump.** Nothing is removed and no tool changes shape, but
-> `seq` keeps its name and changes its meaning, which is a break by the rule this file
-> exists to enforce. A renumbering that looks like the old numbers is worse than a
-> renamed field, not better.
+> **This release is a MAJOR bump**, and the reason is one line rather than the length of
+> the list below: `seq` keeps its name and changes its meaning. A renumbering that looks
+> like the old numbers is worse than a renamed field, not better. Everything else here is
+> additive or a fix.
+>
+> **Read the first four entries before upgrading.** The rest are things to observe
+> afterwards.
+>
+> **New in this release, if you are wondering what you get for the bump:** the station
+> **vault** (somewhere a session may put a credential), and **rooms and broadcast** —
+> many-party messaging where one body reaches every member of a set you filled, each
+> answering for itself. Neither changes anything you already run; both are described in
+> `CHANGELOG.md`.
+
+### `comm_send` takes a room, and `channel_id` is no longer required
+
+**Observed:** `comm_send` accepts `channel_id` OR `to_room`, and **refuses both or
+neither**. A call passing only `channel_id` behaves exactly as before. A call that passed
+`channel_id` twice-over — or that relied on the schema marking it required — sees a new
+error naming which mistake it made.
+
+**Do first:** nothing, unless something you built validates the tool's input schema.
+`channel_id` moved from `required` to optional, because "exactly one of these two" is not
+something a JSON schema can say and the handler enforces it instead.
+
+**Also new in the result:** `recipients`, the number of endpoints the message actually
+went to. `comm_directory` gains `rooms[]`, `broadcast_reaches` and `roster_epoch`.
+
+### The hearsay badge changes wording a second time, and gains a kind
+
+**Observed:** a proposal's badge now reads either "possibly second-hand" or "heard in a
+room?", with tooltips saying which was seen. `entry_version` gains a nullable
+`via_comm_kind` column.
+
+**Do first:** nothing, and specifically **do not go back over old proposals looking for
+the distinction** — every version written before this release carries no kind, because
+the distinction was not recorded at the time. Inventing one retroactively would be
+fabricating provenance, which is the thing the marker exists to avoid.
+
+**Why again:** 2.2.0 narrowed what the badge CLAIMS. This makes it informative, which is
+a different problem: one broadcast to a nine-station room marks nine identities from a
+single send, so rooms would have made an already-noisy signal noisier.
+
+### Notebook pages will measure larger than they did yesterday
+
+**Observed:** station notebook sizes go up — a lot, if your pages are not mostly English
+— and a notebook that was near its cap may now refuse a write. Nothing was added; the
+bound was counting **characters** where the setting promised **bytes**.
+
+**Do first:** look at `/stations` after upgrading if any station was close to
+`station_notebook_kib`. The honest reading is that those stations were always over the
+size their setting described, and Ken was under-reporting it into every snapshot.
+
+### `wait_seconds_granted` is always present in a `comm_poll` result
+
+**Observed:** the field no longer disappears when it is zero.
+
+**Do first:** nothing. Zero is the answer that matters most — it means the call did not
+block — and omitting it left the caller who passed `wait_seconds=-1` receiving neither
+that field nor `wait_clamped_from`, which was the defect 2.2.0 added them to close.
+
+### A rollback point may be uncompressed despite its `.db.gz` name
+
+**Observed:** nothing changes on disk. `docs/BACKUP.md`'s restore recipe changed, because
+the old one was wrong for a file that already exists on at least one deployment.
+
+**Do first:** if you restore from a `pre-upgrade-*` file written by a 1.7.0 or 2.0.0-era
+installer, **do not run `gunzip -c` on it blind** — one was measured as plain SQLite, and
+`gunzip` fails on it. Use the recipe in `BACKUP.md`, which tests the file rather than
+trusting the extension. `ken backup verify` was never affected; it reads magic bytes.
+
+### The installer stops widening `litestream.yml` on every upgrade
+
+**Observed:** the file keeps mode `0640` after an upgrade instead of being reset to
+`0644`.
+
+**Do first:** check the mode on your existing file — every upgrade until now widened it,
+and if you put replication credentials there they have been world-readable on the host
+since the first one.
 
 ### Message sequence numbers are renumbered, and now count per CONVERSATION
 
