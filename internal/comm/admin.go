@@ -38,7 +38,8 @@ SELECT c.channel_id, COALESCE(c.label,''), c.state, c.space_id, c.owner_actor_id
        ea.endpoint_id, COALESCE(ea.label,''),
        COALESCE(eb.endpoint_id,''), COALESCE(eb.label,''),
        (SELECT COUNT(*) FROM message m
-         WHERE m.channel_id = c.id AND m.state IN ('queued','delivered')),
+         WHERE m.channel_id = c.id AND EXISTS (SELECT 1 FROM delivery d
+                WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
        c.created_at, COALESCE(c.opened_at,'')
 FROM channel c
 JOIN endpoint ea ON ea.id = c.endpoint_a
@@ -117,7 +118,8 @@ SELECT
   (SELECT COUNT(*) FROM endpoint WHERE space_id=? AND revoked_at IS NULL),
   (SELECT COUNT(*) FROM channel  WHERE space_id=? AND state='open'),
   (SELECT COUNT(*) FROM message m JOIN channel c ON c.id=m.channel_id
-     WHERE c.space_id=? AND m.state IN ('queued','delivered')),
+     WHERE c.space_id=? AND EXISTS (SELECT 1 FROM delivery d
+            WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
   (SELECT COALESCE(SUM(LENGTH(m.body)),0) FROM message m JOIN channel c ON c.id=m.channel_id
      WHERE c.space_id=? AND m.body IS NOT NULL),
   (SELECT COUNT(*) FROM attachment a JOIN channel c ON c.id=a.channel_id
@@ -149,7 +151,8 @@ SELECT
 + (SELECT COUNT(*) FROM pairing_code WHERE space_id=? AND consumed_at IS NULL
      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')) * 7
 + (SELECT COUNT(*) FROM message m JOIN channel c ON c.id=m.channel_id
-     WHERE c.space_id=? AND m.state IN ('queued','delivered')) * 11`,
+     WHERE c.space_id=? AND EXISTS (SELECT 1 FROM delivery d
+            WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))) * 11`,
 		spaceID, spaceID, spaceID, spaceID, spaceID).Scan(&n)
 	return n, err
 }

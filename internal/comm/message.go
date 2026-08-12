@@ -122,15 +122,27 @@ func (s *Store) Send(ctx context.Context, ep *Endpoint, channelID, body string, 
 		clampedFrom = opts.TTLSeconds
 	}
 
+	scope := channelScope(channelID)
+
 	var out *Message
 	err = s.tx(ctx, func(t *sql.Tx) error {
+		// Resolved inside the transaction so a binding that lands mid-send cannot
+		// file the message under one identity and its deliveries under another.
+		senderParty, err := endpointParty(ctx, t, ep.ID)
+		if err != nil {
+			return err
+		}
+
 		// Idempotent resend: return the original rather than sending a second copy.
 		if opts.IdempotencyKey != "" {
 			var existing string
+			// Keyed on the SENDER PARTY, not the sending endpoint: a session that
+			// reconnects under a new endpoint and retries the same key must get its
+			// original message back rather than send a second copy.
 			err := t.QueryRowContext(ctx, `
 SELECT message_id FROM message
-WHERE channel_id=? AND sender_endpoint=? AND idempotency_key=?`,
-				ch.ID, ep.ID, opts.IdempotencyKey).Scan(&existing)
+WHERE scope_id=? AND sender_party=? AND idempotency_key=?`,
+				scope, senderParty, opts.IdempotencyKey).Scan(&existing)
 			if err == nil {
 				out, err = messageByID(ctx, t, existing)
 				return err
@@ -159,8 +171,9 @@ WHERE channel_id=? AND sender_endpoint=? AND idempotency_key=?`,
 		// apply to the warning I built alongside it.
 		var unacked, waitingForSender int
 		if err := t.QueryRowContext(ctx, `
-SELECT COUNT(*), COUNT(*) FILTER (WHERE recipient_endpoint = ? AND state = 'queued')
-  FROM message WHERE channel_id=? AND state IN ('queued','delivered')`, ep.ID, ch.ID).
+SELECT COUNT(*), COUNT(*) FILTER (WHERE d.party_key = ? AND d.state = 'queued')
+  FROM delivery d JOIN message m ON m.id = d.message_row
+ WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, senderParty, scope).
 			Scan(&unacked, &waitingForSender); err != nil {
 			return err
 		}
@@ -175,8 +188,10 @@ SELECT COUNT(*), COUNT(*) FILTER (WHERE recipient_endpoint = ? AND state = 'queu
 		var replyToRow int64
 		if opts.ReplyToMessageID != "" {
 			err := t.QueryRowContext(ctx, `
-SELECT id FROM message WHERE message_id=? AND channel_id=? AND recipient_endpoint=?`,
-				opts.ReplyToMessageID, ch.ID, ep.ID).Scan(&replyToRow)
+SELECT m.id FROM message m
+  JOIN delivery d ON d.message_row = m.id AND d.party_key = ?
+ WHERE m.message_id = ? AND m.scope_id = ?`,
+				senderParty, opts.ReplyToMessageID, scope).Scan(&replyToRow)
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
@@ -186,7 +201,7 @@ SELECT id FROM message WHERE message_id=? AND channel_id=? AND recipient_endpoin
 			replyTo = replyToRow
 		}
 
-		seq, err := nextSeq(ctx, t, ch.ID, ep.ID)
+		seq, err := nextScopeSeq(ctx, t, scope)
 		if err != nil {
 			return err
 		}
@@ -202,21 +217,40 @@ SELECT id FROM message WHERE message_id=? AND channel_id=? AND recipient_endpoin
 		// p90 144 min, max 23.7 h, against a 1 h default — 18% of messages used to
 		// arrive with the deadline already blown, which made the retention the
 		// deadline governs dead on arrival for nearly a fifth of all traffic.
-		var deadline any
-
 		// Every placeholder is a plain `?`: mixing `?` with explicit `?N` in one
 		// statement renumbers the auto-assigned ones and silently binds the wrong
-		// values. The deadline is therefore passed twice rather than referenced twice.
+		// values.
 		if _, err := t.ExecContext(ctx, `
-INSERT INTO message(message_id, channel_id, seq, sender_endpoint, recipient_endpoint, idempotency_key,
-                    body, body_sha256, body_bytes, requires_response, reply_to,
-                    expires_at, reply_deadline_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,
-       strftime('%Y-%m-%dT%H:%M:%fZ','now',?),
-       CASE WHEN ? IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%fZ','now',?) END)`,
-			messageID, ch.ID, seq, ep.ID, peer, nullStr(opts.IdempotencyKey),
+INSERT INTO message(message_id, scope_id, scope_seq, channel_id, sender_endpoint, sender_party,
+                    idempotency_key, body, body_sha256, body_bytes, requires_response, reply_to,
+                    audience_size, expires_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
+			messageID, scope, seq, ch.ID, ep.ID, senderParty, nullStr(opts.IdempotencyKey),
 			body, sha256Hex(body), len(body), boolInt(opts.RequiresResponse), replyTo,
-			nowExpr(ttl), deadline, deadline); err != nil {
+			1, nowExpr(ttl)); err != nil {
+			return err
+		}
+
+		// One delivery row per recipient party. `peer` is still the addressee for a
+		// channel, but it is resolved to a PARTY first, so a message sent to a staffed
+		// peer is filed against the station rather than the connection that happens to
+		// be reading it — the whole point of the split, and what makes N of these
+		// rows a room.
+		//
+		// NO reply deadline here. It is armed at FIRST DELIVERY (see Poll), because a
+		// deadline anchored at send runs while the recipient has no way to know the
+		// message exists: measured median delivery latency 11 min, p90 144 min, max
+		// 23.7 h against a 1 h default — 18% of messages used to arrive already
+		// expired, which made the retention that deadline governs dead on arrival for
+		// nearly a fifth of all traffic.
+		recipientParty, err := endpointParty(ctx, t, peer)
+		if err != nil {
+			return err
+		}
+		if _, err := t.ExecContext(ctx, `
+INSERT INTO delivery(message_row, party_key, recipient_endpoint)
+SELECT id, ?, ? FROM message WHERE message_id = ?`,
+			recipientParty, peer, messageID); err != nil {
 			return err
 		}
 
@@ -238,9 +272,18 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,
 			// A rewritten pass left its dependant untouched, which is the same shape
 			// as a stale comment naming an enforcer that never existed. Retention now
 			// governs every settled body, with no side door.
+			// Recorded against the DELIVERY that owed the answer, not the message: with
+			// several recipients "was this answered" is a different question per
+			// party, and `answered_at` on the message is the any-recipient roll-up.
 			if _, err := t.ExecContext(ctx, `
-UPDATE message SET replied_by=?
-WHERE id=? AND replied_by IS NULL`, newRow, replyToRow); err != nil {
+UPDATE delivery SET replied_by=?
+WHERE message_row=? AND party_key=? AND replied_by IS NULL`,
+				newRow, replyToRow, senderParty); err != nil {
+				return err
+			}
+			if _, err := t.ExecContext(ctx, `
+UPDATE message SET answered_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE id=? AND answered_at IS NULL`, replyToRow); err != nil {
 				return err
 			}
 		}
@@ -368,10 +411,20 @@ func (s *Store) enqueueLocked(ctx context.Context, t *sql.Tx, chRow, sender, rec
 // the cap suppress it would reintroduce the indefinite wait the signal exists to
 // prevent.
 func (s *Store) enqueueKind(ctx context.Context, t *sql.Tx, chRow, sender, recipient int64, body string, ttlSec int, kind string) (*Message, error) {
+	// The scope is derived from the channel rather than passed in, so the two can
+	// never disagree: a caller holding a rowid cannot accidentally file a message
+	// into another channel's stream.
+	var chPublicID string
+	if err := t.QueryRowContext(ctx, `SELECT channel_id FROM channel WHERE id=?`, chRow).Scan(&chPublicID); err != nil {
+		return nil, err
+	}
+	scope := channelScope(chPublicID)
+
 	if kind != "status" {
 		var unacked int
 		if err := t.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM message WHERE channel_id=? AND state IN ('queued','delivered')`, chRow).
+SELECT COUNT(*) FROM delivery d JOIN message m ON m.id = d.message_row
+ WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, scope).
 			Scan(&unacked); err != nil {
 			return nil, err
 		}
@@ -379,7 +432,7 @@ SELECT COUNT(*) FROM message WHERE channel_id=? AND state IN ('queued','delivere
 			return nil, ErrBackpressure
 		}
 	}
-	seq, err := nextSeq(ctx, t, chRow, sender)
+	seq, err := nextScopeSeq(ctx, t, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -387,12 +440,26 @@ SELECT COUNT(*) FROM message WHERE channel_id=? AND state IN ('queued','delivere
 	if err != nil {
 		return nil, err
 	}
+	senderParty, err := endpointParty(ctx, t, sender)
+	if err != nil {
+		return nil, err
+	}
+	recipientParty, err := endpointParty(ctx, t, recipient)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := t.ExecContext(ctx, `
-INSERT INTO message(message_id, channel_id, seq, sender_endpoint, recipient_endpoint,
+INSERT INTO message(message_id, scope_id, scope_seq, channel_id, sender_endpoint, sender_party,
                     body, body_sha256, body_bytes, expires_at, kind)
-VALUES(?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?), ?)`,
-		messageID, chRow, seq, sender, recipient,
+VALUES(?,?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?), ?)`,
+		messageID, scope, seq, chRow, sender, senderParty,
 		body, sha256Hex(body), len(body), nowExpr(ttlSec), kind); err != nil {
+		return nil, err
+	}
+	if _, err := t.ExecContext(ctx, `
+INSERT INTO delivery(message_row, party_key, recipient_endpoint)
+SELECT id, ?, ? FROM message WHERE message_id = ?`,
+		recipientParty, recipient, messageID); err != nil {
 		return nil, err
 	}
 	return messageByID(ctx, t, messageID)
@@ -454,37 +521,52 @@ func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, e
 		// station that no longer exists and see none of its own mail. With it, it
 		// degrades to exactly the unbound behaviour, which is what "treated as
 		// unbound rather than as an error" has to mean in practice.
-		recipient := `m.recipient_endpoint = ?`
-		args := []any{ep.ID}
+		// The inbox is now the set of DELIVERY rows for my party. The old query
+		// asked "is this message addressed to my endpoint, or to any endpoint of my
+		// station" at read time; the party key answers that at write time, so the
+		// widening is storage rather than a predicate.
+		//
+		// The `OR d.party_key = ?` on the endpoint form survives for the skew case S7
+		// names — ken.db restored backwards while comm.db stays current, leaving rows
+		// whose station_id resolves to nothing. Such a reader still finds mail filed
+		// under its own rowid, degrading to exactly the unbound behaviour, which is
+		// what "treated as unbound rather than as an error" has to mean in practice.
+		party := `d.party_key = ?`
+		args := []any{endpointPartyKey(ep.ID)}
 		if ep.StationID != "" {
-			recipient = `(r.station_id = ? OR m.recipient_endpoint = ?)`
-			args = []any{ep.StationID, ep.ID}
+			party = `(d.party_key = ? OR d.party_key = ?)`
+			args = []any{stationParty(ep.StationID), endpointPartyKey(ep.ID)}
 		}
 		rows, err := t.QueryContext(ctx, `
-SELECT m.message_id
-FROM message m
-JOIN channel c ON c.id = m.channel_id
-LEFT JOIN endpoint r ON r.id = m.recipient_endpoint
-WHERE `+recipient+`
-  AND m.state IN ('queued','delivered')
+SELECT m.message_id, d.party_key
+FROM delivery d
+JOIN message m ON m.id = d.message_row
+LEFT JOIN channel c ON c.id = m.channel_id
+WHERE `+party+`
+  AND d.state IN ('queued','delivered')
   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  AND c.state='open'
-  AND (m.claimed_by_endpoint IS NULL
-       OR m.claimed_by_endpoint = ?
-       OR m.claim_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-ORDER BY m.seq, m.id
+  AND (c.id IS NULL OR c.state='open')
+  AND (d.claimed_by_endpoint IS NULL
+       OR d.claimed_by_endpoint = ?
+       OR d.claim_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+ORDER BY m.scope_seq, m.id
 LIMIT ?`, append(args, ep.ID, limit)...)
 		if err != nil {
 			return err
 		}
-		var ids []string
+		// The party is carried per row rather than recomputed. The predicate above
+		// deliberately matches BOTH forms for a bound endpoint (the S7 skew case), so
+		// assuming the station form here would silently fail to settle any row filed
+		// under the endpoint's own rowid — re-polled forever, no error, no signal.
+		type pollRow struct{ id, party string }
+		var ids []pollRow
 		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
+			var r pollRow
+			if err := rows.Scan(&r.id, &r.party); err != nil {
 				rows.Close()
 				return err
 			}
-			ids = append(ids, id)
+			ids = append(ids, r)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -492,7 +574,8 @@ LIMIT ?`, append(args, ep.ID, limit)...)
 		}
 		rows.Close()
 
-		for _, id := range ids {
+		for _, pr := range ids {
+			id, deliveryParty := pr.id, pr.party
 			// Claiming is conditional on the message still being claimable, so two
 			// readers of one station racing on the same row cannot both take it:
 			// exactly one UPDATE matches. The read above is advisory; THIS is the
@@ -501,14 +584,16 @@ LIMIT ?`, append(args, ep.ID, limit)...)
 			// to exclude.
 			if ep.StationID != "" {
 				res, err := t.ExecContext(ctx, `
-UPDATE message
+UPDATE delivery
 SET claimed_by_endpoint=?,
     claim_expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now', ?)
-WHERE message_id=?
+WHERE message_row = (SELECT id FROM message WHERE message_id=?)
+  AND party_key = ?
   AND (claimed_by_endpoint IS NULL
        OR claimed_by_endpoint = ?
        OR claim_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-					ep.ID, fmt.Sprintf("+%d seconds", s.lim().ClaimLeaseSeconds), id, ep.ID)
+					ep.ID, fmt.Sprintf("+%d seconds", s.lim().ClaimLeaseSeconds), id,
+					deliveryParty, ep.ID)
 				if err != nil {
 					return err
 				}
@@ -532,17 +617,34 @@ WHERE message_id=?
 			//
 			// Both were previously stamped at SEND, which ran them during exactly
 			// the window in which the recipient could not act.
+			// The per-recipient half: state, the redelivery counter and the reply
+			// deadline all live on THIS party's delivery row now, so one recipient
+			// reading does not advance another's clock.
 			if _, err := t.ExecContext(ctx, `
-UPDATE message
+UPDATE delivery
 SET state='delivered',
     delivery_count = delivery_count + 1,
-    expires_at = CASE WHEN first_delivered_at IS NULL
-                      THEN strftime('%Y-%m-%dT%H:%M:%fZ','now',?) ELSE expires_at END,
-    reply_deadline_at = CASE WHEN first_delivered_at IS NULL AND requires_response=1
+    reply_deadline_at = CASE WHEN first_delivered_at IS NULL
+                              AND (SELECT requires_response FROM message WHERE id = message_row) = 1
                              THEN strftime('%Y-%m-%dT%H:%M:%fZ','now',?) ELSE reply_deadline_at END,
     first_delivered_at = COALESCE(first_delivered_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-WHERE message_id=?`,
-				nowExpr(s.lim().MessageTTLSeconds), nowExpr(s.lim().ReplyDeadlineSeconds), id); err != nil {
+WHERE message_row = (SELECT id FROM message WHERE message_id=?)
+  AND party_key = ?`,
+				nowExpr(s.lim().ReplyDeadlineSeconds), id, deliveryParty); err != nil {
+				return err
+			}
+			// expires_at stays on MESSAGE: there is one body with one lifetime, and
+			// the switch from the undelivered backstop to the delivered TTL happens
+			// on FIRST delivery to ANYONE. Guarded on the message's own audience so a
+			// second recipient polling later cannot restart a clock the first one
+			// already started — the same COALESCE discipline, one level up.
+			if _, err := t.ExecContext(ctx, `
+UPDATE message
+SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
+WHERE message_id=?
+  AND (SELECT COUNT(*) FROM delivery d
+        WHERE d.message_row = message.id AND d.first_delivered_at IS NOT NULL) = 1`,
+				nowExpr(s.lim().MessageTTLSeconds), id); err != nil {
 				return err
 			}
 			m, err := messageByID(ctx, t, id)
@@ -573,66 +675,103 @@ WHERE message_id=?`,
 // deadline passes: a responder that crashed and recovered plausibly needs to
 // re-read what it owes.
 func (s *Store) Ack(ctx context.Context, ep *Endpoint, messageID string) error {
-	blankNow := s.lim().BodyRetentionSeconds <= 0
-	// The recipient predicate mirrors Poll's, and it MUST: a bound reader can be
-	// handed a message addressed to a DIFFERENT endpoint of its station — that is the
-	// whole point of the station owning the inbox — so an ack scoped to this
-	// endpoint's own rowid would silently match nothing. The message would then come
-	// back on the next poll, and a replacement session would loop on mail it had
-	// already acted upon. One ack settles it for the STATION (S4).
-	if ep.StationID != "" {
-		_, err := s.W.ExecContext(ctx, `
-UPDATE message
+	pred, pargs := partyPredicate(ep)
+	args := append([]any{ep.ID, messageID}, pargs...)
+	if _, err := s.W.ExecContext(ctx, `
+UPDATE delivery
 SET state='acked',
     acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-    claimed_by_endpoint=NULL, claim_expires_at=NULL,
-    body = CASE WHEN ? THEN NULL ELSE body END
-WHERE message_id=?
-  AND recipient_endpoint IN (SELECT id FROM endpoint WHERE station_id=?)
-  AND state IN ('queued','delivered')`, blankNow, messageID, ep.StationID)
+    acked_by_endpoint=?,
+    claimed_by_endpoint=NULL, claim_expires_at=NULL
+WHERE message_row = (SELECT id FROM message WHERE message_id=?)
+  AND `+pred+`
+  AND state IN ('queued','delivered')`, args...); err != nil {
 		return err
 	}
+	return s.blankIfFullySettled(ctx, messageID)
+}
+
+// partyPredicate is Poll's recipient rule, stated ONCE so Ack and AckUpTo cannot
+// drift from it — and the drift that matters has a direction: an ack scoped to the
+// acking endpoint's own rowid silently matches nothing when the message was addressed
+// to a different endpoint of the same station, so it comes back on the next poll and
+// a replacement session loops on mail it has already acted upon. One ack settles it
+// for the STATION (S4).
+//
+// Both forms are matched for a bound endpoint, for the reason Poll gives: after a
+// backwards ken.db restore a station_id can resolve to nothing, and such a reader must
+// still settle the mail filed under its own rowid.
+func partyPredicate(ep *Endpoint) (string, []any) {
+	if ep.StationID != "" {
+		return `(party_key = ? OR party_key = ?)`,
+			[]any{stationParty(ep.StationID), endpointPartyKey(ep.ID)}
+	}
+	return `party_key = ?`, []any{endpointPartyKey(ep.ID)}
+}
+
+// blankIfFullySettled drops a body once NO recipient still owes anything.
+//
+// With one recipient this is exactly the old inline behaviour. With several it is the
+// only correct rule: blanking when the FIRST recipient acks would destroy the text for
+// everyone who has not read it yet — the retention defect that cost 97% of bodies
+// before 1.6.0, rebuilt from a new cause.
+//
+// Retention above 0 means the sweep governs and this does nothing; at 0 it means
+// "destroy on settling", which is the documented way to ask for the old behaviour
+// deliberately.
+func (s *Store) blankIfFullySettled(ctx context.Context, messageID string) error {
+	if s.lim().BodyRetentionSeconds > 0 {
+		return nil
+	}
 	_, err := s.W.ExecContext(ctx, `
-UPDATE message
-SET state='acked',
-    acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-    body = CASE WHEN ? THEN NULL ELSE body END
-WHERE message_id=? AND recipient_endpoint=? AND state IN ('queued','delivered')`,
-		blankNow, messageID, ep.ID)
+UPDATE message SET body=NULL
+WHERE message_id=? AND body IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM delivery d
+                   WHERE d.message_row = message.id
+                     AND d.state IN ('queued','delivered'))`, messageID)
 	return err
 }
 
-// AckUpTo cumulatively acks every message from one sender on a channel up to and
-// including seq. Cumulative acking collapses ack chatter and is idempotent by
-// construction, which is why it exists alongside per-message Ack.
 func (s *Store) AckUpTo(ctx context.Context, ep *Endpoint, channelID string, seq int64) error {
-	blankNow := s.lim().BodyRetentionSeconds <= 0
-	ch, peer, err := s.ChannelFor(ctx, ep, channelID)
+	if _, _, err := s.ChannelFor(ctx, ep, channelID); err != nil {
+		return err
+	}
+	// The range is over the SCOPE sequence — one ascending stream across every sender
+	// rather than two interleaved ones. That is what makes a cumulative ack safe:
+	// under the old per-(channel, sender) numbering both directions reused the same
+	// low numbers, so acking up to 2 could settle mail from the other direction that
+	// nobody had read.
+	//
+	// Collected then acked one at a time, through Ack, so the body-blanking rule lives
+	// in exactly one place. A range that settled rows with its own UPDATE is how the
+	// two paths drifted apart the first time.
+	pred, pargs := partyPredicate(ep)
+	args := append([]any{channelScope(channelID), seq}, pargs...)
+	rows, err := s.W.QueryContext(ctx, `
+SELECT m.message_id FROM delivery d JOIN message m ON m.id = d.message_row
+ WHERE m.scope_id=? AND m.scope_seq<=? AND d.state='delivered' AND d.`+pred, args...)
 	if err != nil {
 		return err
 	}
-	// Same station-scoping as Ack, and for the same reason: a cumulative ack from a
-	// replacement reader must settle the mail addressed to the endpoint it replaced.
-	if ep.StationID != "" {
-		_, err = s.W.ExecContext(ctx, `
-UPDATE message
-SET state='acked',
-    acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-    claimed_by_endpoint=NULL, claim_expires_at=NULL,
-    body = CASE WHEN ? THEN NULL ELSE body END
-WHERE channel_id=? AND sender_endpoint=? AND seq<=? AND state='delivered'
-  AND recipient_endpoint IN (SELECT id FROM endpoint WHERE station_id=?)`,
-			blankNow, ch.ID, peer, seq, ep.StationID)
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = s.W.ExecContext(ctx, `
-UPDATE message
-SET state='acked',
-    acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-    body = CASE WHEN ? THEN NULL ELSE body END
-WHERE channel_id=? AND sender_endpoint=? AND recipient_endpoint=? AND seq<=? AND state='delivered'`,
-		blankNow, ch.ID, peer, ep.ID, seq)
-	return err
+	for _, id := range ids {
+		if err := s.Ack(ctx, ep, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PendingReplies lists this endpoint's sent messages that still owe a response.
@@ -640,9 +779,10 @@ WHERE channel_id=? AND sender_endpoint=? AND recipient_endpoint=? AND seq<=? AND
 // it from a reference message that may already have been superseded.
 func (s *Store) PendingReplies(ctx context.Context, ep *Endpoint) ([]Message, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT message_id FROM message
-WHERE sender_endpoint=? AND requires_response=1 AND replied_by IS NULL AND state<>'expired'
-ORDER BY created_at`, ep.ID)
+SELECT m.message_id FROM message m
+WHERE m.sender_endpoint=? AND m.requires_response=1 AND m.answered_at IS NULL
+  AND EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = m.id AND d.state <> 'expired')
+ORDER BY m.created_at`, ep.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -697,9 +837,10 @@ func (s *Store) Sweep(ctx context.Context) (expired, purged int64, err error) {
 		//    a message that dies unread is exactly the case where silence would leave
 		//    the sender believing it was delivered.
 		expiring, err := collectForNotice(ctx, t, "expired", `
-SELECT id, channel_id, sender_endpoint, recipient_endpoint, message_id FROM message
-WHERE state IN ('queued','delivered') AND kind='message' AND notified_at IS NULL
-  AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+SELECT m.id, m.channel_id, m.sender_endpoint, d.recipient_endpoint, m.message_id
+  FROM delivery d JOIN message m ON m.id = d.message_row
+ WHERE d.state IN ('queued','delivered') AND m.kind='message' AND d.notified_at IS NULL
+   AND m.expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
 		if err != nil {
 			return err
 		}
@@ -712,26 +853,43 @@ WHERE state IN ('queued','delivered') AND kind='message' AND notified_at IS NULL
 		// on rather than a hole. A DELIVERED message is different: the recipient had
 		// it and did nothing, so it follows the ordinary retention rule.
 		res, err := t.ExecContext(ctx, `
-UPDATE message
-   SET state='expired',
-       body = CASE WHEN ? OR first_delivered_at IS NOT NULL THEN NULL ELSE body END
-WHERE state IN ('queued','delivered') AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-			s.lim().BodyRetentionSeconds <= 0)
+UPDATE delivery
+   SET state='expired'
+ WHERE state IN ('queued','delivered')
+   AND message_row IN (SELECT id FROM message
+                        WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
 		if err != nil {
 			return err
 		}
 		expired, _ = res.RowsAffected()
+
+		// The BODY is one object with one lifetime, so it is blanked on the message
+		// and only once NO recipient is still owed it. `first_delivered_at IS NOT
+		// NULL` becomes "somebody actually received this", asked of the audience.
+		if _, err := t.ExecContext(ctx, `
+UPDATE message SET body=NULL
+ WHERE body IS NOT NULL
+   AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   AND NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = message.id
+                                              AND d.state IN ('queued','delivered'))
+   AND (? OR EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = message.id
+                                                AND d.first_delivered_at IS NOT NULL))`,
+			s.lim().BodyRetentionSeconds <= 0); err != nil {
+			return err
+		}
 
 		// 2. A requires_response message whose deadline passed unanswered: drop the
 		//    retained body (nothing is owed any more) and tell the requester, which is
 		//    the whole reason deadlines exist — without it a session whose peer died
 		//    waits forever, and reply_deadline_at would be decoration.
 		overdue, err := collectForNotice(ctx, t, "reply_overdue", `
-SELECT id, channel_id, sender_endpoint, recipient_endpoint, message_id FROM message
-WHERE requires_response=1 AND replied_by IS NULL AND kind='message' AND notified_at IS NULL
-  AND state IN ('queued','delivered','acked')
-  AND reply_deadline_at IS NOT NULL
-  AND reply_deadline_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+SELECT m.id, m.channel_id, m.sender_endpoint, d.recipient_endpoint, m.message_id
+  FROM delivery d JOIN message m ON m.id = d.message_row
+ WHERE m.requires_response=1 AND d.replied_by IS NULL AND m.kind='message'
+   AND d.notified_at IS NULL
+   AND d.state IN ('queued','delivered','acked')
+   AND d.reply_deadline_at IS NOT NULL
+   AND d.reply_deadline_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
 		if err != nil {
 			return err
 		}
@@ -764,12 +922,20 @@ WHERE requires_response=1 AND replied_by IS NULL AND kind='message' AND notified
 			if r < 0 {
 				r = 0
 			}
+			// The retention window runs from when the message settled for its LAST
+			// recipient, not its first. With one recipient that is the same instant
+			// and this is unchanged; with several, keying on the earliest would
+			// destroy the text while somebody was still entitled to it.
 			if _, err := t.ExecContext(ctx, `
 UPDATE message SET body=NULL
 WHERE body IS NOT NULL
-  AND state IN ('acked','expired')
-  AND first_delivered_at IS NOT NULL
-  AND COALESCE(acked_at, first_delivered_at) <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`,
+  AND NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = message.id
+                                             AND d.state IN ('queued','delivered'))
+  AND EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = message.id
+                                         AND d.first_delivered_at IS NOT NULL)
+  AND (SELECT MAX(COALESCE(d.acked_at, d.first_delivered_at)) FROM delivery d
+        WHERE d.message_row = message.id)
+      <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`,
 				nowExpr(-r)); err != nil {
 				return err
 			}
@@ -804,8 +970,10 @@ WHERE body IS NOT NULL
 		//    on settling. Measured from settle, the two are independent.
 		res, err = t.ExecContext(ctx, `
 DELETE FROM message
-WHERE state IN ('acked','expired')
-  AND COALESCE(acked_at, expires_at) <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`,
+WHERE NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = message.id
+                                              AND d.state IN ('queued','delivered'))
+  AND COALESCE((SELECT MAX(d.acked_at) FROM delivery d WHERE d.message_row = message.id),
+               expires_at) <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)`,
 			nowExpr(-s.lim().MetadataTTLSeconds))
 		if err != nil {
 			return err
@@ -836,7 +1004,8 @@ WHERE consumed_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
 			if _, err := t.ExecContext(ctx, `
 DELETE FROM endpoint
 WHERE last_seen_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
-  AND id NOT IN (SELECT sender_endpoint FROM message UNION SELECT recipient_endpoint FROM message)
+  AND id NOT IN (SELECT sender_endpoint FROM message
+                 UNION SELECT recipient_endpoint FROM delivery WHERE recipient_endpoint IS NOT NULL)
   AND id NOT IN (SELECT sender_endpoint FROM attachment WHERE stored_bytes > 0)`,
 				nowExpr(-idle)); err != nil {
 				return err
@@ -944,7 +1113,7 @@ func (s *Store) notifySender(ctx context.Context, t *sql.Tx, n notice) error {
 		return err
 	}
 	_, err := t.ExecContext(ctx,
-		`UPDATE message SET notified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, n.row)
+		`UPDATE delivery SET notified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE message_row=?`, n.row)
 	return err
 }
 
@@ -953,6 +1122,7 @@ func messageByID(ctx context.Context, q rowQuerier, messageID string) (*Message,
 	var (
 		m        Message
 		body     sql.NullString
+		chID     sql.NullString
 		replyTo  sql.NullString
 		deadline sql.NullString
 		reqResp  int
@@ -965,17 +1135,33 @@ func messageByID(ctx context.Context, q rowQuerier, messageID string) (*Message,
 		attMode  sql.NullString
 		attNonce sql.NullString
 	)
+	// State, delivery_count and the reply deadline are now PER RECIPIENT, so a
+	// single-valued view of a message has to say which recipient it means. This one
+	// aggregates: the LEAST settled state across the audience, the highest delivery
+	// count, and the earliest live deadline.
+	//
+	// For every message that exists today the audience is one and this is exactly the
+	// old behaviour. For a room it answers the question a SENDER asks — "has anybody
+	// still not dealt with this" — which is the only question a single state can
+	// honestly answer about many recipients. A caller needing per-recipient truth
+	// reads `delivery` (slice 4's comm_outbox is that surface).
 	err := q.QueryRowContext(ctx, `
-SELECT m.message_id, c.channel_id, m.seq, se.endpoint_id, m.body, m.requires_response,
+SELECT m.message_id, c.channel_id, m.scope_seq, se.endpoint_id, m.body, m.requires_response,
        (SELECT r.message_id FROM message r WHERE r.id = m.reply_to),
-       m.state, m.delivery_count, m.body_bytes, m.created_at, m.expires_at, m.reply_deadline_at, m.kind,
+       COALESCE((SELECT d.state FROM delivery d WHERE d.message_row = m.id
+                  ORDER BY CASE d.state WHEN 'queued' THEN 0 WHEN 'delivered' THEN 1
+                                        WHEN 'expired' THEN 2 ELSE 3 END LIMIT 1), 'queued'),
+       COALESCE((SELECT MAX(d.delivery_count) FROM delivery d WHERE d.message_row = m.id), 0),
+       m.body_bytes, m.created_at, m.expires_at,
+       (SELECT MIN(d.reply_deadline_at) FROM delivery d WHERE d.message_row = m.id AND d.acked_at IS NULL),
+       m.kind,
        a.attachment_id, a.name, a.size_bytes, a.sha256, a.transfer, a.nonce_sha256
 FROM message m
-JOIN channel  c  ON c.id  = m.channel_id
+LEFT JOIN channel c  ON c.id  = m.channel_id
 JOIN endpoint se ON se.id = m.sender_endpoint
 LEFT JOIN attachment a ON a.message_id = m.id
 WHERE m.message_id=?`, messageID).
-		Scan(&m.MessageID, &m.ChannelID, &m.Seq, &m.SenderEndpointID, &body, &reqResp,
+		Scan(&m.MessageID, &chID, &m.Seq, &m.SenderEndpointID, &body, &reqResp,
 			&replyTo, &m.State, &m.DeliveryCount, &m.BodyBytes, &m.CreatedAt, &m.ExpiresAt, &deadline, &m.Kind,
 			&attID, &attName, &attSize, &attSHA, &attMode, &attNonce)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -985,6 +1171,7 @@ WHERE m.message_id=?`, messageID).
 		return nil, err
 	}
 	m.Body = body.String
+	m.ChannelID = chID.String
 	m.RequiresResponse = reqResp == 1
 	m.ReplyToMessageID = replyTo.String
 	m.ReplyDeadlineAt = deadline.String
