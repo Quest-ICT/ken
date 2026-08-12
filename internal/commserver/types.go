@@ -144,7 +144,14 @@ type pollOut struct {
 	// inert: nothing distinguishes it from one that worked.
 	WaitClampedFrom int `json:"wait_clamped_from,omitempty" jsonschema:"present only when the server shortened your wait_seconds; the value you asked for. The wait actually granted is wait_seconds_granted"`
 	// WaitSecondsGranted is what the server actually waited, whenever it waited at all.
-	WaitSecondsGranted int `json:"wait_seconds_granted,omitempty" jsonschema:"how long this call was prepared to block, in seconds, after the server's cap was applied"`
+	// NOT omitempty, and that is the whole point of the field. A caller passing
+	// wait_seconds=-1 gets a granted wait of 0 — a legitimate, informative answer,
+	// meaning "this call did not block at all" — and omitempty would drop it, so the
+	// one caller most likely to be confused about what their parameter did receives
+	// nothing. That is the same shape as the defect this field was added to fix: a
+	// value accepted and then never spoken of. Reported by ken-prod-ops, who noticed
+	// it in the release that claimed to close it.
+	WaitSecondsGranted int `json:"wait_seconds_granted" jsonschema:"how long this call was prepared to block, in seconds, after the server's cap was applied. 0 means it did not block"`
 }
 
 type ackIn struct {

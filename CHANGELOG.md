@@ -112,8 +112,19 @@ same change — never "docs later".
   and `if_rev` cost a tenth of that.
 
   All three places that gave the advice now name the pattern rather than only the
-  cadence: the connect-time block, `station_note_write`'s description — which is what a
-  session reads at the moment it decides — and the empty-handoff nudge in the briefing.
+  cadence: the connect-time block, `station_note_write`'s description, and the
+  empty-handoff nudge in the briefing.
+
+  **Correction, from ken-prod-ops measuring their own deployment after this shipped:**
+  the sentence originally here said the tool description is "what a session reads at the
+  moment it decides", implying it reaches a running conversation. It does not. Their
+  process has served the 2.2.0 image since `2026-08-12T16:59:05Z` while their station
+  instructions AND that tool description are verbatim the 2.1.0 text. **Both are captured
+  at CONVERSATION START.** Only tool RESULTS are computed per call — and the one result
+  changed here fires solely on the empty-handoff arm, which is false for all eight of
+  their stations. So on an existing deployment this fix reaches nobody until each session
+  restarts, and `comm_poll`'s new fields are the only 2.2.0 change that reaches a running
+  session at all.
 
 - **The hearsay badge claimed more than it detects.** Its tooltip said "the session that
   wrote this had recently received a message" — but `ReceivedSince` is keyed on the

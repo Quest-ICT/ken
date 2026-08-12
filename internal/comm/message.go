@@ -617,6 +617,30 @@ WHERE message_row = (SELECT id FROM message WHERE message_id=?)
 			//
 			// Both were previously stamped at SEND, which ran them during exactly
 			// the window in which the recipient could not act.
+			// expires_at stays on MESSAGE: there is one body with one lifetime, and it
+			// switches from the undelivered backstop to the delivered TTL on first
+			// delivery to ANYONE.
+			//
+			// RUN BEFORE the delivery stamp below, and guarded on nothing having been
+			// delivered yet. Running it after and counting delivered rows looks
+			// equivalent and is not: on a REDELIVERY the count is unchanged, so the
+			// expiry was restamped on every poll and a peer could hold a message open
+			// forever by polling without acking — precisely what
+			// TestDeliveryArmsTheClocksOnceAndOnlyOnce forbids.
+			//
+			// It failed 2 runs in 5. Both statements usually land in the same
+			// millisecond, so the restamp was invisible unless the clock ticked between
+			// them: a real defect wearing a flaky test.
+			if _, err := t.ExecContext(ctx, `
+UPDATE message
+SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
+WHERE message_id=?
+  AND NOT EXISTS (SELECT 1 FROM delivery d
+                   WHERE d.message_row = message.id AND d.first_delivered_at IS NOT NULL)`,
+				nowExpr(s.lim().MessageTTLSeconds), id); err != nil {
+				return err
+			}
+
 			// The per-recipient half: state, the redelivery counter and the reply
 			// deadline all live on THIS party's delivery row now, so one recipient
 			// reading does not advance another's clock.
@@ -631,20 +655,6 @@ SET state='delivered',
 WHERE message_row = (SELECT id FROM message WHERE message_id=?)
   AND party_key = ?`,
 				nowExpr(s.lim().ReplyDeadlineSeconds), id, deliveryParty); err != nil {
-				return err
-			}
-			// expires_at stays on MESSAGE: there is one body with one lifetime, and
-			// the switch from the undelivered backstop to the delivered TTL happens
-			// on FIRST delivery to ANYONE. Guarded on the message's own audience so a
-			// second recipient polling later cannot restart a clock the first one
-			// already started — the same COALESCE discipline, one level up.
-			if _, err := t.ExecContext(ctx, `
-UPDATE message
-SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
-WHERE message_id=?
-  AND (SELECT COUNT(*) FROM delivery d
-        WHERE d.message_row = message.id AND d.first_delivered_at IS NOT NULL) = 1`,
-				nowExpr(s.lim().MessageTTLSeconds), id); err != nil {
 				return err
 			}
 			m, err := messageByID(ctx, t, id)

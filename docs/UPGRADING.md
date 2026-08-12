@@ -151,9 +151,12 @@ accumulating exactly as before. After this release they start being deleted — 
 the newest `KEEP_PRE_UPGRADE` (3) or those younger than `KEEP_PRE_UPGRADE_DAYS` (7),
 whichever keeps more.
 
-**Do first:** if you have been relying on an old `pre-upgrade-*` file, copy it out. This
-is the 2.0.0 warning arriving a release late, and it lands harder because a deployment
-that upgraded to 2.0.0 or 2.1.0 has kept accumulating in the meantime.
+**Do first:** if you have been relying on an old `pre-upgrade-*` file, copy it out —
+**before the next snapshot, however it is started, not merely before the next nightly.**
+`ken-snapshot.service` has one `ExecStart`, so any start runs the prune, including a
+manual `ken-ctl snapshot-now`; ken-prod-ops found out-of-schedule runs in their journal.
+This is the 2.0.0 warning arriving a release late, and it lands harder because a
+deployment that upgraded to 2.0.0 or 2.1.0 has kept accumulating in the meantime.
 
 **Why it did nothing:** `find` does not descend into a symlinked starting point, and the
 default layout is symlinked — `KEN_HOME` is `/opt/ken/current` and `current/backups`
