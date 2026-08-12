@@ -700,6 +700,15 @@ log "setting ownership and permissions"
 run chown -Rh root:root "$RELEASES"
 run chmod -R u=rwX,go=rX "$DEST"
 run chmod 0755 "$DEST/bin/ken" "$DEST/scripts/ken.sh" "$DEST/scripts/ken-snapshot.sh"
+# The blanket chmod above re-widens litestream.yml to 0644 on EVERY upgrade, undoing the
+# 0640 the packager set deliberately: that file is where replication credentials go, and
+# an operator who put them there would have them world-readable again after each
+# upgrade, silently, with nothing in the output to notice.
+#
+# Found by ken-prod-ops on a live box. No exposure there — the deployed file still hashes
+# equal to the public template, so it holds nothing — but the mode is the point, not the
+# current contents.
+[ -f "$DEST/litestream.yml" ] && run chmod 0640 "$DEST/litestream.yml"
 
 run chown -R "$SVC_USER:$SVC_GROUP" "$DATA" "$LOGS"
 run chmod 0750 "$DATA" "$LOGS"

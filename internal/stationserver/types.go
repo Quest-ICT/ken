@@ -81,6 +81,19 @@ type noteMeta struct {
 	Rev       int      `json:"rev"`
 	Bytes     int      `json:"bytes"`
 	UpdatedAt string   `json:"updated_at"`
+	// RevisionsLost is how many of this page's revisions the history bound has already
+	// deleted, oldest first. NOT omitempty: zero is the answer that matters most, and
+	// dropping it would make "nothing lost" and "the field does not exist" identical.
+	//
+	// Pruning is silent by design and a session cannot otherwise discover it. A live
+	// station was measured at head rev 26 holding only revisions 18 and up — seventeen
+	// gone, including its original context, with nothing anywhere reporting it.
+	RevisionsLost int `json:"revisions_lost"`
+	// HistoryBytes is what this page's retained revisions occupy. A page kept by APPEND
+	// accumulates history proportional to the SQUARE of its length, so this number goes
+	// bad long before `bytes` does — one measured station reached 96% of its cap with
+	// 252,759 bytes of history behind an 8,083-byte page.
+	HistoryBytes int `json:"history_bytes"`
 }
 type noteListOut struct {
 	Pages []noteMeta `json:"pages"`

@@ -397,8 +397,11 @@ func newServer(d Deps) *mcp.Server {
 	// --- notebook -----------------------------------------------------------
 	addTool(s, d, &mcp.Tool{
 		Name: "station_note_list",
-		Description: "Your notebook's page keys, titles, tags, sizes and when each changed. Never bodies — " +
-			"read the one you need. Working state only: durable lessons belong in the knowledge base.",
+		Description: "Your notebook's page keys, titles, tags, sizes and when each changed. Never bodies — read the one you need. " +
+			"`revisions_lost` is how many of a page's older revisions the history bound has ALREADY deleted, oldest first: " +
+			"nothing warns you when that happens, so this is the only place it shows. `history_bytes` grows with the SQUARE " +
+			"of a page kept by append, which is why it reaches the cap long before the page looks large. " +
+			"Working state only: durable lessons belong in the knowledge base.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, noteListOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -411,7 +414,8 @@ func newServer(d Deps) *mcp.Server {
 		out := noteListOut{Pages: make([]noteMeta, 0, len(ns))}
 		for _, n := range ns {
 			out.Pages = append(out.Pages, noteMeta{Key: n.Key, Title: n.Title, Tags: n.Tags,
-				Rev: n.Rev, Bytes: n.Bytes, UpdatedAt: n.UpdatedAt})
+				Rev: n.Rev, Bytes: n.Bytes, UpdatedAt: n.UpdatedAt,
+				RevisionsLost: n.Rev - n.OldestRev, HistoryBytes: n.HistoryBytes})
 		}
 		return nil, out, nil
 	})

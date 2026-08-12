@@ -113,6 +113,10 @@ pre-upgrade snapshot** (`backups/pre-upgrade-<UTC-Z>.db`, taken before an upgrad
 compression. The pre-upgrade snapshot is compressed exactly like a nightly, for
 the nightlies; it is exempt from nightly retention and kept as a rollback point.
 
+**One historical exception, worth knowing before reaching for an old file:** rollback points written
+by 1.7.0/2.0.0-era installers can be UNCOMPRESSED despite the `.db.gz` name. See the warning under
+*Restore*; the recipe there handles either shape, and `ken backup verify` never cared.
+
 ## Restore
 
 > **Staging plaintext:** `ken backup snapshot` and `ken backup verify` write `0600` themselves, so a
@@ -121,13 +125,29 @@ the nightlies; it is exempt from nightly retention and kept as a rollback point.
 > directory), so the decrypted knowledge base is not left world-readable in `/tmp`.
 
 **Before you start:** a nightly is `ken-<stamp>.db.gz`; the rollback point the installer takes before
-an upgrade is `pre-upgrade-<stamp>.db.gz`. Both are gzip, and `ken backup verify` reads either
-directly — it detects compression from the file's own magic bytes, so a snapshot that was renamed, or
-handed over without an extension, still verifies.
+an upgrade is `pre-upgrade-<stamp>.db.gz`. `ken backup verify` reads either directly — it detects
+compression from the file's own **magic bytes**, so a snapshot that was renamed, or handed over
+without an extension, still verifies.
+
+> **DO NOT TRUST THE `.gz` IN THE NAME.** `ken-prod-ops` found a live
+> `pre-upgrade-20260811T163126Z.db.gz` on a production box that is **uncompressed SQLite** — `file(1)`
+> says "SQLite 3.x database", `gzip -t` exits 1, and the first sixteen bytes are
+> `53 51 4c 69 74 65 20 66 6f 72 6d 61 74 20 33 00`. The data is intact and verifies; only the name
+> lies. It comes from a 1.7.0/2.0.0-era installer — the current one does not reproduce it, and the
+> sibling written on the same box today decompresses cleanly — but the artifact is real, on disk, and
+> after the next prune it may be one of the few rollback points still held.
+>
+> An earlier version of this section told you to run `gunzip -c` on it, which fails. Use the recipe
+> below: it asks the FILE what it is, exactly as `verify` does, rather than believing the extension.
 
 ```bash
-# decompress if you want a plain .db to work with (verify does not require this):
-gunzip -c /opt/ken/backups/ken-<stamp>.db.gz > /tmp/ken-restore.db
+# Decompress only if it IS compressed. Works on either shape, and on a file with no
+# extension at all. (verify does not require this step — it reads either directly.)
+umask 077
+src=/opt/ken/backups/ken-<stamp>.db.gz
+if gzip -t "$src" 2>/dev/null; then gunzip -c "$src" > /tmp/ken-restore.db
+else cp "$src" /tmp/ken-restore.db; fi
+/opt/ken/current/bin/ken backup verify /tmp/ken-restore.db
 ```
 
 Why the shape: never decrypt straight onto `data/ken.db` — a wrong key or a truncated transfer would

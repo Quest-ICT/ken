@@ -172,3 +172,114 @@ func TestHandoffStalenessCountsActivityNotTime(t *testing.T) {
 		t.Fatalf("activity since the handoff should count the tasks, got %d", n)
 	}
 }
+
+// THE CAP IS IN BYTES AND MUST COUNT BYTES.
+//
+// SQLite's LENGTH() on TEXT returns CHARACTERS. Every bound in this file is a BACKUP
+// decision (S12) — the number an operator reasons about is how much disk a station can
+// make the nightly snapshot carry — so counting characters under-reports every
+// non-ASCII page and lets a notebook exceed the size its setting promised.
+//
+// Benign on the corpus ken-prod-ops measured: 934,305 characters against 943,072 bytes
+// estate-wide. Not benign in a Spanish or French notebook, which is most of them here.
+func TestNotebookBoundsCountBytesNotCharacters(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := DefaultStationNoteLimits()
+
+	// Every rune here is 2 bytes in UTF-8 and 1 character. A cap that counts characters
+	// sees half of what is really stored.
+	body := strings.Repeat("é", 100)
+	if _, err := st.WriteStationNote(ctx, lim, station.StationID, "acentos", "t", body,
+		nil, "replace", 0, "tok", actorID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := st.ListStationNotes(ctx, station.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("%d notes, want 1", len(notes))
+	}
+	if notes[0].Bytes != len(body) {
+		t.Fatalf("the notebook reports %d bytes for a page that occupies %d.\n"+
+			"Every bound here is a backup decision, and one that under-counts by half on accented text "+
+			"lets a station carry twice the disk its setting promised.", notes[0].Bytes, len(body))
+	}
+}
+
+// A SESSION MUST BE ABLE TO SEE WHAT PRUNING TOOK.
+//
+// The history bound deletes oldest-first and says nothing — no log line, no field in the
+// write result, nothing in the page listing. A live station was measured at head rev 26
+// holding only revisions 18 and up: seventeen gone, including its original context, and
+// it could not have found out.
+//
+// This is the cheapest surface that tells it, and it is a tool RESULT rather than a tool
+// description or an instruction — measured to be the only channel that reaches a
+// conversation already in progress.
+func TestTheNoteListingRevealsRevisionsAlreadyPruned(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := DefaultStationNoteLimits()
+	lim.MaxRevisionBytes = 300 // small enough to cross in a handful of writes
+
+	for i := 0; i < 12; i++ {
+		if _, err := st.WriteStationNote(ctx, lim, station.StationID, "handoff", "t",
+			strings.Repeat("x", 100), nil, "replace", 0, "tok", actorID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	notes, err := st.ListStationNotes(ctx, station.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 {
+		t.Fatalf("%d notes, want 1", len(notes))
+	}
+	n := notes[0]
+	if n.Rev != 12 {
+		t.Fatalf("head rev = %d, want 12", n.Rev)
+	}
+	// TWO-SIDED, because one side alone is satisfied by a field that always reports the
+	// head revision — which is exactly what a mutation returning n.rev did, and my first
+	// version of this check let it through.
+	if n.OldestRev >= n.Rev {
+		t.Fatalf("oldest retained revision (%d) is not BELOW the head (%d) — the field is reporting "+
+			"the head rather than the lowest revision actually held, so it would say 'nothing lost' forever",
+			n.OldestRev, n.Rev)
+	}
+	if n.OldestRev <= 1 {
+		t.Fatalf("oldest retained revision is %d after twelve writes past a 300-byte bound — "+
+			"nothing was pruned, so this test is not exercising the loss it exists to report", n.OldestRev)
+	}
+	if n.HistoryBytes == 0 {
+		t.Error("history size reports zero while revisions are retained")
+	}
+
+	// CONTROL: a page whose history has NOT been pruned reports no loss. Without this,
+	// the assertion above would also pass on a field that always reported a gap.
+	if _, err := st.WriteStationNote(ctx, lim, station.StationID, "fresh", "t", "short",
+		nil, "replace", 0, "tok", actorID, false); err != nil {
+		t.Fatal(err)
+	}
+	notes, err = st.ListStationNotes(ctx, station.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range notes {
+		if p.Key == "fresh" && p.Rev != p.OldestRev {
+			t.Fatalf("a page written once reports revisions lost (head %d, oldest %d) — "+
+				"the signal fires on pages that lost nothing, which is how a curator learns to ignore it",
+				p.Rev, p.OldestRev)
+		}
+	}
+}

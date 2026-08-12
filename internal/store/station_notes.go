@@ -50,6 +50,21 @@ type StationNote struct {
 	UpdatedAt      string
 	UpdatedByToken string
 	HearsayAtWrite bool
+
+	// OldestRev is the lowest revision still retained for this page, and equals Rev
+	// when no history is kept. Rev - OldestRev is how many revisions were pruned.
+	//
+	// It is here because pruning is deliberately silent (S12's carve-out) and a session
+	// has no other way to learn its oldest revisions are gone. A live station was
+	// measured at head rev 26 with OldestRev 18 — seventeen revisions destroyed,
+	// including its original context — with no log line, no return signal, and nothing
+	// in any tool result. Reporting it is the cheapest thing that would have told it.
+	OldestRev int
+
+	// HistoryBytes is what the retained revisions of this page occupy. A page kept by
+	// APPEND accumulates history proportional to the square of its length, so this is
+	// the number that goes bad long before Bytes does.
+	HistoryBytes int
 }
 
 // ErrNoteRevConflict is returned when an `if_rev` precondition fails. Two sessions may
@@ -64,9 +79,19 @@ var ErrNotebookCapReached = errors.New("notebook cap reached")
 // read, so the list exists to let it choose what is worth a second call.
 func (s *Store) ListStationNotes(ctx context.Context, stationID string) ([]StationNote, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT key, title, tags, rev, LENGTH(body), updated_at,
-       COALESCE(updated_by_token_id,''), COALESCE(hearsay_at_write,0)
-FROM station_note WHERE station_id=? ORDER BY updated_at DESC`, stationID)
+SELECT n.key, n.title, n.tags, n.rev, OCTET_LENGTH(n.body), n.updated_at,
+       COALESCE(n.updated_by_token_id,''), COALESCE(n.hearsay_at_write,0),
+       -- The LOWEST revision still held, and what history costs. Both are here because
+       -- pruning is silent by design (S12's carve-out) and a session cannot otherwise
+       -- discover that its oldest revisions are gone. A live station was measured at
+       -- head rev 26 with MIN(rev)=18 — seventeen revisions destroyed, including its
+       -- original context, with no log line, no return signal and nothing in any tool
+       -- result. It could not have found out.
+       COALESCE((SELECT MIN(r.rev) FROM station_note_revision r
+                  WHERE r.station_id = n.station_id AND r.key = n.key), n.rev),
+       COALESCE((SELECT SUM(OCTET_LENGTH(r.body)) FROM station_note_revision r
+                  WHERE r.station_id = n.station_id AND r.key = n.key), 0)
+FROM station_note n WHERE n.station_id=? ORDER BY n.updated_at DESC`, stationID)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +101,7 @@ FROM station_note WHERE station_id=? ORDER BY updated_at DESC`, stationID)
 		var n StationNote
 		var tags string
 		if err := rows.Scan(&n.Key, &n.Title, &tags, &n.Rev, &n.Bytes, &n.UpdatedAt,
-			&n.UpdatedByToken, &n.HearsayAtWrite); err != nil {
+			&n.UpdatedByToken, &n.HearsayAtWrite, &n.OldestRev, &n.HistoryBytes); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(tags), &n.Tags)
@@ -90,7 +115,7 @@ func (s *Store) ReadStationNote(ctx context.Context, stationID, key string) (*St
 	var n StationNote
 	var tags string
 	err := s.R.QueryRowContext(ctx, `
-SELECT key, title, tags, body, rev, LENGTH(body), updated_at,
+SELECT key, title, tags, body, rev, OCTET_LENGTH(body), updated_at,
        COALESCE(updated_by_token_id,''), COALESCE(hearsay_at_write,0)
 FROM station_note WHERE station_id=? AND key=?`, stationID, key).
 		Scan(&n.Key, &n.Title, &tags, &n.Body, &n.Rev, &n.Bytes, &n.UpdatedAt,
@@ -154,7 +179,7 @@ func (s *Store) WriteStationNote(ctx context.Context, lim StationNoteLimits, sta
 	// The notebook cap counts HEAD revisions only; history is bounded separately below.
 	var otherBytes int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(LENGTH(body)),0) FROM station_note WHERE station_id=? AND key<>?`,
+		`SELECT COALESCE(SUM(OCTET_LENGTH(body)),0) FROM station_note WHERE station_id=? AND key<>?`,
 		stationID, key).Scan(&otherBytes); err != nil {
 		return nil, err
 	}
@@ -216,7 +241,7 @@ func pruneRevisions(ctx context.Context, tx *sql.Tx, stationID, key string, maxB
 	for {
 		var total int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COALESCE(SUM(LENGTH(body)),0) FROM station_note_revision WHERE station_id=? AND key=?`,
+			`SELECT COALESCE(SUM(OCTET_LENGTH(body)),0) FROM station_note_revision WHERE station_id=? AND key=?`,
 			stationID, key).Scan(&total); err != nil {
 			return err
 		}
