@@ -863,7 +863,7 @@ func (s *Store) Sweep(ctx context.Context) (expired, purged int64, err error) {
 		//    a message that dies unread is exactly the case where silence would leave
 		//    the sender believing it was delivered.
 		expiring, err := collectForNotice(ctx, t, "expired", `
-SELECT m.id, m.channel_id, m.sender_endpoint, d.recipient_endpoint, m.message_id
+SELECT m.id, m.channel_id, m.scope_id, m.sender_endpoint, d.recipient_endpoint, m.message_id
   FROM delivery d JOIN message m ON m.id = d.message_row
  WHERE d.state IN ('queued','delivered') AND m.kind='message' AND d.notified_at IS NULL
    AND m.expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
@@ -909,7 +909,7 @@ UPDATE message SET body=NULL
 		//    the whole reason deadlines exist — without it a session whose peer died
 		//    waits forever, and reply_deadline_at would be decoration.
 		overdue, err := collectForNotice(ctx, t, "reply_overdue", `
-SELECT m.id, m.channel_id, m.sender_endpoint, d.recipient_endpoint, m.message_id
+SELECT m.id, m.channel_id, m.scope_id, m.sender_endpoint, d.recipient_endpoint, m.message_id
   FROM delivery d JOIN message m ON m.id = d.message_row
  WHERE m.requires_response=1 AND d.replied_by IS NULL AND m.kind='message'
    AND d.notified_at IS NULL
@@ -1078,10 +1078,21 @@ const minNoticeTTLSeconds = 3600
 // the endpoint that will RECEIVE the status message — the original sender for an
 // expiry, the original requester for an overdue reply.
 type notice struct {
-	row      int64
-	chRow    int64
-	to       int64
-	from     int64
+	row int64
+	// chRow is NULL for a room or broadcast message — those belong to no channel.
+	// Scanned as a nullable, because scanning it as int64 made an expired ROOM message
+	// abort the entire sweep: expiry, body retention, the metadata purge, file cleanup
+	// and idle-endpoint removal all stop, and retention fails silently from then on.
+	// Shipped in 3.0.0 and 3.0.1; found by asking what happens to a room message nobody
+	// reads, which is the ordinary case rather than an edge one.
+	chRow sql.NullInt64
+	scope string
+	to    int64
+	// from is the recipient that failed to read it, and is NULL for a room delivery —
+	// rooms hold stations, so `delivery.recipient_endpoint` is unset until a poll picks
+	// one. It is scanned and not otherwise used; nullable so the scan cannot abort the
+	// sweep, which is the same defect as chRow above, in the very next column.
+	from     sql.NullInt64
 	publicID string
 	reason   string // "expired" | "reply_overdue"
 }
@@ -1100,7 +1111,7 @@ func collectForNotice(ctx context.Context, t *sql.Tx, reason, query string) ([]n
 	var out []notice
 	for rows.Next() {
 		var n notice
-		if err := rows.Scan(&n.row, &n.chRow, &n.to, &n.from, &n.publicID); err != nil {
+		if err := rows.Scan(&n.row, &n.chRow, &n.scope, &n.to, &n.from, &n.publicID); err != nil {
 			return nil, err
 		}
 		n.reason = reason
@@ -1131,13 +1142,42 @@ func (s *Store) notifySender(ctx context.Context, t *sql.Tx, n notice) error {
 	if ttl < minNoticeTTLSeconds {
 		ttl = minNoticeTTLSeconds
 	}
-	if _, err := s.enqueueKind(ctx, t, n.chRow, n.to, n.to, body, ttl, "status"); err != nil {
+	// A ROOM or BROADCAST message has no channel to enqueue into, so the notice goes
+	// into the message's own scope addressed to the sender's party. Same delivery
+	// machinery, same poll path — the sender learns their room message died unread
+	// exactly as they would for a channel.
+	if !n.chRow.Valid {
+		senderParty, err := endpointParty(ctx, t, n.to)
+		if err != nil {
+			return err
+		}
+		if _, err := s.insertMessageWithDeliveries(ctx, t, insertSpec{
+			Scope:       n.scope,
+			Sender:      n.to,
+			SenderParty: senderParty,
+			Recipients:  []scopeMember{{Party: senderParty}},
+			Body:        body,
+			TTLSeconds:  ttl,
+			Kind:        "status",
+		}); err != nil {
+			return err
+		}
+		return s.markNotified(ctx, t, n)
+	}
+	if _, err := s.enqueueKind(ctx, t, n.chRow.Int64, n.to, n.to, body, ttl, "status"); err != nil {
 		// A closed or revoked channel has nobody to tell; that is not a sweep failure.
 		if errors.Is(err, ErrChannelClosed) || errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	}
+	return s.markNotified(ctx, t, n)
+}
+
+// markNotified stamps the deliveries so a notice is sent once and not on every sweep.
+// Extracted because the room path returns early and the two must not diverge — a notice
+// that is enqueued but never stamped is re-sent every minute forever.
+func (s *Store) markNotified(ctx context.Context, t *sql.Tx, n notice) error {
 	_, err := t.ExecContext(ctx,
 		`UPDATE delivery SET notified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE message_row=?`, n.row)
 	return err

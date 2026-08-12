@@ -36,6 +36,23 @@ is what changed, this is what will bite.
 
 ---
 
+## 3.0.2
+
+### If you are on 3.0.0 or 3.0.1 and use rooms, upgrade before anything expires
+
+**Observed:** from the first room or broadcast message that expires unread, `Sweep`
+fails on every run — so message expiry, body retention, the metadata purge, file cleanup
+and idle-endpoint removal all stop. The symptom is a growing database and a repeated
+error in the log, not a broken tool call.
+
+**Do first:** upgrade. Then check that a sweep has run cleanly since. Nothing is lost —
+the work was skipped, not corrupted — and it resumes on the first successful sweep.
+
+**If you never sent a room or broadcast message, you are unaffected.** Channel traffic
+alone never triggers it.
+
+---
+
 ## 3.0.1
 
 ### `revisions_lost` was inverted in 3.0.0 — read it again after upgrading

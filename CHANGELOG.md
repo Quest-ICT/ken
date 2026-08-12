@@ -15,6 +15,28 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.0.2] — 2026-08-12
+
+### Fixed
+
+- **An expired room message stopped the sweep — all of it.** `Sweep` carries message
+  expiry, body retention, the metadata purge, file cleanup and idle-endpoint removal.
+  From the first room or broadcast message that expired unread, every one of them
+  stopped, and nothing said so: the error went to a log line and retention simply
+  ceased.
+
+  The cause is two columns in one scan. A room message belongs to no channel and a room
+  delivery names no endpoint, so `message.channel_id` and `delivery.recipient_endpoint`
+  are both NULL — and the notice collector scanned both as `int64`. Rooms shipped in
+  3.0.0; the sweep was written for a world with one recipient and always a channel, and
+  the trigger is the ordinary case rather than an edge one: **a room message nobody
+  reads.**
+
+  The sender is now told through the message's own scope, so a room message that dies
+  unread reaches its author exactly as a channel message does — and is stamped, so the
+  notice is sent once rather than on every sweep forever.
+
+
 ## [3.0.1] — 2026-08-12
 
 ### Fixed
@@ -2044,7 +2066,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.0.2...HEAD
+[3.0.2]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.2
 [3.0.1]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.1
 [3.0.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.0
 [2.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.2.0

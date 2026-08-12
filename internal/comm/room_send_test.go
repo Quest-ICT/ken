@@ -398,3 +398,116 @@ func TestTheAdvertisedBroadcastReachMatchesWhatSendingWouldDo(t *testing.T) {
 		t.Errorf("reach = %d, want 2 (beta counted once despite two shared rooms)", advertised)
 	}
 }
+
+// AN EXPIRED ROOM MESSAGE MUST NOT BREAK THE SWEEP.
+//
+// It did, in 3.0.0 and 3.0.1. `collectForNotice` scanned `message.channel_id` into an
+// int64, and a room message belongs to no channel — so the first room message to expire
+// unread aborted Sweep with a scan error, and Sweep is where expiry, body retention, the
+// metadata purge, file cleanup and idle-endpoint removal all live. Every one of them
+// stops, and retention fails silently from that moment on.
+//
+// Nothing caught it because rooms shipped in one release and the sweep was written for a
+// world with one recipient and always a channel. The ordinary case — a room message
+// nobody reads — was the trigger.
+func TestAnExpiredRoomMessageDoesNotBreakTheSweep(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	if err := st.ReplaceRoomMirror(ctx, map[string][]string{
+		"ops": {"s:st-alpha", "s:st-beta"},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.SendToRoom(ctx, alpha, "ops", "will expire unread", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.Exec(
+		`UPDATE message SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second') WHERE message_id=?`,
+		m.MessageID); err != nil {
+		t.Fatal(err)
+	}
+
+	expired, _, err := st.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("the sweep failed on an expired room message: %v.\n"+
+			"Sweep carries expiry, body retention, the metadata purge, file cleanup and idle-endpoint "+
+			"removal — one unread room message stops all of them.", err)
+	}
+	if expired == 0 {
+		t.Fatal("the sweep expired nothing, so it is not exercising the path this test exists for")
+	}
+
+	// The sender is TOLD, in the room's own scope. A room message that dies unread is
+	// exactly the case where silence leaves the sender believing it arrived.
+	var notices int
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM message WHERE kind='status' AND scope_id='r:ops'`).Scan(&notices); err != nil {
+		t.Fatal(err)
+	}
+	if notices != 1 {
+		t.Fatalf("%d status notices for an expired room message, want 1 — the sender is not told", notices)
+	}
+
+	// AND ONLY ONCE. A notice enqueued without stamping notified_at is re-sent on every
+	// sweep, which is a minute-by-minute loop rather than a signal.
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM message WHERE kind='status' AND scope_id='r:ops'`).Scan(&notices); err != nil {
+		t.Fatal(err)
+	}
+	if notices != 1 {
+		t.Fatalf("%d notices after three sweeps — the notice is re-sent every sweep forever", notices)
+	}
+}
+
+// THE SAME QUESTION, ASKED OF EVERY OTHER SHAPE THE SWEEP MEETS.
+//
+// One NULL column aborted the sweep; the fix was two columns in one query, and there is
+// a second collect query and a third scope kind. Asserting the class rather than the
+// instance, because "I fixed the one I found" is how the next one ships.
+func TestTheSweepSurvivesEveryScopeKindAndBothNoticeReasons(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	if err := st.ReplaceRoomMirror(ctx, map[string][]string{
+		"ops": {"s:st-alpha", "s:st-beta"},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	// A ROOM message that asks for a reply and never gets one — the reply_overdue
+	// collect query, which is a different statement from the expiry one.
+	rm, err := st.SendToRoom(ctx, alpha, "ops", "answer me", SendOpts{RequiresResponse: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A BROADCAST, whose scope is neither a channel nor a room.
+	bm, err := st.Broadcast(ctx, alpha, "everyone", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deliver them so the reply deadline arms, then push every clock into the past.
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	if _, err := st.Poll(ctx, beta, 10); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{rm.MessageID, bm.MessageID} {
+		age(t, st, id, "-30 days")
+	}
+
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatalf("the sweep failed with a room message and a broadcast in flight: %v", err)
+	}
+	// Run it again: a sweep that succeeds once and fails on the state it just created
+	// is the same outage one tick later.
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatalf("the second sweep failed on state the first one produced: %v", err)
+	}
+}
