@@ -96,10 +96,14 @@ type scopeMember struct {
 // is what makes a send into a pending channel a no-op rather than an error at this
 // layer; membership and openness are enforced above.
 func membersOfScope(ctx context.Context, t *sql.Tx, scope string) ([]scopeMember, error) {
+	if roomID, ok := roomIDOfScope(scope); ok {
+		return roomMembers(ctx, t, roomID)
+	}
 	chID, ok := channelIDOfScope(scope)
 	if !ok {
-		// Rooms land in slice 5. Refusing loudly beats defaulting to "nobody", which
-		// would accept a send and deliver it to no one.
+		// Refusing loudly beats defaulting to "nobody", which would accept a send and
+		// deliver it to no one — a success that delivered nothing is the worst answer
+		// available here.
 		return nil, errors.New("unknown scope kind: " + scope)
 	}
 	rows, err := t.QueryContext(ctx, `
@@ -155,4 +159,43 @@ ON CONFLICT(scope_id) DO UPDATE SET next_seq = next_seq + 1`, scope); err != nil
 		return 0, err
 	}
 	return next - 1, nil
+}
+
+// roomScope is the scope id for a room.
+func roomScope(roomID string) string { return scopePrefixRoom + roomID }
+
+// roomIDOfScope returns the room id inside an 'r:' scope.
+func roomIDOfScope(scope string) (string, bool) {
+	if rest, ok := strings.CutPrefix(scope, scopePrefixRoom); ok && rest != "" {
+		return rest, true
+	}
+	return "", false
+}
+
+// roomMembers reads a room's parties from the MIRROR.
+//
+// Every member is a station, so there is no endpoint to attach: the Endpoint field
+// stays null and `delivery.recipient_endpoint` is NULL for room mail. That column is
+// audit-only and already nullable for exactly this reason — a room message is addressed
+// to a post, and which connection happens to read it is decided later, at poll time.
+//
+// An empty room is not an error here. Send refuses it, with a message that says so,
+// because "delivered to nobody" and "no such room" are different problems and an
+// operator needs to tell them apart.
+func roomMembers(ctx context.Context, t *sql.Tx, roomID string) ([]scopeMember, error) {
+	rows, err := t.QueryContext(ctx,
+		`SELECT party_key FROM room_member_mirror WHERE room_id=? ORDER BY party_key`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []scopeMember
+	for rows.Next() {
+		var party string
+		if err := rows.Scan(&party); err != nil {
+			return nil, err
+		}
+		out = append(out, scopeMember{Party: party})
+	}
+	return out, rows.Err()
 }
