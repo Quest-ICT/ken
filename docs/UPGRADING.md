@@ -87,6 +87,12 @@ bound was counting **characters** where the setting promised **bytes**.
 `station_notebook_kib`. The honest reading is that those stations were always over the
 size their setting described, and Ken was under-reporting it into every snapshot.
 
+**How big is the shift, measured rather than guessed:** on a mostly-ASCII corpus of
+eight stations, `ken-prod-ops` measured 934,305 characters against 943,072 bytes — under
+2% — with the worst single page moving from 95.70% to 96.42% of its history bound and
+crossing nothing. A notebook written in Spanish, French or anything with accents will
+move considerably more, because the gap is one byte per non-ASCII character.
+
 ### `wait_seconds_granted` is always present in a `comm_poll` result
 
 **Observed:** the field no longer disappears when it is zero.
