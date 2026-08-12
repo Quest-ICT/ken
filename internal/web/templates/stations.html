@@ -23,6 +23,86 @@
     </section>
     {{end}}
 
+{{if .Data.Stations}}
+<!-- ROOMS. The only place a room comes into existence: there is no agent-facing create
+     path, because a room is a decision about which posts may talk to each other. -->
+<section class="card card--pad" style="margin-bottom:var(--sp-5)">
+  <h2 class="h3">{{.T "rooms.heading"}}</h2>
+  <p class="muted">{{.T "rooms.lede"}}</p>
+
+  {{range .Data.Rooms}}
+  <div class="promotion">
+    <p><strong>{{.Name}}</strong>
+      {{if eq .State "archived"}}<span class="badge badge--plain" title="{{$.T "rooms.archived_help"}}">{{$.T "rooms.archived"}}</span>{{end}}
+      <span class="muted">&middot; {{.Members}} {{$.T "rooms.members"}}</span>
+    </p>
+    {{if .Purpose}}<p class="help">{{.Purpose}}</p>{{end}}
+
+
+    <div class="inline">
+      {{$rid := .RoomID}}
+      <form method="post" action="/rooms/{{$rid}}/members">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <select class="input" name="station_id" title="{{$.T "rooms.add_help"}}">
+          {{range $.Data.Stations}}<option value="{{.StationID}}">{{.Name}}</option>{{end}}
+        </select>
+        <button class="btn btn--sm" type="submit">{{$.T "rooms.add"}}</button>
+      </form>
+      <form method="post" action="/rooms/{{$rid}}/archive">
+        <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+        <input type="hidden" name="archived" value="{{if eq .State "archived"}}0{{else}}1{{end}}">
+        <button class="btn btn--sm btn--ghost" type="submit" title="{{$.T "rooms.archive_help"}}">
+          {{if eq .State "archived"}}{{$.T "rooms.unarchive"}}{{else}}{{$.T "rooms.archive"}}{{end}}
+        </button>
+      </form>
+    </div>
+
+    {{if .Members}}
+    <table class="table">
+      <thead><tr>
+        <th data-col-key="station">{{$.T "rooms.member"}}</th>
+        <th data-col-key="added">{{$.T "rooms.added"}}</th>
+        <th data-nosort>{{$.T "stations.col_actions"}}</th>
+      </tr></thead>
+      <tbody>
+        {{range .Members}}
+        <tr>
+          <td class="mono">{{.StationName}}</td>
+          <td data-sort="{{.AddedAt}}">{{localtime .AddedAt}}</td>
+          <td>
+            <form method="post" action="/rooms/{{$rid}}/members">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <input type="hidden" name="station_id" value="{{.StationID}}">
+              <input type="hidden" name="remove" value="1">
+              <button class="btn btn--sm" type="submit" title="{{$.T "rooms.remove_help"}}">{{$.T "rooms.remove"}}</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </div>
+  {{end}}
+
+  <form method="post" action="/rooms">
+    <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
+    <div class="field">
+      <label for="room-name">{{.T "rooms.new_name"}}</label>
+      <input class="input" id="room-name" name="name" type="text" required
+             placeholder="ops" title="{{.T "rooms.new_name_help"}}">
+      <span class="help">{{.T "rooms.new_name_help"}}</span>
+    </div>
+    <div class="field">
+      <label for="room-purpose">{{.T "rooms.new_purpose"}}</label>
+      <input class="input" id="room-purpose" name="purpose" type="text"
+             title="{{.T "rooms.new_purpose_help"}}">
+    </div>
+    <button class="btn" type="submit" title="{{.T "rooms.create_help"}}">{{.T "rooms.create"}}</button>
+  </form>
+</section>
+{{end}}
+
 <div class="page-head">
   <p class="eyebrow">{{.T "stations.eyebrow"}}</p>
   <h1 class="h1">{{.T "stations.heading"}}</h1>

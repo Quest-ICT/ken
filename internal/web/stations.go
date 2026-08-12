@@ -195,8 +195,31 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		linkViews = append(linkViews, v)
 	}
 
+	// Rooms and their members, for the section that is the ONLY way one comes to exist.
+	rooms, err := a.store.ListRooms(ctx, spaceForSession)
+	if err != nil {
+		log.Printf("web: list rooms: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	type roomView struct {
+		store.Room
+		Members []store.RoomMember
+	}
+	roomViews := make([]roomView, 0, len(rooms))
+	for _, rm := range rooms {
+		members, err := a.store.RoomMembers(ctx, rm.RoomID)
+		if err != nil {
+			log.Printf("web: room members %s: %v", rm.RoomID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		roomViews = append(roomViews, roomView{Room: rm, Members: members})
+	}
+
 	a.render(w, r, sess, "stations", map[string]any{
 		"Stations": views, "Requests": requests, "Links": linkViews, "Promotions": promotions,
+		"Rooms": roomViews,
 		"Tasks": tasks, "Archived": archived,
 		"BlockedOn": r.URL.Query().Get("blocked_on"),
 		"NewKey":    newKey,

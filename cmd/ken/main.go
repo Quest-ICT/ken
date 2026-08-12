@@ -395,6 +395,29 @@ func runServe(args []string) {
 	// COMM may fail; the KB stays UP.
 	var commHandler *commserver.Handler
 	if commStore != nil {
+		// REBUILD THE ROOM MIRROR AT BOOT, before anything can send.
+		//
+		// comm.db's room_member_mirror is a projection of ken.db's membership, and the
+		// console refreshes it on every write — but a restart is the one moment nobody
+		// wrote anything and the projection may still be from a comm.db that was
+		// restored, rebuilt, or lost. Without this, a fresh comm.db means every room
+		// send refuses until a human happens to touch the console, which reads as
+		// "rooms are broken" and is really "the cache is empty".
+		//
+		// A failure here is logged, never fatal: the durable decision is in ken.db, and
+		// an empty mirror refuses sends rather than misdirecting them. That is the safe
+		// direction, and taking the whole knowledge base down over a cache is not.
+		bootCtx := context.Background()
+		if rows, err := st.RoomMirrorRows(bootCtx); err != nil {
+			log.Printf("COMM: room mirror read failed, room sends will refuse until the console is touched: %v", err)
+		} else if epoch, err := st.RosterEpoch(bootCtx); err != nil {
+			log.Printf("COMM: roster epoch read failed: %v", err)
+		} else if err := commStore.ReplaceRoomMirror(bootCtx, rows, epoch); err != nil {
+			log.Printf("COMM: room mirror rebuild failed: %v", err)
+		} else {
+			log.Printf("COMM: room mirror rebuilt — %d room(s) at roster epoch %d", len(rows), epoch)
+		}
+
 		commDeps := commserver.Deps{
 			Comm: commStore, Store: st, TokenLimiter: rlToken, Metrics: reg,
 			MaxPollWaitSeconds: live.Current().CommPollWaitMaxSec,

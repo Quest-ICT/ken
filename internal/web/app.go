@@ -192,6 +192,9 @@ func (a *app) routes() http.Handler {
 		mux.HandleFunc("POST /stations/promotions/{id}/resolve", a.requireAuth(a.handlePromotionResolve))
 		mux.HandleFunc("POST /stations/{id}/vault/reveal", a.requireAuth(a.handleStationVaultReveal))
 		mux.HandleFunc("POST /stations/{id}/vault/restore", a.requireAuth(a.handleStationVaultRestore))
+		mux.HandleFunc("POST /rooms", a.requireAuth(a.handleRoomCreate))
+		mux.HandleFunc("POST /rooms/{id}/members", a.requireAuth(a.handleRoomMember))
+		mux.HandleFunc("POST /rooms/{id}/archive", a.requireAuth(a.handleRoomArchive))
 	}
 	if a.comm != nil {
 		mux.HandleFunc("GET /comm", a.requireAuth(a.handleComm))

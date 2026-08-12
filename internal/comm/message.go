@@ -52,6 +52,15 @@ type Message struct {
 	// timestamp against a number you had to remember passing.
 	TTLClampedFrom int
 
+	// Recipients is how many parties this message was delivered to. 1 for a channel,
+	// the room's size minus the sender for a room, the union of the sender's rooms for
+	// a broadcast.
+	//
+	// Reported because a sender who cannot see the audience cannot tell a broadcast
+	// that reached nine stations from one that reached none — and "reached none" is
+	// refused rather than returned, so a number here is always a real audience.
+	Recipients int
+
 	// WaitingForYou is how many messages were already queued or delivered FOR THE
 	// SENDER on this channel at the moment of sending.
 	//
@@ -291,6 +300,7 @@ WHERE id=? AND answered_at IS NULL`, replyToRow); err != nil {
 		out, err = messageByID(ctx, t, messageID)
 		if out != nil {
 			out.TTLClampedFrom, out.WaitingForYou = clampedFrom, waitingForSender
+			out.Recipients = 1
 		}
 		return err
 	})

@@ -109,7 +109,7 @@ func (s *Store) SendToRoom(ctx context.Context, ep *Endpoint, roomID, body strin
 			Kind:        "message",
 		})
 		if out != nil {
-			out.TTLClampedFrom = clampedFrom
+			out.TTLClampedFrom, out.Recipients = clampedFrom, len(recipients)
 		}
 		return err
 	})
@@ -245,4 +245,91 @@ func nullInt(v sql.NullInt64) any {
 		return nil
 	}
 	return v.Int64
+}
+
+// ErrNoAudience refuses a broadcast that would reach nobody.
+//
+// Distinct from ErrRoomEmpty because the remedy differs: an empty room is one the human
+// has not filled, while an empty broadcast means this station is in no room with anyone
+// else. "Join a room" and "add someone to yours" are different sentences to hear.
+var ErrNoAudience = errors.New("you share no room with any other station, so a broadcast would reach nobody")
+
+// Broadcast sends one body to every station the sender shares a room with.
+//
+// The audience is DERIVED, never stored: it is the union of the memberships of the rooms
+// this sender is in, minus the sender. That is deliberately the same authorization as a
+// room send — you may broadcast to exactly the set you could already have addressed one
+// room at a time — so broadcast adds reach, never permission.
+//
+// One message, N deliveries, exactly like a room send, so a broadcast to nine stations
+// is one body and nine rows rather than nine copies.
+func (s *Store) Broadcast(ctx context.Context, ep *Endpoint, body string, opts SendOpts) (*Message, error) {
+	if len(body) > s.lim().MaxBodyBytes {
+		return nil, ErrTooLarge
+	}
+	undelivered := s.lim().UndeliveredTTLSeconds
+	if undelivered <= 0 || undelivered < s.lim().MessageTTLSeconds {
+		undelivered = DefaultLimits().UndeliveredTTLSeconds
+	}
+	ttl := clampTTL(opts.TTLSeconds, undelivered)
+	clampedFrom := 0
+	if opts.TTLSeconds > 0 && opts.TTLSeconds != ttl {
+		clampedFrom = opts.TTLSeconds
+	}
+
+	var out *Message
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		senderParty, err := endpointParty(ctx, t, ep.ID)
+		if err != nil {
+			return err
+		}
+		// The union, computed in one query rather than room by room, because a station
+		// in three rooms with one shared member must receive ONE copy. Iterating rooms
+		// and appending would deliver it three times, and at-least-once delivery makes
+		// that indistinguishable from a redelivery on the receiving side.
+		rows, err := t.QueryContext(ctx, `
+SELECT DISTINCT other.party_key
+  FROM room_member_mirror mine
+  JOIN room_member_mirror other ON other.room_id = mine.room_id
+ WHERE mine.party_key = ? AND other.party_key <> ?
+ ORDER BY other.party_key`, senderParty, senderParty)
+		if err != nil {
+			return err
+		}
+		var recipients []scopeMember
+		for rows.Next() {
+			var party string
+			if err := rows.Scan(&party); err != nil {
+				rows.Close()
+				return err
+			}
+			recipients = append(recipients, scopeMember{Party: party})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(recipients) == 0 {
+			return ErrNoAudience
+		}
+
+		out, err = s.insertMessageWithDeliveries(ctx, t, insertSpec{
+			Scope:       broadcastScope(senderParty),
+			Sender:      ep.ID,
+			SenderParty: senderParty,
+			Recipients:  recipients,
+			Body:        body,
+			TTLSeconds:  ttl,
+			Opts:        opts,
+			Kind:        "message",
+		})
+		if out != nil {
+			out.TTLClampedFrom, out.Recipients = clampedFrom, len(recipients)
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

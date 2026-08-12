@@ -213,3 +213,80 @@ func TestReplacingTheMirrorRemovesMembershipsThatAreGone(t *testing.T) {
 		t.Errorf("mirror epoch = %d, want 2 — a projection that cannot say which generation it holds cannot be known to be stale", epoch)
 	}
 }
+
+// A BROADCAST REACHES EVERY STATION YOU SHARE A ROOM WITH, EXACTLY ONCE.
+//
+// The "exactly once" is the part worth testing rather than assuming: a station in three
+// of your rooms must get ONE copy. Iterating rooms and appending would deliver three,
+// and at-least-once delivery makes that indistinguishable from a redelivery on the
+// receiving side — the sender would never learn they had said it three times.
+func TestABroadcastReachesEveryoneOnceAcrossOverlappingRooms(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+
+	// beta is in all three of alpha's rooms; gamma in one; delta in none of them.
+	if err := st.ReplaceRoomMirror(ctx, map[string][]string{
+		"ops":     {"s:st-alpha", "s:st-beta", "s:st-gamma"},
+		"deploys": {"s:st-alpha", "s:st-beta"},
+		"oncall":  {"s:st-alpha", "s:st-beta"},
+		"other":   {"s:st-delta", "s:st-epsilon"},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := st.Broadcast(ctx, alpha, "deploying in ten", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var total, betaRows, deltaRows int
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM delivery WHERE message_row=(SELECT id FROM message WHERE message_id=?)`,
+		m.MessageID).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM delivery WHERE party_key='s:st-beta'`).Scan(&betaRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM delivery WHERE party_key='s:st-delta'`).Scan(&deltaRows); err != nil {
+		t.Fatal(err)
+	}
+	if betaRows != 1 {
+		t.Fatalf("a station in THREE of the sender's rooms got %d deliveries, want 1 — "+
+			"the recipient cannot tell three copies from a redelivery, so the sender never learns they said it three times", betaRows)
+	}
+	if total != 2 {
+		t.Fatalf("%d deliveries, want 2 (beta and gamma)", total)
+	}
+	// A station in none of the sender's rooms is NOT reachable. Broadcast adds reach,
+	// never permission — the audience is exactly the set already addressable one room
+	// at a time.
+	if deltaRows != 0 {
+		t.Fatal("a broadcast reached a station the sender shares no room with — broadcast granted permission rather than reach")
+	}
+}
+
+// A station in no shared room is told so, and told something it can act on. "Join a
+// room" and "add someone to yours" are different sentences, which is why this is not
+// ErrRoomEmpty.
+func TestBroadcastingWithNoAudienceIsRefusedDistinctly(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	lonely := stationEndpoint(t, st, "tok-a", "st-alpha")
+	if err := st.ReplaceRoomMirror(ctx, map[string][]string{"solo": {"s:st-alpha"}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Broadcast(ctx, lonely, "anyone?", SendOpts{}); !errors.Is(err, ErrNoAudience) {
+		t.Fatalf("broadcasting into an empty estate got %v, want ErrNoAudience", err)
+	}
+	var n int
+	if err := st.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM message`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d message rows written for a refused broadcast", n)
+	}
+}

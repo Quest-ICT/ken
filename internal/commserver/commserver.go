@@ -26,6 +26,7 @@ package commserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -469,32 +470,53 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name:        "comm_send",
-		Description: "Send one message to the peer on a channel. Bodies are atomic and size-capped — never chunk a large payload through this tool; a mebibyte of base64 costs hundreds of thousands of output tokens. Pass idempotency_key so a retry cannot deliver twice. IF THE RESULT CARRIES waiting_for_you, mail was already waiting for you when this went out: poll it and RECONSIDER what you just sent — the common cost is a message that answers a question your peer has already moved past. ttl_clamped_from appears when the server shortened the lifetime you asked for.",
+		Description: "Send one message. Address it with channel_id (a pairing-code channel), to_room (a room your human put you in), or to_room=\"all\" to reach every station you share a room with — no pairing code needed for either room form. A room message is ONE body delivered to each member separately, so each of them acks for themselves and none of them settles it for the others. Bodies are atomic and size-capped — never chunk a large payload through this tool; a mebibyte of base64 costs hundreds of thousands of output tokens. Pass idempotency_key so a retry cannot deliver twice. IF THE RESULT CARRIES waiting_for_you, mail was already waiting for you when this went out: poll it and RECONSIDER what you just sent. ttl_clamped_from appears when the server shortened the lifetime you asked for; recipients tells you how many endpoints it actually went to.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, sendOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
 			return nil, sendOut{}, err
 		}
-		// Resolve the peer before sending so a successful send can wake a poll
-		// parked on the recipient. Cheap indexed read; the send re-checks membership
-		// itself, so this is not the authorization step.
-		_, peer, err := d.Comm.ChannelFor(ctx, ep, in.ChannelID)
-		if err != nil {
-			return nil, sendOut{}, commError(err)
+		// EXACTLY ONE address. Refusing both-or-neither rather than picking a winner:
+		// a caller that passed two meant one of them, and silently choosing sends the
+		// message somewhere they did not ask for — the failure they cannot see.
+		if (in.ChannelID == "") == (in.ToRoom == "") {
+			return nil, sendOut{}, fmt.Errorf("pass exactly one of channel_id or to_room (got %s)",
+				map[bool]string{true: "neither", false: "both"}[in.ChannelID == ""])
 		}
-		m, err := d.Comm.Send(ctx, ep, in.ChannelID, in.Body, comm.SendOpts{
+
+		opts := comm.SendOpts{
 			IdempotencyKey:   in.IdempotencyKey,
 			RequiresResponse: in.RequiresResponse,
 			ReplyToMessageID: in.ReplyTo,
 			TTLSeconds:       in.TTLSeconds,
-		})
+		}
+
+		var m *comm.Message
+		var peer int64
+		switch {
+		case in.ToRoom == "all":
+			m, err = d.Comm.Broadcast(ctx, ep, in.Body, opts)
+		case in.ToRoom != "":
+			m, err = d.Comm.SendToRoom(ctx, ep, in.ToRoom, in.Body, opts)
+		default:
+			// Resolve the peer before sending so a successful send can wake a poll
+			// parked on the recipient. Cheap indexed read; the send re-checks
+			// membership itself, so this is not the authorization step.
+			if _, peer, err = d.Comm.ChannelFor(ctx, ep, in.ChannelID); err != nil {
+				return nil, sendOut{}, commError(err)
+			}
+			m, err = d.Comm.Send(ctx, ep, in.ChannelID, in.Body, opts)
+		}
 		if err != nil {
 			return nil, sendOut{}, commError(err)
 		}
-		w.notify(peer)
+		if peer != 0 {
+			w.notify(peer)
+		}
 		return nil, sendOut{
 			MessageID: m.MessageID, Seq: m.Seq, ExpiresAt: m.ExpiresAt, ReplyDeadlineAt: m.ReplyDeadlineAt,
 			TTLClampedFrom: m.TTLClampedFrom, WaitingForYou: m.WaitingForYou,
+			Recipients: m.Recipients,
 		}, nil
 	})
 

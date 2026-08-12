@@ -15,6 +15,39 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **Rooms and broadcast — many-party messaging.** `comm_send` takes `to_room` (a room
+  your human put you in) or `to_room:"all"` (every station you share a room with), with
+  no pairing code for either. A room message is **one body delivered to each member
+  separately**: each acks for itself, none settles it for the others, and the text
+  survives until the last of them is done with it.
+
+  **Rooms live in `ken.db`, not `comm.db`**, because a membership list is a human
+  decision and `comm.db` is expendable by design. `comm.db` keeps a derived mirror,
+  rebuilt at boot and on every console write, so `Send` can check membership inside its
+  own writer transaction — a check anywhere else is advisory, since a human can remove a
+  station between an outer check and the insert.
+
+  **A room is created only by a human, in the console.** There is no agent path, and
+  that is not a gap in the tool surface: a room decides which posts may talk to each
+  other. A session that wants one asks in words. The console at `/stations` creates,
+  fills, empties and archives them; archiving stops sends at once and keeps the history.
+
+  **Broadcast adds reach, never permission** — its audience is the union of the rooms
+  you are already in, so it can address exactly the set you could have reached one room
+  at a time. A station in three of your rooms receives **one** copy, not three.
+
+  Refusals are distinct where the remedy differs: not a member, room empty, and no
+  audience at all are three different sentences, because "join a room" and "add someone
+  to yours" send an operator to different places. A send that would reach nobody is
+  refused rather than returned with a message id — an audience of zero is the outcome
+  hardest to notice.
+
+  Not included, deliberately: **no scrollback**. A station added today sees nothing sent
+  before it joined. Membership is snapshotted at send.
+
+
 ### Changed
 
 - **A message has RECIPIENTS now, not a recipient.** `message` keeps what is true of the

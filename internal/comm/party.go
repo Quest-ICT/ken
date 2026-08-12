@@ -33,6 +33,16 @@ import (
 const (
 	scopePrefixChannel = "ch:"
 	scopePrefixRoom    = "r:"
+	// A BROADCAST scope belongs to its sender rather than to a place. There is no
+	// standing set of participants to point at — the audience is computed at send time
+	// from the rooms the sender is in — so the scope names the only stable thing
+	// involved, which is who is speaking.
+	//
+	// It is still a real scope with a real sequence, because a recipient needs to be
+	// able to ack one and a cumulative ack has to mean something. What it is NOT is a
+	// place anyone can reply INTO: a reply goes to a room or to a station, which is the
+	// honest shape of "I told everyone" — the answer comes back to somewhere specific.
+	scopePrefixBroadcast = "b:"
 )
 
 // channelScope is the scope id for a two-party channel.
@@ -199,3 +209,6 @@ func roomMembers(ctx context.Context, t *sql.Tx, roomID string) ([]scopeMember, 
 	}
 	return out, rows.Err()
 }
+
+// broadcastScope is the scope a sender's broadcasts live in.
+func broadcastScope(senderParty string) string { return scopePrefixBroadcast + senderParty }

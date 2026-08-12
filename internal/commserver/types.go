@@ -72,9 +72,14 @@ type channelsOut struct {
 }
 
 type sendIn struct {
-	EndpointID       string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret   string `json:"endpoint_secret" jsonschema:"required"`
-	ChannelID        string `json:"channel_id" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
+	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	// EXACTLY ONE of these three. channel_id is the pairing-code channel; to_room is a
+	// room you are in; to_room:"all" broadcasts to every station you share a room with.
+	// No longer `required` individually — the handler enforces the choice, because
+	// "exactly one of" is not something a JSON schema can say.
+	ChannelID        string `json:"channel_id,omitempty" jsonschema:"a pairing-code channel. Exactly one of channel_id or to_room"`
+	ToRoom           string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of, or the literal \"all\" to reach every station you share a room with. Exactly one of channel_id or to_room"`
 	Body             string `json:"body" jsonschema:"required; the message text. Atomic and size-capped — there is no multi-part send"`
 	RequiresResponse bool   `json:"requires_response,omitempty" jsonschema:"optional; marks the message as owing a reply and arms a reply deadline"`
 	ReplyTo          string `json:"reply_to,omitempty" jsonschema:"optional; message_id of the request you are answering. Must be a message addressed to you on this channel"`
@@ -83,8 +88,13 @@ type sendIn struct {
 }
 
 type sendOut struct {
-	MessageID       string `json:"message_id"`
-	Seq             int64  `json:"seq" jsonschema:"monotonic per channel and direction"`
+	MessageID string `json:"message_id"`
+	Seq       int64  `json:"seq" jsonschema:"monotonic per CONVERSATION — one ascending stream shared by every sender, not one per direction"`
+	// How many recipients this went to. 1 for a channel; the room's size minus you for
+	// a room; the union of your rooms minus you for a broadcast. Reported because a
+	// sender who cannot see the audience cannot tell a broadcast that reached nine
+	// stations from one that reached none.
+	Recipients      int    `json:"recipients"`
 	ExpiresAt       string `json:"expires_at"`
 	ReplyDeadlineAt string `json:"reply_deadline_at,omitempty"`
 	// TTLClampedFrom appears only when the server overruled the ttl_seconds asked
