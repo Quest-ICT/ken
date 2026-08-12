@@ -61,8 +61,16 @@ alone never triggers it.
 pruned. Every healthy page claimed to have lost history, and a page that really lost
 seventeen reported a smaller number than the intact ones beside it.
 
-**Do first:** if you acted on that field in 3.0.0 — or worried about a station because of
-it — look again. `history_bytes` was correct throughout.
+**Do first:** **re-read anything a session RECORDED from that field while running 3.0.0.**
+Looking again at the live value is not enough. A station that audited its own notebook
+during the 3.0.0 window wrote the wrong number into its notes, where it now sits
+indistinguishable from a correct one — `ken-prod-ops` reported exactly that, a station
+holding `revisions_lost: 8` for a page that had lost nothing.
+
+This is the mirror of 2.2.0's hearsay-badge entry, which said *do not* go back over old
+proposals. That was right there and is wrong here, and the difference is worth stating:
+a badge whose MEANING was narrowed leaves old records still true; a number that was
+INVERTED leaves old records false. `history_bytes` was correct throughout.
 
 ---
 

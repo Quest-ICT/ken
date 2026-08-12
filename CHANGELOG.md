@@ -15,6 +15,22 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **`station_note_read` takes a `rev`.** 3.0.0 told a station how many revisions it had
+  lost and gave it no way to look at the ones that survived; `ken-prod-ops` had to query
+  the database directly, which is not a route a station has. **A measurement without a
+  read path leaves a session knowing something is wrong and unable to act on it.**
+
+  The lowest readable revision is `revisions_lost + 1`, and that arithmetic is in the
+  tool description, so a test asserts it. Asking for a pruned revision says it was
+  pruned rather than returning nothing — "gone for good" and "you typed the wrong key"
+  send a session to different places.
+
+  An old revision returns the old body under the CURRENT title, because the title was
+  never versioned. Presenting one as if it had been would invent history.
+
+
 ## [3.0.2] — 2026-08-12
 
 ### Fixed

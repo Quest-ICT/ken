@@ -420,3 +420,57 @@ SELECT COUNT(*) FROM station_promotion p JOIN station st ON st.station_id=p.stat
  WHERE p.state='pending' AND st.space_id=?`, spaceID).Scan(&n)
 	return n, err
 }
+
+// ReadStationNoteRev returns one RETAINED revision of a page.
+//
+// 3.0.0 gave a station the ability to LEARN it had lost history — `revisions_lost` —
+// and no way to look at what remains. ken-prod-ops had to query the database to read
+// the surviving revisions of a page whose loss Ken had just reported to it, which is
+// not a route a station has. Surfacing a measurement without a read path tells a
+// session something is wrong and leaves it unable to act.
+//
+// Only retained revisions are readable, and asking for a pruned one says so rather than
+// returning nothing: "that revision was pruned" and "there is no such page" send a
+// session to different places.
+func (s *Store) ReadStationNoteRev(ctx context.Context, stationID, key string, rev int) (*StationNote, error) {
+	// A revision row keeps the BODY and its provenance, not the title or tags — those
+	// live on the page and describe what it is NOW. Reading an old revision therefore
+	// returns the old text under the current title, which is the honest shape: the title
+	// was never versioned, so presenting one as if it had been would invent history.
+	var n StationNote
+	err := s.R.QueryRowContext(ctx, `
+SELECT r.key, r.body, r.rev, OCTET_LENGTH(r.body), r.updated_at, COALESCE(n.title,'')
+  FROM station_note_revision r
+  LEFT JOIN station_note n ON n.station_id = r.station_id AND n.key = r.key
+ WHERE r.station_id=? AND r.key=? AND r.rev=?`,
+		stationID, key, rev).Scan(&n.Key, &n.Body, &n.Rev, &n.Bytes, &n.UpdatedAt, &n.Title)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Distinguish pruned from never-existed, using the head revision as the frame:
+		// a rev below the oldest retained was pruned; one above the head never existed.
+		var head, oldest int
+		if err := s.R.QueryRowContext(ctx, `
+SELECT n.rev, COALESCE((SELECT MIN(r.rev) FROM station_note_revision r
+                         WHERE r.station_id=n.station_id AND r.key=n.key), n.rev)
+  FROM station_note n WHERE n.station_id=? AND n.key=?`, stationID, key).Scan(&head, &oldest); err != nil {
+			return nil, ErrNotFound
+		}
+		if rev == head {
+			// The head is not in the revision table — it is the page itself.
+			return s.ReadStationNote(ctx, stationID, key)
+		}
+		if rev < oldest {
+			return nil, fmt.Errorf("%w: revision %d of %q was pruned; the oldest still held is %d",
+				ErrRevisionPruned, rev, key, oldest)
+		}
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+// ErrRevisionPruned means the revision existed and the history bound deleted it. Named
+// separately from ErrNotFound because the remedies differ: a pruned revision is gone
+// for good and the session should stop looking, while an unknown one is a typo.
+var ErrRevisionPruned = errors.New("that revision has been pruned")

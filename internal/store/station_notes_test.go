@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -360,5 +361,65 @@ func TestRevisionsLostCountsWhatIsMissingNotWhatSurvived(t *testing.T) {
 		t.Fatalf("the pruned page reports %d lost and the intact page reports %d — "+
 			"a curator comparing them is pointed at the wrong station",
 			dmg.RevisionsLost, by["healthy"].RevisionsLost)
+	}
+}
+
+// A MEASUREMENT WITHOUT A READ PATH LEAVES A SESSION UNABLE TO ACT.
+//
+// 3.0.0 told a station how many revisions it had lost and gave it no way to look at the
+// ones that survived — ken-prod-ops had to query the database directly, which is not a
+// route a station has. This is the other half.
+func TestAStationCanReadTheRevisionsItStillHas(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := DefaultStationNoteLimits()
+	lim.MaxRevisionBytes = 300
+
+	for i := 1; i <= 10; i++ {
+		if _, err := st.WriteStationNote(ctx, lim, station.StationID, "handoff", "t",
+			fmt.Sprintf("version %d %s", i, strings.Repeat("x", 90)),
+			nil, "replace", 0, "tok", actorID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	notes, err := st.ListStationNotes(ctx, station.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := notes[0]
+	if n.RevisionsLost == 0 {
+		t.Fatal("nothing was pruned, so this test is not exercising what it claims")
+	}
+
+	// The lowest READABLE revision is exactly one past what was lost. That arithmetic is
+	// in the tool description, so it has to be true.
+	lowest := n.RevisionsLost + 1
+	got, err := st.ReadStationNoteRev(ctx, station.StationID, "handoff", lowest)
+	if err != nil {
+		t.Fatalf("the oldest surviving revision (%d) is not readable: %v — the station is told what "+
+			"it lost and still cannot see what it kept", lowest, err)
+	}
+	if !strings.HasPrefix(got.Body, fmt.Sprintf("version %d ", lowest)) {
+		t.Errorf("revision %d returned %q — the wrong revision", lowest, got.Body[:20])
+	}
+
+	// A PRUNED revision says it was pruned. "Gone for good" and "you typed the wrong
+	// key" send a session to different places.
+	_, err = st.ReadStationNoteRev(ctx, station.StationID, "handoff", lowest-1)
+	if !errors.Is(err, ErrRevisionPruned) {
+		t.Fatalf("reading a pruned revision returned %v, want ErrRevisionPruned", err)
+	}
+
+	// And the HEAD is readable by number, not only by omitting rev — a session walking
+	// backwards from the head should not have to special-case its own starting point.
+	head, err := st.ReadStationNoteRev(ctx, station.StationID, "handoff", n.Rev)
+	if err != nil {
+		t.Fatalf("the head revision (%d) is not readable by number: %v", n.Rev, err)
+	}
+	if head.Rev != n.Rev {
+		t.Errorf("asked for revision %d and got %d", n.Rev, head.Rev)
 	}
 }

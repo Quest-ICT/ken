@@ -421,14 +421,21 @@ func newServer(d Deps) *mcp.Server {
 	})
 
 	addTool(s, d, &mcp.Tool{
-		Name:        "station_note_read",
-		Description: "Read one notebook page.",
+		Name: "station_note_read",
+		Description: "Read one notebook page, or a retained older revision of it with `rev`. " +
+			"When station_note_list says a page has lost revisions, `rev` is how you read what survived — " +
+			"the lowest readable revision is (revisions_lost + 1), and anything below it is gone for good.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, noteOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
 			return nil, noteOut{}, err
 		}
-		n, err := d.Store.ReadStationNote(ctx, p.StationID, in.Key)
+		var n *store.StationNote
+		if in.Rev > 0 {
+			n, err = d.Store.ReadStationNoteRev(ctx, p.StationID, in.Key, in.Rev)
+		} else {
+			n, err = d.Store.ReadStationNote(ctx, p.StationID, in.Key)
+		}
 		if err != nil {
 			return nil, noteOut{}, err
 		}

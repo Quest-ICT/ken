@@ -100,6 +100,12 @@ type noteListOut struct {
 }
 type noteReadIn struct {
 	Key string `json:"key" jsonschema:"required; the page key. 'handoff' is the reserved page a future session reads first"`
+	// Rev reads a RETAINED older revision. Omit for the current page.
+	//
+	// Added because station_note_list could tell a station it had lost history and
+	// nothing let it look at what remained — a measurement with no read path leaves a
+	// session knowing something is wrong and unable to act on it.
+	Rev int `json:"rev,omitempty" jsonschema:"optional; read a retained older revision instead of the current page. Revisions below the oldest retained have been pruned and say so"`
 }
 type noteWriteIn struct {
 	Key   string   `json:"key" jsonschema:"required"`
