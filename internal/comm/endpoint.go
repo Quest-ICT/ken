@@ -5,7 +5,6 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
-	"strconv"
 )
 
 // Endpoint is one AI session's communication point.
@@ -217,19 +216,18 @@ func (s *Store) BindEndpointToStation(ctx context.Context, endpointID, stationID
 		// Found by binding this very repository's session and watching its own channel
 		// stop working. Two correct pieces — station-keyed sequencing so a REPLACEMENT
 		// session does not restart at 1, and in-place adoption so a RUNNING session
-		// keeps its channels — that together switch counter namespaces mid-stream.
+		// keeps its channels — that together switched counter namespaces mid-stream.
 		//
-		// MAX is the right merge: the destination counter must exceed anything this
-		// endpoint has already sent, and anything a sibling of the station has sent. It
-		// only ever moves forward, so it cannot reissue a number either has used.
-		if _, err := t.ExecContext(ctx, `
-INSERT INTO channel_seq(channel_id, sender_key, next_seq)
-SELECT channel_id, ?, next_seq FROM channel_seq WHERE sender_key = ?
-ON CONFLICT(channel_id, sender_key)
-  DO UPDATE SET next_seq = MAX(channel_seq.next_seq, excluded.next_seq)`,
-			"s:"+stationID, "e:"+strconv.FormatInt(rowID, 10)); err != nil {
-			return err
-		}
+		// THE CARRY-FORWARD IS GONE, and so is the defect it patched. Sequence numbers
+		// are per SCOPE now (migration 0009), spanning every sender in a conversation,
+		// so binding does not move a sender between counters — there is no second
+		// namespace to move to. The merge that used to run here was necessary only
+		// because numbering was keyed on WHO was sending; keying it on WHERE the
+		// message lives makes the question disappear rather than answering it.
+		//
+		// This also retires the operational warning that went with it: binding a
+		// long-lived endpoint no longer restarts its outbound numbering, so nothing has
+		// to be counted before and after.
 
 		res, err := t.ExecContext(ctx, `
 UPDATE endpoint
@@ -270,29 +268,22 @@ UPDATE endpoint
 func (s *Store) UnbindEndpointFromStation(ctx context.Context, endpointID string) error {
 	var n int64
 	err := s.tx(ctx, func(t *sql.Tx) error {
+		// Release any claim this endpoint holds on mail addressed to its STATION.
+		// Unbinding makes it a stranger to that inbox, and a claim it can no longer
+		// act on would hide those messages from the readers that can until the lease
+		// expired. Mail addressed to the endpoint ITSELF keeps its claim — that mail
+		// is still its own.
 		if _, err := t.ExecContext(ctx, `
-UPDATE message SET claimed_by_endpoint=NULL, claim_expires_at=NULL
+UPDATE delivery SET claimed_by_endpoint=NULL, claim_expires_at=NULL
  WHERE acked_at IS NULL
    AND claimed_by_endpoint = (SELECT id FROM endpoint WHERE endpoint_id=?)
-   AND recipient_endpoint <> (SELECT id FROM endpoint WHERE endpoint_id=?)`,
+   AND party_key <> 'e:' || (SELECT id FROM endpoint WHERE endpoint_id=?)`,
 			endpointID, endpointID); err != nil {
 			return err
 		}
-		// The mirror of the carry-forward in BindEndpointToStation, and needed for the
-		// same reason in reverse: after unbinding this endpoint numbers under its own
-		// rowid again, and that counter may sit BEHIND what it already sent under the
-		// station key. Moving it forward keeps the UNIQUE index on
-		// (channel_id, sender_endpoint, seq) satisfiable.
-		if _, err := t.ExecContext(ctx, `
-INSERT INTO channel_seq(channel_id, sender_key, next_seq)
-SELECT cs.channel_id, 'e:' || e.id, cs.next_seq
-  FROM channel_seq cs
-  JOIN endpoint e ON e.endpoint_id = ?
- WHERE cs.sender_key = 's:' || e.station_id
-ON CONFLICT(channel_id, sender_key)
-  DO UPDATE SET next_seq = MAX(channel_seq.next_seq, excluded.next_seq)`, endpointID); err != nil {
-			return err
-		}
+		// No counter to hand back, for the reason BindEndpointToStation gives: per-scope
+		// numbering has one sequence per conversation, and it does not care who sends.
+
 		res, err := t.ExecContext(ctx, `
 UPDATE endpoint SET station_id=NULL, bound_by_station_key_id=NULL, bound_at=NULL
  WHERE endpoint_id=? AND station_id IS NOT NULL AND revoked_at IS NULL`, endpointID)
@@ -327,7 +318,7 @@ func (s *Store) SeverEndpointsBoundBy(ctx context.Context, keyID string) (int, e
 	var n int64
 	err := s.tx(ctx, func(t *sql.Tx) error {
 		if _, err := t.ExecContext(ctx, `
-UPDATE message
+UPDATE delivery
    SET claimed_by_endpoint=NULL, claim_expires_at=NULL
  WHERE acked_at IS NULL
    AND claimed_by_endpoint IN (SELECT id FROM endpoint WHERE bound_by_station_key_id=?)`,
@@ -369,7 +360,7 @@ func (s *Store) RevokeEndpoint(ctx context.Context, endpointID string) error {
 		// lease would hide them from the station's other readers for no reason — the
 		// operator revoked a wedged session precisely so someone else could take over.
 		if _, err := t.ExecContext(ctx, `
-UPDATE message SET claimed_by_endpoint=NULL, claim_expires_at=NULL
+UPDATE delivery SET claimed_by_endpoint=NULL, claim_expires_at=NULL
  WHERE acked_at IS NULL
    AND claimed_by_endpoint = (SELECT id FROM endpoint WHERE endpoint_id=?)`, endpointID); err != nil {
 			return err
