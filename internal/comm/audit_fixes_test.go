@@ -465,7 +465,7 @@ func TestProvenanceSeesRedelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Backdate the first delivery well outside any window.
-	if _, err := st.W.Exec(`UPDATE message SET first_delivered_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-2 days')`); err != nil {
+	if _, err := st.W.Exec(`UPDATE delivery SET first_delivered_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-2 days')`); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := st.ReceivedSince(ctx, 7, 3600); got {

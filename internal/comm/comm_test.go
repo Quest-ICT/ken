@@ -358,9 +358,20 @@ func TestSendIsIdempotentPerKey(t *testing.T) {
 	}
 }
 
-// Sequence numbers are per (channel, sender) — i.e. per direction — which is the
-// only ordering COMM promises.
-func TestSequenceIsPerDirection(t *testing.T) {
+// SEQUENCE NUMBERS ARE PER CONVERSATION, NOT PER DIRECTION. This replaces
+// TestSequenceIsPerDirection, which asserted the opposite and was correct until the
+// delivery split retired the rule.
+//
+// The old scheme gave each SENDER its own counter in a channel, so two interleaved
+// sequences shared one stream and both reused the same low numbers. Ordering was the
+// visible cost; the real one is that `ack_up_to_seq` is a RANGE — "ack up to 2" could
+// not distinguish the two 2s, so a cumulative ack could settle mail from the other
+// direction that nobody had read.
+//
+// One counter per scope makes the range mean one thing. It is also the only scheme
+// that survives a third participant: "per direction" has no meaning among five
+// stations.
+func TestSequenceIsPerConversationNotPerSender(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
@@ -372,10 +383,23 @@ func TestSequenceIsPerDirection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a1.Seq != 1 || a2.Seq != 2 {
-		t.Fatalf("sender A sequence: got %d,%d want 1,2", a1.Seq, a2.Seq)
+		t.Fatalf("first sender's numbering: got %d,%d want 1,2", a1.Seq, a2.Seq)
 	}
-	if b1.Seq != 1 {
-		t.Fatalf("sender B must start its own sequence at 1, got %d", b1.Seq)
+	if b1.Seq != 3 {
+		t.Fatalf("the reply took seq %d, want 3 — a second sender must CONTINUE the "+
+			"conversation's numbering, not start a parallel one. Two messages sharing a "+
+			"number is what made a cumulative ack able to settle mail nobody read.", b1.Seq)
+	}
+
+	// CONTROL: the numbers are unique across the whole scope, which is the property
+	// the range ack actually depends on. Asserting 1,2,3 alone would pass on a scheme
+	// that numbered per sender and happened to interleave.
+	seen := map[int64]bool{}
+	for _, m := range []*Message{a1, a2, b1} {
+		if seen[m.Seq] {
+			t.Fatalf("sequence %d was issued twice in one conversation", m.Seq)
+		}
+		seen[m.Seq] = true
 	}
 }
 
@@ -1332,12 +1356,41 @@ func TestSequenceDoesNotRestartWhenASessionIsReplaced(t *testing.T) {
 	}
 }
 
-// The unbound regime keeps its own counter, and the two namespaces must not collide:
-// a station id and an endpoint rowid live in the same column, so they are tagged.
-func TestUnboundSendersKeepTheirOwnSequence(t *testing.T) {
+// NUMBERING DOES NOT DEPEND ON WHO IS SENDING, bound or not. This replaces
+// TestUnboundSendersKeepTheirOwnSequence, whose second half asserted a per-direction
+// counter the delivery split retires.
+//
+// The property that survives, and the one that mattered: a sequence is strictly
+// ascending and never reissued within a conversation. The old design achieved that
+// per direction and needed a counter carried between the 'e:' and 's:' namespaces
+// every time an endpoint bound or unbound, or a replacement session restarted at 1
+// while its predecessor had reached 20. One counter per scope removes the namespace,
+// the carry-over, and the class of bug — there is nothing to migrate because there is
+// nothing keyed on the sender.
+func TestNumberingIsIndependentOfWhoIsSending(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
-	a, b, chID := pair(t, st)
+
+	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "sender", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, b, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chID := ch.ChannelID
 
 	var seqs []int64
 	for i := 0; i < 3; i++ {
@@ -1348,15 +1401,36 @@ func TestUnboundSendersKeepTheirOwnSequence(t *testing.T) {
 		seqs = append(seqs, m.Seq)
 	}
 	if seqs[0] != 1 || seqs[1] != 2 || seqs[2] != 3 {
-		t.Fatalf("unbound sequence = %v, want strictly ascending from 1 — the shipped behaviour must be unchanged", seqs)
+		t.Fatalf("sequence = %v, want strictly ascending from 1", seqs)
 	}
-	// The other direction has its own counter, as it always did.
+	// The reply CONTINUES the conversation rather than opening a parallel stream.
 	m, err := st.Send(ctx, b, chID, "reply", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Seq != 1 {
-		t.Fatalf("the reverse direction started at %d, want 1 — per channel AND direction", m.Seq)
+	if m.Seq != 4 {
+		t.Fatalf("the reply took seq %d, want 4 — the conversation has one stream", m.Seq)
+	}
+
+	// CONTROL: binding a sender mid-conversation must not disturb the numbering. This
+	// is the scenario the deleted carry-over existed to protect, asserted directly so
+	// its removal cannot silently reintroduce the restart it prevented — a live
+	// deployment measured 'e:1 -> 50' and 's:… -> 50' under the old mechanism, and
+	// the new one has to hold the same line without one.
+	if err := st.BindEndpointToStation(ctx, a.EndpointID, "stn_numbering", "kens_k"); err != nil {
+		t.Fatal(err)
+	}
+	rebound, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := st.Send(ctx, rebound, chID, "after binding", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Seq != 5 {
+		t.Fatalf("after binding, the next message took seq %d, want 5 — binding restarted the numbering, "+
+			"which is exactly what the removed carry-over used to prevent", after.Seq)
 	}
 }
 
@@ -1494,14 +1568,39 @@ func TestUnbindReturnsAnEndpointToStandingAloneWithoutLosingAnything(t *testing.
 	if len(chans) != 1 || chans[0].ChannelID != ch.ChannelID {
 		t.Fatalf("channels after unbinding = %+v, want the original %s — unbinding must cost nothing", chans, ch.ChannelID)
 	}
-	// Its own mail is still its own. Unbinding narrows what it may read; it must not
-	// strand anything that was addressed to this endpoint in the first place.
+	// MAIL SENT WHILE BOUND BELONGS TO THE STATION, AND STAYS THERE.
+	//
+	// This reverses what this test asserted before the delivery split, and the reversal
+	// is the point rather than a casualty. S4 says the station owns the inbox; storing
+	// a recipient ENDPOINT made that true only in the poll query, which is why an
+	// unbound endpoint used to keep reading mail that had been sent to a post it no
+	// longer staffs. Filing the delivery against the party makes the rule true at the
+	// storage layer, and then this follows.
+	//
+	// Nothing is lost or unreachable: the message waits for whoever staffs the station
+	// next, and it is visible in the console meanwhile. The cost, stated plainly rather
+	// than discovered: if nobody ever binds to that station again, nobody reads it.
 	got, err := st.Poll(ctx, back, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Body != "addressed to me" {
-		t.Fatalf("polled %+v after unbinding, want the message addressed to this endpoint", got)
+	if len(got) != 0 {
+		t.Fatalf("polled %+v after unbinding — mail addressed to the STATION followed the endpoint out of it, "+
+			"which means the station does not own its inbox after all", got)
+	}
+
+	// CONTROL, and the half that must not regress: mail sent to this endpoint while it
+	// is UNBOUND is its own and arrives normally. Without this the assertion above
+	// would also pass on an endpoint that had simply stopped receiving anything.
+	if _, err := st.Send(ctx, peer, ch.ChannelID, "sent after unbinding", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	own, err := st.Poll(ctx, back, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(own) != 1 || own[0].Body != "sent after unbinding" {
+		t.Fatalf("an unbound endpoint polled %+v, want the message addressed to it — unbinding cost it its own mail", own)
 	}
 	// And it can bind again — the door swings both ways, which is the point.
 	if err := st.BindEndpointToStation(ctx, a.EndpointID, station, "kens_k"); err != nil {
@@ -1570,77 +1669,23 @@ func TestAdoptingAStationDoesNotBreakAnExistingChannel(t *testing.T) {
 	}
 }
 
-// UNBIND MUST WORK FROM INSIDE THE COLLIDED STATE. Requested by the production
-// operator after they bound on 1.5.2, hit the collision, and unbound to recover.
+// RETIRED: the collided state this recovered from can no longer occur.
 //
-// This is the property that matters most about the fix, and it is not the fix
-// itself: anyone who adopted a station on 1.5.2 or 1.5.3 has an endpoint that cannot
-// send, and comm_unbind is their ONLY way back. If a later change ever makes unbind
-// depend on sending, or on the sequence table being consistent, that operator is
-// stranded with no path out.
+// The original, kept because the reasoning still matters: a production operator bound
+// on 1.5.2, hit a sequence collision, and unbound to recover. The test simulated the
+// broken state directly — a station-keyed counter behind the endpoint's own history —
+// so that no later change could make unbind depend on sending, or on the sequence
+// table being consistent, and strand the one person who needed the way out.
 //
-// So this simulates the broken state directly — a station-keyed counter behind the
-// endpoint's own history — rather than relying on the current code to produce it.
-func TestUnbindRecoversAnEndpointStuckInASequenceCollision(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	a, b, chID := pair(t, st)
-	const station = "stn_stuck"
-
-	for _, body := range []string{"one", "two", "three"} {
-		if _, err := st.Send(ctx, a, chID, body, SendOpts{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// Force the exact state a 1.5.2/1.5.3 bind produced: bound, with a station
-	// counter that starts from scratch and collides with this endpoint's own seqs.
-	if _, err := st.W.ExecContext(ctx,
-		`UPDATE endpoint SET station_id=?, bound_by_station_key_id='kens_old' WHERE endpoint_id=?`,
-		station, a.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-	var chRow int64
-	if err := st.R.QueryRowContext(ctx, `SELECT id FROM channel WHERE channel_id=?`, chID).Scan(&chRow); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.W.ExecContext(ctx,
-		`INSERT INTO channel_seq(channel_id, sender_key, next_seq) VALUES(?,?,1)`,
-		chRow, "s:"+station); err != nil {
-		t.Fatal(err)
-	}
-
-	stuck, err := st.endpointByRowID(ctx, a.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Send(ctx, stuck, chID, "this should fail", SendOpts{}); err == nil {
-		t.Fatal("the simulated collided state did not actually break sending — the test is not testing what it claims")
-	} else if !errors.Is(err, ErrSequenceCollision) {
-		t.Fatalf("collision surfaced as %v, want ErrSequenceCollision so the operator is told what happened", err)
-	}
-
-	// THE REMEDIATION. It must work while sending is broken.
-	if err := st.UnbindEndpointFromStation(ctx, stuck.EndpointID); err != nil {
-		t.Fatalf("UNBIND FAILED FROM THE COLLIDED STATE: %v — this is the only way back for anyone who "+
-			"adopted a station on 1.5.2 or 1.5.3, and without it they are stranded", err)
-	}
-	recovered, err := st.endpointByRowID(ctx, a.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := st.Send(ctx, recovered, chID, "sending works again", SendOpts{})
-	if err != nil {
-		t.Fatalf("sending still broken after unbinding: %v", err)
-	}
-	if m.Seq <= 3 {
-		t.Fatalf("post-recovery seq = %d, want past the endpoint's own history", m.Seq)
-	}
-	got, err := st.Poll(ctx, b, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 4 {
-		t.Fatalf("peer received %d messages, want all 4 — recovery must not have cost a message", len(got))
-	}
-}
+// The delivery split removes the state rather than the recovery. Sequence numbers key
+// on the SCOPE now, so binding does not move a sender between counters and there is no
+// pair of counters to fall out of step. The carry-forward that used to reconcile them
+// is deleted, and this test's own failure said so before I did: "the simulated
+// collided state did not actually break sending — the test is not testing what it
+// claims."
+//
+// It is retired rather than repaired, because repairing it would mean inventing a
+// failure to keep a test alive. What survives is the property, asserted in
+// TestNumberingIsIndependentOfWhoIsSending: binding a sender mid-conversation does not
+// disturb the numbering — measured on a live endpoint at 'e:1 -> 50' and 's:… -> 50'
+// under the old mechanism, and held by construction under the new one.

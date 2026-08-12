@@ -34,6 +34,52 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+> **This release is a MAJOR bump.** Nothing is removed and no tool changes shape, but
+> `seq` keeps its name and changes its meaning, which is a break by the rule this file
+> exists to enforce. A renumbering that looks like the old numbers is worse than a
+> renamed field, not better.
+
+### Message sequence numbers are renumbered, and now count per CONVERSATION
+
+**Observed:** every message's `seq` changes at upgrade, and new numbering is one
+ascending stream per channel instead of one per sender. Where two participants each had
+their own `1, 2, 3`, there is now a single `1, 2, 3, 4, 5, 6`.
+
+**Do first:** discard any stored sequence number. If a client or a runbook records "acked
+up to seq 7", that 7 refers to a message that now has a different number. Re-poll instead
+of resuming from a remembered position; nothing is lost, and un-acked mail comes back by
+design.
+
+**Why:** `ack_up_to_seq` is a RANGE, and with two interleaved sequences in one channel
+both directions reused the same low numbers — so "ack up to 2" could not tell the two 2s
+apart and could settle mail nobody had read. One stream per conversation makes the range
+mean one thing. It is also the only scheme that survives a third participant: "per
+direction" has no meaning among five stations.
+
+### Mail sent to a station stays with the station when an endpoint unbinds
+
+**Observed:** a session that receives messages while bound to a station, then unbinds,
+no longer sees those messages. Previously it kept reading them.
+
+**Do first:** nothing, unless you unbind a session that is holding unread mail. That mail
+now waits for whoever staffs the station next and is visible in the console meanwhile. If
+nobody binds to that station again, nobody reads it.
+
+**Why:** `docs/STATIONS.md` S4 says the station owns the inbox. That was true only in the
+poll query; the recipient stored on each message was an ENDPOINT, so an endpoint carried
+the station's mail out of the station with it. Deliveries are now filed against the party
+— station or endpoint — which makes the documented rule true where the data lives.
+
+### The station sequence carry-over on bind/unbind is gone
+
+**Observed:** nothing. Binding and unbinding no longer touch sequence counters.
+
+**Do first:** nothing. Noted because it retires an operational caution: binding a
+long-lived endpoint used to move it between two counters, and the merge that kept them
+consistent no longer exists because there is only one counter per conversation.
+
+---
+
 ### A snapshot can now contain plaintext credentials
 
 **Observed:** stations gain a **vault** — a place a session is *told* to put tokens, keys and

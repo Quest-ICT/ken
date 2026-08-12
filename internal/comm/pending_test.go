@@ -29,7 +29,7 @@ func TestPendingCountDoesNotDeliverAnything(t *testing.T) {
 	var beforeState string
 	var beforeDelivered any
 	if err := st.R.QueryRow(
-		`SELECT state, first_delivered_at FROM message ORDER BY id DESC LIMIT 1`).Scan(&beforeState, &beforeDelivered); err != nil {
+		`SELECT d.state, d.first_delivered_at FROM delivery d ORDER BY d.id DESC LIMIT 1`).Scan(&beforeState, &beforeDelivered); err != nil {
 		t.Fatal(err)
 	}
 	if beforeState != "queued" {
@@ -47,7 +47,7 @@ func TestPendingCountDoesNotDeliverAnything(t *testing.T) {
 	var afterState string
 	var afterDelivered any
 	if err := st.R.QueryRow(
-		`SELECT state, first_delivered_at FROM message ORDER BY id DESC LIMIT 1`).Scan(&afterState, &afterDelivered); err != nil {
+		`SELECT d.state, d.first_delivered_at FROM delivery d ORDER BY d.id DESC LIMIT 1`).Scan(&afterState, &afterDelivered); err != nil {
 		t.Fatal(err)
 	}
 	if afterState != beforeState {

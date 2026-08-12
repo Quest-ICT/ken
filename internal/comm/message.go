@@ -675,7 +675,7 @@ WHERE message_id=?
 // deadline passes: a responder that crashed and recovered plausibly needs to
 // re-read what it owes.
 func (s *Store) Ack(ctx context.Context, ep *Endpoint, messageID string) error {
-	pred, pargs := partyPredicate(ep)
+	pred, pargs := partyPredicate(ep, "")
 	args := append([]any{ep.ID, messageID}, pargs...)
 	if _, err := s.W.ExecContext(ctx, `
 UPDATE delivery
@@ -701,12 +701,18 @@ WHERE message_row = (SELECT id FROM message WHERE message_id=?)
 // Both forms are matched for a bound endpoint, for the reason Poll gives: after a
 // backwards ken.db restore a station_id can resolve to nothing, and such a reader must
 // still settle the mail filed under its own rowid.
-func partyPredicate(ep *Endpoint) (string, []any) {
+// The alias is taken as an argument rather than pasted on by the caller: prefixing
+// `d.` onto a parenthesised OR produces `d.(party_key = ? OR …)`, which is not SQL.
+// Caught by TestAReplacementReaderCanReplyAndAckCumulatively rather than by reading.
+func partyPredicate(ep *Endpoint, alias string) (string, []any) {
+	if alias != "" {
+		alias += "."
+	}
 	if ep.StationID != "" {
-		return `(party_key = ? OR party_key = ?)`,
+		return `(` + alias + `party_key = ? OR ` + alias + `party_key = ?)`,
 			[]any{stationParty(ep.StationID), endpointPartyKey(ep.ID)}
 	}
-	return `party_key = ?`, []any{endpointPartyKey(ep.ID)}
+	return alias + `party_key = ?`, []any{endpointPartyKey(ep.ID)}
 }
 
 // blankIfFullySettled drops a body once NO recipient still owes anything.
@@ -745,11 +751,11 @@ func (s *Store) AckUpTo(ctx context.Context, ep *Endpoint, channelID string, seq
 	// Collected then acked one at a time, through Ack, so the body-blanking rule lives
 	// in exactly one place. A range that settled rows with its own UPDATE is how the
 	// two paths drifted apart the first time.
-	pred, pargs := partyPredicate(ep)
+	pred, pargs := partyPredicate(ep, "d")
 	args := append([]any{channelScope(channelID), seq}, pargs...)
 	rows, err := s.W.QueryContext(ctx, `
 SELECT m.message_id FROM delivery d JOIN message m ON m.id = d.message_row
- WHERE m.scope_id=? AND m.scope_seq<=? AND d.state='delivered' AND d.`+pred, args...)
+ WHERE m.scope_id=? AND m.scope_seq<=? AND d.state='delivered' AND `+pred, args...)
 	if err != nil {
 		return err
 	}

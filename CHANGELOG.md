@@ -15,6 +15,38 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **A message has RECIPIENTS now, not a recipient.** `message` keeps what is true of the
+  message; a new `delivery` table holds one row per recipient with everything that varies
+  between them — state, redelivery count, claim, reply deadline, ack. Addressing moves to
+  a **scope** (`ch:<channel>`, and `r:<room>` when rooms land) and a **party**
+  (`s:<station>` or `e:<endpoint>`).
+
+  The party is the change that matters. The poll query already asked "addressed to my
+  endpoint, or to any endpoint of my station" at READ time; storing the party answers it
+  at WRITE time. That is what makes a third participant possible at all, and it makes
+  `STATIONS.md` S4 — the station owns the inbox — true where the data lives rather than
+  only in one query.
+
+  **Sequence numbers are per conversation**, one ascending stream instead of one per
+  sender. `ack_up_to_seq` is a range, and two interleaved sequences reusing the same low
+  numbers meant a cumulative ack could settle mail nobody had read.
+
+  Body lifetime is the part where a careless port would rebuild the 97%-of-bodies defect
+  from a new cause: a body is one object with one lifetime, so it is never blanked while
+  any recipient is still owed it, and the retention window runs from the **last**
+  recipient to settle. With one recipient every one of these is byte-for-byte the old
+  behaviour.
+
+- **Migrations run with foreign keys disabled outside the transaction, and the result is
+  checked.** `PRAGMA foreign_keys=OFF` written inside a migration file is a documented
+  no-op, so a table rebuild silently fired every `ON DELETE` aimed at the table it
+  dropped. Measured against the driver before the fix: a child table populated in the
+  same transaction came out empty, with no error. `Migrate()` now pins a connection,
+  disables enforcement around the run, and fails loudly on `PRAGMA foreign_key_check`.
+
+
 ### Added
 
 - **The station vault — somewhere for a credential to live.** `station_vault_list` / `_put` / `_get` /
