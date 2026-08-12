@@ -34,6 +34,10 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+---
+
+## 3.0.0
+
 > **This release is a MAJOR bump**, and the reason is one line rather than the length of
 > the list below: `seq` keeps its name and changes its meaning. A renumbering that looks
 > like the old numbers is worse than a renamed field, not better. Everything else here is
