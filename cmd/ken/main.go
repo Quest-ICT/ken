@@ -353,17 +353,27 @@ func runServe(args []string) {
 		// A closure keeps internal/mcpserver free of any dependency on the optional
 		// subsystem. An error yields false — the marker is advisory and must never
 		// block a save.
-		mcpDeps.CommProvenance = func(ctx context.Context, actorID int64) bool {
+		mcpDeps.CommProvenance = func(ctx context.Context, actorID int64) (bool, string) {
 			win := live.Current().CommProvenanceWindowSec
 			if win <= 0 {
-				return false
+				return false, ""
 			}
-			got, err := commStore.ReceivedSince(ctx, actorID, win)
+			srcs, err := commStore.ReceivedFrom(ctx, actorID, win)
 			if err != nil {
 				log.Printf("comm: provenance check: %v", err)
-				return false
+				return false, ""
 			}
-			return got
+			if len(srcs) == 0 {
+				return false, ""
+			}
+			// Sources come back with DIRECTED first, so the head is the strongest
+			// reason to look twice. Reporting the weakest would tell a curator "you
+			// were in a room where something was said" while a peer had also written
+			// to this actor directly.
+			if srcs[0].Broadcast {
+				return true, "broadcast"
+			}
+			return true, "directed"
 		}
 	}
 	if oauthSrv != nil {

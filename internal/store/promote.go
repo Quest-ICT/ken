@@ -301,6 +301,11 @@ type ProposalRow struct {
 	// (docs/COMM.md §7). False means "no signal", never "known first-hand" — it is
 	// a prompt to ask for a citation, not a verdict.
 	LatestViaComm bool
+	// LatestViaCommKind distinguishes what the marker actually saw: "directed" when
+	// somebody wrote to this actor specifically, "broadcast" when it was one of several
+	// recipients of a room message. Empty for versions written before the distinction
+	// existed — honest, because inventing one would be fabricating provenance.
+	LatestViaCommKind string
 }
 
 // CountProposals returns how many entries have at least one proposed version —
@@ -320,7 +325,7 @@ func (s *Store) ListProposals(ctx context.Context) ([]ProposalRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT e.slug, e.title, e.kind, COUNT(ev.id) AS n,
        lv.rev_no, lv.id, COALESCE(lv.confidence,0), COALESCE(lv.change_note,''), COALESCE(lv.content_lang,''),
-       COALESCE(lv.via_comm,0)
+       COALESCE(lv.via_comm,0), COALESCE(lv.via_comm_kind,'')
 FROM entry e
 JOIN entry_version ev ON ev.entry_id=e.id AND ev.state='proposed'
 JOIN entry_version lv ON lv.id=(SELECT id FROM entry_version WHERE entry_id=e.id AND state='proposed' ORDER BY rev_no DESC LIMIT 1)
@@ -333,7 +338,7 @@ ORDER BY MAX(ev.created_at) DESC`)
 	var out []ProposalRow
 	for rows.Next() {
 		var r ProposalRow
-		if err := rows.Scan(&r.Slug, &r.Title, &r.Kind, &r.NProposals, &r.LatestRev, &r.LatestVersionID, &r.LatestConfidence, &r.LatestChangeNote, &r.LatestLang, &r.LatestViaComm); err != nil {
+		if err := rows.Scan(&r.Slug, &r.Title, &r.Kind, &r.NProposals, &r.LatestRev, &r.LatestVersionID, &r.LatestConfidence, &r.LatestChangeNote, &r.LatestLang, &r.LatestViaComm, &r.LatestViaCommKind); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

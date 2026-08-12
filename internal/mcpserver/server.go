@@ -46,7 +46,12 @@ type Deps struct {
 	// Keyed on the actor rather than the token because a COMM token must be
 	// dedicated — the token that receives messages is never the one that authors an
 	// entry, so a token-keyed check could never fire.
-	CommProvenance func(ctx context.Context, actorID int64) bool
+	// Returns whether to mark, and WHICH KIND of traffic was seen: "directed" when
+	// somebody addressed this actor specifically, "broadcast" when it was one of
+	// several recipients. The kind is what keeps the marker informative now that one
+	// send can reach nine stations — a badge that is almost always on carries less
+	// information than one that is sometimes absent.
+	CommProvenance func(ctx context.Context, actorID int64) (bool, string)
 
 	// ResourceMetadataURL, when set (OAuth enabled), builds the RFC 9728
 	// protected-resource-metadata URL advertised in the 401 WWW-Authenticate
@@ -129,13 +134,13 @@ func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) 
 // viaComm reports whether the caller should have its authored version marked as
 // possible hearsay. Errors and a disabled subsystem both yield false — the marker
 // is advisory, and a failed check must never block a save.
-func (d Deps) viaComm(ctx context.Context) bool {
+func (d Deps) viaComm(ctx context.Context) (bool, string) {
 	if d.CommProvenance == nil {
-		return false
+		return false, ""
 	}
 	id := actorID(ctx)
 	if id == 0 {
-		return false
+		return false, ""
 	}
 	return d.CommProvenance(ctx, id)
 }
@@ -435,6 +440,7 @@ func NewServer(d Deps) *mcp.Server {
 		if err := verifyDedupToken(d.DedupSecret, in.DedupCheckToken, dedupSubject(ctx)); err != nil {
 			return nil, saveOut{}, err
 		}
+		viaComm, viaKind := d.viaComm(ctx)
 		r, err := d.Store.Save(ctx, store.SaveInput{
 			Slug:     in.Slug,
 			Kind:     in.Kind,
@@ -445,8 +451,8 @@ func NewServer(d Deps) *mcp.Server {
 				Tags: in.Tags, Triggers: in.Triggers, AppliesTo: in.AppliesTo, VerifiedAgainst: in.VerifiedAgainst,
 			},
 			Confidence: in.Confidence, AuthorActorID: actorID(ctx), AuthorKind: "ai", SessionID: in.SessionID,
-			ViaComm: d.viaComm(ctx),
-			Links:   toLinkInputs(in.Links),
+			ViaComm: viaComm, ViaCommKind: viaKind,
+			Links: toLinkInputs(in.Links),
 		})
 		if err != nil {
 			return nil, saveOut{}, mcpError(err)
@@ -464,10 +470,11 @@ func NewServer(d Deps) *mcp.Server {
 		if in.Slug == "" || in.ChangeNote == "" {
 			return nil, proposeOut{}, errors.New("slug and change_note are required")
 		}
+		viaComm, viaKind := d.viaComm(ctx)
 		r, err := d.Store.ProposeEnhancement(ctx, store.ProposeInput{
 			Slug: in.Slug, BasedOnRev: in.BasedOnRev, ChangeNote: in.ChangeNote,
 			Confidence: in.Confidence, AuthorActorID: actorID(ctx), AuthorKind: "ai", SessionID: in.SessionID,
-			ViaComm: d.viaComm(ctx),
+			ViaComm: viaComm, ViaCommKind: viaKind,
 			Patch: store.Patch{
 				Title: in.Patch.Title, Summary: in.Patch.Summary, Problem: in.Patch.Problem,
 				Solution: in.Patch.Solution, Rationale: in.Patch.Rationale, Caveats: in.Patch.Caveats,

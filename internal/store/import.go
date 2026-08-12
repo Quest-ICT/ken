@@ -49,7 +49,7 @@ VALUES(?,?,?,?,?,?,?, 'active','fresh','import')`,
 	entryID, _ := res.LastInsertId()
 
 	vid, _, err := insertVersion(ctx, tx, entryID, 1, "curated", 0, in.Content, 0, "import", "", 1.0, in.ChangeNote,
-		s.detectLang(in.Content.prose()...), false) // an import is first-hand by definition
+		s.detectLang(in.Content.prose()...), false, "") // an import is first-hand by definition
 	if err != nil {
 		return false, err
 	}

@@ -45,22 +45,86 @@ import "context"
 // Callers must treat any error as "unknown" and NOT as "no": failing to mark is the
 // direction that loses information.
 func (s *Store) ReceivedSince(ctx context.Context, actorID int64, windowSeconds int) (bool, error) {
+	srcs, err := s.ReceivedFrom(ctx, actorID, windowSeconds)
+	return len(srcs) > 0, err
+}
+
+// Source is one piece of inter-session traffic this actor received inside the window.
+//
+// Broadcast is the field slice 5 made necessary. Before rooms, every message had one
+// recipient and "you received something" meant somebody addressed YOU. A broadcast to
+// nine stations marks nine actors from a single send, and treating that identically to
+// a direct message means the marker fires far more often while meaning far less — the
+// badge prod already measured as nearly always on, made worse by the feature that just
+// shipped.
+type Source struct {
+	// StationID of the SENDER when it had one; empty for an unbound endpoint.
+	StationID string
+	MessageID string
+	At        string
+	// Broadcast is true when this arrived as one of many recipients — a room message or
+	// an estate broadcast. A directed message is one addressed to this party alone.
+	Broadcast bool
+}
+
+// ReceivedFrom lists the traffic behind the hearsay marker, newest first, with directed
+// messages ranked ahead of broadcast ones.
+//
+// The ordering IS the point rather than presentation: a curator reading a badge wants
+// the strongest reason first. "prod-ops told you this an hour ago" and "you were in a
+// room where something was said" are different claims about the same entry, and
+// collapsing them to a boolean is what made the badge uninformative.
+//
+// Callers must treat any error as "unknown" and NOT as "no": failing to mark is the
+// direction that loses information.
+func (s *Store) ReceivedFrom(ctx context.Context, actorID int64, windowSeconds int) ([]Source, error) {
 	if actorID == 0 || windowSeconds <= 0 {
-		return false, nil
+		return nil, nil
 	}
-	var found int
-	// Asked of DELIVERY rows now. The receiving side moved off `message` with the
-	// delivery split, and `delivery.recipient_endpoint` is kept precisely so this
-	// question stays answerable — it is the audit column that survives the endpoint
-	// itself (ON DELETE SET NULL), because a marker that forgets a session received
-	// something the moment that session goes idle fails in the silent direction.
-	err := s.R.QueryRowContext(ctx, `
-SELECT EXISTS(
-  SELECT 1 FROM delivery d
-  JOIN endpoint e ON e.id = d.recipient_endpoint
-  WHERE e.actor_id = ?
-    AND d.first_delivered_at IS NOT NULL
-    AND COALESCE(d.acked_at, d.first_delivered_at) > strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
-		actorID, nowExpr(-windowSeconds)).Scan(&found)
-	return found == 1, err
+	// TWO WAYS A DELIVERY BELONGS TO AN ACTOR, and missing the second one made this
+	// blind to exactly the traffic slice 5 added.
+	//
+	// A channel delivery names a recipient ENDPOINT, and the endpoint carries the
+	// actor. A ROOM delivery names no endpoint at all — rooms hold stations, and which
+	// connection reads the mail is decided later, at poll time — so
+	// `recipient_endpoint` is NULL and an inner join on it drops every room message.
+	//
+	// Caught by a test, and it would have shipped silently: the badge would simply
+	// never fire for room mail, and an absent badge is indistinguishable from a
+	// checked-and-clean one. The second arm resolves the party's STATION back to the
+	// actors staffing it, which is the same widening the poll predicate does.
+	rows, err := s.R.QueryContext(ctx, `
+SELECT COALESCE(se.station_id, ''), m.message_id,
+       COALESCE(d.acked_at, d.first_delivered_at),
+       CASE WHEN m.audience_size > 1 THEN 1 ELSE 0 END
+  FROM delivery d
+  JOIN message m ON m.id = d.message_row
+  LEFT JOIN endpoint se ON se.id = m.sender_endpoint
+ WHERE d.first_delivered_at IS NOT NULL
+   AND COALESCE(d.acked_at, d.first_delivered_at) > strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
+   AND (
+     EXISTS (SELECT 1 FROM endpoint e
+              WHERE e.id = d.recipient_endpoint AND e.actor_id = ?)
+     OR EXISTS (SELECT 1 FROM endpoint e
+                 WHERE e.actor_id = ? AND e.station_id IS NOT NULL
+                   AND d.party_key = 's:' || e.station_id)
+   )
+ ORDER BY CASE WHEN m.audience_size > 1 THEN 1 ELSE 0 END,
+          COALESCE(d.acked_at, d.first_delivered_at) DESC`,
+		nowExpr(-windowSeconds), actorID, actorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Source
+	for rows.Next() {
+		var src Source
+		var broadcast int
+		if err := rows.Scan(&src.StationID, &src.MessageID, &src.At, &broadcast); err != nil {
+			return nil, err
+		}
+		src.Broadcast = broadcast == 1
+		out = append(out, src)
+	}
+	return out, rows.Err()
 }

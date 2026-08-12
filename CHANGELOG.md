@@ -15,6 +15,36 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **The hearsay badge tells a directed message from a broadcast one.** `ReceivedSince`
+  becomes `ReceivedFrom`, returning the traffic behind the marker with **directed
+  sources ranked first**, and the console badge reads *"possibly second-hand"* or
+  *"heard in a room?"* with tooltips that say which was seen.
+
+  This was a companion to rooms rather than an improvement on them. `ken-prod-ops`
+  measured the badge as **nearly always on** before rooms existed — three sessions
+  exchanging eleven messages kept the window continuously open — and named the
+  consequence: *"a badge that is almost always present carries less information than one
+  that is sometimes absent."* One broadcast to nine stations marks nine actors from a
+  single send, so shipping rooms without this made an already-weak signal weaker.
+
+  Versions written before this ships carry no kind, and that is deliberate: they were
+  marked without the distinction being recorded, and inventing one now would be
+  fabricating provenance — the one thing the whole mechanism exists to avoid.
+
+### Fixed
+
+- **The hearsay marker was blind to room mail, and would have shipped that way.** It
+  joined `delivery.recipient_endpoint` to find the actor, and a room delivery names no
+  endpoint at all — rooms hold stations, and which connection reads the mail is decided
+  at poll time. So every room message was invisible to the check, the badge would simply
+  never have fired for it, and **an absent badge is indistinguishable from a
+  checked-and-clean one**. Found by a test written for the feature above; the query now
+  also resolves a party's station back to the actors staffing it, which is the same
+  widening the poll predicate already does.
+
+
 ### Added
 
 - **Rooms and broadcast — many-party messaging.** `comm_send` takes `to_room` (a room

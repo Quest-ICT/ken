@@ -46,6 +46,13 @@ type SaveInput struct {
 	AuthorKind    string
 	SessionID     string
 	Links         []LinkInput
+	// ViaCommKind says WHICH kind of traffic the marker saw: "directed" when somebody
+	// addressed this actor specifically, "broadcast" when it was one of several
+	// recipients of a room message. Empty when unknown — including every version
+	// written before the distinction existed, which is honest rather than convenient:
+	// inventing a kind for those would be fabricating provenance.
+	ViaCommKind string
+
 	// ViaComm marks the version as possibly second-hand: the authoring token had
 	// recently RECEIVED an inter-session message (docs/COMM.md §7). It is a prompt
 	// for the curator's judgement, not a verdict — false means "no signal", never
@@ -125,7 +132,7 @@ VALUES(?,?,?,?,?,?,?,'draft','fresh',?)`,
 
 	vid, revNo, err := insertVersion(ctx, tx, entryID, 1, "proposed", 0, in.Content,
 		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, "initial capture",
-		s.detectLang(in.Content.prose()...), in.ViaComm)
+		s.detectLang(in.Content.prose()...), in.ViaComm, in.ViaCommKind)
 	if err != nil {
 		return SaveResult{}, err
 	}
@@ -170,6 +177,8 @@ type ProposeInput struct {
 	Patch         Patch
 	// ViaComm — see SaveInput.ViaComm.
 	ViaComm bool
+	// ViaCommKind — see SaveInput.ViaCommKind.
+	ViaCommKind string
 }
 
 // ProposeResult reports the appended version and any rebase warning.
@@ -249,7 +258,7 @@ FROM entry WHERE slug=?`, in.Slug).Scan(&entryID, &curatedVID, &maxRev)
 
 	newRev := maxRev + 1
 	vid, _, err := insertVersion(ctx, tx, entryID, newRev, "proposed", baseVID, merged,
-		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, in.ChangeNote, contentLang, in.ViaComm)
+		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, in.ChangeNote, contentLang, in.ViaComm, in.ViaCommKind)
 	if err != nil {
 		return ProposeResult{}, err
 	}
@@ -320,17 +329,17 @@ func viaCommVal(b bool) any {
 
 func insertVersion(ctx context.Context, tx *sql.Tx, entryID int64, revNo int, state string, parentVID int64,
 	c Content, actorID int64, authorKind, sessionID string, confidence float64, changeNote, contentLang string,
-	viaComm bool) (int64, int, error) {
+	viaComm bool, viaCommKind string) (int64, int, error) {
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO entry_version(entry_id,rev_no,state,parent_version_id,title,summary,problem,solution,rationale,caveats,
                           code,tags,triggers,applies_to,verified_against,
-                          author_actor_id,author_kind,session_id,confidence,change_note,content_lang,via_comm)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                          author_actor_id,author_kind,session_id,confidence,change_note,content_lang,via_comm,via_comm_kind)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		entryID, revNo, state, nullVID(parentVID),
 		c.Title, c.Summary, nullStr(c.Problem), nullStr(c.Solution), nullStr(c.Rationale), nullStr(c.Caveats),
 		jsonCode(c.Code), jsonArr(c.Tags), jsonArr(c.Triggers), jsonArr(c.AppliesTo), jsonVerified(c.VerifiedAgainst),
 		nullActor(actorID), nullStr(authorKind), nullStr(sessionID), confidence, nullStr(changeNote), nullStr(contentLang),
-		viaCommVal(viaComm))
+		viaCommVal(viaComm), nullStr(viaCommKind))
 	if err != nil {
 		return 0, 0, err
 	}
