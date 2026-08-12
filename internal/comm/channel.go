@@ -555,15 +555,26 @@ func (s *Store) PendingForEndpoint(ctx context.Context, ep *Endpoint) (map[strin
 	// Plain `?` with the id repeated, never `?N`: message.go:207 records that mixing
 	// numbered and auto-assigned placeholders renumbers the auto-assigned ones and binds
 	// the wrong values silently.
+	// The count is over DELIVERY rows for this endpoint's PARTY. Both party forms are
+	// matched for a bound endpoint, exactly as Poll and Ack do — a count that used the
+	// station form alone would read zero for mail filed under the endpoint's own rowid
+	// after a backwards ken.db restore, and zero here is indistinguishable from an
+	// empty inbox, so a caller believes it.
+	party := endpointPartyKey(ep.ID)
+	altParty := party
+	if ep.StationID != "" {
+		party = stationParty(ep.StationID)
+	}
 	rows, err := s.R.QueryContext(ctx, `
-SELECT c.channel_id, COUNT(m.id)
+SELECT c.channel_id, COUNT(d.id)
   FROM channel c
-  LEFT JOIN message m
-    ON m.channel_id = c.id
-   AND m.recipient_endpoint = ?
-   AND m.state = 'queued'
+  LEFT JOIN message m ON m.channel_id = c.id
+  LEFT JOIN delivery d
+    ON d.message_row = m.id
+   AND (d.party_key = ? OR d.party_key = ?)
+   AND d.state = 'queued'
  WHERE c.state='open' AND (c.endpoint_a = ? OR c.endpoint_b = ?)
- GROUP BY c.channel_id`, ep.ID, ep.ID, ep.ID)
+ GROUP BY c.channel_id`, party, altParty, ep.ID, ep.ID)
 	if err != nil {
 		return nil, err
 	}

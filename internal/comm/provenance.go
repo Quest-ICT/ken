@@ -49,13 +49,18 @@ func (s *Store) ReceivedSince(ctx context.Context, actorID int64, windowSeconds 
 		return false, nil
 	}
 	var found int
+	// Asked of DELIVERY rows now. The receiving side moved off `message` with the
+	// delivery split, and `delivery.recipient_endpoint` is kept precisely so this
+	// question stays answerable — it is the audit column that survives the endpoint
+	// itself (ON DELETE SET NULL), because a marker that forgets a session received
+	// something the moment that session goes idle fails in the silent direction.
 	err := s.R.QueryRowContext(ctx, `
 SELECT EXISTS(
-  SELECT 1 FROM message m
-  JOIN endpoint e ON e.id = m.recipient_endpoint
+  SELECT 1 FROM delivery d
+  JOIN endpoint e ON e.id = d.recipient_endpoint
   WHERE e.actor_id = ?
-    AND m.first_delivered_at IS NOT NULL
-    AND COALESCE(m.acked_at, m.first_delivered_at) > strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
+    AND d.first_delivered_at IS NOT NULL
+    AND COALESCE(d.acked_at, d.first_delivered_at) > strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
 		actorID, nowExpr(-windowSeconds)).Scan(&found)
 	return found == 1, err
 }

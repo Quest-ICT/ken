@@ -559,10 +559,17 @@ UPDATE attachment SET state='expired'
 WHERE state IN ('offered','ready') AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`); err != nil {
 		return nil, err
 	}
-	// An acked message settles its attachment.
+	// An acked message settles its attachment — and with several recipients that
+	// means acked by ALL of them. Settling on the first ack would delete the bytes
+	// while somebody who has not read the offer yet is still entitled to fetch them,
+	// which is the body-retention mistake wearing a filesystem.
 	if _, err := t.ExecContext(ctx, `
 UPDATE attachment SET state='done', done_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE state='ready' AND message_id IN (SELECT id FROM message WHERE state='acked')`); err != nil {
+WHERE state='ready' AND message_id IN (
+  SELECT m.id FROM message m
+   WHERE EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = m.id AND d.state='acked')
+     AND NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = m.id
+                                                AND d.state IN ('queued','delivered')))`); err != nil {
 		return nil, err
 	}
 	// Collect deletable bytes: settled uploads still holding disk.

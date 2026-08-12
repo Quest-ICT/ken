@@ -9,11 +9,22 @@ import (
 // test cannot wait 64 hours and a sleep would only prove the scheduler works.
 func age(t *testing.T, st *Store, messageID, modifier string) {
 	t.Helper()
+	// The clocks live in TWO tables since the delivery split: the message owns its
+	// creation and expiry, each recipient owns when it saw and settled the message.
+	// Both have to move, or a test ages a message into the past while its deliveries
+	// still look like now — which is the same silent untestability the acked_at note
+	// below records, one table further along.
 	res, err := st.W.Exec(`
 UPDATE message
    SET created_at  = strftime('%Y-%m-%dT%H:%M:%fZ', created_at,  ?),
-       expires_at  = strftime('%Y-%m-%dT%H:%M:%fZ', expires_at,  ?),
-       first_delivered_at = CASE WHEN first_delivered_at IS NULL THEN NULL
+       expires_at  = strftime('%Y-%m-%dT%H:%M:%fZ', expires_at,  ?)
+ WHERE message_id=?`, modifier, modifier, messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.Exec(`
+UPDATE delivery
+   SET first_delivered_at = CASE WHEN first_delivered_at IS NULL THEN NULL
             ELSE strftime('%Y-%m-%dT%H:%M:%fZ', first_delivered_at, ?) END,
        reply_deadline_at  = CASE WHEN reply_deadline_at IS NULL THEN NULL
             ELSE strftime('%Y-%m-%dT%H:%M:%fZ', reply_deadline_at, ?) END,
@@ -22,8 +33,8 @@ UPDATE message
        -- untestable — the message looked old and its settle time looked like now.
        acked_at = CASE WHEN acked_at IS NULL THEN NULL
             ELSE strftime('%Y-%m-%dT%H:%M:%fZ', acked_at, ?) END
- WHERE message_id=?`, modifier, modifier, modifier, modifier, modifier, messageID)
-	if err != nil {
+ WHERE message_row = (SELECT id FROM message WHERE message_id=?)`,
+		modifier, modifier, modifier, messageID); err != nil {
 		t.Fatal(err)
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
