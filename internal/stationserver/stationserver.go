@@ -415,7 +415,7 @@ func newServer(d Deps) *mcp.Server {
 		for _, n := range ns {
 			out.Pages = append(out.Pages, noteMeta{Key: n.Key, Title: n.Title, Tags: n.Tags,
 				Rev: n.Rev, Bytes: n.Bytes, UpdatedAt: n.UpdatedAt,
-				RevisionsLost: n.Rev - n.OldestRev, HistoryBytes: n.HistoryBytes})
+				RevisionsLost: n.RevisionsLost, HistoryBytes: n.HistoryBytes})
 		}
 		return nil, out, nil
 	})

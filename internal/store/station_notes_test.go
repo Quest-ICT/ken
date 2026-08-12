@@ -283,3 +283,82 @@ func TestTheNoteListingRevealsRevisionsAlreadyPruned(t *testing.T) {
 		}
 	}
 }
+
+// THE NUMBER MUST BE HOW MANY ARE GONE, NOT HOW MANY REMAIN.
+//
+// Shipped in 3.0.0 as `head_rev - oldest_retained`, which is the count of SURVIVING
+// history rows. ken-prod-ops measured it on a live station within twenty minutes of the
+// release: head 6, revisions 1..5 present, nothing ever pruned, and the field returned 5.
+//
+// The inversion is worse than an off-by-N because it points at the wrong station. A
+// healthy page with a long history reports a big number; the one page in their estate
+// that genuinely lost seventeen revisions would report 8, LESS than the healthy ones
+// around it. The field was added so that station would finally see its own damage.
+func TestRevisionsLostCountsWhatIsMissingNotWhatSurvived(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := DefaultStationNoteLimits()
+
+	// A page with plenty of history and NOTHING pruned: the bound is generous, so every
+	// revision from 1 up is still held.
+	for i := 0; i < 6; i++ {
+		if _, err := st.WriteStationNote(ctx, lim, station.StationID, "healthy", "t",
+			strings.Repeat("a", 50), nil, "replace", 0, "tok", actorID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A page that HAS been pruned: a tight bound, many writes.
+	tight := lim
+	tight.MaxRevisionBytes = 300
+	for i := 0; i < 12; i++ {
+		if _, err := st.WriteStationNote(ctx, tight, station.StationID, "damaged", "t",
+			strings.Repeat("b", 100), nil, "replace", 0, "tok", actorID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A page written exactly once: no history at all.
+	if _, err := st.WriteStationNote(ctx, lim, station.StationID, "fresh", "t", "once",
+		nil, "replace", 0, "tok", actorID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	notes, err := st.ListStationNotes(ctx, station.StationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]StationNote{}
+	for _, n := range notes {
+		by[n.Key] = n
+	}
+
+	if got := by["healthy"].RevisionsLost; got != 0 {
+		t.Errorf("a page that never pruned reports %d revisions lost, want 0.\n"+
+			"Every healthy station is told it lost history, which is how the signal becomes noise.", got)
+	}
+	if got := by["fresh"].RevisionsLost; got != 0 {
+		t.Errorf("a page written once reports %d revisions lost, want 0", got)
+	}
+
+	dmg := by["damaged"]
+	if dmg.RevisionsLost == 0 {
+		t.Fatalf("a page pruned past a 300-byte bound reports nothing lost (head %d) — "+
+			"the one page that needs the signal does not get it", dmg.Rev)
+	}
+	// The exact relationship, not merely "non-zero": revisions are numbered 1..head-1 in
+	// history, so what is missing is everything below the oldest still held.
+	if want := dmg.OldestRev - 1; dmg.RevisionsLost != want {
+		t.Errorf("revisions lost = %d, want %d (oldest retained %d, head %d)",
+			dmg.RevisionsLost, want, dmg.OldestRev, dmg.Rev)
+	}
+	// AND THE ORDERING, which is the property that actually failed in production: the
+	// damaged page must report MORE loss than the healthy one. The shipped arithmetic
+	// inverted exactly this.
+	if dmg.RevisionsLost <= by["healthy"].RevisionsLost {
+		t.Fatalf("the pruned page reports %d lost and the intact page reports %d — "+
+			"a curator comparing them is pointed at the wrong station",
+			dmg.RevisionsLost, by["healthy"].RevisionsLost)
+	}
+}

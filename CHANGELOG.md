@@ -15,6 +15,30 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.0.1] — 2026-08-12
+
+### Fixed
+
+- **`station_note_list`'s `revisions_lost` reported the revisions that SURVIVED, not the
+  ones that were pruned.** `ken-prod-ops` measured it on a live station within the hour:
+  head revision 6, revisions 1–5 all present, nothing ever pruned — and the field
+  returned 5.
+
+  **The inversion points at the wrong station**, which is why this is a release rather
+  than a note. A healthy page with a long history reports a big number; the one page in
+  their estate that genuinely lost seventeen revisions would have reported **8** — less
+  than the intact pages around it. The field was added in 3.0.0 so that station would
+  finally see its own damage, and as shipped it would have sent a curator to the wrong
+  three.
+
+  History holds revisions 1 … head−1, so what is missing is everything below the oldest
+  still held. The arithmetic now lives in the store beside the query that produces it,
+  rather than in the caller that got it backwards, and the test asserts the ordering
+  that actually failed: a pruned page must report MORE loss than an intact one.
+
+  `history_bytes` was correct and is unchanged.
+
+
 ## [3.0.0] — 2026-08-12
 
 ### Added
@@ -2020,7 +2044,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.1
 [3.0.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.0
 [2.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.2.0
 [2.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v2.1.0

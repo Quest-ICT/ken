@@ -36,6 +36,19 @@ is what changed, this is what will bite.
 
 ---
 
+## 3.0.1
+
+### `revisions_lost` was inverted in 3.0.0 — read it again after upgrading
+
+**Observed:** the field reported how many revisions a page still HAS, not how many were
+pruned. Every healthy page claimed to have lost history, and a page that really lost
+seventeen reported a smaller number than the intact ones beside it.
+
+**Do first:** if you acted on that field in 3.0.0 — or worried about a station because of
+it — look again. `history_bytes` was correct throughout.
+
+---
+
 ## 3.0.0
 
 > **This release is a MAJOR bump**, and the reason is one line rather than the length of

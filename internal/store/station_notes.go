@@ -51,8 +51,23 @@ type StationNote struct {
 	UpdatedByToken string
 	HearsayAtWrite bool
 
+	// RevisionsLost is how many of this page's revisions the history bound has already
+	// deleted, oldest first — computed HERE rather than by each caller, because the
+	// first caller to derive it got the arithmetic backwards.
+	//
+	// It shipped in 3.0.0 as `Rev - OldestRev`, which is the count of SURVIVING history
+	// rows. ken-prod-ops measured it on a live station within the hour: head 6,
+	// revisions 1..5 intact, nothing ever pruned, field returned 5. The inversion is
+	// worse than an off-by-N because it points at the WRONG STATION — a healthy page
+	// with long history reports a big number, while the one page in their estate that
+	// really lost seventeen revisions would have reported 8.
+	//
+	// Correct: history holds revisions 1..Rev-1, so what is missing is everything below
+	// the oldest still held.
+	RevisionsLost int
+
 	// OldestRev is the lowest revision still retained for this page, and equals Rev
-	// when no history is kept. Rev - OldestRev is how many revisions were pruned.
+	// when no history is kept.
 	//
 	// It is here because pruning is deliberately silent (S12's carve-out) and a session
 	// has no other way to learn its oldest revisions are gone. A live station was
@@ -103,6 +118,10 @@ FROM station_note n WHERE n.station_id=? ORDER BY n.updated_at DESC`, stationID)
 		if err := rows.Scan(&n.Key, &n.Title, &tags, &n.Rev, &n.Bytes, &n.UpdatedAt,
 			&n.UpdatedByToken, &n.HearsayAtWrite, &n.OldestRev, &n.HistoryBytes); err != nil {
 			return nil, err
+		}
+		n.RevisionsLost = n.OldestRev - 1
+		if n.RevisionsLost < 0 {
+			n.RevisionsLost = 0
 		}
 		_ = json.Unmarshal([]byte(tags), &n.Tags)
 		out = append(out, n)
