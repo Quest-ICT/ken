@@ -3,6 +3,7 @@ package comm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -509,5 +510,57 @@ func TestTheSweepSurvivesEveryScopeKindAndBothNoticeReasons(t *testing.T) {
 	// is the same outage one tick later.
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatalf("the second sweep failed on state the first one produced: %v", err)
+	}
+}
+
+// D2. A ROOM ID PASSED AS channel_id MUST NAME THE RIGHT PARAMETER.
+//
+// ken-promo, cold: passed a room id as channel_id because that is the only addressing
+// parameter their captured schema has, got a bare "not found", concluded rooms were
+// receive-only, and reported that to their human. They are the promotion station.
+//
+// The same call answers precisely once you already know the answer — passing both
+// parameters returns "pass exactly one of channel_id or to_room". The good error is
+// unreachable from the state a new caller is in, which is the defect.
+func TestARoomIDPassedAsAChannelSaysSo(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	roomFixture(t, st, "room1", "s:st-alpha", "s:st-beta")
+
+	_, _, err := st.ChannelFor(ctx, alpha, "room1")
+	if err == nil {
+		t.Fatal("a room id was accepted as a channel id")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error is not ErrNotFound: %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "to_room") {
+		t.Fatalf("the refusal does not name the parameter that WOULD work: %q\n"+
+			"That omission cost a working station twenty minutes and a wrong report to its human.", msg)
+	}
+	if !strings.Contains(strings.ToLower(msg), "room") {
+		t.Errorf("the refusal never says the word room: %q", msg)
+	}
+
+	// AN UNKNOWN ID STILL MENTIONS ROOMS AS A CONCEPT, so a caller who mistyped a
+	// channel id also learns the parameter exists — that caller is equally stuck.
+	_, _, err = st.ChannelFor(ctx, alpha, "no-such-thing-at-all")
+	if err == nil || !strings.Contains(err.Error(), "to_room") {
+		t.Errorf("an unknown id gives no hint that rooms exist: %v", err)
+	}
+
+	// AND IT MUST NOT BECOME AN ORACLE. A room the caller is NOT in must not be
+	// confirmed as existing — that is the probing comm_open_channel's uniform refusal
+	// closes, and a helpful error is exactly how it would be reopened.
+	beta := stationEndpoint(t, st, "tok-x", "st-outsider")
+	_, _, err = st.ChannelFor(ctx, beta, "room1")
+	if err == nil {
+		t.Fatal("a non-member got a channel")
+	}
+	if strings.Contains(err.Error(), "is a ROOM") {
+		t.Fatal("the refusal CONFIRMS a room exists to a station that is not in it — " +
+			"a helpful message reopened the oracle the uniform refusal was built to close")
 	}
 }

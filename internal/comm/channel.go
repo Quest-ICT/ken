@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 )
 
 // Channel joins exactly two distinct endpoints, full-duplex.
@@ -186,7 +187,25 @@ WHERE c.channel_id=?`, channelID).
 		Scan(&ch.ID, &ch.ChannelID, &ch.SpaceID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn,
 			&stnA, &stnB)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, 0, ErrNotFound
+		// D2. A ROOM ID PASSED AS channel_id LANDS HERE, and a bare "not found" is what
+		// made a working station conclude the feature did not exist.
+		//
+		// ken-promo, cold and with no peer evidence: passed a room id as channel_id
+		// because channel_id is the only addressing parameter their captured schema has,
+		// got "not found", searched their tools for a room-send call, found none, and
+		// reported to their human that rooms were receive-only. They are the PROMOTION
+		// station — copy written that afternoon would have said so.
+		//
+		// The same call answers precisely once you already know the answer: passing both
+		// parameters returns "pass exactly one of channel_id or to_room". THE GOOD ERROR
+		// IS UNREACHABLE FROM THE STATE A NEW CALLER IS IN, which is the whole defect.
+		// Mentioning rooms here costs a string and ends the detour.
+		if s.callerIsInRoom(ctx, ep, channelID) {
+			return nil, 0, fmt.Errorf("%w: %q is a ROOM, not a channel — address it with to_room instead of channel_id. "+
+				"A room needs no pairing code: your human putting your station in it is the whole authorisation", ErrNotFound, channelID)
+		}
+		return nil, 0, fmt.Errorf("%w: no channel %q. If you meant a ROOM, the parameter is to_room rather than channel_id — "+
+			"comm_directory lists the rooms you are in", ErrNotFound, channelID)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -589,4 +608,29 @@ SELECT c.channel_id, COUNT(d.id)
 		out[id] = n
 	}
 	return out, rows.Err()
+}
+
+// callerIsInRoom reports whether this id names a room THE CALLER IS A MEMBER OF.
+//
+// Membership, not existence, and the difference is a security property rather than a
+// nicety. My first version asked only whether the room existed, and the test written
+// alongside it caught the consequence immediately: a station that is NOT in a room got
+// told "that is a ROOM", which confirms its existence. That is precisely the oracle
+// comm_open_channel's uniform refusal exists to close — reopened by a helpful error
+// message, which is how these usually come back.
+//
+// A member already knows the room exists, so telling them costs nothing. Everyone else
+// gets the generic text, which mentions rooms only as a CONCEPT — true for every caller
+// and informative to none of them about who is in what.
+func (s *Store) callerIsInRoom(ctx context.Context, ep *Endpoint, id string) bool {
+	party := endpointPartyKey(ep.ID)
+	if ep.StationID != "" {
+		party = stationParty(ep.StationID)
+	}
+	var n int
+	if err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM room_member_mirror WHERE room_id=? AND party_key=?`, id, party).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
 }

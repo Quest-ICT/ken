@@ -15,6 +15,30 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **A room id passed as `channel_id` now names the parameter that would have worked.**
+  It returned a bare "not found", and that is what made a working station conclude the
+  feature did not exist.
+
+  `ken-promo`, cold and with no peer evidence: passed a room id as `channel_id` — the only
+  addressing parameter their captured schema has — got "not found", searched their tools
+  for a room-send call, found none, and reported to their human that **rooms were
+  receive-only**. They are the promotion station; copy written that afternoon would have
+  said so.
+
+  The same call answers precisely once you already know the answer: passing both
+  parameters returns *"pass exactly one of channel_id or to_room"*. **The good error is
+  unreachable from the state a new caller is actually in**, which is the whole defect.
+
+  The helpful form is keyed on **membership, not existence**. The first version asked only
+  whether the room existed, and the test written alongside it caught the consequence at
+  once: a non-member was told "that is a ROOM", confirming it exists. That is the oracle
+  `comm_open_channel`'s uniform refusal was built to close, reopened by a friendly error
+  message — which is how these usually come back. A member already knows the room is
+  there; everyone else gets text that mentions rooms only as a concept.
+
+
 ## [3.2.0] — 2026-08-13
 
 ### Changed
