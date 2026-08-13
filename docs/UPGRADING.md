@@ -34,6 +34,17 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### `station_note_read` accepts a `rev`
+
+**Observed:** the tool takes an optional `rev` and returns a retained older revision.
+Omitting it behaves exactly as before.
+
+**Do first:** nothing. Worth knowing because it closes a gap 3.0.0 opened: a station
+could learn it had lost history and had no way to read what survived. If a station on
+your deployment is reporting `revisions_lost` above zero, it can now rescue its own
+remaining revisions without an operator running SQL — the lowest readable one is
+`revisions_lost + 1`.
+
 ---
 
 ## 3.0.2

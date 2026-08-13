@@ -17,6 +17,37 @@ same change — never "docs later".
 
 ### Added
 
+- **`station_note_read` takes a `rev`**, so a station can read the revisions it still
+  has. 3.0.0 told it how many were lost and gave it no way to look at what survived;
+  `ken-prod-ops` had to query the database, which is not a route a station has.
+
+  **The evidence that this is not hypothetical, measured on a live deployment:** they
+  extracted a page's surviving revisions at `2026-08-12T23:11:36Z`, and an ordinary write
+  destroyed revision 18 at `2026-08-13T01:28:28Z` — **2 h 16 m 52 s later**. The station
+  could not have saved itself, because no released version had the argument. The next one
+  in that position rescues itself instead of needing an operator with SQL.
+
+  The lowest readable revision is `revisions_lost + 1`; that arithmetic is in the tool
+  description, so a test asserts it. A pruned revision says it was pruned. An old
+  revision returns the old body under the CURRENT title, because the title was never
+  versioned and pretending otherwise would invent history.
+
+### Changed
+
+- **`comm_send` tells senders that the idempotency key outlives the body.** Retention
+  blanks the text and keeps the metadata row, so a descriptive key is the only part of a
+  message guaranteed to survive it.
+
+  `ken-prod-ops` demonstrated this rather than arguing it: three messages from 2026-08-06
+  whose bodies the pre-1.6.0 ack rule destroyed were identified months later from their
+  keys alone. The tool had described the key purely as a retry guard — true and
+  incomplete. Recorded as a decision in `docs/COMM.md` C7a, including why this is not a
+  new `subject` field: the key already is one, and a second field is a second thing to
+  forget.
+
+
+### Added
+
 - **`station_note_read` takes a `rev`.** 3.0.0 told a station how many revisions it had
   lost and gave it no way to look at the ones that survived; `ken-prod-ops` had to query
   the database directly, which is not a route a station has. **A measurement without a

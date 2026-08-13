@@ -83,8 +83,13 @@ type sendIn struct {
 	Body             string `json:"body" jsonschema:"required; the message text. Atomic and size-capped — there is no multi-part send"`
 	RequiresResponse bool   `json:"requires_response,omitempty" jsonschema:"optional; marks the message as owing a reply and arms a reply deadline"`
 	ReplyTo          string `json:"reply_to,omitempty" jsonschema:"optional; message_id of the request you are answering. Must be a message addressed to you on this channel"`
-	IdempotencyKey   string `json:"idempotency_key,omitempty" jsonschema:"optional but recommended; a repeat with the same key returns the original message instead of sending a second copy"`
-	TTLSeconds       int    `json:"ttl_seconds,omitempty" jsonschema:"optional; how long this message stays deliverable if the peer never polls. Relative, never an absolute time"`
+	// MAKE IT DESCRIPTIVE. The key survives the body's destruction — retention blanks
+	// text, the metadata row and its key remain — so it is the only part of a message
+	// guaranteed to outlive the message. ken-prod-ops recovered the subjects of three
+	// messages blanked by the pre-1.6.0 ack rule from their keys alone, months after the
+	// text was gone.
+	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional but strongly recommended; a repeat with the same key returns the original instead of sending a second copy. MAKE IT DESCRIPTIVE — like 'prune-warning-2026-08-06' — because the key OUTLIVES the body: retention blanks the text and the key remains, so it is often the only record of what a message was about"`
+	TTLSeconds     int    `json:"ttl_seconds,omitempty" jsonschema:"optional; how long this message stays deliverable if the peer never polls. Relative, never an absolute time"`
 }
 
 type sendOut struct {

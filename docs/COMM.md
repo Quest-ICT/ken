@@ -188,6 +188,21 @@ Messages are redelivered on every poll until acknowledged. `comm_ack` is the onl
 - **Trade-off accepted:** receivers must tolerate seeing a message twice. The envelope carries a
   delivery count so they can tell.
 
+### C7a — The idempotency key outlives the body, so it is a naming decision *(chosen: tell senders, do not add a subject field)*
+
+Retention blanks a message body and keeps its metadata row. The key goes with the row, so
+**a descriptive key is the only part of a message guaranteed to survive its text.**
+
+`ken-prod-ops` demonstrated it rather than argued it: three messages from 2026-08-06 whose
+bodies the pre-1.6.0 ack rule had destroyed were identified months later from their keys
+alone — `quest-infra-notebook-loss-warning-2026-08-06` and two siblings. That is how an
+"unidentified message" got identified without reading anything.
+
+**Why not a `subject` field instead:** because the key already is one, and a second field
+would be a second thing to forget. What was missing was that nobody told senders — the
+tool described it purely as a retry guard, which is true and incomplete. The description
+now says both.
+
 ### C7 — Establishment is human-authorized *(chosen: pairing code, both sides join)*
 An agent cannot conjure a channel. A human mints a short-lived **pairing code** in the web UI and
 gives it to both sessions; each calls `comm_join` with it, and the channel exists once both have.
