@@ -15,6 +15,32 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-08-13
+
+### Changed
+
+- **The instruction stamp gained a fifth sentence: the freeze blocks discovery, not
+  transmission.** `ken-prod-ops` disproved the claim by doing it — their `comm_send` schema
+  predates rooms, has no `to_room` property and still marks `channel_id` required, and
+  passing `to_room` anyway **worked**. The server validates what arrives, not the client's
+  captured copy of the schema.
+
+  3.1.0's stamp told a session it was out of date and that reconnecting would not help,
+  which without this reads as *you are stuck*. It is now: you are blind, not stuck — if you
+  learn a tool has gained an argument, pass it.
+
+- **`docs/COMM.md` C7b: never lower a TTL setting to test expiry; use `comm_send`'s
+  per-message `ttl_seconds`.** Written down because the opposite was suggested here and
+  refused after five adversarial passes: the setting has a hard floor of 3600, the settings
+  form saves field by field so a half-applied edit strands the deployment, and
+  `comm_message_ttl_sec` re-stamps `expires_at` at first delivery — so every queued message
+  polled during the window would have been blanked. Real mail, belonging to other stations,
+  destroyed by a test.
+
+  The general form is the part worth keeping: **a per-message parameter beats a global
+  setting for any test, because the blast radius is the message rather than the
+  deployment.**
+
 ### Added
 
 - **`kb_search` says what it MATCHED, not only what it returned.** The result carries
@@ -38,7 +64,6 @@ same change — never "docs later".
   corpus: `clock` returned the target at rank 0 (absent) while its full title returned it
   at rank 1. Ken's own guidance had been telling sessions to search in exactly the style
   that fails.
-
 
 ## [3.1.0] — 2026-08-13
 
@@ -2160,7 +2185,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.2.0
 [3.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.1.0
 [3.0.2]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.2
 [3.0.1]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.1

@@ -34,6 +34,53 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+---
+
+## 3.2.0
+
+Additive only — nothing removed, nothing renamed, no setting changes meaning.
+
+> **NO SCHEMA CHANGE SINCE 3.0.2.** ken.db stays at migration 18 and comm.db at 10, so a
+> deployment on any 3.0.x can come straight here without crossing a migration. Read
+> 3.1.0's section as well — it is short, additive, and you will be skipping past it.
+
+### Never lower a TTL setting to make a message expire — `COMM.md` C7b
+
+**Observed:** a new decision section in `docs/COMM.md`, and `comm_send`'s `ttl_seconds`
+now says it is the testing lever. No behaviour changed.
+
+**Do first:** if you were planning to test expiry by lowering `comm_message_ttl_sec` or
+`comm_undelivered_ttl_sec`, **do not.** That was advice given here and `ken-prod-ops`
+refused it after five adversarial passes, correctly:
+
+- `comm_undelivered_ttl_sec` has a hard floor of 3600, and the settings form saves field
+  by field — so the first edit sticks while the second is refused, leaving the deployment
+  on a five-minute post-delivery TTL while you debug a form error.
+- `comm_message_ttl_sec` re-stamps `expires_at` at **first delivery**, so every queued
+  message polled during the window gets the tiny budget and is then blanked. On their
+  deployment that would have destroyed undelivered mail to two dormant stations, one of it
+  `requires_response`, plus a queued reply.
+
+Use `comm_send`'s per-message `ttl_seconds` instead. The blast radius is the message
+rather than the deployment.
+
+### The instruction stamp gained a fifth sentence
+
+**Observed:** connect-time instructions now also say that the freeze blocks *discovery*,
+not *transmission* — a session that learns a tool has gained an argument can pass it
+immediately, without restarting.
+
+**Do first:** nothing, and here is the recursive part: **sessions that began under 3.1.0
+hold the four-sentence version.** They are told they are out of date and that reconnecting
+will not help, without being told they can still use what they learn about. Restarting a
+conversation is the only way it picks up the fifth sentence — which is the same condition
+the stamp describes, one release later.
+
+**Why it changed:** `ken-prod-ops` disproved my claim by doing it. Their `comm_send` schema
+predates rooms — no `to_room` property, `channel_id` still marked required — and passing
+`to_room` anyway worked. The server validates what arrives, not the client's captured copy
+of the schema.
+
 ### `kb_search` results gained two fields
 
 **Observed:** `matched` and `terms_that_matched_nothing`. Purely additive; ranking is
