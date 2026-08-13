@@ -43,10 +43,18 @@ Additive only — nothing removed, nothing renamed, no setting changes meaning.
 > **NO SCHEMA CHANGE SINCE 3.0.2.** ken.db stays at migration 18 and comm.db at 10, so any
 > 3.0.x or 3.x deployment can come straight here without crossing a migration.
 >
-> **Everything in this release reaches a RUNNING session immediately.** Unusually, none of
-> it is carried by a tool description: the fixes are error text, result fields and console
-> rendering, so a conversation that started before the upgrade gets all of it without
-> restarting.
+> **The FIXES reach a running session immediately; their EXPLANATIONS do not.** The
+> behaviour is error text, result fields and console rendering, so a conversation begun
+> before the upgrade gets every fix without restarting. But `comm_poll`'s and
+> `comm_directory`'s tool descriptions also changed to explain the new fields, and
+> descriptions pin at conversation start — so an existing session receives `scope`,
+> `room_id`, `from_station_name` and `reachable_via` **with no documentation of what they
+> are for**.
+>
+> That is still far better than the alternative, and it is worth stating precisely rather
+> than rounding to "everything arrives": a session that meets an unexplained field is in a
+> better position than one that meets silence, but it is not in the same position as a
+> session that started today.
 
 ### Room members that cannot receive are now visible in the console
 
