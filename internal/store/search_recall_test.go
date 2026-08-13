@@ -140,3 +140,81 @@ func TestAddingWordsThatMatchDoesNotPushAnEntryDown(t *testing.T) {
 			short, long)
 	}
 }
+
+// AN EMPTY RESULT MUST BE DISTINGUISHABLE FROM AN ABSENT ENTRY.
+//
+// This is the defect prod's report actually exposed, and it is not a ranking preference:
+// they searched twice, got nothing, and wrote "the proposal was lost" into a task about
+// an entry that was curated and indexed the whole time. Nothing in the result could have
+// told them. A search that matched forty and showed ten, and a search that matched
+// nothing, returned the same shape.
+//
+// The fix is not better ranking — that trades one silent failure for another. It is
+// making the ranking's effect visible.
+func TestASearchSaysWhatItMatchedNotOnlyWhatItReturned(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 8; i++ {
+		if _, err := st.Save(ctx, SaveInput{
+			Kind: "reference", AuthorKind: "ai",
+			Content: Content{
+				Title:   "Retention and the snapshot chain, note " + string(rune('a'+i)),
+				Summary: "Retention governs how long a snapshot survives.",
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// MANY MATCHED, FEW SHOWN. The page is a slice and must say so, or a session reads
+	// two results as "there are two".
+	res, err := st.Search(ctx, "retention snapshot", SearchOpts{K: 2, Scope: "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diag, err := st.Diagnose(ctx, "retention snapshot", SearchOpts{K: 2, Scope: "all"}, len(res))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diag.Matched <= len(res) {
+		t.Fatalf("matched=%d with %d results — a page cut from eight matching entries reports no "+
+			"more than it showed, so a session cannot tell selection from scarcity", diag.Matched, len(res))
+	}
+	if !diag.Truncated {
+		t.Error("the page is a slice and does not say so")
+	}
+
+	// NOTHING MATCHED. Zero must be reported as zero rather than omitted, because that
+	// is the value the whole field exists for.
+	diag, err = st.Diagnose(ctx, "zygomorphic pterodactyl", SearchOpts{Scope: "all"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diag.Matched != 0 {
+		t.Errorf("matched=%d for words that appear nowhere", diag.Matched)
+	}
+
+	// AND IT NAMES THE DEAD WORDS, which is the actionable half: "pterodactyl matched
+	// nothing" is a next query; "no results" is a conclusion.
+	if len(diag.DeadTerms) == 0 {
+		t.Fatal("no dead terms reported for a query of two words that appear nowhere — a session " +
+			"is left to guess which of its words was the problem")
+	}
+
+	// CONTROL: a word that DOES appear is not reported dead. Without this the field
+	// could satisfy the assertion above by naming every term always.
+	diag, err = st.Diagnose(ctx, "retention pterodactyl", SearchOpts{Scope: "all"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dead := range diag.DeadTerms {
+		if dead == "retention" {
+			t.Fatal("a word present in eight entries is reported as matching nothing — the signal " +
+				"names every term regardless, which makes it noise")
+		}
+	}
+	if len(diag.DeadTerms) != 1 || diag.DeadTerms[0] != "pterodactyl" {
+		t.Fatalf("dead terms = %v, want exactly [pterodactyl]", diag.DeadTerms)
+	}
+}

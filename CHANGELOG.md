@@ -15,6 +15,31 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **`kb_search` says what it MATCHED, not only what it returned.** The result carries
+  `matched` — how many distinct entries matched your words before ranking cut the page —
+  and `terms_that_matched_nothing`, naming the individual words that found nothing.
+
+  **`matched` is not `omitempty`**, because zero is the value the whole field exists for.
+  Omitting it would restore the exact ambiguity being removed.
+
+  **Why this rather than better ranking.** `ken-prod-ops` searched twice for an entry, got
+  nothing, and told their human it "never landed" — writing *"the proposal was lost"* into
+  a task. It had been curated and indexed the whole time. Nothing in the result could have
+  told them otherwise: **a search that matched forty and showed ten, and a search that
+  matched nothing, return the same shape.** Tuning the ranking would trade one silent
+  failure for another; this makes the ranking's effect visible, so a thin result becomes a
+  reason to ask differently instead of a conclusion that the knowledge does not exist.
+
+  The tool description now also warns that **long, specific queries are not reliably
+  better** — ranking penalises long documents, so an entry can be missed by a query built
+  from its own title while one distinctive word finds it. Measured here on a 111-entry
+  corpus: `clock` returned the target at rank 0 (absent) while its full title returned it
+  at rank 1. Ken's own guidance had been telling sessions to search in exactly the style
+  that fails.
+
+
 ## [3.1.0] — 2026-08-13
 
 ### Added

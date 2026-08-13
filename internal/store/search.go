@@ -205,3 +205,84 @@ func maturity(useCount, curatedRev int) string {
 		return "seed"
 	}
 }
+
+// SearchDiag is what a search can say about ITSELF, so an empty or thin result stops
+// being indistinguishable from an absent entry.
+//
+// ken-prod-ops searched twice for an entry, got nothing, and told their human it "never
+// landed" — writing "the proposal was lost" into a task. It had been curated and indexed
+// the whole time. Nothing in the result could have told them otherwise: a search that
+// matched forty entries and showed ten, and a search that matched nothing at all, return
+// the same shape.
+//
+// This does not improve ranking. It makes the ranking's effect VISIBLE, which is the
+// difference between a session that retries with different words and one that concludes
+// the knowledge does not exist.
+type SearchDiag struct {
+	// Matched is how many DISTINCT entries matched at least one search term, before
+	// ranking and before the top-K cut. Zero means the words are absent from the corpus;
+	// a number larger than the page means ranking chose, and a session that wants the
+	// rest should ask differently or page.
+	Matched int
+	// DeadTerms are the words that matched NOTHING anywhere. This is the actionable
+	// half: "generated matched nothing" turns a mystery into a next query, where a bare
+	// empty list turns it into a conclusion.
+	DeadTerms []string
+	// Truncated says the page is a slice of a larger match set.
+	Truncated bool
+}
+
+// diagTermCap bounds the per-term probes. A long natural-language query is exactly the
+// case this feature is for, and it is also the case where unbounded probing would cost
+// most — twelve indexed COUNT lookups is the trade.
+const diagTermCap = 12
+
+// Diagnose reports what the search matched, independently of what it returned.
+//
+// Deliberately a SEPARATE call rather than a field on the result: it costs extra queries,
+// the console does not need it, and a diagnostic that slows every search is a diagnostic
+// an operator turns off. kb_search asks for it because a session acting on an empty
+// result is the case that goes wrong.
+func (s *Store) Diagnose(ctx context.Context, query string, opt SearchOpts, returned int) (SearchDiag, error) {
+	var d SearchDiag
+	ftsQ := ftsQuery(query)
+	if ftsQ == "" {
+		return d, nil
+	}
+	statePred := scopeStatePredicate(opt.Scope)
+
+	// DISTINCT ENTRIES, not versions: a session thinks in entries, and counting versions
+	// would report three for one entry with three revisions and read as a bigger corpus
+	// than exists.
+	countSQL := `
+SELECT COUNT(DISTINCT ev.entry_id)
+  FROM entry_fts JOIN entry_version ev ON ev.id = entry_fts.rowid
+  JOIN entry e ON e.id = ev.entry_id
+ WHERE entry_fts MATCH ? AND ` + statePred + ` AND e.lifecycle != 'archived'`
+	if err := s.R.QueryRowContext(ctx, countSQL, ftsQ).Scan(&d.Matched); err != nil {
+		return d, err
+	}
+	d.Truncated = d.Matched > returned
+
+	// Which individual words found nothing. Each probe is the same MATCH the real query
+	// uses, one term at a time, so a term reported dead is dead by the same rule the
+	// search applied rather than by a different tokenizer.
+	seen := map[string]bool{}
+	for _, term := range strings.Split(ftsQ, " OR ") {
+		if len(seen) >= diagTermCap {
+			break
+		}
+		if seen[term] {
+			continue
+		}
+		seen[term] = true
+		var n int
+		if err := s.R.QueryRowContext(ctx, countSQL, term).Scan(&n); err != nil {
+			return d, err
+		}
+		if n == 0 {
+			d.DeadTerms = append(d.DeadTerms, strings.Trim(term, `"`))
+		}
+	}
+	return d, nil
+}

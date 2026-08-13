@@ -34,6 +34,17 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### `kb_search` results gained two fields
+
+**Observed:** `matched` and `terms_that_matched_nothing`. Purely additive; ranking is
+unchanged.
+
+**Do first:** nothing, but know what they are for. A thin result no longer has to be read
+as "the knowledge base does not have this" — `matched` says how many entries matched
+before the page was cut, and a session that sees `matched: 40` with 10 results knows to
+ask differently rather than conclude. `matched: 0` means the words really are absent.
+
+
 ---
 
 ## 3.1.0

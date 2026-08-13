@@ -164,10 +164,23 @@ type searchIn struct {
 }
 
 type searchOut struct {
-	Results         []model.SearchResult `json:"results"`
-	HasMore         bool                 `json:"has_more"`
-	NextOffset      int                  `json:"next_offset,omitempty"`
-	DedupCheckToken string               `json:"dedup_check_token"`
+	Results []model.SearchResult `json:"results"`
+	// Matched is how many DISTINCT entries matched your words, before ranking and
+	// before this page was cut. NOT omitempty: zero is the most important value it can
+	// take, and omitting it would restore the exact ambiguity this field exists to
+	// remove.
+	//
+	// matched=0            your words are absent from the knowledge base
+	// matched>len(results) something matched and RANKING chose these; ask differently
+	//                      or page rather than concluding the rest does not exist
+	Matched int `json:"matched"`
+	// DeadTerms are the words that matched NOTHING anywhere. The actionable half: it
+	// turns "no results" into "the word `generated` is not in this corpus", which is a
+	// next query rather than a conclusion.
+	DeadTerms       []string `json:"terms_that_matched_nothing,omitempty"`
+	HasMore         bool     `json:"has_more"`
+	NextOffset      int      `json:"next_offset,omitempty"`
+	DedupCheckToken string   `json:"dedup_check_token"`
 }
 
 // --- kb_get ---
@@ -387,8 +400,14 @@ func NewServer(d Deps) *mcp.Server {
 	}, &mcp.ServerOptions{Instructions: buildInstructions(d.CurationLangs) + version.InstructionStamp()})
 
 	addTool(s, d, &mcp.Tool{
-		Name:        "kb_search",
-		Description: "Search the knowledge base. Returns ranked, token-light summaries (no bodies) — your default first move; follow up with kb_get. Also returns a dedup_check_token required by kb_save.",
+		Name: "kb_search",
+		Description: "Search the knowledge base. Returns ranked, token-light summaries (no bodies) — your default first move; follow up with kb_get. Also returns a dedup_check_token required by kb_save. " +
+			"READ `matched` BEFORE YOU CONCLUDE ANYTHING FROM AN EMPTY OR THIN RESULT. It is how many entries matched your words at all, " +
+			"before ranking cut the page: matched=0 means the words are genuinely absent, while matched above the number of results means " +
+			"something IS there and ranking chose these — ask differently rather than deciding the knowledge does not exist. " +
+			"`terms_that_matched_nothing` names the individual words that found nothing, which is usually the fastest way to a better query. " +
+			"Long, specific queries are NOT reliably better: ranking penalises long documents, so an entry can be missed by a query built from " +
+			"its own title while a single distinctive word finds it. If a search comes back thin, try FEWER and RARER words.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, searchOut, error) {
 		if err := requireScope(ctx, scopeRead); err != nil {
 			return nil, searchOut{}, err
@@ -406,6 +425,13 @@ func NewServer(d Deps) *mcp.Server {
 			return nil, searchOut{}, mcpError(err)
 		}
 		out := searchOut{Results: res, HasMore: hasMore, DedupCheckToken: issueDedupToken(d.DedupSecret, dedupSubject(ctx))}
+		// What the search MATCHED, independently of what it returned. A failure here is
+		// swallowed: the diagnostic exists to stop a thin result being misread, and
+		// failing the whole search to protect a hint would be a worse trade than the one
+		// it fixes.
+		if diag, derr := d.Store.Diagnose(ctx, in.Query, opt, len(res)); derr == nil {
+			out.Matched, out.DeadTerms = diag.Matched, diag.DeadTerms
+		}
 		if hasMore {
 			out.NextOffset = in.Offset + len(res)
 		}
