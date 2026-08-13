@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-08-13
+
 ### Added
 
 - **`ken_version` on all three MCP surfaces, and every instruction set now says which
@@ -41,9 +43,6 @@ same change — never "docs later".
   likely to need it is one bound to a single endpoint, so a surface that forgot would
   fail exactly the caller it was for.
 
-
-### Added
-
 - **`station_note_read` takes a `rev`**, so a station can read the revisions it still
   has. 3.0.0 told it how many were lost and gave it no way to look at what survived;
   `ken-prod-ops` had to query the database, which is not a route a station has.
@@ -59,22 +58,6 @@ same change — never "docs later".
   revision returns the old body under the CURRENT title, because the title was never
   versioned and pretending otherwise would invent history.
 
-### Changed
-
-- **`comm_send` tells senders that the idempotency key outlives the body.** Retention
-  blanks the text and keeps the metadata row, so a descriptive key is the only part of a
-  message guaranteed to survive it.
-
-  `ken-prod-ops` demonstrated this rather than arguing it: three messages from 2026-08-06
-  whose bodies the pre-1.6.0 ack rule destroyed were identified months later from their
-  keys alone. The tool had described the key purely as a retry guard — true and
-  incomplete. Recorded as a decision in `docs/COMM.md` C7a, including why this is not a
-  new `subject` field: the key already is one, and a second field is a second thing to
-  forget.
-
-
-### Added
-
 - **`station_note_read` takes a `rev`.** 3.0.0 told a station how many revisions it had
   lost and gave it no way to look at the ones that survived; `ken-prod-ops` had to query
   the database directly, which is not a route a station has. **A measurement without a
@@ -88,6 +71,18 @@ same change — never "docs later".
   An old revision returns the old body under the CURRENT title, because the title was
   never versioned. Presenting one as if it had been would invent history.
 
+### Changed
+
+- **`comm_send` tells senders that the idempotency key outlives the body.** Retention
+  blanks the text and keeps the metadata row, so a descriptive key is the only part of a
+  message guaranteed to survive it.
+
+  `ken-prod-ops` demonstrated this rather than arguing it: three messages from 2026-08-06
+  whose bodies the pre-1.6.0 ack rule destroyed were identified months later from their
+  keys alone. The tool had described the key purely as a retry guard — true and
+  incomplete. Recorded as a decision in `docs/COMM.md` C7a, including why this is not a
+  new `subject` field: the key already is one, and a second field is a second thing to
+  forget.
 
 ## [3.0.2] — 2026-08-12
 
@@ -2140,7 +2135,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.0.2...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.1.0
 [3.0.2]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.2
 [3.0.1]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.1
 [3.0.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.0

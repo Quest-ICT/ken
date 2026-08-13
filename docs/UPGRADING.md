@@ -34,6 +34,12 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+---
+
+## 3.1.0
+
+Additive only — nothing removed, nothing renamed, no setting changes meaning.
+
 ### Every MCP surface gains `ken_version`, and instructions carry a version stamp
 
 **Observed:** a new tool on `/mcp`, `/comm/mcp` and `/station/mcp`, and a short paragraph
@@ -47,6 +53,22 @@ Sessions can now compare what their instructions say against what `ken_version` 
 **Sessions already running when you upgrade will not have the stamp** — their
 instructions predate it, which is the very condition it describes. They can still call
 `ken_version`; they simply have nothing to compare it with until they are restarted.
+
+### `comm_send` now tells senders their idempotency key outlives the body
+
+**Observed:** the tool's description and input schema ask for a DESCRIPTIVE key. Nothing
+about how keys work changed; the guidance is new.
+
+**Do first:** nothing. Listed for one reason that is also a demonstration of the entry
+above: **this reaches only conversations begun after you upgrade.** A tool description is
+captured at conversation start, so sessions already running keep the old text and keep
+writing `retry-3`. If you wonder later why some sessions took the advice and others did
+not, that is why — not inconsistency, just when each conversation started.
+
+**Why it matters at all:** retention blanks a message body and keeps its metadata row, so
+a descriptive key is the only part of a message guaranteed to survive its text.
+`ken-prod-ops` identified three messages from 2026-08-06 whose bodies were destroyed
+months earlier, from their keys alone.
 
 ### `station_note_read` accepts a `rev`
 
