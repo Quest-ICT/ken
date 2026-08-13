@@ -188,6 +188,32 @@ Messages are redelivered on every poll until acknowledged. `comm_ack` is the onl
 - **Trade-off accepted:** receivers must tolerate seeing a message twice. The envelope carries a
   delivery count so they can tell.
 
+### C7b — Test expiry with a per-message `ttl_seconds`, NEVER by lowering the settings *(chosen: the parameter that already exists)*
+
+**Do not lower `comm_message_ttl_sec` or `comm_undelivered_ttl_sec` to make something expire.**
+`comm_send` takes a per-message `ttl_seconds`, and `clampTTL` honours any value from 1 up to
+the configured maximum. One parameter, no console round-trip, no collateral.
+
+This is written down because the obvious-looking alternative was proposed here and
+`ken-prod-ops` refused it after five adversarial passes. Three reasons, and the second is
+the one that would have destroyed other people's mail:
+
+- **It cannot execute.** `comm_undelivered_ttl_sec` has a hard field minimum of 3600, so the
+  console refuses anything smaller. Worse than refusing: the settings form saves field by
+  field, so a first edit sticks while a second is rejected — leaving the deployment on a
+  five-minute post-delivery TTL while the operator debugs a form error.
+- **It is destructive to mail that has nothing to do with the test.** `comm_message_ttl_sec`
+  re-stamps `expires_at` at FIRST DELIVERY, not at send. Every queued message polled during
+  the window gets the tiny budget instead of the real one, then expires and has its body
+  blanked. On the deployment where this was proposed, that would have taken undelivered mail
+  to two dormant stations — one of it `requires_response` — plus a queued reply.
+- **Restoring is not symmetrical.** Writing a value the operator had been leaving implicit
+  pins it as an explicit row forever, so "put it back" leaves the deployment in a different
+  state from the one it started in.
+
+The general form is worth more than the instance: **a per-message parameter beats a global
+setting for any test, because the blast radius is the message rather than the deployment.**
+
 ### C7a — The idempotency key outlives the body, so it is a naming decision *(chosen: tell senders, do not add a subject field)*
 
 Retention blanks a message body and keeps its metadata row. The key goes with the row, so

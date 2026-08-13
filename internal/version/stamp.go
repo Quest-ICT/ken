@@ -38,5 +38,9 @@ THESE INSTRUCTIONS WERE WRITTEN BY KEN %s. Call ken_version to see what is runni
 If the two differ, this text and every tool description you hold are from the older one —
 they were captured when this conversation began and do NOT refresh, not on reconnect and
 not on a server upgrade. Nothing is broken; you are simply reading an older manual. Trust
-the tool RESULTS, which are always current, and ask your human what changed.`, Version)
+the tool RESULTS, which are always current, and ask your human what changed.
+YOU ARE NOT LIMITED TO WHAT YOUR MANUAL LISTS. The freeze hides new parameters; it does
+not block them. If you learn from your human, a peer or the docs that a tool has gained an
+argument, PASS IT — the server validates what arrives, not what your copy of the schema
+says. A tool that refuses your old way may accept the new one.`, Version)
 }

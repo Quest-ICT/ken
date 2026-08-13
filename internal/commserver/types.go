@@ -89,7 +89,7 @@ type sendIn struct {
 	// messages blanked by the pre-1.6.0 ack rule from their keys alone, months after the
 	// text was gone.
 	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"optional but strongly recommended; a repeat with the same key returns the original instead of sending a second copy. MAKE IT DESCRIPTIVE — like 'prune-warning-2026-08-06' — because the key OUTLIVES the body: retention blanks the text and the key remains, so it is often the only record of what a message was about"`
-	TTLSeconds     int    `json:"ttl_seconds,omitempty" jsonschema:"optional; how long this message stays deliverable if the peer never polls. Relative, never an absolute time"`
+	TTLSeconds     int    `json:"ttl_seconds,omitempty" jsonschema:"optional; how long this message stays deliverable if the peer never polls. Relative, never an absolute time. Any value from 1 up to the configured maximum is honoured — so this, NOT a settings change, is how to make a message expire quickly for a test: the blast radius is this message rather than the whole deployment"`
 }
 
 type sendOut struct {

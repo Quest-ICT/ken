@@ -43,6 +43,16 @@ func TestTheStampTellsASessionWhatToDoWithADiscrepancy(t *testing.T) {
 		"reconnect",    // that reconnecting does NOT help — the counter-intuitive part
 		"tool descrip", // that descriptions are pinned too, not just this text
 		"result",       // that results ARE current, so something is still trustworthy
+		// THE FREEZE BLOCKS DISCOVERY, NOT TRANSMISSION — and ken-prod-ops proved it by
+		// doing it. Their comm_send schema predates rooms, has no `to_room` property at
+		// all and still marks channel_id required; passing `to_room` anyway WORKED,
+		// because the server validates what ARRIVES, not what the client's captured copy
+		// of the schema says.
+		//
+		// I had told them, and Vlad, that a frozen session cannot use what it cannot see.
+		// Half right, and I overstated it. Without this sentence the stamp tells a session
+		// it is stuck when it is only blind.
+		"pass it",
 	} {
 		if !strings.Contains(stamp, want) {
 			t.Errorf("the stamp never mentions %q — a session reading it cannot act on it:\n%s", want, InstructionStamp())
