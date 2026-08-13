@@ -15,6 +15,48 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **COMM failure notices are now DERIVED at poll time instead of written as messages.** When a
+  message expires unread, or a requested reply passes its deadline, the sender learns about it in a
+  `notices` array on the `comm_poll` result — computed from `message` and `delivery` on every call.
+  Nothing is written, queued, or acknowledged.
+
+  **Why, in the order the reasons were learned rather than the order they matter.** The sweeper's
+  job is deleting: it expires messages, blanks bodies, purges metadata, removes attachment files and
+  drops idle endpoints, in one transaction. Because it also INSERTED the notice, a failure in the
+  notice rolled back every deletion — which is exactly how a single unread ROOM message stopped all
+  five of those in 3.0.0 and 3.0.1 (the notice writer scanned two columns that are NULL for room
+  mail). Beyond that, everything a notice carries was already derivable from rows that exist, so the
+  written form was a denormalised copy that could disagree with its source; and it was stamped with
+  a TTL, so the signal reporting a failure to deliver was subject to the same failure it reported.
+
+  **What an operator will observe:** `kind: "status"` rows stop being created. Existing ones are
+  left alone and behave as ordinary messages — deleting them would be destroying mail a session may
+  not have read. See docs/UPGRADING.md for the one behaviour change worth knowing about.
+
+- **A room message that only SOME recipients read now notifies its sender.** Previously a single ack
+  suppressed the notice entirely, so a message two of three stations ignored reported nothing at
+  all — and silence is what a sender reads as successful delivery. The notice now fires when any
+  delivery expired and nobody is still holding it, and names only the parties that went quiet.
+  Found by mutation testing: removing the clause changed no test, which is what absent coverage
+  looks like from the outside.
+
+### Fixed
+
+- **Error guidance added in 3.3.0 never reached a caller.** Passing a room id as `channel_id`
+  returned a bare `not found` on 3.3.0 — byte-identical to the error that led a station to conclude
+  rooms were receive-only and report that to its human — even though the release added text naming
+  `to_room`. The raise site wrapped `ErrNotFound` with `%w`; the MCP surface's error mapper matches
+  by sentinel and replaces the whole error with the literal string the guidance was written to
+  replace. The text was in the shipped binary and unreachable from every caller.
+
+  Fixed with an opt-in marker (`comm.CallerSafe`) rather than by echoing wrapped text: a blanket
+  echo would turn every annotated sentinel into an existence oracle, which is the property the
+  flattening exists to protect. Reported by ken-prod-ops, who found it by probing the running 3.3.0
+  image rather than by reading the diff — a test at the raise site asserted the string and passed.
+
+
 ## [3.3.0] — 2026-08-13
 
 ### Added

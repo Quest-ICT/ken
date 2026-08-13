@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -141,29 +140,37 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := st.Poll(ctx, a, 10) // the REQUESTER polls
+	// DERIVED, not delivered (slice 4). The property is unchanged — a requester whose
+	// peer went silent must not wait forever — but the sweep no longer writes them a
+	// message to say so, because a pass that deletes must not also insert.
+	n, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("requester received %d messages, want 1 status notice", len(got))
+	if len(n) != 1 {
+		t.Fatalf("requester sees %d notices, want 1 — the deadline passed and nothing tells them", len(n))
 	}
-	if got[0].Kind != "status" {
-		t.Fatalf("notice kind = %q, want status", got[0].Kind)
-	}
-	if !strings.Contains(got[0].Body, "reply_overdue") || !strings.Contains(got[0].Body, req.MessageID) {
-		t.Fatalf("notice body does not identify the overdue request: %q", got[0].Body)
+	if n[0].Reason != "reply_overdue" || n[0].MessageID != req.MessageID {
+		t.Fatalf("notice = %+v, want reply_overdue for %s", n[0], req.MessageID)
 	}
 
-	// Exactly once, however often the sweeper runs.
+	// Exactly once, however often the sweeper runs. Enforced by the WATERMARK now
+	// rather than by a notified_at stamp: the old exactly-once lived in the writer, so
+	// a notice enqueued without stamping repeated every minute forever. A query cannot
+	// have that bug — but it CAN repeat what the reader already saw, so the watermark
+	// is where the property moved, and this is the assertion that follows it there.
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, a, got[0].MessageID); err != nil {
+	if err := st.MarkNoticesSeen(ctx, endpointPartyKey(a.ID), n[0].At); err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := st.Poll(ctx, a, 10); len(again) != 0 {
-		t.Fatalf("sweeper re-notified: %d extra notices", len(again))
+	again, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("the sender is told again after marking it seen: %+v", again)
 	}
 	_ = b
 }
@@ -187,21 +194,38 @@ func TestSenderIsNotifiedWhenAMessageExpires(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
+	n, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n) != 1 || n[0].Reason != "expired" || n[0].MessageID != sent.MessageID {
+		t.Fatalf("sender was not told its message expired: %+v", n)
+	}
+	// AND THE SENDER'S INBOX IS UNTOUCHED. The notice used to be a real message in the
+	// channel, so it consumed the sender's own poll and their ack. Nothing arrives now.
 	got, err := st.Poll(ctx, a, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].Kind != "status" || !strings.Contains(got[0].Body, "expired") {
-		t.Fatalf("sender was not told its message expired: %+v", got)
-	}
-	if !strings.Contains(got[0].Body, sent.MessageID) {
-		t.Fatalf("notice does not identify the message: %q", got[0].Body)
+	if len(got) != 0 {
+		t.Fatalf("the sweep delivered %d message(s) to the sender: %+v", len(got), got)
 	}
 }
 
 // A status notice must reach the sender even when the channel is at its
 // backpressure cap — that is exactly when the failure signal matters most.
-func TestStatusNoticeBypassesBackpressure(t *testing.T) {
+// A SENDER AT THE BACKPRESSURE CAP STILL LEARNS ITS MESSAGES DIED.
+//
+// This test used to be called TestStatusNoticeBypassesBackpressure, and the name records
+// what the old design needed: the notice was a real message into a channel that was, by
+// construction, already full — so it had to be granted an exemption from the cap it was
+// reporting. An exemption is a rule with a hole in it, and the hole was in the writer
+// that a failing sweep rolls back.
+//
+// Derived notices need no exemption because they are not messages. The property is the
+// one that mattered all along and it is now structural: being at the cap has nothing to
+// do with being told.
+func TestASenderAtTheBackpressureCapIsStillTold(t *testing.T) {
 	ctx := context.Background()
 	l := DefaultLimits()
 	l.MaxUnackedPerChannel = 2
@@ -213,18 +237,23 @@ func TestStatusNoticeBypassesBackpressure(t *testing.T) {
 			t.Fatalf("send %d: %v", i, err)
 		}
 	}
+	// CONTROL: the channel really is at its cap, so the assertion below is about
+	// notices surviving backpressure rather than about backpressure never happening.
+	if _, err := st.Send(ctx, a, channelID, "one too many", SendOpts{}); !errors.Is(err, ErrBackpressure) {
+		t.Fatalf("a third send past a cap of 2 returned %v, want ErrBackpressure — the fixture is not at the cap", err)
+	}
 	if _, err := st.W.Exec(`UPDATE message SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatalf("sweep with a full channel: %v", err)
 	}
-	got, err := st.Poll(ctx, a, 10)
+	n, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("want 2 status notices past the cap, got %d", len(got))
+	if len(n) != 2 {
+		t.Fatalf("want 2 notices past the cap, got %d", len(n))
 	}
 }
 

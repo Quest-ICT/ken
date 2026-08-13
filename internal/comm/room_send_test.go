@@ -440,31 +440,44 @@ func TestAnExpiredRoomMessageDoesNotBreakTheSweep(t *testing.T) {
 		t.Fatal("the sweep expired nothing, so it is not exercising the path this test exists for")
 	}
 
-	// The sender is TOLD, in the room's own scope. A room message that dies unread is
-	// exactly the case where silence leaves the sender believing it arrived.
-	var notices int
-	if err := st.R.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM message WHERE kind='status' AND scope_id='r:ops'`).Scan(&notices); err != nil {
+	// The sender is TOLD, in the room's own scope — DERIVED now, not written. A room
+	// message that dies unread is exactly the case where silence leaves the sender
+	// believing it arrived, and it is also the case that used to take the sweep down:
+	// the notice writer scanned channel_id and recipient_endpoint as int64, and both are
+	// NULL for room mail.
+	n, err := st.NoticesFor(ctx, stationParty("st-alpha"), 10)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if notices != 1 {
-		t.Fatalf("%d status notices for an expired room message, want 1 — the sender is not told", notices)
+	if len(n) != 1 || n[0].Scope != "r:ops" {
+		t.Fatalf("notices for an expired room message = %+v, want one on r:ops — the sender is not told", n)
 	}
 
-	// AND ONLY ONCE. A notice enqueued without stamping notified_at is re-sent on every
-	// sweep, which is a minute-by-minute loop rather than a signal.
-	if _, _, err := st.Sweep(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.Sweep(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// AND THE SWEEP WROTE NOTHING AT ALL. This is the invariant the slice exists for,
+	// and it is stronger than the "only once" it replaces: there is no insert to repeat.
+	var written int
 	if err := st.R.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM message WHERE kind='status' AND scope_id='r:ops'`).Scan(&notices); err != nil {
+		`SELECT COUNT(*) FROM message WHERE kind='status'`).Scan(&written); err != nil {
 		t.Fatal(err)
 	}
-	if notices != 1 {
-		t.Fatalf("%d notices after three sweeps — the notice is re-sent every sweep forever", notices)
+	if written != 0 {
+		t.Fatalf("the sweep wrote %d status message(s) — a pass whose job is deleting is inserting again", written)
+	}
+
+	// Repeated sweeps stay idempotent, which used to depend on a notified_at stamp the
+	// writer could forget.
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after, err := st.NoticesFor(ctx, stationParty("st-alpha"), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("%d notices after three sweeps, want a stable 1", len(after))
 	}
 }
 

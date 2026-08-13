@@ -72,6 +72,44 @@ var (
 	ErrChannelClosed = errors.New("channel is not open")
 )
 
+// CallerSafe marks an error whose TEXT may be shown to the caller verbatim.
+//
+// WHY THIS EXISTS, and it is a defect that shipped. Callers map sentinels to their own
+// surface by FLATTENING them: commserver's mapper answers every errors.Is(ErrNotFound)
+// with the literal string "not found". That is deliberate — uniform refusals are what
+// stop an error message becoming an existence oracle. But it also means a raise site
+// that wraps a sentinel with guidance has its guidance silently discarded one layer up.
+//
+// That is exactly what happened to the room-vs-channel message in 3.3.0: the text was in
+// the shipped binary, a test at the raise site asserted it and passed, and a caller
+// passing a room id as channel_id still got a bare "not found" — byte-identical to the
+// error that made a working station conclude rooms did not exist. Two correct layers,
+// one untested composition.
+//
+// The marker is OPT-IN so the default stays uniform: an error only carries its text
+// across the boundary when its author decided the caller is entitled to it. Wrapping
+// preserves the chain, so errors.Is against the sentinel is unaffected — nothing that
+// matched before stops matching.
+//
+// The bar for marking one: the text must reveal nothing the caller could not already
+// establish. The room message clears it because it is raised only for a MEMBER of that
+// room, who necessarily knows it exists.
+func CallerSafe(err error) error {
+	if err == nil {
+		return nil
+	}
+	return callerSafeError{err: err}
+}
+
+type callerSafeError struct{ err error }
+
+func (e callerSafeError) Error() string { return e.err.Error() }
+func (e callerSafeError) Unwrap() error { return e.err }
+
+// CallerSafeText is the interface a surface checks for. Declared as a method rather than
+// matched by concrete type so a mapper in another package needs no import beyond this one.
+func (e callerSafeError) CallerSafeText() string { return e.err.Error() }
+
 // Limits are the operator-tunable bounds enforced by this package. They are
 // enforced in SQL inside the writing transaction rather than by keying the shared
 // rate-limiter bucket: that bucket fails OPEN when saturated, which is correct for

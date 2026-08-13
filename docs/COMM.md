@@ -393,11 +393,12 @@ queued ──poll──▶ delivered ──ack──▶ processed ──▶ (bod
    │                  │                  │              window, then deleted;
    │                  │                  │              metadata outlives it)
    │                  │                  │
-   │                  └── TTL from DELIVERY ──▶ expired (body deleted; sender notified)
+   │                  └── TTL from DELIVERY ──▶ expired (body deleted; sender learns
+   │                                                        at its next poll — §4.6)
    │
    └── undelivered backstop ─────────────────▶ expired (BODY KEPT — nobody ever read it,
                                                         so "expired" must not also mean
-                                                        "unknowable"; sender notified)
+                                                        "unknowable")
 ```
 
 Every transition is stamped by the **server** clock. Clients supply *relative* lifetimes
@@ -455,6 +456,53 @@ reply loop that grows the database without bound.
 - A message may be delivered more than once; check the delivery count.
 - Acknowledge after acting, not on receipt.
 - A truncated poll is a normal empty result, not an error.
+
+---
+
+### 4.6 Notices — a sender learns what became of what it sent
+
+A **notice** tells a sender that a message they sent expired unread, or that a reply they asked for
+never came. It rides the `comm_poll` result as a `notices` array. It is not mail: nothing is
+addressed to anyone, nothing is queued, and there is nothing to acknowledge.
+
+**It used to be mail, and that is the point of the design.** Until 3.4.0 the sweeper WROTE the
+sender a real message — a row in `message` with `kind: "status"`, occupying the scope, counting
+against backpressure, carrying its own TTL, and needing its own ack. Three consequences, in the
+order they were learned rather than the order they matter:
+
+- **A deleting pass was also an inserting one.** Sweep expires messages, blanks bodies, purges
+  metadata, cleans attachment files and removes idle endpoints — all in one transaction. Because it
+  also inserted, a failure in the *notice* rolled back every deletion. That is precisely how one
+  unread ROOM message stopped all five in 3.0.0 and 3.0.1: the notice writer read two columns that
+  are NULL for room mail.
+- **The information was always derivable.** Everything a notice carries already exists in `message`
+  and `delivery`. A written notice is a denormalised copy that can disagree with its source.
+- **A notice could itself expire.** It was stamped with a TTL, so the signal reporting a failure to
+  deliver was subject to the same failure it reported.
+
+**What a notice says.** `message_id`, `scope`, `reason` (`expired` or `reply_overdue`), `at`, the
+`idempotency_key` — echoed because retention blanks bodies and keeps metadata, so a notice naming
+only an opaque id describes something the sender can no longer look up — and `recipients`, the
+parties it concerns. For a room message the recipient list is most of the information: "nobody
+engaged" and "one station is quiet" are different facts and only one of them is actionable.
+
+A room message that **some** recipients read and others ignored still produces a notice, naming only
+the parties that went quiet. Suppressing it when any recipient acked was a real defect: one ack hid
+every other silence, and silence is what a sender reads as delivery.
+
+**How it clears.** Each poll confirms what the PREVIOUS poll displayed, then records what it is
+showing. A notice is therefore cleared by the caller coming back, not by the call that showed it, so
+a fault between the query and the caller holding the result cannot drop it. A result lost in transit
+*does* lose the notice — the server cannot tell a delivered result from a discarded one — and that
+is accepted rather than fixed: the alternative is an explicit confirmation call, and a NEW TOOL
+reaches no session that is already running, because MCP tool lists pin at conversation start. The
+population that would never receive the fix is exactly the population with mail dying unread.
+
+**What this gives up.** A notice cannot outlive the rows it is derived from. The metadata purge
+removes a settled message `metadata_ttl_seconds` after it settles (7 days by default), and the
+notice goes with it; a written notice was an independent row and could outlive its subject. The
+trade is deliberate — an independent row is what gave a failure signal its own expiry, its own
+backpressure and its own ack — but operators should know the notice window is the metadata window.
 
 ---
 
@@ -641,8 +689,11 @@ the capability. COMM must be equally honest about where it does and does not hav
   cannot position itself as though it were part of Ken's own instructions. (There is deliberately no
   claim here about defeating a determined in-band forgery: the transport is JSON, the boundary is the
   field, and a receiving harness that flattens structured results into a prompt is beyond Ken's reach.)
-- Server-authored **status** messages carry `kind: "status"` and are the only messages Ken itself
-  writes; every peer send is `kind: "message"`, so a peer cannot forge a notice about its own conduct.
+- **Ken writes no messages at all.** Every row in `message` came from a peer. Failure notices used
+  to be server-authored `kind: "status"` rows; since 3.4.0 they are DERIVED at poll time (§4.6), so
+  the forgery question is closed by construction rather than by a field a reader must check. Rows
+  written before the change are still present and still carry `kind: "status"`; nothing new joins
+  them.
 - Path strings in the file-exchange flow are validated server-side against the exchange-root rule
   (C9), even though Ken cannot see the filesystem in question.
 - Metadata audit rows survive acknowledgement, so an incident has something to investigate.

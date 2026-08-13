@@ -27,7 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Quest-ICT/ken/internal/version"
+	"log"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -39,6 +39,7 @@ import (
 	"github.com/Quest-ICT/ken/internal/metrics"
 	"github.com/Quest-ICT/ken/internal/ratelimit"
 	"github.com/Quest-ICT/ken/internal/store"
+	"github.com/Quest-ICT/ken/internal/version"
 )
 
 // Deps are the collaborators for the comm MCP endpoint.
@@ -606,7 +607,8 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_poll",
 		Description: "Receive un-acknowledged messages. Blocks up to wait_seconds for one to arrive. An empty result is a NORMAL outcome, not an error. Messages repeat until acked, so check delivery_count. " +
-			"EVERY MESSAGE SAYS WHERE IT CAME FROM AND HOW TO ANSWER: `scope` is the address, `room_id` is present for room traffic and is what you pass back as to_room, `from_station_name` is who wrote it, and `broadcast` with `audience_size` tells you whether you are one of several — a reply to a broadcast reaches the whole scope, not a person. `channel_id` is EMPTY for room and broadcast messages; those belong to no channel.",
+			"EVERY MESSAGE SAYS WHERE IT CAME FROM AND HOW TO ANSWER: `scope` is the address, `room_id` is present for room traffic and is what you pass back as to_room, `from_station_name` is who wrote it, and `broadcast` with `audience_size` tells you whether you are one of several — a reply to a broadcast reaches the whole scope, not a person. `channel_id` is EMPTY for room and broadcast messages; those belong to no channel. " +
+			"ALSO READ `notices`: that is what became of messages YOU sent — one expired unread, or a reply you asked for never came, with `recipients` naming who went quiet. It is not mail and there is nothing to ack. Each notice is shown once, on the poll after the failure, so a poll that returns no messages can still be telling you something died. Silence is otherwise indistinguishable from delivery.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in pollIn) (*mcp.CallToolResult, pollOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
@@ -652,6 +654,25 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 				v.FromStationName = stationLabel(ctx, d, v.FromStationID)
 			}
 			out.Messages = append(out.Messages, v)
+		}
+
+		// WHAT BECAME OF WHAT YOU SENT. Derived from the caller's own rows rather than
+		// delivered as mail, so a poll that returns no messages can still tell a sender
+		// their last three died unread — which is exactly the state that used to read as
+		// silence, and silence is indistinguishable from delivery.
+		//
+		// A failure here does NOT fail the poll: notices are a secondary signal, and
+		// losing the caller's actual mail to a fault in the thing that reports faults
+		// would repeat the coupling this slice removed, one layer up.
+		if ns, nErr := d.Comm.NoticesForPoll(ctx, comm.PartyOf(ep), noticesPerPoll); nErr != nil {
+			log.Printf("comm: notices for %s: %v", comm.PartyOf(ep), nErr)
+		} else {
+			for _, n := range ns {
+				out.Notices = append(out.Notices, noticeView{
+					MessageID: n.MessageID, Scope: n.Scope, Reason: n.Reason, At: n.At,
+					IdempotencyKey: n.IdempotencyKey, Recipients: n.Recipients,
+				})
+			}
 		}
 		return nil, out, nil
 	})
@@ -806,7 +827,28 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 // commError maps store sentinels to messages an agent can act on. Following the
 // knowledge base's convention, these are plain MCP tool errors with no code
 // vocabulary — match on the text.
+// noticesPerPoll bounds how many derived notices ride one poll result.
+//
+// Bounded because a sender returning after a long absence could otherwise receive
+// hundreds at once, on the same call carrying their actual mail — a notice stream that
+// floods the poll it rides on has replaced one delivery problem with another. The
+// remainder is not lost: the watermark only advances past what was shown, so the next
+// poll carries the next batch.
+const noticesPerPoll = 25
+
 func commError(err error) error {
+	// GUIDANCE FIRST, and only when the raise site opted in.
+	//
+	// Everything below flattens by sentinel, which is what keeps refusals uniform and
+	// stops an error becoming an existence oracle. The cost of that, unnoticed until
+	// production probed the running 3.3.0 binary: a raise site that wraps a sentinel
+	// with useful text has the text replaced by the very string it was written to
+	// replace. comm.CallerSafe is the author's explicit statement that this particular
+	// text is safe to show — so the default stays uniform and nothing leaks by accident.
+	var safe interface{ CallerSafeText() string }
+	if errors.As(err, &safe) {
+		return errors.New(safe.CallerSafeText())
+	}
 	switch {
 	case errors.Is(err, comm.ErrNotFound):
 		return errors.New("not found")

@@ -195,6 +195,28 @@ type pollOut struct {
 	// value accepted and then never spoken of. Reported by ken-prod-ops, who noticed
 	// it in the release that claimed to close it.
 	WaitSecondsGranted int `json:"wait_seconds_granted" jsonschema:"how long this call was prepared to block, in seconds, after the server's cap was applied. 0 means it did not block"`
+	// Notices is what became of messages YOU sent — not mail addressed to you.
+	//
+	// It rides the poll because that is the one call every session already makes. Until
+	// slice 4 these were real messages the sweep wrote into the sender's own inbox,
+	// which put a failure signal behind the same delivery that had just failed, gave it
+	// its own expiry, and made a deleting pass into a writing one.
+	Notices []noticeView `json:"notices,omitempty"`
+}
+
+// noticeView is one thing that happened to a message this caller sent.
+type noticeView struct {
+	MessageID string `json:"message_id"`
+	Scope     string `json:"scope" jsonschema:"where the message was sent: ch:<channel>, r:<room> or b:<sender>"`
+	Reason    string `json:"reason" jsonschema:"expired = nobody read it before its lifetime ran out; reply_overdue = you marked it requires_response and the deadline passed unanswered"`
+	At        string `json:"at" jsonschema:"when it became true"`
+	// IdempotencyKey is echoed because it is often the only surviving description:
+	// retention blanks bodies and keeps metadata, so a notice naming an opaque id and
+	// nothing else describes something the sender can no longer look up.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	// Recipients names WHO it is about. For a room message the difference between
+	// "nobody engaged" and "one station is quiet" is most of the information.
+	Recipients []string `json:"recipients,omitempty"`
 }
 
 type ackIn struct {

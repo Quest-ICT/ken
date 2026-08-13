@@ -34,6 +34,35 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### COMM failure notices are no longer messages — and the window they cover is now bounded by metadata retention
+
+**What changes.** When a message expires unread, or a requested reply misses its deadline, Ken used
+to WRITE the sender a message (`kind: "status"`). It now derives that information at poll time and
+returns it in a `notices` array on the `comm_poll` result.
+
+**What an operator will observe.**
+
+- No new `kind: "status"` rows. Existing ones are untouched and still poll, ack and expire as
+  ordinary messages — they are mail a session may not have read yet, not clutter to tidy.
+- A sender's inbox no longer receives its own failure reports, so poll counts and un-acked depth for
+  a busy sender drop. Nothing was lost; it moved out of the message table.
+- **The notice window is now the metadata window.** A derived notice is computed from `message` and
+  `delivery`, so it exists only while those rows do. The metadata purge deletes a settled message
+  `metadata_ttl_seconds` after it settles — **7 days by default** — and the notice goes with it. A
+  written notice was an independent row and could outlive its subject; this one cannot.
+
+**What to do first.** If your deployment relies on senders learning about failures after long
+absences, check `metadata_ttl_seconds` before upgrading: that value, not the message TTL, is now
+what bounds how long a failure remains reportable. A session polling on any normal cadence is
+unaffected.
+
+**Why the trade was taken.** The written notice gave a failure signal its own delivery, its own
+expiry, its own backpressure and its own acknowledgement — a second thing that could fail, reporting
+the first. It did fail: one unread room message stopped expiry, body retention, the metadata purge,
+attachment cleanup and idle-endpoint removal in 3.0.0 and 3.0.1, because the sweeper both deleted
+and inserted in one transaction and the insert took the deletions down with it.
+
+
 ---
 
 ## 3.3.0

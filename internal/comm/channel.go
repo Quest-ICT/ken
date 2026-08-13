@@ -200,12 +200,18 @@ WHERE c.channel_id=?`, channelID).
 		// parameters returns "pass exactly one of channel_id or to_room". THE GOOD ERROR
 		// IS UNREACHABLE FROM THE STATE A NEW CALLER IS IN, which is the whole defect.
 		// Mentioning rooms here costs a string and ends the detour.
+		//
+		// MARKED CallerSafe, because wrapping alone was not enough and that is the part
+		// this shipped without. The 3.3.0 mapper answers every ErrNotFound with the
+		// literal "not found", so both strings below were in the binary and neither
+		// reached a caller — production probed the running image with this exact call and
+		// got the same bare error promo got before any of it was written.
 		if s.callerIsInRoom(ctx, ep, channelID) {
-			return nil, 0, fmt.Errorf("%w: %q is a ROOM, not a channel — address it with to_room instead of channel_id. "+
-				"A room needs no pairing code: your human putting your station in it is the whole authorisation", ErrNotFound, channelID)
+			return nil, 0, CallerSafe(fmt.Errorf("%w: %q is a ROOM, not a channel — address it with to_room instead of channel_id. "+
+				"A room needs no pairing code: your human putting your station in it is the whole authorisation", ErrNotFound, channelID))
 		}
-		return nil, 0, fmt.Errorf("%w: no channel %q. If you meant a ROOM, the parameter is to_room rather than channel_id — "+
-			"comm_directory lists the rooms you are in", ErrNotFound, channelID)
+		return nil, 0, CallerSafe(fmt.Errorf("%w: no channel %q. If you meant a ROOM, the parameter is to_room rather than channel_id — "+
+			"comm_directory lists the rooms you are in", ErrNotFound, channelID))
 	}
 	if err != nil {
 		return nil, 0, err
