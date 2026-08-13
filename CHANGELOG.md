@@ -15,28 +15,7 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-### Fixed
-
-- **`ken_version` could not be called by the sessions it was built for.** 3.1.0 shipped it
-  as a tool, and a tool added after a conversation begins is **not in that conversation's
-  tool list at all** — there is no handle to invoke something you cannot see. So the
-  mechanism for telling a stale session what version is running was itself unreachable by
-  every stale session.
-
-  Found by Vlad asking me to use it, on a conversation that predates it, and watching the
-  lookup come back empty.
-
-  It also sharpens the freeze rule, which 3.1.0 stated too broadly. **Parameters cross the
-  freeze; whole tools do not.** `ken-prod-ops` proved the first half by passing `to_room`
-  on a schema that has no such property; this is the limit on the other side, and the
-  stamp now says both.
-
-  The running version therefore rides in **results a frozen session already calls** —
-  `station_me`, `comm_poll` and `kb_search`. All three, because a comm-only session never
-  calls `station_me`, a knowledge-base-only session calls neither, and each is equally
-  unable to call the tool. The `ken_version` tool stays: it is self-describing and it is
-  the right answer for any conversation begun after it existed.
-
+## [3.3.0] — 2026-08-13
 
 ### Added
 
@@ -61,8 +40,27 @@ same change — never "docs later".
   caller could demonstrably reach. `ken-promo`'s stayed empty while it sat in a room with
   two others, until a human approved two link requests it did not need.
 
-
 ### Fixed
+
+- **`ken_version` could not be called by the sessions it was built for.** 3.1.0 shipped it
+  as a tool, and a tool added after a conversation begins is **not in that conversation's
+  tool list at all** — there is no handle to invoke something you cannot see. So the
+  mechanism for telling a stale session what version is running was itself unreachable by
+  every stale session.
+
+  Found by Vlad asking me to use it, on a conversation that predates it, and watching the
+  lookup come back empty.
+
+  It also sharpens the freeze rule, which 3.1.0 stated too broadly. **Parameters cross the
+  freeze; whole tools do not.** `ken-prod-ops` proved the first half by passing `to_room`
+  on a schema that has no such property; this is the limit on the other side, and the
+  stamp now says both.
+
+  The running version therefore rides in **results a frozen session already calls** —
+  `station_me`, `comm_poll` and `kb_search`. All three, because a comm-only session never
+  calls `station_me`, a knowledge-base-only session calls neither, and each is equally
+  unable to call the tool. The `ken_version` tool stays: it is self-describing and it is
+  the right answer for any conversation begun after it existed.
 
 - **The console admitted a station to a room that could not participate, and said
   nothing.** Room membership keys on the party `s:<station_id>`; an endpoint with no
@@ -105,7 +103,6 @@ same change — never "docs later".
   `comm_open_channel`'s uniform refusal was built to close, reopened by a friendly error
   message — which is how these usually come back. A member already knows the room is
   there; everyone else gets text that mentions rooms only as a concept.
-
 
 ## [3.2.0] — 2026-08-13
 
@@ -2277,7 +2274,8 @@ append-only and the curated head moves only on human promotion.
 - Windows installer: the NSIS `.exe` is not attached to this release (built separately
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
-[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.3.0
 [3.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.2.0
 [3.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.1.0
 [3.0.2]: https://github.com/Quest-ICT/ken/releases/tag/v3.0.2

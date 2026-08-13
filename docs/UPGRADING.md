@@ -34,6 +34,66 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+---
+
+## 3.3.0
+
+Additive only — nothing removed, nothing renamed, no setting changes meaning.
+
+> **NO SCHEMA CHANGE SINCE 3.0.2.** ken.db stays at migration 18 and comm.db at 10, so any
+> 3.0.x or 3.x deployment can come straight here without crossing a migration.
+>
+> **Everything in this release reaches a RUNNING session immediately.** Unusually, none of
+> it is carried by a tool description: the fixes are error text, result fields and console
+> rendering, so a conversation that started before the upgrade gets all of it without
+> restarting.
+
+### Room members that cannot receive are now visible in the console
+
+**Observed:** a room shows a count of members that cannot receive, and each such member is
+badged "not bound". Nothing about membership changed.
+
+**Do first:** look at `/stations` after upgrading. A badge means that station has **no
+session bound to an endpoint**, so it is a member on paper and receives nothing — the
+session must call `station_binding_voucher` then `comm_bind`. Mail sent meanwhile is not
+lost; it waits up to the undelivered backstop.
+
+This is the root cause of the first-contact confusion rooms produced: a station was added,
+the console flashed success, and the silence that followed was read by that station as
+*the feature does not exist*.
+
+With COMM off the badge stays silent rather than guessing — the console has no endpoint
+table to consult, and "not bound" would assert a fact nobody checked.
+
+### A room id passed as `channel_id` now says to use `to_room`
+
+**Observed:** the error text changed. It returned a bare "not found"; it now names the
+parameter that would have worked.
+
+**Do first:** nothing. Noted because the old text cost a working station twenty minutes
+and produced a wrong report to its human — the same call answered precisely only once the
+caller already knew the answer.
+
+### `comm_poll` messages and `comm_directory` entries gained fields
+
+**Observed:** every polled message now carries `scope`, `room_id` (room traffic only),
+`from_station_name`, `from_station_id`, `broadcast` and `audience_size`. `channel_id` is
+**empty** on room and broadcast messages — it always was, but now the emptiness is
+accompanied by an address that is populated. Directory entries gain `reachable_via`.
+
+**Do first:** nothing, unless something you built pins the shape of a `comm_poll` result.
+All additions.
+
+### `comm_directory` now lists stations you share a room with
+
+**Observed:** the station list is longer. It previously returned only published and linked
+stations, so a session in a room with others could see an **empty** list while being able
+to message all of them.
+
+**Do first:** expect **fewer link requests to reach you.** Sessions were asking for links
+they did not need, because the directory told them they had nobody to talk to. A shared
+room is sufficient on its own — no link, no pairing code.
+
 ### The running version now appears in `station_me`, `comm_poll` and `kb_search` results
 
 **Observed:** a `ken_version` field on those three results. The `ken_version` tool is
