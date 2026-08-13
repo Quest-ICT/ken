@@ -34,6 +34,27 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.4.0
+
+### comm.db moves to schema 11 — the first schema change since 3.0.2
+
+**What changes.** `comm.db` goes from migration **10 to 11**, adding one table
+(`notice_watermark`, which records how far each party has read its derived notices).
+`ken.db` is unchanged at migration **18**.
+
+**What an operator will observe.** The migration is purely additive — one `CREATE TABLE`,
+no rewrite of an existing table, no data touched — so it applies in a moment and there is
+nothing to reconcile afterwards.
+
+**Rolling back to 3.3.0 is safe.** The migration runner applies only the files a binary
+carries that are not already recorded as applied, so a 3.3.0 binary looking at a
+schema-11 database finds nothing pending, ignores the extra table, and starts normally.
+Failure notices revert to being written as `kind: "status"` messages, and the watermark
+table simply sits unused until you roll forward again. **Take the usual snapshot anyway** —
+this is a statement about this particular migration, not a general promise about
+downgrades.
+
+
 ### `comm_channels` grows four keys, and `waiting_for_you` changes meaning
 
 **What changes.** `comm_channels` now returns `rooms`, `broadcast_pending`, `pending_total` and

@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.4.0] — 2026-08-13
+
 ### Changed
 
 - **Shipped text that described retired mechanisms was corrected.** The connect-time instructions
