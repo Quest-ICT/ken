@@ -17,6 +17,33 @@ same change — never "docs later".
 
 ### Added
 
+- **`ken_version` on all three MCP surfaces, and every instruction set now says which
+  version wrote it.** Together these let a session detect the one thing it otherwise
+  cannot: that the manual it is reading is older than the server it is talking to.
+
+  `ken-prod-ops` measured that problem on a live deployment — their session held 1.7.0's
+  instructions while the process serving it had been the 2.1.0 image for hours, and
+  nothing said so. An MCP client captures `instructions` **and every tool description**
+  when the CONVERSATION begins; neither refreshes on an upgrade or on a reconnect. Only
+  tool RESULTS are computed per call.
+
+  **This is deliberately not self-detection**, which prod rejected and I agreed to drop:
+  a session cannot check the thing it is made of. It is two statements from the same
+  authority at two different times — the instructions state the version that wrote them,
+  `ken_version` states the version running now — so the session compares two strings it
+  was handed rather than introspecting anything.
+
+  The stamp says what to do, not just a number: that reconnecting does **not** help
+  (the counter-intuitive part), that tool descriptions are pinned too, that results are
+  still trustworthy, and that stale text is **normal** — a session told only that it is
+  out of date will treat an ordinary condition as a fault. Tests assert each of those
+  sentences is present, and that all three surfaces register the tool: the session most
+  likely to need it is one bound to a single endpoint, so a surface that forgot would
+  fail exactly the caller it was for.
+
+
+### Added
+
 - **`station_note_read` takes a `rev`**, so a station can read the revisions it still
   has. 3.0.0 told it how many were lost and gave it no way to look at what survived;
   `ken-prod-ops` had to query the database, which is not a route a station has.

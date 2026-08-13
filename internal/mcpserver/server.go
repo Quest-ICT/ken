@@ -384,7 +384,7 @@ func NewServer(d Deps) *mcp.Server {
 		Name:    "ken",
 		Title:   "Ken knowledge base",
 		Version: version.Version,
-	}, &mcp.ServerOptions{Instructions: buildInstructions(d.CurationLangs)})
+	}, &mcp.ServerOptions{Instructions: buildInstructions(d.CurationLangs) + version.InstructionStamp()})
 
 	addTool(s, d, &mcp.Tool{
 		Name:        "kb_search",
@@ -564,6 +564,13 @@ func NewServer(d Deps) *mcp.Server {
 			})
 		}
 		return nil, out, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name:        "ken_version",
+		Description: version.ToolDescription,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.Info, error) {
+		return nil, version.Current(), nil
 	})
 
 	return s

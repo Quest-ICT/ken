@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Quest-ICT/ken/internal/version"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -207,7 +208,7 @@ const errStationUnavailable = "no station by that name is available to you — c
 func newServer(d Deps, h *Handler) *mcp.Server {
 	w := h.w
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-comm", Version: "1"},
-		&mcp.ServerOptions{Instructions: instructions})
+		&mcp.ServerOptions{Instructions: instructions + version.InstructionStamp()})
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_register",
@@ -671,6 +672,13 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			Name:        att.Name, SizeBytes: att.SizeBytes, SHA256: att.SHA256,
 			ExpiresAt: att.ExpiresAt,
 		}, nil
+	})
+
+	addTool(s, d.Metrics, &mcp.Tool{
+		Name:        "ken_version",
+		Description: version.ToolDescription,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.Info, error) {
+		return nil, version.Current(), nil
 	})
 
 	return s

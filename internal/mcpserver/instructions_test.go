@@ -73,9 +73,17 @@ func TestSetCurationLangsLive(t *testing.T) {
 		return sess.InitializeResult().Instructions
 	}
 
-	// Before: no curation language declared → base instructions.
-	if got := instructions(); got != baseInstructions {
-		t.Fatalf("initial instructions should be the base guide, got a %d-char variant", len(got))
+	// Before: no curation language declared → the base guide, with no curation paragraph.
+	//
+	// Asserted by CONTENT rather than by equality with baseInstructions. Every surface
+	// now appends a version stamp, so an exact-match test would fail on a change that has
+	// nothing to do with curation languages — and the property under test was never
+	// "the string is exactly this", it was "the curation paragraph is absent".
+	const curationMarker = "Author in the curation language(s)"
+	if got := instructions(); !strings.HasPrefix(got, baseInstructions) {
+		t.Fatalf("initial instructions do not start with the base guide (%d chars)", len(got))
+	} else if strings.Contains(got, curationMarker) {
+		t.Fatal("the curation paragraph appears with no curation language configured")
 	}
 
 	// Operator sets curation_langs live.
@@ -83,7 +91,7 @@ func TestSetCurationLangsLive(t *testing.T) {
 
 	// After: a NEW connection sees the curation paragraph.
 	got := instructions()
-	if got == baseInstructions {
+	if !strings.Contains(got, curationMarker) {
 		t.Fatal("after SetCurationLangs a new connection should receive the curation paragraph")
 	}
 	for _, want := range []string{"French (fr)", "Chinese (zh)"} {

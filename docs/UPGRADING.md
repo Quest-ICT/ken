@@ -34,6 +34,20 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### Every MCP surface gains `ken_version`, and instructions carry a version stamp
+
+**Observed:** a new tool on `/mcp`, `/comm/mcp` and `/station/mcp`, and a short paragraph
+appended to each surface's connect-time instructions naming the version that wrote them.
+
+**Do first:** nothing. Worth knowing because it makes a real condition visible for the
+first time: a conversation started before an upgrade keeps the OLD instructions and the
+OLD tool descriptions for its whole life. That was always true and nothing reported it.
+Sessions can now compare what their instructions say against what `ken_version` returns.
+
+**Sessions already running when you upgrade will not have the stamp** — their
+instructions predate it, which is the very condition it describes. They can still call
+`ken_version`; they simply have nothing to compare it with until they are restarted.
+
 ### `station_note_read` accepts a `rev`
 
 **Observed:** the tool takes an optional `rev` and returns a retained older revision.

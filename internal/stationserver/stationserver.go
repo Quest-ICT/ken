@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Quest-ICT/ken/internal/version"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -224,7 +225,7 @@ Your human reads all of it. Nothing here is private from them.`
 
 func newServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-station", Version: "1"},
-		&mcp.ServerOptions{Instructions: instructions})
+		&mcp.ServerOptions{Instructions: instructions + version.InstructionStamp()})
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_binding_voucher",
@@ -722,6 +723,13 @@ func newServer(d Deps) *mcp.Server {
 		}
 		err = d.Store.DeleteStationVaultSecret(ctx, d.vaultLim(), p.StationID, in.Name, p.TokenID, p.ActorID)
 		return nil, okOut{OK: err == nil}, err
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name:        "ken_version",
+		Description: version.ToolDescription,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.Info, error) {
+		return nil, version.Current(), nil
 	})
 
 	return s
