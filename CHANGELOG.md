@@ -17,6 +17,27 @@ same change — never "docs later".
 
 ### Fixed
 
+- **The console admitted a station to a room that could not participate, and said
+  nothing.** Room membership keys on the party `s:<station_id>`; an endpoint with no
+  station resolves to `e:<rowid>`, which can never match. So a station with no bound
+  endpoint was a member on paper and deaf in practice, and the console flashed success.
+
+  `ken-promo` was added that way and concluded from the resulting silence that **rooms
+  were receive-only**, reporting that to its human. It is the station whose charter is
+  describing the product. `ken-prod-ops` identified this as the root of the whole episode
+  and the one neither participating agent found, because both had the symptom.
+
+  **Admitted and flagged rather than refused**, because the specification is that
+  membership is durable — *"once a room is created and parties are added, they should
+  permanently be able to use it"* — so adding a station before its session binds is
+  legitimate and the membership is correct. What was missing was any surface saying it
+  cannot yet hear. The room now carries a count of members that cannot receive and each
+  such member is badged, with text saying what to do and that nothing sent meanwhile is
+  lost.
+
+  With COMM off the badge stays silent rather than guessing: this package has no endpoint
+  table to ask, and printing "not bound" would assert a fact nobody checked.
+
 - **A room id passed as `channel_id` now names the parameter that would have worked.**
   It returned a bare "not found", and that is what made a working station conclude the
   feature did not exist.

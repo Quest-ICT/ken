@@ -3,6 +3,7 @@ package web
 import (
 	"errors"
 	"fmt"
+	"github.com/Quest-ICT/ken/internal/comm"
 	"log"
 	"net/http"
 	"strconv"
@@ -202,10 +203,49 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// D1 — THE ROOT DEFECT OF THE ROOMS DEBUGGING, and the one neither agent found
+	// because both experienced the symptom rather than the cause.
+	//
+	// A station with NO BOUND ENDPOINT can be added to a room, the console flashes
+	// success, and the station is a member on paper and deaf in practice: room
+	// membership is keyed on the party `s:<station_id>`, and an unbound endpoint
+	// resolves to `e:<rowid>`, which can never match. ken-promo was added at
+	// 2026-08-13T15:39:59Z with zero bound endpoints and concluded from the resulting
+	// silence that rooms were RECEIVE-ONLY — a wrong belief about the product, reported
+	// upward, by the station whose charter is describing the product.
+	//
+	// ADMITTED AND FLAGGED rather than refused, because Vlad's specification is that
+	// membership is durable: "once a room is created and parties are added, they should
+	// permanently be able to use it". Adding a station before its session binds is
+	// legitimate and the membership is correct — what was missing is any surface saying
+	// the station cannot yet hear. Refusing would make the console wrong about a
+	// legitimate order of operations; staying silent makes it wrong about the outcome.
+	type roomMemberView struct {
+		store.RoomMember
+		// Bound is meaningless unless BoundKnown — with COMM off this package has no
+		// endpoint table to ask, and reporting "not bound" would be asserting a fact
+		// nobody checked. Same discipline as the link live-channel count.
+		Bound      bool
+		BoundKnown bool
+	}
 	type roomView struct {
 		store.Room
-		Members []store.RoomMember
+		Members []roomMemberView
+		// Deaf is how many members cannot receive. Surfaced on the room itself so an
+		// operator sees it without expanding the member list.
+		Deaf int
 	}
+
+	// One read for the whole page rather than per member.
+	var staffing map[string]comm.Staffing
+	if a.comm != nil {
+		if sf, err := a.comm.StaffingByStation(ctx); err != nil {
+			log.Printf("web: staffing for room members: %v", err)
+		} else {
+			staffing = sf
+		}
+	}
+
 	roomViews := make([]roomView, 0, len(rooms))
 	for _, rm := range rooms {
 		members, err := a.store.RoomMembers(ctx, rm.RoomID)
@@ -214,7 +254,19 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		roomViews = append(roomViews, roomView{Room: rm, Members: members})
+		rv := roomView{Room: rm, Members: make([]roomMemberView, 0, len(members))}
+		for _, m := range members {
+			mv := roomMemberView{RoomMember: m}
+			if staffing != nil {
+				mv.BoundKnown = true
+				mv.Bound = staffing[m.StationID].Endpoints > 0
+				if !mv.Bound {
+					rv.Deaf++
+				}
+			}
+			rv.Members = append(rv.Members, mv)
+		}
+		roomViews = append(roomViews, rv)
 	}
 
 	a.render(w, r, sess, "stations", map[string]any{

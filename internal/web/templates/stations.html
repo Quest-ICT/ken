@@ -35,7 +35,9 @@
     <p><strong>{{.Name}}</strong>
       {{if eq .State "archived"}}<span class="badge badge--plain" title="{{$.T "rooms.archived_help"}}">{{$.T "rooms.archived"}}</span>{{end}}
       <span class="muted">&middot; {{.Members}} {{$.T "rooms.members"}}</span>
+      {{if .Deaf}}<span class="badge badge--warn" title="{{$.T "rooms.deaf_help"}}">{{.Deaf}} {{$.T "rooms.deaf"}}</span>{{end}}
     </p>
+    {{if .Deaf}}<p class="help"><b>{{$.T "rooms.deaf_lede"}}</b></p>{{end}}
     {{if .Purpose}}<p class="help">{{.Purpose}}</p>{{end}}
 
 
@@ -67,7 +69,9 @@
       <tbody>
         {{range .Members}}
         <tr>
-          <td class="mono">{{.StationName}}</td>
+          <td class="mono">{{.StationName}}
+            {{if and .BoundKnown (not .Bound)}}<span class="badge badge--warn" title="{{$.T "rooms.member_deaf_help"}}">{{$.T "rooms.member_deaf"}}</span>{{end}}
+          </td>
           <td data-sort="{{.AddedAt}}">{{localtime .AddedAt}}</td>
           <td>
             <form method="post" action="/rooms/{{$rid}}/members">
