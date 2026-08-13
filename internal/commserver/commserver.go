@@ -123,11 +123,18 @@ func (h *Handler) SetMaxPollWait(seconds int) {
 func viewOf(m *comm.Message) messageView {
 	mv := messageView{
 		MessageID: m.MessageID, ChannelID: m.ChannelID, Seq: m.Seq,
+		Scope: m.Scope, FromStationID: m.SenderStationID, AudienceSize: m.AudienceSize,
 		FromEndpointID: m.SenderEndpointID, Body: m.Body,
 		RequiresResponse: m.RequiresResponse, ReplyTo: m.ReplyToMessageID,
 		DeliveryCount: m.DeliveryCount, Redelivered: m.Redelivered(),
 		CreatedAt: m.CreatedAt, ReplyDeadlineAt: m.ReplyDeadlineAt, Kind: m.Kind,
 	}
+	// The room id, handed over already parsed. A reader should never have to know that a
+	// scope is a tagged string to answer the message it just received.
+	if room, ok := strings.CutPrefix(m.Scope, "r:"); ok {
+		mv.RoomID = room
+	}
+	mv.Broadcast = m.AudienceSize > 1
 	if m.File != nil {
 		mv.File = &fileView{
 			AttachmentID: m.File.AttachmentID, Name: m.File.Name,
@@ -300,6 +307,9 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_directory",
 		Description: "List the stations you can see, the ROOMS you are in, and how far a broadcast would reach. " +
+			"`reachable_via` on each station says WHY it is listed: \"link\" means a human approved a relationship and you may open a channel; " +
+			"\"room\" means you share a room and can address it with to_room right now, no link and no pairing code needed. " +
+			"A station you share a room with is listed even if no link exists — the directory reports what you can actually reach. " +
 			"Address a room with comm_send{to_room: room_id}, or every station you share a room with using " +
 			"to_room:\"all\" — rooms need no pairing code and no link, because your human already decided who is in one. " +
 			"A room's `pending` is a count and delivers nothing, so checking it before you speak costs nothing. " +
@@ -364,13 +374,38 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if e, err := d.Store.RosterEpoch(ctx); err == nil {
 			out.RosterEpoch = e
 		}
+		// D4. THE STATIONS YOU SHARE A ROOM WITH ARE REACHABLE AND WERE NOT LISTED.
+		//
+		// ListStationsVisibleTo returns published and linked stations. Room membership
+		// grants neither, so the tool whose job is "who may I talk to" answered with a
+		// list excluding everyone the caller could demonstrably reach — ken-promo's
+		// stayed empty while it sat in a room with two others, until a human approved
+		// two link requests it did not need.
+		//
+		// Collected as a SET keyed on station id, so a station that is both linked and a
+		// room co-member appears once carrying both reasons rather than twice.
+		roomMates := map[string]bool{}
+		for _, r := range out.Rooms {
+			for _, name := range r.Members {
+				roomMates[name] = true
+			}
+		}
+
+		seen := map[string]bool{}
 		for _, st := range list {
+			seen[st.Name] = true
 			e := directoryEntry{
 				Name:               st.Name,
 				Purpose:            st.Purpose,
 				SelfDescribedAbout: st.SelfDescribedAbout,
 				SelfDescribedTags:  st.SelfDescribedTags,
 				Linked:             st.Linked,
+			}
+			if st.Linked {
+				e.ReachableVia = append(e.ReachableVia, "link")
+			}
+			if roomMates[st.Name] {
+				e.ReachableVia = append(e.ReachableVia, "room")
 			}
 			// A station COMM has never seen an endpoint for is genuinely unknown to
 			// COMM, so it gets no staffing verdict at all. One that COMM knows gets a
@@ -381,6 +416,18 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 				e.LastSeenAt = sf.LastSeenAt
 			}
 			out.Stations = append(out.Stations, e)
+		}
+
+		// And the room co-members the visibility query never returned. Listing them is
+		// not a widening of permission — a session can already address them with to_room
+		// this second. It is the directory catching up with what is already true.
+		for name := range roomMates {
+			if seen[name] || name == out.YouAre {
+				continue
+			}
+			out.Stations = append(out.Stations, directoryEntry{
+				Name: name, ReachableVia: []string{"room"},
+			})
 		}
 		return nil, out, nil
 	})
@@ -557,8 +604,9 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
-		Name:        "comm_poll",
-		Description: "Receive un-acknowledged messages. Blocks up to wait_seconds for one to arrive. An empty result is a NORMAL outcome, not an error. Messages repeat until acked, so check delivery_count.",
+		Name: "comm_poll",
+		Description: "Receive un-acknowledged messages. Blocks up to wait_seconds for one to arrive. An empty result is a NORMAL outcome, not an error. Messages repeat until acked, so check delivery_count. " +
+			"EVERY MESSAGE SAYS WHERE IT CAME FROM AND HOW TO ANSWER: `scope` is the address, `room_id` is present for room traffic and is what you pass back as to_room, `from_station_name` is who wrote it, and `broadcast` with `audience_size` tells you whether you are one of several — a reply to a broadcast reaches the whole scope, not a person. `channel_id` is EMPTY for room and broadcast messages; those belong to no channel.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in pollIn) (*mcp.CallToolResult, pollOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
@@ -594,7 +642,15 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 
 		out := pollOut{Waited: waited, WaitSecondsGranted: granted, WaitClampedFrom: clampedFrom, Messages: make([]messageView, 0, len(msgs))}
 		for _, m := range msgs {
-			out.Messages = append(out.Messages, viewOf(&m))
+			v := viewOf(&m)
+			// The sender's NAME, resolved here because this is the one layer holding
+			// both databases: comm.db knows which station sent it, ken.db knows what
+			// that station is called. A reader handed only an opaque endpoint id has to
+			// ask somebody who it was — which is the state rooms shipped in.
+			if v.FromStationID != "" {
+				v.FromStationName = stationLabel(ctx, d, v.FromStationID)
+			}
+			out.Messages = append(out.Messages, v)
 		}
 		return nil, out, nil
 	})

@@ -17,8 +17,23 @@ import (
 // deleted while the metadata row survives. See the schema comment for why that
 // split is load-bearing rather than an optimization.
 type Message struct {
-	MessageID        string
-	ChannelID        string
+	MessageID string
+	// ChannelID is EMPTY for a room or broadcast message — those belong to no channel.
+	// Scope is the address that always exists.
+	ChannelID string
+	// Scope is where this message lives: 'ch:<channel>', 'r:<room>' or 'b:<party>'.
+	//
+	// D3 of the rooms debugging. Without it a recipient could not tell that a message
+	// came from a room, WHICH room, or how to answer — both agents that received one
+	// inferred the room from "I am only in one", and with two rooms neither could have.
+	Scope string
+	// SenderStationID is the sending station when the sender is staffed, empty when not.
+	// The receive side previously carried only an opaque endpoint id, so a reader could
+	// not name who wrote to them without a second lookup they had no tool for.
+	SenderStationID string
+	// AudienceSize is how many parties this went to. Above 1 means the reader is one of
+	// several and a reply reaches the scope rather than a person.
+	AudienceSize     int
 	Seq              int64
 	SenderEndpointID string
 	Body             string
@@ -1212,7 +1227,8 @@ func messageByID(ctx context.Context, q rowQuerier, messageID string) (*Message,
 	// honestly answer about many recipients. A caller needing per-recipient truth
 	// reads `delivery` (slice 4's comm_outbox is that surface).
 	err := q.QueryRowContext(ctx, `
-SELECT m.message_id, c.channel_id, m.scope_seq, se.endpoint_id, m.body, m.requires_response,
+SELECT m.message_id, c.channel_id, m.scope_id, COALESCE(se.station_id,''), m.audience_size,
+       m.scope_seq, se.endpoint_id, m.body, m.requires_response,
        (SELECT r.message_id FROM message r WHERE r.id = m.reply_to),
        COALESCE((SELECT d.state FROM delivery d WHERE d.message_row = m.id
                   ORDER BY CASE d.state WHEN 'queued' THEN 0 WHEN 'delivered' THEN 1
@@ -1227,7 +1243,8 @@ LEFT JOIN channel c  ON c.id  = m.channel_id
 JOIN endpoint se ON se.id = m.sender_endpoint
 LEFT JOIN attachment a ON a.message_id = m.id
 WHERE m.message_id=?`, messageID).
-		Scan(&m.MessageID, &chID, &m.Seq, &m.SenderEndpointID, &body, &reqResp,
+		Scan(&m.MessageID, &chID, &m.Scope, &m.SenderStationID, &m.AudienceSize,
+			&m.Seq, &m.SenderEndpointID, &body, &reqResp,
 			&replyTo, &m.State, &m.DeliveryCount, &m.BodyBytes, &m.CreatedAt, &m.ExpiresAt, &deadline, &m.Kind,
 			&attID, &attName, &attSize, &attSHA, &attMode, &attNonce)
 	if errors.Is(err, sql.ErrNoRows) {

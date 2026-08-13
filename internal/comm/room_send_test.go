@@ -564,3 +564,75 @@ func TestARoomIDPassedAsAChannelSaysSo(t *testing.T) {
 			"a helpful message reopened the oracle the uniform refusal was built to close")
 	}
 }
+
+// D3 — A RECEIVED ROOM MESSAGE MUST SAY WHERE IT CAME FROM.
+//
+// The highest-severity defect of the rooms debugging, confirmed independently by two
+// stations against real received messages rather than fixtures. A room message arrived
+// with `channel_id: ""`, an opaque sender id, and no scope, room, broadcast flag or
+// audience. Both readers inferred the room from "I am only in one" — with two rooms
+// neither could have, and neither could tell who had written to them.
+//
+// dev's diagnosis, which prod put in the changelog: slice 5 built SEND and DISCOVERY and
+// left RECEIVE alone. The sender knows what they did; the receiver cannot see it.
+func TestAReceivedRoomMessageCarriesItsScopeAndSender(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta", "s:st-gamma")
+
+	if _, err := st.SendToRoom(ctx, alpha, "ops", "morning", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.Poll(ctx, beta, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("polled %d messages, want 1", len(got))
+	}
+	m := got[0]
+
+	if m.Scope != "r:ops" {
+		t.Fatalf("scope = %q, want r:ops — the reader cannot tell WHERE this came from, "+
+			"which is what forced two stations to guess the room from being in only one", m.Scope)
+	}
+	if m.SenderStationID != "st-alpha" {
+		t.Fatalf("sender station = %q, want st-alpha — the reader has only an opaque endpoint id "+
+			"and no way to name who wrote to them", m.SenderStationID)
+	}
+	if m.AudienceSize != 2 {
+		t.Errorf("audience = %d, want 2 — a reply to a broadcast reaches the scope rather than a "+
+			"person, and a reader cannot know that without the number", m.AudienceSize)
+	}
+	// A room message belongs to no channel, and saying so is the point: the field being
+	// empty is information, not an omission.
+	if m.ChannelID != "" {
+		t.Errorf("channel_id = %q on a room message, want empty", m.ChannelID)
+	}
+
+	// CONTROL: a CHANNEL message still carries its channel and is not marked broadcast.
+	// Without this, everything above could be satisfied by a change that broke channels.
+	c1, c2, chID := pair(t, st)
+	if _, err := st.Send(ctx, c1, chID, "just you", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	cgot, err := st.Poll(ctx, c2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cgot) != 1 {
+		t.Fatalf("polled %d channel messages, want 1", len(cgot))
+	}
+	if cgot[0].ChannelID != chID {
+		t.Errorf("a channel message lost its channel_id: %q", cgot[0].ChannelID)
+	}
+	if cgot[0].Scope != "ch:"+chID {
+		t.Errorf("channel scope = %q, want ch:%s", cgot[0].Scope, chID)
+	}
+	if cgot[0].AudienceSize != 1 {
+		t.Errorf("a channel message reports an audience of %d, want 1 — it would be badged "+
+			"as a broadcast", cgot[0].AudienceSize)
+	}
+}

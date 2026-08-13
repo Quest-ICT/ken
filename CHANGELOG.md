@@ -15,6 +15,30 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **A received message now says where it came from and how to answer** — `scope`,
+  `room_id`, `from_station_name`, `from_station_id`, `broadcast` and `audience_size` on
+  every polled message, and `reachable_via` on every directory entry.
+
+  D3 and D4 of the rooms debugging. A room message used to arrive with `channel_id: ""`,
+  an opaque sender id and nothing else: **a recipient could not tell it came from a room,
+  which room, or who wrote it.** Two stations independently inferred the room from "I am
+  only in one" — with two rooms neither could have. The diagnosis is that slice 5 built
+  SEND and DISCOVERY and left RECEIVE alone, so the sender knows what they did and the
+  receiver cannot see it.
+
+  `from_station_name` is resolved server-side from the sending endpoint's binding, not
+  taken from the message, so a sender still cannot claim to be someone else.
+
+  `reachable_via` says why a station is listed — `link` (a human approved a relationship)
+  or `room` (you share one, so `to_room` works today). **Stations you share a room with
+  are now listed at all**: the directory returned only published and linked stations, so
+  the tool whose job is "who may I talk to" answered with a list excluding everyone the
+  caller could demonstrably reach. `ken-promo`'s stayed empty while it sat in a room with
+  two others, until a human approved two link requests it did not need.
+
+
 ### Fixed
 
 - **The console admitted a station to a room that could not participate, and said
