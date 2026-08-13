@@ -15,6 +15,29 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ken_version` could not be called by the sessions it was built for.** 3.1.0 shipped it
+  as a tool, and a tool added after a conversation begins is **not in that conversation's
+  tool list at all** — there is no handle to invoke something you cannot see. So the
+  mechanism for telling a stale session what version is running was itself unreachable by
+  every stale session.
+
+  Found by Vlad asking me to use it, on a conversation that predates it, and watching the
+  lookup come back empty.
+
+  It also sharpens the freeze rule, which 3.1.0 stated too broadly. **Parameters cross the
+  freeze; whole tools do not.** `ken-prod-ops` proved the first half by passing `to_room`
+  on a schema that has no such property; this is the limit on the other side, and the
+  stamp now says both.
+
+  The running version therefore rides in **results a frozen session already calls** —
+  `station_me`, `comm_poll` and `kb_search`. All three, because a comm-only session never
+  calls `station_me`, a knowledge-base-only session calls neither, and each is equally
+  unable to call the tool. The `ken_version` tool stays: it is self-describing and it is
+  the right answer for any conversation begun after it existed.
+
+
 ### Added
 
 - **A received message now says where it came from and how to answer** — `scope`,

@@ -783,6 +783,12 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 		return meOut{}, err
 	}
 	out := meOut{
+		KenVersion: version.Version,
+		VersionNote: "This is the version RUNNING NOW. Your connect-time instructions state the version that " +
+			"wrote them; if they differ, that text and every tool description you hold are older — they were " +
+			"captured when this conversation began and never refresh. New PARAMETERS still work if you learn " +
+			"about them; new TOOLS are not in your list at all and cannot be called. Results like this one are " +
+			"always current.",
 		StationID: st.StationID, Name: st.Name, NameSource: "human", Purpose: st.Purpose,
 		SelfDescribedAbout: st.SelfDescribedAbout, SelfDescribedTags: st.SelfDescribedTags,
 		Tasks: briefingView{

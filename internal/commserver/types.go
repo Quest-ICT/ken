@@ -170,7 +170,12 @@ type messageView struct {
 
 type pollOut struct {
 	Messages []messageView `json:"messages"`
-	Waited   bool          `json:"waited" jsonschema:"true if this call blocked before returning. An empty messages list is a NORMAL result, not an error"`
+	// KenVersion is what is running now. Carried on the poll loop because a comm-only
+	// session never calls station_me, and because the ken_version TOOL is unreachable
+	// from any conversation older than it — whole tools do not cross the freeze, only
+	// parameters do. A result is the one channel that always arrives.
+	KenVersion string `json:"ken_version"`
+	Waited     bool   `json:"waited" jsonschema:"true if this call blocked before returning. An empty messages list is a NORMAL result, not an error"`
 	// WaitClampedFrom appears only when the server shortened the wait that was asked
 	// for, and it carries the ORIGINAL request so the caller can see the gap.
 	//

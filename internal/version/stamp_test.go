@@ -53,6 +53,11 @@ func TestTheStampTellsASessionWhatToDoWithADiscrepancy(t *testing.T) {
 		// Half right, and I overstated it. Without this sentence the stamp tells a session
 		// it is stuck when it is only blind.
 		"pass it",
+		// AND that a whole new TOOL does not travel, which is the sharper limit and the
+		// one that bites the mechanism itself: ken_version is a tool added in 3.1.0, so
+		// no conversation begun before it can call it — precisely the sessions it exists
+		// for. Vlad found that by asking me to use it and watching it not be there.
+		"whole tools do not",
 	} {
 		if !strings.Contains(stamp, want) {
 			t.Errorf("the stamp never mentions %q — a session reading it cannot act on it:\n%s", want, InstructionStamp())
@@ -99,6 +104,42 @@ func TestEverySurfaceOffersTheVersionToolAndStampsItsInstructions(t *testing.T) 
 		if !strings.Contains(src, "version.InstructionStamp()") {
 			t.Errorf("the %s surface does not stamp its instructions, so a session there has nothing "+
 				"to compare the tool's answer against", name)
+		}
+	}
+}
+
+// THE VERSION MUST RIDE IN RESULTS, because the TOOL cannot reach the sessions that
+// need it.
+//
+// ken_version shipped in 3.1.0. A conversation begun before 3.1.0 does not have it in its
+// tool list and has no handle to call it — Vlad found this by asking me to use it and
+// watching ToolSearch return nothing. Parameters cross the freeze; whole tools do not.
+//
+// So the answer rides in results a frozen session ALREADY calls, and it has to be on all
+// three surfaces: a comm-only session never calls station_me, a KB-only session calls
+// neither, and each of them is equally unable to call the tool.
+//
+// Source-level, and deliberately: this asserts the field is WIRED on every surface, which
+// a behavioural test on one of them would silently not cover for the other two — the same
+// reason the registration test above is written this way.
+func TestTheRunningVersionRidesInResultsOnEverySurface(t *testing.T) {
+	surfaces := map[string]string{
+		"station_me (stations)": filepath.Join("..", "stationserver", "stationserver.go"),
+		"comm_poll (comm)":      filepath.Join("..", "commserver", "commserver.go"),
+		"kb_search (knowledge)": filepath.Join("..", "mcpserver", "server.go"),
+	}
+	for name, path := range surfaces {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		// Matched on the ASSIGNMENT, not a mention: the identifier appears in comments
+		// explaining why the field exists, and a test that cannot tell a use from an
+		// explanation eventually forces the explanation out.
+		if !regexp.MustCompile(`KenVersion:\s+version\.Version`).Match(body) {
+			t.Errorf("%s does not report the running version in its RESULT.\n"+
+				"A session on that surface whose conversation predates the ken_version tool cannot "+
+				"call it and has no other way to learn what it is talking to.", name)
 		}
 	}
 }

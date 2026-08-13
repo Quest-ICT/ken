@@ -39,8 +39,11 @@ If the two differ, this text and every tool description you hold are from the ol
 they were captured when this conversation began and do NOT refresh, not on reconnect and
 not on a server upgrade. Nothing is broken; you are simply reading an older manual. Trust
 the tool RESULTS, which are always current, and ask your human what changed.
-YOU ARE NOT LIMITED TO WHAT YOUR MANUAL LISTS. The freeze hides new parameters; it does
-not block them. If you learn from your human, a peer or the docs that a tool has gained an
-argument, PASS IT — the server validates what arrives, not what your copy of the schema
-says. A tool that refuses your old way may accept the new one.`, Version)
+WHAT THE FREEZE DOES AND DOES NOT BLOCK — the distinction is worth reading twice.
+PARAMETERS travel: if you learn from your human, a peer or the docs that a tool has gained
+an argument, PASS IT. The server validates what arrives, not your copy of the schema, so a
+tool that refuses your old way may accept the new one. WHOLE TOOLS DO NOT travel: a tool
+added after this conversation began is not in your list and you have no handle to call it,
+however much you know about it. That is why the running version is also reported inside
+results you already call — a result is the one channel that always reaches you.`, Version)
 }

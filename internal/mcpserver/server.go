@@ -177,10 +177,15 @@ type searchOut struct {
 	// DeadTerms are the words that matched NOTHING anywhere. The actionable half: it
 	// turns "no results" into "the word `generated` is not in this corpus", which is a
 	// next query rather than a conclusion.
-	DeadTerms       []string `json:"terms_that_matched_nothing,omitempty"`
-	HasMore         bool     `json:"has_more"`
-	NextOffset      int      `json:"next_offset,omitempty"`
-	DedupCheckToken string   `json:"dedup_check_token"`
+	DeadTerms  []string `json:"terms_that_matched_nothing,omitempty"`
+	HasMore    bool     `json:"has_more"`
+	NextOffset int      `json:"next_offset,omitempty"`
+	// KenVersion is what is running now. A knowledge-base-only session calls neither
+	// station_me nor comm_poll, and cannot call the ken_version TOOL either when this
+	// conversation predates it — whole tools do not cross the freeze, only parameters
+	// do. A result is the one channel that always arrives.
+	KenVersion      string `json:"ken_version"`
+	DedupCheckToken string `json:"dedup_check_token"`
 }
 
 // --- kb_get ---
@@ -424,7 +429,8 @@ func NewServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, searchOut{}, mcpError(err)
 		}
-		out := searchOut{Results: res, HasMore: hasMore, DedupCheckToken: issueDedupToken(d.DedupSecret, dedupSubject(ctx))}
+		out := searchOut{Results: res, HasMore: hasMore, KenVersion: version.Version,
+			DedupCheckToken: issueDedupToken(d.DedupSecret, dedupSubject(ctx))}
 		// What the search MATCHED, independently of what it returned. A failure here is
 		// swallowed: the diagnostic exists to stop a thin result being misread, and
 		// failing the whole search to protect a hint would be a worse trade than the one

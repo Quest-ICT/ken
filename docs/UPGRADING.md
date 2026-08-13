@@ -34,6 +34,17 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### The running version now appears in `station_me`, `comm_poll` and `kb_search` results
+
+**Observed:** a `ken_version` field on those three results. The `ken_version` tool is
+unchanged and still there.
+
+**Do first:** nothing. Worth knowing because it fixes a gap in 3.1.0 that only shows up
+from inside a long-running session: **a tool added after a conversation began is not in
+that conversation's tool list**, so `ken_version` was unreachable by exactly the sessions
+it was added to help. Results always arrive; new tools do not.
+
+
 ---
 
 ## 3.2.0

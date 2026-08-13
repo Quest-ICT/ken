@@ -62,6 +62,18 @@ type meOut struct {
 	Tasks              briefingView `json:"tasks"`
 	Handoff            string       `json:"handoff"`
 	Relay              string       `json:"relay_to_human,omitempty"`
+	// KenVersion is what is running RIGHT NOW, reported in the briefing every session is
+	// told to call FIRST.
+	//
+	// It is here because the ken_version TOOL cannot reach the sessions that most need
+	// it. A tool added in 3.1.0 is absent from the tool list of every conversation begun
+	// before 3.1.0, and there is no handle to call something you cannot see — parameters
+	// travel across the freeze, whole tools do not. A RESULT is the only channel that
+	// always arrives, so the answer rides in one.
+	KenVersion string `json:"ken_version"`
+	// VersionNote says what to do with it, because a bare number in a briefing is a
+	// number a session reads past.
+	VersionNote string `json:"ken_version_note"`
 }
 
 type requestIn struct {

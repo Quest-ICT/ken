@@ -640,7 +640,8 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			}
 		}
 
-		out := pollOut{Waited: waited, WaitSecondsGranted: granted, WaitClampedFrom: clampedFrom, Messages: make([]messageView, 0, len(msgs))}
+		out := pollOut{Waited: waited, WaitSecondsGranted: granted, WaitClampedFrom: clampedFrom,
+			KenVersion: version.Version, Messages: make([]messageView, 0, len(msgs))}
 		for _, m := range msgs {
 			v := viewOf(&m)
 			// The sender's NAME, resolved here because this is the one layer holding
