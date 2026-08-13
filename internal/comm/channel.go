@@ -568,6 +568,13 @@ SELECT id FROM endpoint
 // been shown to this session; telling it to "go and read what is waiting" would be
 // telling it to re-read something it has. That is the same distinction that made
 // waiting_for_you fire on mail its recipient had already replied to.
+//
+// CHANNEL SCOPES ONLY, and the limit is stated here because it cannot be seen from the
+// signature: the query is `FROM channel`, so a scope with no channel row contributes
+// nothing and can contribute nothing. Room mail is counted by RoomsFor, broadcast by
+// BroadcastPendingFor, and everything at once by PendingTotalFor (pending.go). Widening
+// THIS function is not the fix — its result is keyed by channel_id, and there is no
+// channel_id to key a room under.
 func (s *Store) PendingForEndpoint(ctx context.Context, ep *Endpoint) (map[string]int, error) {
 	// TWO COLUMNS ARE CALLED channel_id AND THEY ARE NOT THE SAME THING.
 	// channel.channel_id is the opaque server-minted TEXT id a session sees;
@@ -590,6 +597,28 @@ func (s *Store) PendingForEndpoint(ctx context.Context, ep *Endpoint) (map[strin
 	if ep.StationID != "" {
 		party = stationParty(ep.StationID)
 	}
+	// THE SEAT PREDICATE IS STATION-SCOPED, matching ListChannels above.
+	//
+	// It was endpoint-scoped while the LIST was station-scoped, and the two disagreeing is
+	// worse than either being wrong alone: a successor endpoint bound to the same station
+	// got the inherited channel LISTED — because ListChannels was widened for exactly that
+	// takeover case — with `pending: 0` beside it, while mail sat queued for the station.
+	//
+	// A missing row is a silence a caller can notice. A row that says zero is an
+	// ASSERTION, and this one was false in the situation stations exist for. The
+	// endpoint's own rowid is still matched, so an unbound endpoint is unaffected.
+	seat := `(c.endpoint_a = ? OR c.endpoint_b = ?)`
+	args := []any{party, altParty, ep.ID, ep.ID}
+	if ep.StationID != "" {
+		seat = `(c.endpoint_a IN (SELECT id FROM endpoint WHERE station_id=?)
+              OR c.endpoint_b IN (SELECT id FROM endpoint WHERE station_id=?))`
+		args = []any{party, altParty, ep.StationID, ep.StationID}
+	}
+	// Built as a plain-`?` fragment with its arguments appended in order, NOT copied from
+	// ListChannels — that one uses `?1`/`?2`, and the note above forbids mixing numbered
+	// with auto-assigned placeholders in one statement. `channel.station_a`/`station_b`
+	// are deliberately NOT used here either: those are the authorisation snapshot taken
+	// when the channel was opened, not the current binding.
 	rows, err := s.R.QueryContext(ctx, `
 SELECT c.channel_id, COUNT(d.id)
   FROM channel c
@@ -598,8 +627,8 @@ SELECT c.channel_id, COUNT(d.id)
     ON d.message_row = m.id
    AND (d.party_key = ? OR d.party_key = ?)
    AND d.state = 'queued'
- WHERE c.state='open' AND (c.endpoint_a = ? OR c.endpoint_b = ?)
- GROUP BY c.channel_id`, party, altParty, ep.ID, ep.ID)
+ WHERE c.state='open' AND `+seat+`
+ GROUP BY c.channel_id`, args...)
 	if err != nil {
 		return nil, err
 	}

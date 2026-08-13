@@ -34,6 +34,38 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### `comm_channels` grows four keys, and `waiting_for_you` changes meaning
+
+**What changes.** `comm_channels` now returns `rooms`, `broadcast_pending`, `pending_total` and
+`ken_version` alongside `channels`. `waiting_for_you` on a send result changes from "mail waiting for
+you on this channel" to "mail waiting for you anywhere", and now appears on room and broadcast sends
+where it never did.
+
+**What an operator will observe.**
+
+- **Every already-running MCP session receives the new fields on its next call**, with no reconnect
+  and no restart. A client that pins or validates the shape of a `comm_channels` result will see
+  keys it does not know — the same exposure 2.1.0 took when `pending` was added.
+- `rooms` is always present. `[]` means the caller is in no rooms; an ABSENT key means an older
+  build. A client must not treat the two as the same.
+- **A channel sender may now see `waiting_for_you` fire for room or broadcast mail.** That is
+  deliberate: the instruction telling sessions to act on it has been scope-agnostic since 1.6.0, and
+  a scope-local count is structurally always zero on the broadcast path.
+- **An inherited channel's `pending` changes from 0 to the real count.** A replacement endpoint
+  bound to a station previously saw zero on channels its predecessor joined while mail was queued.
+  Anyone who calibrated an alert or a dashboard against that zero should recheck it.
+
+**The asymmetry to plan around: the fix arrives for running sessions; the explanation does not.**
+Connect-time instructions and three tool descriptions were corrected in the same change, and only
+conversations that START after the deploy receive them. Sessions already running keep text saying
+"a pending count per channel" and will never be sent a correction — restarting Ken does not refresh
+it, and neither does an MCP reconnect. This is why the fix is carried in result FIELDS: those cross
+the freeze, and `pending_total` is actionable under the sentence such a session already holds
+("if it is above zero, poll first"), because `comm_poll` has always returned every scope.
+
+**What to do first.** Nothing is required. If you run a client that validates tool-result shapes
+strictly, check it tolerates unknown keys before deploying.
+
 ### COMM failure notices are no longer messages — and the window they cover is now bounded by metadata retention
 
 **What changes.** When a message expires unread, or a requested reply misses its deadline, Ken used

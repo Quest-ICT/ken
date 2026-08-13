@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -454,6 +455,78 @@ func TestTheWaitAdviceNamesTheFieldsThatContradictIt(t *testing.T) {
 	for _, want := range []string{"wait_seconds_granted", "wait_clamped_from", "CLAMPED"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("the wait_seconds description does not mention %q — a session is told to prefer long waits with no way to learn it did not get one.\ngot: %s", want, desc)
+		}
+	}
+}
+
+// THE CONNECT-TIME TEXT MUST NOT DESCRIBE A MECHANISM THAT NO LONGER EXISTS.
+//
+// This string is the one artefact a session captures at conversation start and can never
+// be sent a correction for. That makes a stale sentence here worse than a stale comment
+// anywhere else in the tree: it keeps being obeyed, by every session, for the whole life
+// of the conversation, and nothing in the product can contradict it.
+//
+// Two mechanisms have been retired out from under it. The sweeper stopped writing
+// kind='status' notices (3.4.0) — a session told to wait for one waits forever. And
+// comm_channels stopped being channel-only, so "a pending count per channel" understated
+// what the caller can see in exactly the surface that exists to stop hasty sends.
+func TestInstructionsDescribeTheMechanismsThatActuallyExist(t *testing.T) {
+	for _, want := range []string{
+		"pending_total", // the number that covers rooms and broadcast, not just channels
+		"'notices' array",
+		"reason='expired'",
+		"nothing to ack",
+	} {
+		if !strings.Contains(instructions, want) {
+			t.Errorf("connect-time instructions do not mention %q", want)
+		}
+	}
+	// AND THE RETIRED CLAIMS ARE GONE. Asserting only the presence of the new text would
+	// pass with both versions present, which is the likeliest way this regresses: an edit
+	// that adds the correction and leaves the contradiction sitting above it.
+	for _, gone := range []string{
+		"comm_channels reports a pending count per channel",
+		`Treat it as the answer to "why is my peer silent" rather than waiting further. Ack it like any other message.`,
+	} {
+		if strings.Contains(instructions, gone) {
+			t.Errorf("connect-time instructions still carry a retired mechanism: %q.\n"+
+				"A session captures this once and cannot be corrected — it will act on it all conversation.", gone)
+		}
+	}
+	// The legacy note must SURVIVE, though: an upgraded database still holds pre-3.4.0
+	// status rows, and they are still pollable mail somebody may not have read.
+	if !strings.Contains(instructions, "kind='status'") {
+		t.Error("the instructions no longer mention kind='status' at all — an upgraded deployment " +
+			"still holds those rows and a session that meets one has no idea what it is")
+	}
+}
+
+// THE OPERATOR-FACING CONSOLE TEXT MUST NOT CLAIM A REMOVED SETTING OR A REPLACED RULE.
+//
+// The existing i18n test catches a MISSING key across locales. It cannot catch a key whose
+// meaning went stale, which is what happened here: every locale said COMM was off by
+// default (the env var was removed in 2.0.0) and that bodies are deleted once processed
+// (the pre-1.6.0 rule that destroyed 97% of one deployment's message bodies). An operator
+// sizing retention or a deletion commitment against that text would get it wrong.
+func TestConsoleTextDoesNotDescribeRemovedOrReplacedBehaviour(t *testing.T) {
+	for _, f := range []string{"messages.properties", "messages_es.properties", "messages_fr.properties"} {
+		b, err := os.ReadFile(filepath.Join("..", "i18n", "locales", f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			if !strings.HasPrefix(line, "comm.optin") {
+				continue
+			}
+			if strings.Contains(line, "KEN_COMM_ENABLED") {
+				t.Errorf("%s: %q names a setting removed in 2.0.0", f, line)
+			}
+			for _, bad := range []string{"opt-in", "opcional", "optionnelle", "Off by default",
+				"Desactivado por defecto", "Désactivé par défaut"} {
+				if strings.Contains(line, bad) {
+					t.Errorf("%s: %q still describes COMM as optional — it is core and always on", f, line)
+				}
+			}
 		}
 	}
 }

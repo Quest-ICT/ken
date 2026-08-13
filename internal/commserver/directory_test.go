@@ -116,7 +116,7 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 	}
 	t.Cleanup(func() { sess.Close() })
 
-	dirEP, dirSecret = ep.EndpointID, secret
+	dirEP, dirSecret, dirComm, dirStation = ep.EndpointID, secret, cs, mine.StationID
 	return sess, st, ctx
 }
 
@@ -124,6 +124,15 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 // builds its own harness, so a package-level pair is simpler than threading creds
 // through every call site.
 var dirEP, dirSecret string
+
+// dirComm is the harness's comm store, exposed so a test can seed room membership
+// through ReplaceRoomMirror — the same projection the running server reads — rather than
+// reaching into the table behind the code under test.
+var dirComm *comm.Store
+
+// dirStation is the station the harness's endpoint is bound to — the party its room
+// membership must be keyed by.
+var dirStation string
 
 func dirCreds() map[string]any {
 	return map[string]any{"endpoint_id": dirEP, "endpoint_secret": dirSecret}

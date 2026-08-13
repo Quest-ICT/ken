@@ -117,9 +117,9 @@ task list are valuable to a solo session with no peers (STATIONS.md S2).
 - **What did NOT change, deliberately:** the contract exclusion. COMPATIBILITY.md still keeps the
   `comm_*` and `station_*` surfaces outside the byte-level SemVer contract — but the justification is
   no longer "optional-and-off-by-default", which is now false. The reason is that the COMM surface is
-  **mid-redesign**: the remaining planned work removes notice-messages, replaces pairing codes and
-  channel-pair addressing with rooms and name-addressed send, and retires the **channel** — the
-  central noun of §3, §4 and the tool table in §6. Promoting these surfaces into the contract now
+  **mid-redesign**. Notice-messages are gone (§4.6, 3.4.0) and rooms have landed; the remaining work
+  replaces pairing codes and channel-pair addressing with name-addressed send, and retires the
+  **channel** — the central noun of §3, §4 and the tool table in §6. Promoting these surfaces into the contract now
   would make that redesign a MAJOR bump, or force deprecated v1 aliases through a release cycle, for
   no benefit. They are promoted when COMM v2 lands.
 - **Trade-off accepted:** what the original decision protected is now spent — every install carries
@@ -412,7 +412,8 @@ Required on every operation, because §C6 makes redelivery normal:
 - **`comm_send`** takes a client-supplied idempotency key, unique per sender and channel within a
   dedup window. A repeat returns the original message id rather than sending a second message.
 - **`comm_poll`** is a pure read. It returns *all* unacknowledged messages for the endpoint across
-  all its channels, with a delivery count. Being polled is an informational timestamp, never a state
+  every scope it can receive in — channels, rooms and broadcast alike — with a delivery count, plus
+  the `notices` array describing what became of messages it SENT (§4.6). Being polled is an informational timestamp, never a state
   that hides a message from the next poll.
 - **`comm_ack`** succeeds on an already-acknowledged or unknown id.
 
@@ -435,13 +436,17 @@ A message with `requires_response` is given a server-computed reply deadline **w
 delivered** — not when it is sent, because a deadline that starts before the recipient can know the
 message exists is a deadline against the transport rather than against the peer. Its body follows the
 ordinary retention window like every other message; `requires_response` no longer governs retention
-at all. When a deadline passes unanswered, the sweeper delivers a
-**status message** to the requester through the ordinary poll path — `kind: "status"`, body
-`{"status":"reply_overdue","message_id":"…"}` — so a dead peer surfaces as a normal arrival rather
-than an indefinite wait. A message that expires unread notifies its sender the same way
-(`{"status":"expired",…}`). Notices are delivered exactly once, and deliberately bypass the
-backpressure cap: a full channel is precisely when a failure signal matters most. Full-duplex removes turn deadlock; reply
-deadlines are what keep the *requester* from hanging in its place.
+at all. When a deadline passes unanswered, the requester learns about it from the
+`notices` array on its next `comm_poll` — `reason: "reply_overdue"` — so a dead peer surfaces as a
+fact the requester can act on rather than an indefinite wait. A message that expires unread reports
+the same way (`reason: "expired"`). Full-duplex removes turn deadlock; reply deadlines are what keep
+the *requester* from hanging in its place.
+
+Until 3.4.0 this was a **status message** the sweeper WROTE to the requester (`kind: "status"`), and
+it deliberately bypassed the backpressure cap because a full channel is precisely when a failure
+signal matters most. That exemption is gone with the mechanism: a derived notice is not a message, so
+there is no cap for it to be exempt from — and no insert inside a pass whose job is deleting. §4.6
+has the full reasoning.
 
 ### 4.4 Backpressure
 

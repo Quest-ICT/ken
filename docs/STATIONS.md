@@ -6,9 +6,9 @@
 > the byte-level compatibility contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)), exactly as COMM
 > does — but **no longer because it is off by default**. It stays outside because the COMM surface
 > this design is wired into (S4's station-owned inbox, S9's links materializing channels) is
-> mid-redesign: the remaining planned work removes notice-messages, replaces pairing codes and
-> channel-pair addressing with rooms and name-addressed send, and retires the **channel** — the
-> central noun of the current tool surface. Promoting either surface now would make that redesign a
+> mid-redesign: notice-messages are gone (3.4.0) and rooms have landed; the remaining work replaces
+> pairing codes and channel-pair addressing with name-addressed send, and retires the **channel** —
+> the central noun of the current tool surface. Promoting either surface now would make that redesign a
 > MAJOR bump, or push deprecated v1 aliases through a release cycle, for no benefit. Both are
 > promoted into the contract when that redesign ("COMM v2") lands; until then they evolve additively.
 >

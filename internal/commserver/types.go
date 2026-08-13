@@ -64,11 +64,59 @@ type channelView struct {
 	//
 	// Queued only. A delivered-but-unacked message has already been shown to you, so
 	// counting it would be telling you to go and read something you have.
-	Pending int `json:"pending" jsonschema:"messages waiting for you on this channel, counted without delivering them. Above zero means poll before you send"`
+	Pending int `json:"pending" jsonschema:"messages waiting for you on THIS CHANNEL, counted without delivering them. Room and broadcast mail are counted separately — pending_total is the number that covers everything"`
 }
 
 type channelsOut struct {
+	// Channels keeps meaning exactly "things addressable by channel_id". Room rows are
+	// NOT folded in under a discriminator, deliberately: every element of this array has
+	// always been spendable as `channel_id`, and three input schemas take one. A room id
+	// in there would be passed straight back to comm_send/comm_ack/comm_file_offer, all
+	// of which reject it — turning a clean structural absence into a plausible wrong
+	// value, which is strictly worse.
 	Channels []channelView `json:"channels"`
+	// Rooms is the fix for comm_channels being blind to room mail. NEVER omitempty and
+	// never nil: `[]` means "you are in no rooms", an ABSENT key means an older build,
+	// and a caller must be able to tell those apart. That distinction is the entire
+	// reason this is a result field rather than a new tool.
+	Rooms []channelRoomView `json:"rooms"`
+	// BroadcastPending is mail sent to you by a station broadcasting to every room it
+	// shares with you. It gets its own number because broadcast has nowhere else to live:
+	// a channel has a channel row and a room has a room row, but `b:<sender>` appears in
+	// no list a recipient can enumerate.
+	BroadcastPending int `json:"broadcast_pending"`
+	// PendingTotal is every queued message for you across channels, rooms and broadcast.
+	//
+	// THIS IS THE FIELD THAT REACHES A SESSION ALREADY RUNNING. Such a session captured a
+	// tool description saying "a pending count per channel" and will never see the
+	// corrected text — tool descriptions pin at conversation start. But the instruction it
+	// holds says "if it is above zero, poll first", and comm_poll has always been
+	// scope-blind, so one honest total is actionable under the old sentence.
+	PendingTotal int `json:"pending_total"`
+	// KenVersion is what is running now — the same field comm_poll carries, on the same
+	// surface, for the same reason: the ken_version TOOL is unreachable from a
+	// conversation older than it, and this is the only zero-side-effect version read an
+	// unbound endpoint has.
+	KenVersion string `json:"ken_version"`
+}
+
+// channelRoomView is one room from this endpoint's point of view.
+//
+// Mirrors directoryRoom (below) on purpose, field for field. Two surfaces that disagree
+// about what a room row is have drifted before, and a session cross-checking
+// comm_channels against comm_directory must not have to reconcile two shapes.
+type channelRoomView struct {
+	RoomID string `json:"room_id"`
+	// Members are station NAMES, resolved here, not raw `s:<id>` party keys. A list of
+	// opaque ids answers "how many" and not "who", and "who is in this room" is the
+	// question a sender actually has.
+	Members []string `json:"members"`
+	Pending int      `json:"pending" jsonschema:"messages waiting for you in this room, counted without delivering them"`
+	// AddressWith is the literal call shape. It is here because the single most expensive
+	// failure this surface has caused was a station that knew a room existed, had its id,
+	// and could not work out how to send to it — it passed the id as channel_id, got a
+	// bare refusal, and concluded rooms were receive-only.
+	AddressWith string `json:"address_with" jsonschema:"how to send here: pass this room_id as to_room, not as channel_id"`
 }
 
 type sendIn struct {
@@ -165,7 +213,7 @@ type messageView struct {
 	CreatedAt        string    `json:"created_at"`
 	ReplyDeadlineAt  string    `json:"reply_deadline_at,omitempty"`
 	File             *fileView `json:"file,omitempty" jsonschema:"present when this message carries a file offer"`
-	Kind             string    `json:"kind" jsonschema:"'message' = your peer wrote it; 'status' = Ken wrote it about an earlier message of YOURS, e.g. {\"status\":\"reply_overdue\"} or {\"status\":\"expired\"}. A peer cannot forge a status message"`
+	Kind             string    `json:"kind" jsonschema:"'message' = a peer wrote it. 'status' = a LEGACY notice Ken wrote about a message of yours before 3.4.0; nothing creates these any more — what became of what you sent now arrives in the poll result's 'notices' array instead. A peer cannot forge a status message"`
 }
 
 type pollOut struct {

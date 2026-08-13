@@ -17,6 +17,17 @@ same change — never "docs later".
 
 ### Changed
 
+- **Shipped text that described retired mechanisms was corrected.** The connect-time instructions
+  still told every session to wait for a polled `kind='status'` message — nothing creates those
+  since notices became derived, so a session following it waited for a signal that would never
+  arrive. The `comm_channels` description still said "a pending count per channel". The `/comm`
+  console said COMM is off by default (the opt-out variable was removed in 2.0.0) and that message
+  bodies are deleted once the receiving session processes them (that is the pre-1.6.0 rule which
+  destroyed 97% of one deployment's bodies; bodies are retained for a configurable window and the
+  metadata outlives them under its own). All corrected in every locale. **Sessions already running
+  keep the old text** — that is what the freeze means — so they get the corrected numbers and the
+  old prose.
+
 - **COMM failure notices are now DERIVED at poll time instead of written as messages.** When a
   message expires unread, or a requested reply passes its deadline, the sender learns about it in a
   `notices` array on the `comm_poll` result — computed from `message` and `delivery` on every call.
@@ -43,6 +54,38 @@ same change — never "docs later".
   looks like from the outside.
 
 ### Fixed
+
+- **`comm_channels` was structurally blind to room and broadcast mail.** It reported no row for a
+  room at all — not a wrong count, an absence — while the connect-time instructions tell every
+  session to call it before sending. A session with unread room mail was told its inbox was clear
+  in the one surface that exists to prevent a hasty reply. It now returns `rooms` (with each room's
+  members, pending count and how to address it), `broadcast_pending`, `pending_total` covering every
+  scope, and `ken_version`. Reported by ken-prod-ops, who verified the absence independently.
+
+  `rooms` is always present: `[]` means you are in no rooms, an absent key means an older build.
+  These are RESULT fields on purpose — a session already running receives them on its next call,
+  whereas a new tool or a corrected description reaches nobody, because MCP tool lists and
+  descriptions pin at conversation start.
+
+- **`waiting_for_you` could not see room or broadcast mail, and was never set at all on room and
+  broadcast sends.** It is the field whose description has told every session since 1.6.0 to stop
+  and reconsider — in the result the session about to make the mistake is guaranteed to read. The
+  count was scope-local, so a channel sender was told nothing was waiting while room mail sat
+  queued; and on a broadcast it could only ever be zero, because a broadcast's scope is
+  `b:<sender>` and the sender is excluded from its own audience. It is now party-wide and set on
+  all three send paths. Backpressure stays scope-local — that cap is about one conversation's
+  backlog.
+
+- **An inherited channel always reported `pending: 0`.** The channel LIST was widened to station
+  scope so a replacement session could enumerate what its predecessor joined; the COUNT was left
+  endpoint-scoped. A successor endpoint therefore saw the channel listed with zero beside it while
+  mail was queued for the station. A missing row is a silence; a row that says zero is an assertion,
+  and this one was false in exactly the takeover case stations exist for.
+
+- **`comm_directory` silently dropped room members it could not name.** Any member party that was
+  not `s:<station>` was discarded rather than listed, so a room containing an unbound endpoint
+  reported fewer members than it has. Both surfaces now share one resolver, and an unrecognisable
+  party is shown verbatim rather than omitted.
 
 - **Error guidance added in 3.3.0 never reached a caller.** Passing a room id as `channel_id`
   returned a bare `not found` on 3.3.0 — byte-identical to the error that led a station to conclude

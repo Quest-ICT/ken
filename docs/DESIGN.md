@@ -161,9 +161,9 @@ full contract in [`COMM.md`](COMM.md).
   unrecognised value leaves COMM **on**: a typo must not silently disable core functionality.
 - **The contract exclusion stays, for a different reason:** [`../COMPATIBILITY.md`](../COMPATIBILITY.md)
   still keeps the `comm_*` surface outside the byte-level contract — no longer because it is optional, but
-  because it is **mid-redesign**. The remaining planned work removes notice-messages, replaces pairing
-  codes and channel-pair addressing with rooms and name-addressed send, and retires the **channel**, the
-  central noun of today's tools. Promoting the surface now would make that redesign a MAJOR bump, or push
+  because it is **mid-redesign**. Notice-messages are gone (3.4.0) and rooms have landed; the remaining
+  work replaces pairing codes and channel-pair addressing with name-addressed send, and retires the
+  **channel**, the central noun of today's tools. Promoting the surface now would make that redesign a MAJOR bump, or push
   deprecated v1 aliases through a release cycle, for no benefit. It is promoted when COMM v2 lands.
 - **Trade-off accepted, stated plainly:** a separate file isolates the KB's WAL and backups, **not** the
   disk, the process, or the readiness signal. Those require enforced rules (storage budget with a

@@ -68,8 +68,9 @@ it never collides with the `ken_` shape) and always resolves to the **same agent
 > durable knowledge base down — and removing the variable would not remove that state, only the
 > operator's control of it, which is their one remedy if COMM misbehaves in production. It still
 > sits **outside** the byte-level compatibility contract, but no longer because it is optional: the
-> surface is mid-redesign — notice-messages go, rooms and name-addressed send replace pairing codes
-> and channel-pair addressing, and the *channel*, the central noun of today's tools, is retired — so
+> surface is mid-redesign — notice-messages are gone (3.4.0) and rooms have landed, name-addressed
+> send still has to replace pairing codes and channel-pair addressing, and the *channel*, the central
+> noun of today's tools, is still to be retired — so
 > promoting it now would buy a MAJOR bump, or a release cycle of deprecated v1 aliases, for no
 > benefit. It is promoted when that redesign (COMM v2) lands. That is why its contract lives in
 > [COMM.md](COMM.md) rather than here. Nothing in this document changes either way.

@@ -71,9 +71,9 @@ and then the claim — not the reverse.
 - **The inter-session communication surface** ([docs/COMM.md](docs/COMM.md)) — its `comm_*`
   tools, endpoint ids, MCP endpoint path, and settings. COMM is **core, on by default, and
   supported**. It is excluded not for being optional — it is not, any more — but because the
-  surface is **mid-redesign**: the remaining planned work removes notice-messages, replaces
-  pairing codes and channel-pair addressing with rooms and name-addressed send, and **retires
-  the channel**, the central noun of the tool surface as it stands. Promoting it into the
+  surface is **mid-redesign**. Notice-messages are gone (3.4.0) and rooms have landed; what
+  remains is replacing pairing codes and channel-pair addressing with name-addressed send, and
+  **retiring the channel**, the central noun of the tool surface as it stands. Promoting it into the
   contract now would make that redesign a MAJOR bump, or force a release cycle of deprecated v1
   aliases for a shape nobody intends to keep, and buy a caller nothing in exchange. Until then
   it evolves **additively wherever it can**, and where it cannot the CHANGELOG says so plainly

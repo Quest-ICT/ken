@@ -76,15 +76,20 @@ type Message struct {
 	// refused rather than returned, so a number here is always a real audience.
 	Recipients int
 
-	// WaitingForYou is how many messages were already queued or delivered FOR THE
-	// SENDER on this channel at the moment of sending.
+	// WaitingForYou is how many messages were already QUEUED for the sender — anywhere,
+	// in any scope — at the moment of sending.
 	//
 	// A session that sends without reading what is already waiting answers a question
 	// its peer has often moved past — measured on this project: a reply that
 	// re-argued a point the peer had already conceded. The value of checking is not
 	// the read, it is the pause before sending; a non-zero count here is the prompt
-	// to take it. Send already computed this number for backpressure and discarded
-	// it, so it costs one extra aggregate over a scan that was happening anyway.
+	// to take it.
+	//
+	// It was scope-local until it was found to be structurally zero on the broadcast
+	// path and blind to room mail on every path — including for the channel sender, who
+	// would be told "nothing is waiting" while a room message sat queued. It now costs
+	// its own small query rather than riding the backpressure aggregate, which is the
+	// price of it meaning what its description has always said.
 	WaitingForYou int
 }
 
@@ -193,16 +198,24 @@ WHERE scope_id=? AND sender_party=? AND idempotency_key=?`,
 		// replying to the very message it was counting. It is the same queued-versus-
 		// delivered distinction I argued for on the refusal design and then failed to
 		// apply to the warning I built alongside it.
-		var unacked, waitingForSender int
+		// BACKPRESSURE STAYS SCOPE-LOCAL. The cap is about this conversation's backlog,
+		// and widening it would let one busy room throttle unrelated traffic.
+		var unacked int
 		if err := t.QueryRowContext(ctx, `
-SELECT COUNT(*), COUNT(*) FILTER (WHERE d.party_key = ? AND d.state = 'queued')
+SELECT COUNT(*)
   FROM delivery d JOIN message m ON m.id = d.message_row
- WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, senderParty, scope).
-			Scan(&unacked, &waitingForSender); err != nil {
+ WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, scope).Scan(&unacked); err != nil {
 			return err
 		}
 		if unacked >= s.lim().MaxUnackedPerChannel {
 			return ErrBackpressure
+		}
+		// The sender's own waiting mail is a SEPARATE, party-wide question — see
+		// queuedForEndpoint. It used to be the second half of the aggregate above, which
+		// is why it could only ever see this one scope.
+		waitingForSender, err := queuedForEndpoint(ctx, t, ep)
+		if err != nil {
+			return err
 		}
 
 		// Correlate a reply, if any. The referenced request must be on this channel
@@ -426,16 +439,15 @@ func senderKey(ctx context.Context, t *sql.Tx, sender int64) (string, error) {
 // with that many knobs would be harder to hold to account than these few
 // shared-shape lines. If the backpressure or sequencing RULES ever change, both
 // places change — they are the same rule stated twice, and each points here.
+//
+// EVERY ROW IT WRITES IS kind='message'. It used to take a kind, because the sweeper
+// authored 'status' rows here and those bypassed backpressure — a channel that is full
+// being exactly when a failure signal matters most. Notices are derived at poll time
+// since 3.4.0 (notice.go), so nothing authors a status row and the parameter, the branch
+// and the exemption were all unreachable. They are removed rather than left with a
+// corrected comment: dead code behind an explanation is how the next reader rebuilds a
+// mechanism that was deliberately deleted.
 func (s *Store) enqueueLocked(ctx context.Context, t *sql.Tx, chRow, sender, recipient int64, body string, ttlSec int) (*Message, error) {
-	return s.enqueueKind(ctx, t, chRow, sender, recipient, body, ttlSec, "message")
-}
-
-// enqueueKind is enqueueLocked plus the message kind. A 'status' row is authored
-// by the SERVER about a message's fate and deliberately BYPASSES backpressure: a
-// channel that is full is exactly when a failure signal matters most, and letting
-// the cap suppress it would reintroduce the indefinite wait the signal exists to
-// prevent.
-func (s *Store) enqueueKind(ctx context.Context, t *sql.Tx, chRow, sender, recipient int64, body string, ttlSec int, kind string) (*Message, error) {
 	// The scope is derived from the channel rather than passed in, so the two can
 	// never disagree: a caller holding a rowid cannot accidentally file a message
 	// into another channel's stream.
@@ -445,17 +457,15 @@ func (s *Store) enqueueKind(ctx context.Context, t *sql.Tx, chRow, sender, recip
 	}
 	scope := channelScope(chPublicID)
 
-	if kind != "status" {
-		var unacked int
-		if err := t.QueryRowContext(ctx, `
+	var unacked int
+	if err := t.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM delivery d JOIN message m ON m.id = d.message_row
  WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, scope).
-			Scan(&unacked); err != nil {
-			return nil, err
-		}
-		if unacked >= s.lim().MaxUnackedPerChannel {
-			return nil, ErrBackpressure
-		}
+		Scan(&unacked); err != nil {
+		return nil, err
+	}
+	if unacked >= s.lim().MaxUnackedPerChannel {
+		return nil, ErrBackpressure
 	}
 	seq, err := nextScopeSeq(ctx, t, scope)
 	if err != nil {
@@ -478,7 +488,7 @@ INSERT INTO message(message_id, scope_id, scope_seq, channel_id, sender_endpoint
                     body, body_sha256, body_bytes, expires_at, kind)
 VALUES(?,?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?), ?)`,
 		messageID, scope, seq, chRow, sender, senderParty,
-		body, sha256Hex(body), len(body), nowExpr(ttlSec), kind); err != nil {
+		body, sha256Hex(body), len(body), nowExpr(ttlSec), "message"); err != nil {
 		return nil, err
 	}
 	if _, err := t.ExecContext(ctx, `
@@ -748,6 +758,37 @@ func partyPredicate(ep *Endpoint, alias string) (string, []any) {
 			[]any{stationParty(ep.StationID), endpointPartyKey(ep.ID)}
 	}
 	return alias + `party_key = ?`, []any{endpointPartyKey(ep.ID)}
+}
+
+// queuedForEndpoint counts what is waiting for this endpoint EVERYWHERE, for the
+// waiting_for_you warning on a send.
+//
+// PARTY-WIDE, NOT SCOPE-LOCAL, and the second reason is not optional:
+//
+//  1. The instruction a session holds is scope-agnostic — "mail was already waiting for
+//     you when this went out". It has said that since 1.6.0, and a session that captured
+//     it will never see a corrected version, because tool descriptions pin at conversation
+//     start. Broadening the number makes text already in the field MORE true.
+//  2. Scope-local is a permanent zero on the broadcast path. A broadcast's scope is
+//     b:<senderParty> and Broadcast excludes the sender from its own audience, so no
+//     delivery addressed to the sender can ever exist there. Scope-local is not a weaker
+//     answer on that path; it is a dead field.
+//
+// Shares Poll's predicates for the same reason pending.go does: a warning about mail a
+// poll would refuse sends a session looking for something it cannot have.
+func queuedForEndpoint(ctx context.Context, t *sql.Tx, ep *Endpoint) (int, error) {
+	pred, args := partyPredicate(ep, "d")
+	var n int
+	err := t.QueryRowContext(ctx, `
+SELECT COUNT(*)
+  FROM delivery d
+  JOIN message m ON m.id = d.message_row
+  LEFT JOIN channel c ON c.id = m.channel_id
+ WHERE `+pred+`
+   AND d.state = 'queued'
+   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   AND (c.id IS NULL OR c.state='open')`, args...).Scan(&n)
+	return n, err
 }
 
 // blankIfFullySettled drops a body once NO recipient still owes anything.

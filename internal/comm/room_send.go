@@ -107,6 +107,7 @@ func (s *Store) SendToRoom(ctx context.Context, ep *Endpoint, roomID, body strin
 			TTLSeconds:  ttl,
 			Opts:        opts,
 			Kind:        "message",
+			Endpoint:    ep,
 		})
 		if out != nil {
 			out.TTLClampedFrom, out.Recipients = clampedFrom, len(recipients)
@@ -131,6 +132,12 @@ type insertSpec struct {
 	TTLSeconds  int
 	Opts        SendOpts
 	Kind        string
+	// Endpoint is the SENDING endpoint, carried so the waiting_for_you warning can be
+	// computed here rather than at each call site. Room and broadcast sends never set that
+	// field at all before this: the result simply omitted it, and `omitempty` then deleted
+	// the key — so a sender with mail waiting read an absence as all-clear, on the two
+	// paths where a hasty reply reaches the most people.
+	Endpoint *Endpoint
 }
 
 // insertMessageWithDeliveries writes one message and one delivery row per recipient.
@@ -158,16 +165,19 @@ WHERE scope_id=? AND sender_party=? AND idempotency_key=?`,
 	// same way a busy channel does. Counting per recipient instead would let an
 	// N-member room carry N times the backlog before anything pushed back, which is
 	// precisely backwards: the wider the audience, the more a runaway costs.
-	if in.Kind != "status" {
-		var unacked int
-		if err := t.QueryRowContext(ctx, `
+	// UNCONDITIONAL, where it used to exempt kind='status'. The exemption existed because
+	// the sweeper authored notices into this path and a full scope is exactly when a
+	// failure signal matters most. Notices are derived at poll time since 3.4.0, so both
+	// call sites pass 'message' and the exemption was unreachable — removed here for the
+	// same reason as its twin in message.go, and consistently with it.
+	var unacked int
+	if err := t.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM delivery d JOIN message m ON m.id = d.message_row
  WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, in.Scope).Scan(&unacked); err != nil {
-			return nil, err
-		}
-		if unacked >= s.lim().MaxUnackedPerChannel {
-			return nil, ErrBackpressure
-		}
+		return nil, err
+	}
+	if unacked >= s.lim().MaxUnackedPerChannel {
+		return nil, ErrBackpressure
 	}
 
 	var replyTo any
@@ -235,7 +245,23 @@ WHERE id=? AND answered_at IS NULL`, replyToRow); err != nil {
 			return nil, err
 		}
 	}
-	return messageByID(ctx, t, messageID)
+	out, err := messageByID(ctx, t, messageID)
+	if err != nil || out == nil {
+		return out, err
+	}
+	// WHAT WAS ALREADY WAITING FOR THE SENDER, computed here so both addressing paths get
+	// it from one place. Counted AFTER the insert, which is correct and worth stating: the
+	// message just written is addressed to the recipients, never to the sender, so it
+	// cannot count itself — and on the broadcast path the sender is excluded from its own
+	// audience by construction.
+	if in.Endpoint != nil {
+		n, wErr := queuedForEndpoint(ctx, t, in.Endpoint)
+		if wErr != nil {
+			return nil, wErr
+		}
+		out.WaitingForYou = n
+	}
+	return out, nil
 }
 
 // nullInt keeps a room delivery's recipient_endpoint NULL rather than zero. Zero would
@@ -322,6 +348,7 @@ SELECT DISTINCT other.party_key
 			TTLSeconds:  ttl,
 			Opts:        opts,
 			Kind:        "message",
+			Endpoint:    ep,
 		})
 		if out != nil {
 			out.TTLClampedFrom, out.Recipients = clampedFrom, len(recipients)
