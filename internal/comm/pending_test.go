@@ -1063,3 +1063,95 @@ func TestUnackedCountsMessagesWhileDeliveriesCountsRecipients(t *testing.T) {
 		t.Fatalf("Unacked = %d — the message is still outstanding for the other member", after.Unacked)
 	}
 }
+
+// A GAUGE NAMED _bytes MUST COUNT BYTES.
+//
+// It summed LENGTH(body), and SQLite's LENGTH() on TEXT counts CHARACTERS — so the figure
+// under-reported by however much non-ASCII the traffic carried. ken-prod-ops measured it on
+// production: 308,940 reported against 310,655 actual, 65 of 70 body-bearing rows affected.
+// 0.55% low, which is precisely the kind of wrong that survives every review, because the
+// number looks entirely reasonable.
+//
+// The third of this exact shape in this project. body_bytes was already written at every
+// insert site and already covered by a test saying it "must survive for accounting"; the
+// accounting metric just did not use it.
+func TestBodyBytesCountsBytesNotCharacters(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a, _, ch := pair(t, st)
+
+	// Multi-byte throughout, because an ASCII fixture cannot tell the two functions apart —
+	// which is exactly why this survived: most test text is ASCII and the bug is invisible.
+	body := "cañón — mañana ✓ 日本語"
+	if _, err := st.Send(ctx, a, ch, body, SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	wantBytes := int64(len(body)) // Go strings are UTF-8, so len() IS the byte count
+	if int64(len([]rune(body))) == wantBytes {
+		t.Fatal("the fixture is pure ASCII, so characters and bytes agree and this test cannot fail")
+	}
+
+	got, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BodyBytes != wantBytes {
+		t.Fatalf("BodyBytes = %d, want %d (the real byte length).\n"+
+			"LENGTH() on TEXT counts characters; a gauge named _bytes over UTF-8 under-reports "+
+			"by the multi-byte content, which on production was 65 of 70 messages.", got.BodyBytes, wantBytes)
+	}
+}
+
+// AND BLANKED BODIES MUST NOT BE COUNTED — the dependency the fix rests on.
+//
+// body_bytes survives blanking on purpose (it is the record of how much text used to be
+// there), so this figure is only correct because retention writes body=NULL and the query
+// excludes NULL. If blanking ever wrote an empty string instead, the gauge would silently
+// report several times the truth — on production, 1.27 MB of accounting for text that no
+// longer exists.
+func TestBlankedBodiesAreNotCountedAsRetainedBytes(t *testing.T) {
+	l := DefaultLimits()
+	l.BodyRetentionSeconds = 0 // blank on settle, the documented way to ask for it
+	st := newStore(t, l)
+	ctx := context.Background()
+	a, b, ch := pair(t, st)
+
+	m, err := st.Send(ctx, a, ch, "this text will be destroyed", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.BodyBytes == 0 {
+		t.Fatal("setup: nothing counted before blanking")
+	}
+
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.Ack(ctx, b, m.MessageID); err != nil || n != 1 {
+		t.Fatalf("setup ack: (%d, %v)", n, err)
+	}
+
+	after, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.BodyBytes != 0 {
+		t.Fatalf("BodyBytes = %d after the body was blanked, want 0 — body_bytes outlives the "+
+			"text on purpose, so counting it for a row whose body is gone reports storage that "+
+			"was already reclaimed", after.BodyBytes)
+	}
+	// AND THE ROW STILL CARRIES ITS body_bytes, which is what makes the above load-bearing
+	// rather than incidental: the number is there and must be excluded by the predicate.
+	var kept int64
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(body_bytes),0) FROM message WHERE body IS NULL`).Scan(&kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept == 0 {
+		t.Fatal("the blanked row lost its body_bytes, so this test is not exercising the exclusion")
+	}
+}

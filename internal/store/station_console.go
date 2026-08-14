@@ -182,12 +182,17 @@ type StationUsage struct {
 // StationAssetUsage counts what a station is holding. Reported per station rather
 // than per space because the caps are per station, and a total across stations would
 // hide the one that is actually full.
+// OCTET_LENGTH, not LENGTH: SQLite's LENGTH() on TEXT counts CHARACTERS, so a field named
+// NoteBytes fed by it under-reports by however much non-ASCII a notebook holds — and this
+// number is compared against a byte CAP, so the station that is actually full is the one
+// most likely to be under-reported. station_notes.go already uses OCTET_LENGTH throughout;
+// this was the one query in the package that did not, which is why it read as correct.
 func (s *Store) StationAssetUsage(ctx context.Context, stationID string) (*StationUsage, error) {
 	u := &StationUsage{StationID: stationID}
 	err := s.R.QueryRowContext(ctx, `
 SELECT
   (SELECT COUNT(*)                     FROM station_note   WHERE station_id=?),
-  (SELECT COALESCE(SUM(LENGTH(body)),0) FROM station_note   WHERE station_id=?),
+  (SELECT COALESCE(SUM(OCTET_LENGTH(body)),0) FROM station_note WHERE station_id=?),
   (SELECT COUNT(*)                     FROM station_task   WHERE station_id=? AND state='open'),
   (SELECT COUNT(*)                     FROM station_task   WHERE station_id=?),
   (SELECT COUNT(*)                     FROM station_locker WHERE station_id=?),

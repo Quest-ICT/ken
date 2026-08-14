@@ -24,6 +24,23 @@ same change — never "docs later".
 
 ### Fixed
 
+- **`ken_comm_message_bytes` and a station's notebook usage counted CHARACTERS, not bytes.**
+  Both summed SQLite's `LENGTH()` over a TEXT column, which returns characters — so a figure
+  named *bytes* under-reported by however much non-ASCII the content carried. ken-prod-ops
+  measured the COMM one on production: 308,940 reported against 310,655 actual, 65 of 70
+  body-bearing rows affected. 0.55% low, which is exactly the kind of wrong that survives
+  review, because the number looks entirely reasonable.
+
+  The COMM metric now sums `message.body_bytes`, a column already written at every insert
+  site and already covered by a test saying it "must survive for accounting" — the accounting
+  metric simply did not use it. The station notebook figure now uses `OCTET_LENGTH`, matching
+  the rest of its own package; it was the one query in `internal/store` that did not, and it
+  is compared against a byte CAP, so the notebook closest to full was the one most
+  under-reported.
+
+  This is the third defect of this exact shape in the project. The pattern is grep-able:
+  `LENGTH(` applied to any TEXT column whose value feeds something named *bytes*.
+
 - **Two metric HELP strings were ambiguous or false.** `ken_comm_messages_unacked` said
   "Messages delivered or queued but not yet acknowledged" — correct, and insufficient since
   rooms: one body sent to three members is 1 message and 3 deliveries, and before rooms those

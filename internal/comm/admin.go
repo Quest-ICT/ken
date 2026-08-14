@@ -144,6 +144,22 @@ type Stats struct {
 // space would follow its sender, where `channel.space_id` was fixed at creation; that is
 // the moment to revisit this.
 //
+// BODY BYTES COMES FROM body_bytes, NOT FROM LENGTH(body). SQLite's LENGTH() on a TEXT
+// value counts CHARACTERS; a gauge named _bytes over a UTF-8 column therefore under-reports
+// by however much non-ASCII the traffic carries. Measured on production 3.5.1: 308,940
+// reported against 310,655 actual, 65 of 70 body-bearing rows affected — 0.55% low, which
+// is exactly the kind of wrong that survives review because it looks right.
+//
+// body_bytes was already written at every insert site and already covered by a test that
+// says it "must survive for accounting"; the accounting metric simply did not use it.
+// FileBytes two lines down always did the equivalent thing with stored_bytes.
+//
+// THIS IS ONLY CORRECT BECAUSE BLANKING WRITES NULL, NOT ”. The predicate below excludes
+// blanked rows by `body IS NOT NULL`, and those rows keep their body_bytes forever — on
+// production that is 1.27 MB of accounting for text that no longer exists. If retention
+// ever blanks to an empty string instead, this line silently reports several times the
+// truth. The dependency is on a choice made in message.go, so it is written down here.
+//
 // ATTACHMENT COUNTERS KEEP THE CHANNEL JOIN, deliberately. A file offer still binds a
 // channel rowid, so there are no room-scoped attachment rows to miss. They become the same
 // bug the moment file exchange learns about scopes, and not before.
@@ -160,7 +176,7 @@ SELECT
      JOIN message m ON m.id = d.message_row
      JOIN endpoint e ON e.id = m.sender_endpoint
      WHERE e.space_id=? AND d.state IN ('queued','delivered')),
-  (SELECT COALESCE(SUM(LENGTH(m.body)),0) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
+  (SELECT COALESCE(SUM(m.body_bytes),0) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
      WHERE e.space_id=? AND m.body IS NOT NULL),
   (SELECT COUNT(*) FROM attachment a JOIN channel c ON c.id=a.channel_id
      WHERE c.space_id=? AND a.state IN ('offered','ready')),
