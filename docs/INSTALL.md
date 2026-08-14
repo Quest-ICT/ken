@@ -47,6 +47,36 @@ The browser page `https://github.com/Quest-ICT/ken/releases/latest` also always 
 the newest release. (Verify against `SHA256SUMS`; it lists both the versioned and the
 alias names — the aliases are byte-identical copies.)
 
+## Verifying what you downloaded
+
+`SHA256SUMS` detects a **corrupted download**. It cannot detect a **compromised release**,
+because it is served from the same place as the thing it vouches for — if that place is
+wrong, so is the checksum. Every release therefore also carries a **build-provenance
+attestation**, which is signed at build time and resolved out of band:
+
+```sh
+gh attestation verify ken-latest-linux-amd64.bin --repo Quest-ICT/ken
+```
+
+**IT SUCCEEDS SILENTLY — exit 0, no output.** That is indistinguishable from a command that
+did nothing, so before you trust a pass, prove the check can fail. Two controls, and run
+them once on any machine where you rely on this:
+
+```sh
+head -c 2048 /dev/urandom > /tmp/junk.bin
+gh attestation verify /tmp/junk.bin --repo Quest-ICT/ken          # expect: exit 1
+gh attestation verify ken-latest-linux-amd64.bin --repo torvalds/linux   # expect: exit 1
+```
+
+The **second** is the one that matters. The first only shows that an unknown file fails.
+The second takes the genuine artifact and asks the wrong repository about it — so passing
+it proves the command resolves your file's hash against *a specific repository's*
+attestations, rather than rubber-stamping whatever it is handed. With both failing as
+shown, an exit 0 on the real command is a pass you can justify.
+
+Reported by ken-prod-ops, who nearly recorded a pass they had not earned — and by the
+maintainer, who actually did, in the same week, in a message recommending the command.
+
 On a terminal it runs an **interactive wizard** (install prefix, service user,
 listen port, firewall, start/enable); piped or with `-y` it runs unattended with
 sensible defaults. Useful flags:
