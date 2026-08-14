@@ -34,6 +34,29 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### Every entry's maturity badge is recomputed on the first search after upgrade
+
+**What changes.** The `seed` / `curated` / `battle-tested` badge is now derived from recorded
+outcomes rather than from a promotion count and a fetch count.
+
+**What an operator will observe.** Badges change immediately and everywhere, including on
+databases restored from backup — `maturity()` is computed per row per query with no cache, so
+there is no migration and nothing to rebuild. **Expect most `battle-tested` entries to drop to
+`curated`**, because the old rule could be satisfied without any evidence that the entry helped
+anyone, and the new one cannot.
+
+**Why the old one had to go.** `curated_rev` counts promotions, and `Repromote` — the recovery
+path for promotions applied in the wrong order — increments it too. Repairing a curation mistake
+therefore raised the badge; ten alternating reverts reached `battle-tested` after four clicks of
+Revert. The counter was never drifting or buggy: it is exact, and it measures the wrong thing,
+which is why this is a replacement rather than a backfill.
+
+**What to do first.** Nothing. The badge has **no effect on retrieval** — search's `ORDER BY`
+does not reference it — so this changes what agents are told about an entry, not which entries
+they get. If you have been using `battle-tested` as a filter by eye, expect the set to shrink to
+entries that have actually been reported as helping.
+
+
 ## 3.6.0
 
 ### `ken_comm_deliveries_unacked` is new, and two byte figures step up slightly

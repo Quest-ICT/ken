@@ -129,6 +129,9 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
       behaviour was corrected in code in 1.5.2 by a commit that touched no `.properties` and no
       template. *A destructive control with a tooltip promising it is safe.*
 
+- [x] **`kb_record_outcome` has a reader** — the maturity badge now reads the outcome evidence
+      instead of a promotion count. *Unreleased.* Vlad settled the three open numbers: dedup by
+      distinct `session_id`, N=3, and a `was-wrong` since the last promotion blocks the top tier.
 - [ ] **Work through the remaining confirmed findings** in the appendix, prose-first. The rule
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of

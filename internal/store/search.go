@@ -53,7 +53,24 @@ fused AS (
   ) GROUP BY version_id
 )
 SELECT e.slug, ev.title, ev.summary, e.kind, COALESCE(e.category,''), e.staleness,
-       e.curated_rev, e.use_count, f.score,
+       -- THE CURATION GATE: a human promoted something. Necessary, and no longer sufficient.
+       (e.curated_version_id IS NOT NULL) AS curated,
+       -- DEDUPED BY SESSION. Sessions are cheap to mint, so counting rows would let one
+       -- enthusiastic session promote an entry alone; counting distinct sessions is the
+       -- cheapest thing that cannot be inflated by repetition. Measured on real data: 8
+       -- 'helped' from one session plus 3 from distinct ones is 11 naive and 4 deduped.
+       (SELECT COUNT(DISTINCT o.session_id) FROM entry_outcome o
+         WHERE o.entry_id = e.id AND o.outcome = 'helped'
+           AND o.session_id IS NOT NULL AND o.session_id <> '') AS helped_sessions,
+       -- A 'was-wrong' SINCE THE LAST PROMOTION blocks the top tier. Anchored at the
+       -- promotion because promoting a correction is precisely how a was-wrong is answered;
+       -- without the anchor an entry could never recover from one report.
+       EXISTS (SELECT 1 FROM entry_outcome o
+                WHERE o.entry_id = e.id AND o.outcome = 'was-wrong'
+                  AND o.created_at > COALESCE(
+                        (SELECT MAX(ce.created_at) FROM curation_event ce
+                          WHERE ce.entry_id = e.id AND ce.event_type = 'promoted'), '')) AS refuted_since,
+       f.score,
        (e.provisional_version_id IS NOT NULL) AS has_provisional,
        COALESCE(ev.content_lang,'')
 FROM fused f
@@ -119,15 +136,16 @@ func (s *Store) SearchPage(ctx context.Context, query string, opt SearchOpts) ([
 	var out []model.SearchResult
 	for rows.Next() {
 		var (
-			r          model.SearchResult
-			curatedRev int
-			useCount   int
+			r              model.SearchResult
+			curated        bool
+			helpedSessions int
+			refutedSince   bool
 		)
 		if err := rows.Scan(&r.Slug, &r.Title, &r.Summary, &r.Kind, &r.Category, &r.Staleness,
-			&curatedRev, &useCount, &r.Score, &r.HasProvisional, &r.Language); err != nil {
+			&curated, &helpedSessions, &refutedSince, &r.Score, &r.HasProvisional, &r.Language); err != nil {
 			return nil, false, err
 		}
-		r.Maturity = maturity(useCount, curatedRev)
+		r.Maturity = maturity(curated, helpedSessions, refutedSince)
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -194,16 +212,43 @@ func ftsQuery(s string) string {
 	return strings.Join(terms, " OR ")
 }
 
-// maturity is a coarse signal derived from promotion count and fetch count.
-func maturity(useCount, curatedRev int) string {
-	switch {
-	case curatedRev >= 3 && useCount >= 10:
-		return "battle-tested"
-	case curatedRev >= 1:
-		return "curated"
-	default:
+// helpedSessionsForBattleTested is how many DISTINCT sessions must have reported 'helped'
+// before an entry is called battle-tested. Small enough to be reachable, large enough that
+// no single session can promote anything on its own.
+const helpedSessionsForBattleTested = 3
+
+// maturity is what every agent is told about how much an entry can be trusted.
+//
+// THE HUMAN GATE STAYS NECESSARY AND STOPS BEING SUFFICIENT: nothing reaches a tier above
+// `seed` without a promotion, so the curation gate is intact — but a promotion alone no
+// longer earns the top tier. That is deliberate, and the trade was accepted explicitly: an
+// agent-written signal sizes the top tier.
+//
+// WHAT THIS REPLACES, AND WHY IT HAD TO GO. The old rule was `curated_rev >= 3 && useCount
+// >= 10`, and `curated_rev` is a PROMOTION COUNT — `curated_rev = curated_rev + 1` appears
+// at promote.go:131 and again inside Repromote at :265, which is the human recovery path for
+// promotions applied in the wrong order. So REPAIRING A CURATION MISTAKE RAISED THE BADGE.
+// Executed on a two-version entry: ten alternating reverts took curated_rev from 2 to 12,
+// reaching "battle-tested" after four clicks of Revert. On the recovery path the signal was
+// anti-correlated with quality — and no backfill can fix that, because the counter is exact
+// and simply measures the wrong thing.
+//
+// `use_count` is gone from the badge too: it counts fetches, and being fetched often is
+// popularity rather than evidence. An entry nobody could apply is fetched exactly as often
+// as one that works.
+//
+// The evidence used instead was already being collected. entry_outcome has been written on
+// every kb_record_outcome since migration 0004 and read by NOTHING — while the connect-time
+// instruction told every session "this is how Ken self-curates — do not skip it". This
+// function is that promise being kept.
+func maturity(curated bool, helpedSessions int, refutedSince bool) string {
+	if !curated {
 		return "seed"
 	}
+	if helpedSessions >= helpedSessionsForBattleTested && !refutedSince {
+		return "battle-tested"
+	}
+	return "curated"
 }
 
 // SearchDiag is what a search can say about ITSELF, so an empty or thin result stops

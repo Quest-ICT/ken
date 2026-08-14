@@ -15,6 +15,36 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **The maturity badge is computed from recorded outcomes instead of a promotion count.** Every
+  session is told at connect: *"close the loop EVERY time: kb_record_outcome … this is how Ken
+  self-curates — do not skip it."* Those outcomes went into `entry_outcome` from migration 0004
+  onward and **nothing ever read them**. This is that promise being kept.
+
+  **What it replaces was worse than unfinished — it was inverted.** The old rule was
+  `curated_rev >= 3 && use_count >= 10`, and `curated_rev` is a promotion COUNT incremented both
+  by `Promote` and by `Repromote`, the human recovery path for promotions applied in the wrong
+  order. So repairing a curation mistake RAISED the badge: ten alternating reverts took an entry
+  from 2 to 12 and reached "battle-tested" after four clicks of Revert. On the recovery path the
+  signal agents trust was anti-correlated with quality. No backfill could fix that — the counter
+  is exact and measures the wrong thing.
+
+  **The new rule.** `seed` until a human promotes — the curation gate is unchanged and still
+  necessary. `battle-tested` additionally requires **3 distinct sessions** reporting `helped`
+  (deduped by `session_id`, because sessions are cheap to mint and counting rows would let one
+  session promote an entry alone) **and no `was-wrong` since the last promotion** (anchored
+  there so promoting a correction clears it, rather than one report being permanently fatal).
+  `use_count` is gone from the badge: being fetched often is popularity, not evidence.
+
+  No schema change — `entry_outcome` already carried everything needed.
+
+  **Every entry's badge is recomputed on the first query after upgrade**, retroactively and
+  globally, including databases restored from backup. The badge has **no effect on retrieval**
+  (search's ordering does not touch it), so this changes what agents are *told*, not what they
+  are *given*. See docs/UPGRADING.md.
+
+
 ### Fixed
 
 - **`station_note_write` with `mode=replace` could overwrite an existing page blind.** `if_rev`
