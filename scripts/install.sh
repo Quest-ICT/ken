@@ -374,18 +374,28 @@ BUNDLE="$(dirname "$SCRIPTS_DIR")"
 [ -x "$BUNDLE/bin/ken" ] || die "no ken binary at $BUNDLE/bin/ken — is this a complete bundle?"
 
 # The pre-upgrade snapshot (§5b) uses the SAME naming + securing policy as the
-# nightly snapshot — one shared library, so the two can never drift on timezone,
-# mode, or encryption. It ships in every bundle alongside ken-snapshot.sh.
+# nightly snapshot — one shared library, so the two can never drift on timezone or
+# mode. (It also covered encryption until 2.0.0 retired it; the shared helper is why
+# that retirement was a change in ONE place rather than two, which is the payoff the
+# knowledge-base entry on this argued for three releases earlier.) It ships in every
+# bundle alongside ken-snapshot.sh.
 [ -f "$SCRIPTS_DIR/ken-snapshot-lib.sh" ] || die "missing $SCRIPTS_DIR/ken-snapshot-lib.sh — is this a complete bundle?"
 # shellcheck source=ken-snapshot-lib.sh
 . "$SCRIPTS_DIR/ken-snapshot-lib.sh"
 
-# _ken_unit_env <VAR> — the effective value of VAR the operator configured for
-# the NIGHTLY snapshots, so the pre-upgrade snapshot honors the same intent ("encrypt
-# my backups") instead of dropping a plaintext DB next to encrypted ones. Read from
-# the just-installed unit's merged environment (main unit + any `systemctl edit`
-# drop-in), with a direct file grep as a fallback. Empty = the operator has not opted
-# into encryption; the snapshot is then left plaintext 0600, exactly as a nightly is.
+# _ken_unit_env <VAR> — the effective value of VAR the operator configured for the
+# NIGHTLY snapshots, so the pre-upgrade snapshot lands in the SAME PLACE, owned by the
+# SAME GROUP, instead of diverging from the nightlies it sits beside. Read from the
+# just-installed unit's merged environment (main unit + any `systemctl edit` drop-in),
+# with a direct file grep as a fallback. Empty = the operator configured neither, and
+# the installer's own defaults apply.
+#
+# It reads KEN_BACKUP_DIR and KEN_BACKUP_GROUP. It was introduced to carry an "encrypt
+# my backups" intent across to this path; encryption was retired in 2.0.0 and the
+# function outlived its original reason, which is worth stating because the fallback
+# logic below is elaborate for a reason that no longer applies to encryption — it
+# applies to the directory, where getting it wrong scatters snapshots across two
+# locations.
 _ken_unit_env() {
     if command -v systemctl >/dev/null 2>&1; then
         # AUTHORITATIVE when systemd is present (which it is on any install target).
