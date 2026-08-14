@@ -650,8 +650,22 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if err != nil {
 			return nil, sendOut{}, commError(err)
 		}
+		// WAKE WHOEVER IS WAITING. On a channel that is the resolved peer; on a room or
+		// broadcast it is every live endpoint staffing a recipient party, which the send
+		// path cannot know because a room delivery has no endpoint until somebody polls.
+		// Room sends previously woke nobody at all, so room mail waited out the poll
+		// interval while channel mail arrived at once — a latency difference readable as
+		// a capability difference.
 		if peer != 0 {
 			w.notify(peer)
+		} else if targets, wErr := d.Comm.WakeTargetsFor(ctx, m.MessageID); wErr != nil {
+			// A wakeup is an OPTIMISATION — the poll re-reads the database when its wait
+			// elapses — so failing to compute one must never fail the send that succeeded.
+			log.Printf("comm: wake targets for %s: %v", m.MessageID, wErr)
+		} else {
+			for _, id := range targets {
+				w.notify(id)
+			}
 		}
 		return nil, sendOut{
 			MessageID: m.MessageID, Seq: m.Seq, ExpiresAt: m.ExpiresAt, ReplyDeadlineAt: m.ReplyDeadlineAt,
@@ -724,9 +738,17 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			log.Printf("comm: notices for %s: %v", comm.PartyOf(ep), nErr)
 		} else {
 			for _, n := range ns {
+				// NAMES, not raw party keys. The field exists to distinguish "nobody
+				// engaged" from "one station is quiet", and a list of opaque s:<id>
+				// strings answers neither — while this same handler resolves station
+				// names twenty lines above, for messages.
+				who := make([]string, 0, len(n.Recipients))
+				for _, p := range n.Recipients {
+					who = append(who, partyLabel(ctx, d, p))
+				}
 				out.Notices = append(out.Notices, noticeView{
 					MessageID: n.MessageID, Scope: n.Scope, Reason: n.Reason, At: n.At,
-					IdempotencyKey: n.IdempotencyKey, Recipients: n.Recipients,
+					IdempotencyKey: n.IdempotencyKey, Recipients: who,
 				})
 			}
 		}

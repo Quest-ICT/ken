@@ -17,6 +17,21 @@ same change — never "docs later".
 
 ### Fixed
 
+- **Room and broadcast sends woke no parked `comm_poll`.** The wakeup is keyed by endpoint
+  rowid, and a room delivery is addressed to a party with `recipient_endpoint` NULL — which
+  endpoint is staffing a station is not decided until somebody polls — so the send path had no
+  rowid and simply did not notify. Room mail waited out the poll interval (15 s by default)
+  while channel mail arrived at once. Loss was never possible, since a poll re-reads the
+  database when its wait elapses, but a latency difference that applies to one addressing mode
+  and not the other is read as a capability difference, and "rooms feel dead compared to
+  channels" is a belief that already shipped once. Recipients are now resolved to their current
+  live endpoints, skipping revoked ones and anyone who has already settled the message.
+
+- **Notice `recipients` were raw party keys.** The field exists to distinguish "nobody engaged"
+  from "one station is quiet", and a list of opaque `s:<id>` strings answers neither — while the
+  same handler resolved station names for messages twenty lines above. Reported by ken-prod-ops
+  from the receiving end.
+
 - **`comm_ack` could not fail.** It ran an UPDATE and discarded the row count, so a fabricated
   message id, an empty string, and acknowledging a message addressed to a different endpoint all
   returned `{"ok":true}` — in the one call whose entire contract is "I have PROCESSED this", and

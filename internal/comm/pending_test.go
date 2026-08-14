@@ -682,3 +682,128 @@ func TestCumulativeAckRefusesARoomYouAreNotIn(t *testing.T) {
 		t.Fatalf("the refusal confirms the room exists: %v", err)
 	}
 }
+
+// A ROOM SEND MUST WAKE EVERY MEMBER WAITING ON IT, not the first one and not none.
+//
+// The wakeup is keyed by endpoint rowid; a room delivery is addressed to a PARTY with
+// recipient_endpoint NULL, because which endpoint staffs a station is not decided until
+// somebody polls. So the send path had no rowid and woke nobody — room mail waited out the
+// poll interval while channel mail arrived at once. Latency rather than loss, but "rooms feel
+// dead compared to channels" is a belief that already shipped.
+func TestARoomSendResolvesEveryWaitingMember(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	gamma := stationEndpoint(t, st, "tok-g", "st-gamma")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta", "s:st-gamma")
+
+	m, err := st.SendToRoom(ctx, alpha, "ops", "everyone wake up", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, err := st.WakeTargetsFor(ctx, m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]bool{}
+	for _, id := range targets {
+		got[id] = true
+	}
+	// BOTH recipients, so an implementation that wakes only the first is caught. With one
+	// recipient "all of them" and "the first one" are the same set.
+	if !got[beta.ID] || !got[gamma.ID] {
+		t.Fatalf("wake targets %v miss a recipient (beta=%d gamma=%d)", targets, beta.ID, gamma.ID)
+	}
+	// AND NOT THE SENDER. Waking the sender is a self-inflicted spurious wakeup on every
+	// send, and it is the easiest way to make this look like it works.
+	if got[alpha.ID] {
+		t.Errorf("the SENDER is a wake target (%v) — every send would wake its own parked poll", targets)
+	}
+}
+
+// AND SOMEBODY WHO ALREADY HANDLED IT IS NOT WOKEN AGAIN.
+//
+// Only 'queued' deliveries count. Without that filter a recipient who has already polled and
+// acked is still a wake target, so a redelivery sweep or any later call would rouse a session
+// to re-read something it has finished with — the same "go and read what you are already
+// holding" mistake the pending counts were fixed for.
+func TestWakeTargetsSkipRecipientsWhoAlreadySettled(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	gamma := stationEndpoint(t, st, "tok-g", "st-gamma")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta", "s:st-gamma")
+
+	m, err := st.SendToRoom(ctx, alpha, "ops", "beta will finish with this", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Poll(ctx, beta, 10); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.Ack(ctx, beta, m.MessageID); err != nil || n != 1 {
+		t.Fatalf("setup ack: (%d, %v)", n, err)
+	}
+
+	targets, err := st.WakeTargetsFor(ctx, m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range targets {
+		if id == beta.ID {
+			t.Fatalf("beta acked this and is still a wake target: %v", targets)
+		}
+	}
+	// CONTROL: gamma has NOT settled and is still woken, so the assertion above is about
+	// settlement rather than about the query having stopped returning anything.
+	found := false
+	for _, id := range targets {
+		if id == gamma.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("gamma has not read it and is not a wake target: %v", targets)
+	}
+}
+
+// A REVOKED ENDPOINT IS NOT A WAKE TARGET, and a station with two endpoints wakes the live one.
+func TestWakeTargetsSkipRevokedEndpoints(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	dead := stationEndpoint(t, st, "tok-dead", "st-beta")
+	live := stationEndpoint(t, st, "tok-live", "st-beta")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
+
+	if _, err := st.W.ExecContext(ctx,
+		`UPDATE endpoint SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, dead.ID); err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.SendToRoom(ctx, alpha, "ops", "who is staffing beta", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, err := st.WakeTargetsFor(ctx, m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range targets {
+		if id == dead.ID {
+			t.Fatalf("a revoked endpoint is a wake target: %v", targets)
+		}
+	}
+	// CONTROL: the live successor IS woken, so the assertion above is about revocation
+	// rather than about the station resolving to nothing at all.
+	found := false
+	for _, id := range targets {
+		if id == live.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the live endpoint on the station is not a wake target: %v", targets)
+	}
+}

@@ -212,3 +212,47 @@ func roomMembers(ctx context.Context, t *sql.Tx, roomID string) ([]scopeMember, 
 
 // broadcastScope is the scope a sender's broadcasts live in.
 func broadcastScope(senderParty string) string { return scopePrefixBroadcast + senderParty }
+
+// WakeTargetsFor returns the endpoint rowids that should have a parked poll woken because
+// this message was just written for them.
+//
+// ROOM AND BROADCAST SENDS WOKE NOBODY. The wakeup is keyed by endpoint rowid, and a room
+// delivery is addressed to a PARTY with recipient_endpoint NULL — rooms hold stations, and
+// which endpoint is staffing one is not decided until somebody polls. So the send handler had
+// no rowid to notify and simply did not, on both room paths.
+//
+// The cost is latency rather than loss: a poll re-reads the database when its wait elapses, so
+// nothing was ever dropped. But it is bounded by the granted wait (15 s by default) on every
+// room message and immediate on every channel message, and "rooms feel dead compared to
+// channels" is a belief that has already shipped once. A wakeup is an optimisation; an
+// optimisation that applies to one addressing mode and not the other is a difference users read
+// as capability.
+//
+// Resolves the party to CURRENT live endpoints rather than to whatever polled last: the whole
+// point of a station inbox is that a successor session inherits it, and waking the endpoint
+// that has gone away would be waking the wrong one.
+func (s *Store) WakeTargetsFor(ctx context.Context, messageID string) ([]int64, error) {
+	rows, err := s.R.QueryContext(ctx, `
+SELECT DISTINCT e.id
+  FROM delivery d
+  JOIN message m ON m.id = d.message_row
+  JOIN endpoint e
+    ON (d.party_key = 's:' || COALESCE(e.station_id,'')  AND e.station_id IS NOT NULL)
+    OR (d.party_key = 'e:' || e.id)
+ WHERE m.message_id = ?
+   AND d.state = 'queued'
+   AND e.revoked_at IS NULL`, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
