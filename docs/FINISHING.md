@@ -132,6 +132,15 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
 - [x] **`kb_record_outcome` has a reader** — the maturity badge now reads the outcome evidence
       instead of a promotion count. *Unreleased.* Vlad settled the three open numbers: dedup by
       distinct `session_id`, N=3, and a `was-wrong` since the last promotion blocks the top tier.
+> **Record correction, 2026-08-14.** `9ec2e5c`'s commit message says *"neither of the two
+> stations that maintain handoff pages had ever called `station_note_read`"*. ken-prod-ops has
+> since MEASURED their own usage and it is false for them — they called it on 2026-08-12 and used
+> the locker on 2026-08-11; both of their earlier claims were recalled rather than measured.
+> promo's statements about themselves stand. The commit is pushed and force-push is blocked on
+> this branch, so the sentence stays in the log and the correction lives here. **The `if_rev` fix
+> is unaffected**: it was built against the four behaviours prod measured on the live deployment,
+> not against that framing — which is the whole argument for measuring.
+
 - [ ] **Work through the remaining confirmed findings** in the appendix, prose-first. The rule
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of
