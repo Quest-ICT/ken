@@ -503,6 +503,16 @@ is accepted rather than fixed: the alternative is an explicit confirmation call,
 reaches no session that is already running, because MCP tool lists pin at conversation start. The
 population that would never receive the fix is exactly the population with mail dying unread.
 
+**What it recovered, which was not designed for and is worth recording.** A written notice was
+itself a message with its own TTL, so a notice about a failure could expire before its sender came
+back — the signal reporting a delivery failure was subject to the same failure it reported. Deriving
+it from rows that already exist removes that: a notice is computed fresh on every poll, so it is
+available for as long as its underlying rows are. Measured on the first production deployment to
+upgrade: the first poll after 3.4.0 returned **ten notices, nine of which that station had never
+seen** — `reply_overdue` events from 2026-08-04 to 08-06 whose written notices had expired unread
+months of polls ago. The change was made to decouple the sweeper; it also retroactively surfaced
+signals the old model had already lost.
+
 **What this gives up.** A notice cannot outlive the rows it is derived from. The metadata purge
 removes a settled message `metadata_ttl_seconds` after it settles (7 days by default), and the
 notice goes with it; a written notice was an independent row and could outlive its subject. The
