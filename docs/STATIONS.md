@@ -1,7 +1,7 @@
 # Ken — stations, notebooks and task lists
 
-> **Status: BUILT, supported, and CORE — ON by default, with `KEN_STATION_ENABLED=0` as an opt-OUT
-> (S2).** Written before the code, the way [`COMM.md`](COMM.md) was, so the decisions were argued
+> **Status: BUILT, supported, and CORE — always on. There is no switch:** `KEN_STATION_ENABLED`
+> was removed in 2.0.0 and setting it does nothing (S2 records the decision as it stood).** Written before the code, the way [`COMM.md`](COMM.md) was, so the decisions were argued
 > while they were still cheap — then implemented against. The `station_*` surface still sits outside
 > the byte-level compatibility contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)), exactly as COMM
 > does — but **no longer because it is off by default**. It stays outside because the COMM surface
@@ -77,9 +77,14 @@ living in `ken.db` where the backup story already reaches.
 
 ### S2 — REVERSED: stations are CORE and ON by default *(was: opt-in, off unless `KEN_STATION_ENABLED=1`)*
 
-`KEN_STATION_ENABLED` survives **inverted**, as an opt-OUT: `0` / `false` / `off` / `no` turns the
-surface off, and a value Ken does not recognise leaves it **ON** — a typo must not silently disable
-core functionality.
+> **SUPERSEDED IN PART, 2.0.0 — read the variable below as history.** `KEN_STATION_ENABLED` was
+> REMOVED. Nothing reads it and setting it does nothing. Stations are core and there is no switch.
+> The *reversal* this record describes stands; only the opt-out it kept is gone.
+
+`KEN_STATION_ENABLED` survived **inverted**, as an opt-OUT: `0` / `false` / `off` / `no` turned the
+surface off, and a value Ken did not recognise left it **ON** — a typo must not silently disable
+core functionality. (Removed entirely in 2.0.0: a switch nobody used still cost a hedge in every
+document, and the hedges rotted.)
 
 - **Why it was off:** the same reasoning as COMM's C2. A default install must remain exactly the
   curated knowledge base the README promises — no extra operating loop in every agent's connect-time
@@ -282,8 +287,8 @@ for the console's staffed-now display.
   It looks like churn but is not: it is touched only on the handful of rows a briefing actually
   displays, at most once per staffing session (§11.4) — not per task, not per message.
   The alternative, putting it in `comm.db`, is unimplementable, because that file is opened only when
-  COMM is running — which an operator may switch off with `KEN_COMM_ENABLED=0`, and which an
-  unopenable `comm.db` degrades out of on purpose — while S2 promises the task list works with COMM
+  COMM is running — which an unopenable `comm.db` degrades out of on purpose (there is no operator
+  switch; that was removed in 2.0.0) — while S2 promises the task list works with COMM
   off. Aging-first surfacing is the whole point of §11, so it cannot depend on the messaging
   subsystem.
 - **The pointer rule:** every cross-database pointer this design adds runs from the **expendable** file
@@ -662,8 +667,8 @@ At every cap: **refuse, naming the cap in the message** (S12).
 
 ## 10. Operator surface
 
-A `/stations` console page, registered unless the operator opted out with `KEN_STATION_ENABLED=0` and
-gated on that flag alone — never on `KEN_COMM_ENABLED`, because stations work with COMM off:
+A `/stations` console page, always registered — stations are core and there is no flag to gate it
+on, and it was never gated on COMM's state either, because stations work with COMM off:
 
 - the **request queue** — station requests and link requests together, one approval model — each row
   showing requester, reason, and the `prompted_by_peer_traffic` badge;
@@ -907,7 +912,7 @@ rather than merely exist:
 The order matters, and only the last step involves the sessions themselves:
 
 1. **Nothing to enable.** Stations are core and on by default (S2): the upgrade exposes
-   `/station/mcp` and the `/stations` console unless the operator set `KEN_STATION_ENABLED=0`. The
+   `/station/mcp` and the `/stations` console, unconditionally — there is no opt-out. The
    schema was already there — migrations are unconditional — so that is all the upgrade adds.
 2. **Create a station per working identity, naming each one yourself**: `ken station add --name
    prod-ops`. Or leave this until a session asks with `station_request` and approve it in the console;

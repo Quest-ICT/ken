@@ -42,9 +42,16 @@ is what changed, this is what will bite.
 
 - **New series `ken_comm_deliveries_unacked`** — one per recipient who has not acknowledged.
   It equals `ken_comm_messages_unacked` until a room or broadcast message has more than one
-  recipient still outstanding. **Neither existing series changed what it counts**; the unacked
-  gauge's HELP text now states its unit explicitly, because since rooms "messages unacked" and
-  "deliveries unacked" are different numbers and neither is wrong.
+  recipient still outstanding. The unacked gauge's HELP text now states its unit explicitly,
+  because since rooms "messages unacked" and "deliveries unacked" are different numbers and
+  neither is wrong. **`ken_comm_messages_unacked` itself is unchanged.**
+
+  **`ken_comm_message_bytes` DID change what it counts, and your archive has a discontinuity.**
+  It summed characters and now sums bytes. The new samples are the true ones and the old ones were
+  always wrong — but nothing in the data announces the step, so a series crossing this upgrade is
+  not comparable with itself. Measured across the boundary on production: 311,177 → 313,010,
+  +0.589%. **Annotate your archive at the upgrade timestamp.** Correcting a gauge is still changing
+  what it reports, and calling it a HELP-string fix understated it — ken-prod-ops caught that.
 - **`ken_comm_message_bytes` steps UP by a fraction of a percent**, as does a station's notebook
   usage figure on the console. Both summed SQLite's `LENGTH()` over a TEXT column, which returns
   CHARACTERS, so both under-reported by however much non-ASCII the content carried. Measured on

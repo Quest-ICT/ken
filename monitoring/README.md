@@ -72,7 +72,7 @@ scrape_configs:
 
 The `ken_comm_*` gauges appear whenever COMM is running, which on a default install it is — COMM
 is core, not opt-in. They are **absent series, not zeros**, when COMM is off: either an operator set
-`KEN_COMM_ENABLED=0`, or `comm.db` could not be opened and COMM degraded to disabled on purpose, so
+`comm.db` could not be opened and COMM degraded to disabled on purpose (there is no operator switch — it was removed in 2.0.0), so
 that an expendable database can never take the durable knowledge base down. COMM is deliberately absent from `/health` (which marks the whole service
 DOWN on any component failure), so these gauges are the only place a runaway channel shows up.
 

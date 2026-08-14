@@ -104,12 +104,18 @@ tools are **not registered** and its instruction section is **not appended** whe
 > real (an unopenable `comm.db` still degrades COMM rather than taking the knowledge base down) —
 > only the operator-facing switch is gone. See docs/UPGRADING.md for the release that removed it.
 
-**What changed:** COMM and [stations](STATIONS.md) are now **core** — on by default. The variable
-survives **inverted**, as an opt-*out*: `KEN_COMM_ENABLED=0` (also `false`, `off`, `no`) turns COMM
-off, and an unrecognised or malformed value leaves it **on**, because a typo must never silently
-disable core functionality. `KEN_STATION_ENABLED` reads the same way, and the two remain
-**independent** — turning COMM off leaves stations fully working, because the station notebook and
-task list are valuable to a solo session with no peers (STATIONS.md S2).
+**What changed (1.7.0):** COMM and [stations](STATIONS.md) became **core** — on by default. The
+variable was *kept, inverted*, as an opt-*out*: `KEN_COMM_ENABLED=0` turned COMM off, and an
+unrecognised value left it **on**, because a typo must never silently disable core functionality.
+`KEN_STATION_ENABLED` read the same way, and the two were **independent** — turning COMM off left
+stations fully working, because the station notebook and task list are valuable to a solo session
+with no peers (STATIONS.md S2).
+
+**What changed again (2.0.0), and this is the state today:** both variables were REMOVED. Nothing
+reads them; setting either does nothing. The independence above is still true and is now structural
+rather than configured — stations work whether or not COMM has a peer. What survives is the
+*runtime* degradation: an unopenable `comm.db` still disables COMM rather than taking the durable
+knowledge base down.
 
 - **Why the reversal:** the premise stopped holding. COMM is not an extra bolted onto a knowledge
   base; it is part of what Ken is. And an opt-in transport is off on *both* sides by default — a

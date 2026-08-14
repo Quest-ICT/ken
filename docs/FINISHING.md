@@ -38,9 +38,18 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.6.0.** Production was on 3.5.1 and has been asked to upgrade and verify.
+**Released: 3.6.0**, and **verified on production 2026-08-14T22:02Z** — band clean on both
+databases, no migration ran at all (`schema_migration`'s rows still carry their original
+timestamps, and the `migrations/` tree hash is identical between the two tags). **The Batch 2 gate
+is open.**
 
-**Unreleased on `main`: nothing.** The next work starts at Batch 2, and only after prod reports.
+**Unreleased on `main`: documentation only.** For what is actually pending, read
+`CHANGELOG.md`'s `## [Unreleased]` section — it is the machine-conventional home and this line is
+prose that drifted from it within an hour of being written.
+
+> **This file broke its own Rule 2 on its first release.** Six items sat marked *unreleased* after
+> shipping in 3.6.0, and prod found it, not me. The rule is right; I did not apply it in the release
+> commit itself. Marking an item done and naming its release is part of cutting, not a follow-up.
 
 ---
 
@@ -55,18 +64,30 @@ No schema change. Everything here is written, tested and sitting on `main`.
 - [x] Code-paired channels record their authorising stations — **3.5.0**
 - [x] Console and metrics count room mail — **3.5.1**
 - [x] Attestation controls documented in INSTALL.md — **3.5.1**
-- [x] `ken_comm_deliveries_unacked`; the unacked gauge states its unit — *unreleased*
-- [x] Two figures named *bytes* now count bytes — *unreleased*
-- [x] The briefing says how much of the list it is not showing — *unreleased*
-- [x] A replacement session can download its station's file — *unreleased*
-- [x] `install.sh`'s `_ken_unit_env` says what it is for now — *unreleased*
-- [x] Live claims that COMM and stations can be switched off, corrected — *unreleased*
+- [x] `ken_comm_deliveries_unacked`; the unacked gauge states its unit — **3.6.0**
+- [x] Two figures named *bytes* now count bytes — **3.6.0**
+- [x] The briefing says how much of the list it is not showing — **3.6.0**
+- [x] A replacement session can download its station's file — **3.6.0**
+- [x] `install.sh`'s `_ken_unit_env` says what it is for now — **3.6.0**
+- [x] Live claims that COMM and stations can be switched off, corrected — **3.6.0**
+- [x] `docs/COMM.md`'s C2 record no longer contradicts its own SUPERSEDED banner six lines later,
+      and `docs/STATIONS.md` — which had **no banner anywhere** and asserted the opt-out in its
+      status line — is corrected. *(Both found by peers: promo hit the contradiction while fixing
+      the public site, prod established that STATIONS.md was the worse half.)*
 - [ ] **Finish the retired-switch sweep.** `KEN_COMM_ENABLED` / `KEN_STATION_ENABLED` were removed
       in 2.0.0. The instructions that told an OPERATOR or an AGENT to use them are fixed
       (README, INSTALL, AI-INTEGRATION, MONITORING, MCP-TOOLS, COMM §6, DESIGN), and COMM's C2
       decision record is marked superseded rather than rewritten. **About 20 further mentions
-      remain** — mostly inside decision records and rationale, where the reasoning is still worth
-      keeping and only the tense is wrong. Go through them once; do not delete the reasoning.
+      remain. **Split them on promo's line, which prod confirmed is the right one:** "wrong tense,
+      keep the reasoning" is cosmetic; **"asserts a live capability that does not exist" is the kind
+      that propagates** — it is what put "off by default" on the public site in three languages,
+      four majors after it stopped being true. Do the second kind first.
+- [ ] **`docs/FINISHING.md` does not ship.** `scripts/build-release.sh` stages only `INSTALL.md`,
+      `BACKUP.md` and `configs/litestream.yml`, and no docs are embedded in the binary — so a file
+      whose stated purpose is that a human can open it and know where things stand is absent from
+      every artifact a human installs. Either add it to the bundle or say plainly that its audience
+      is people with a git checkout. Found by prod, who verified it against the build script rather
+      than assuming.
 - [x] **Cut and release** — **3.6.0**. Prod asked to upgrade and verify; awaiting their report.
 
 ---
@@ -107,9 +128,17 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       party set. Migration 0010 already added and backfilled `attachment.scope_id` — and
       `internal/comm/file.go` contains the string "scope" **zero times**. The seam was cut and
       never used, so a file cannot be offered to a room. *Needs a migration; ships alone.*
+- [ ] **`comm_room.kind='dm'`** — the CHECK constraint at `migrations/0017_comm_rooms.sql:36`
+      permits a value `CreateRoom` cannot produce (`internal/store/rooms.go:57-59` hardcodes
+      `'topic'`). *Moved here from Batch 4 on prod's correction: it is an unfinished migration, not
+      a duplicated generation.* It is also the natural two-party container, so Batch 5's second
+      decision may settle it.
 - [ ] **A regression test for retroactive revocation.** Revoking a channel stops mail already
       queued; that property is held by three hand-mirrored SQL predicates and the only test
-      asserts a *send* fails afterwards. Nothing pins the retroactive half.
+      asserts a *send* fails afterwards. Nothing pins the retroactive half. **The three are
+      `message.go:583`, `message.go:813` and `pending.go:56`** — prod's own first pass found two and
+      nearly corrected me; the third is the predicate behind `pending_total`, so a test that misses
+      it lets the console counter drift from the poll.
 
 ---
 
@@ -127,9 +156,7 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
       deny that "beats the roster and beats a link". Either wire it to a console surface and a
       send-path check, or delete it. Leaving designed-and-unwired code is how a future session
       concludes the capability exists.
-- [ ] **`comm_room.kind='dm'`** — admitted by a CHECK constraint; `CreateRoom` hardcodes
-      `'topic'`. Anticipated, never built. Decide: build it (it is the natural two-party
-      container) or remove it from the constraint.
+
 
 ---
 
