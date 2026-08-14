@@ -81,6 +81,13 @@ and guessing would repeat the mistake this whole plan exists to fix.
       never built. Produces new checklist items, not code.
 - [ ] **Audit the knowledge base the same way.** Expected to be small — its open questions are
       policy decisions waiting on a human, not debt — but *expected* is not *checked*.
+- [ ] **Age EVERY open task, not just the human-blocked ones.** 3.6.0 added
+      `oldest_blocked_on_human_days`, which covers only `blocked_on='human'`. ken-promo audited
+      their own station and found a third staleness category neither of us had: a task that is
+      **overtaken rather than stale** — not wrong, just no longer the point. Their example was
+      "read the 1.5.1 and 1.5.2 promo briefs", created 2026-07-30, still accurate and pointless
+      because Ken is at 3.6.0. It was `blocked_on='self'`, so the field I shipped misses it, and
+      `briefed_count` could never have caught it. Age since creation would have.
 - [ ] Fold the findings into Batch 3/4 below, then re-read this file with Vlad.
 
 ---
