@@ -880,3 +880,122 @@ func TestAnUnboundJoinerRecordsNoAuthorisingStation(t *testing.T) {
 		t.Errorf("an UNBOUND joiner recorded station_b=%v — the snapshot must be a fact, not a guess", sb)
 	}
 }
+
+// THE OPERATOR'S COUNTERS MUST SEE ROOM AND BROADCAST MAIL.
+//
+// They said `FROM message m JOIN channel c ON c.id=m.channel_id`, and a room or broadcast
+// message has channel_id NULL, so an INNER JOIN dropped every one. The /comm page and the
+// ken_comm_messages_unacked metric counted channel traffic only — a deployment doing all its
+// work in rooms reported as idle, which is a wrong number rather than a missing one.
+func TestStatsCountRoomAndBroadcastMail(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
+
+	// CONTROL: nothing yet, so a non-zero below is this traffic and not a pre-existing row.
+	base, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.Unacked != 0 {
+		t.Fatalf("setup: %d unacked before any send", base.Unacked)
+	}
+
+	if _, err := st.SendToRoom(ctx, beta, "ops", "room traffic", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Broadcast(ctx, beta, "broadcast traffic", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Unacked != 2 {
+		t.Fatalf("Unacked = %d with one room and one broadcast message outstanding, want 2.\n"+
+			"The channel join drops both, so the operator's console and ken_comm_messages_unacked "+
+			"report a busy room-only deployment as idle.", got.Unacked)
+	}
+	if got.BodyBytes <= 0 {
+		t.Fatalf("BodyBytes = %d — retained room bodies are the thing that grows the disk and are invisible", got.BodyBytes)
+	}
+	_ = alpha
+}
+
+// AND THE CHANGE DETECTOR MOVES ON ROOM TRAFFIC, or /comm's live auto-refresh never fires
+// for it and an operator watching during active room traffic sees a static screen.
+func TestConsoleFingerprintMovesOnRoomTraffic(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
+
+	before, err := st.ConsoleFingerprint(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SendToRoom(ctx, beta, "ops", "does the page notice", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := st.ConsoleFingerprint(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after == before {
+		t.Fatalf("the fingerprint is unchanged at %d after a room message — the page never reloads "+
+			"for room traffic, so the operator's live view is stale exactly while something is happening", after)
+	}
+}
+
+// SPACE SCOPING SURVIVES THE REWRITE. Counting by the sender's endpoint instead of by the
+// channel must not turn a per-space counter into a global one — that would be a worse
+// defect than the one being fixed, because the number would look plausible and be wrong
+// for every multi-space deployment.
+func TestStatsStillScopeToOneSpace(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	// An endpoint in ANOTHER space, sending on its own channel.
+	other, _, err := st.RegisterEndpoint(ctx, Owner{TokenID: "tok-x", ActorID: 9, SpaceID: 2}, "elsewhere", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, _, err := st.RegisterEndpoint(ctx, Owner{TokenID: "tok-y", ActorID: 9, SpaceID: 2}, "elsewhere-peer", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.MintPairingCode(ctx, 2, 42, "space 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, other, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, other, ch.ChannelID, "not space 1's business", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL: space 2 sees it, so the zero below is scoping rather than an empty database.
+	two, err := st.StatsFor(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if two.Unacked != 1 {
+		t.Fatalf("space 2 reports %d unacked for its own message, want 1", two.Unacked)
+	}
+	one, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Unacked != 0 {
+		t.Fatalf("space 1 reports %d unacked for a message sent entirely within space 2 — "+
+			"the rewrite dropped the space filter and every counter is now global", one.Unacked)
+	}
+}

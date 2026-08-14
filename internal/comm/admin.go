@@ -111,17 +111,39 @@ type Stats struct {
 }
 
 // StatsFor reports counters for one space.
+//
+// MESSAGE COUNTERS SCOPE BY THE SENDER'S ENDPOINT, NOT BY A CHANNEL. They used to say
+// `FROM message m JOIN channel c ON c.id=m.channel_id`, and a room or broadcast message has
+// channel_id NULL, so an INNER JOIN dropped every one of them: the operator's at-a-glance
+// view and the `ken_comm_messages_unacked` metric both counted channel traffic only, and
+// silently reported a busy room-only deployment as idle.
+//
+// `message.sender_endpoint` is NOT NULL and references `endpoint`, which already carries
+// `space_id` and indexes it — so the sender's space is available for EVERY scope without a
+// schema change. (There is a `message.space_id` column, added by migration 0009; it is
+// written by nothing and read by nothing, so populating and backfilling it would be a data
+// rewrite to reach a fact already one join away.)
+//
+// THE ONE ASSUMPTION, stated so it can be rechecked: nothing moves an endpoint between
+// spaces. Verified — every `UPDATE endpoint SET` in this package touches only last_seen_at,
+// station binding, or revocation. If a space-move is ever added, a message's attributed
+// space would follow its sender, where `channel.space_id` was fixed at creation; that is
+// the moment to revisit this.
+//
+// ATTACHMENT COUNTERS KEEP THE CHANNEL JOIN, deliberately. A file offer still binds a
+// channel rowid, so there are no room-scoped attachment rows to miss. They become the same
+// bug the moment file exchange learns about scopes, and not before.
 func (s *Store) StatsFor(ctx context.Context, spaceID int64) (Stats, error) {
 	var st Stats
 	err := s.R.QueryRowContext(ctx, `
 SELECT
   (SELECT COUNT(*) FROM endpoint WHERE space_id=? AND revoked_at IS NULL),
   (SELECT COUNT(*) FROM channel  WHERE space_id=? AND state='open'),
-  (SELECT COUNT(*) FROM message m JOIN channel c ON c.id=m.channel_id
-     WHERE c.space_id=? AND EXISTS (SELECT 1 FROM delivery d
+  (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
+     WHERE e.space_id=? AND EXISTS (SELECT 1 FROM delivery d
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
-  (SELECT COALESCE(SUM(LENGTH(m.body)),0) FROM message m JOIN channel c ON c.id=m.channel_id
-     WHERE c.space_id=? AND m.body IS NOT NULL),
+  (SELECT COALESCE(SUM(LENGTH(m.body)),0) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
+     WHERE e.space_id=? AND m.body IS NOT NULL),
   (SELECT COUNT(*) FROM attachment a JOIN channel c ON c.id=a.channel_id
      WHERE c.space_id=? AND a.state IN ('offered','ready')),
   (SELECT COALESCE(SUM(a.stored_bytes),0) FROM attachment a JOIN channel c ON c.id=a.channel_id
@@ -141,6 +163,11 @@ SELECT
 // Distinct prime weights make an accidental collision (two offsetting changes
 // summing to the same number) unlikely; this is a change detector, not a checksum,
 // so unlikely is enough.
+//
+// The message term scopes by the SENDER'S ENDPOINT for the reason given on StatsFor: it
+// joined `channel` before, so room and broadcast traffic moved this number not at all — the
+// page's live auto-refresh never fired for a room, and an operator watching /comm during
+// active room traffic saw a static screen.
 func (s *Store) ConsoleFingerprint(ctx context.Context, spaceID int64) (int64, error) {
 	var n int64
 	err := s.R.QueryRowContext(ctx, `
@@ -150,8 +177,8 @@ SELECT
 + (SELECT COUNT(*) FROM channel  WHERE space_id=? AND state='open') * 5
 + (SELECT COUNT(*) FROM pairing_code WHERE space_id=? AND consumed_at IS NULL
      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')) * 7
-+ (SELECT COUNT(*) FROM message m JOIN channel c ON c.id=m.channel_id
-     WHERE c.space_id=? AND EXISTS (SELECT 1 FROM delivery d
++ (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
+     WHERE e.space_id=? AND EXISTS (SELECT 1 FROM delivery d
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))) * 11`,
 		spaceID, spaceID, spaceID, spaceID, spaceID).Scan(&n)
 	return n, err

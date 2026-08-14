@@ -15,6 +15,27 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **The operator console and `ken_comm_messages_unacked` were blind to room and broadcast
+  mail.** `StatsFor` and `ConsoleFingerprint` scoped messages with
+  `JOIN channel c ON c.id=m.channel_id`, and a room or broadcast message has `channel_id`
+  NULL, so an INNER JOIN dropped every one. A deployment doing all its work in rooms reported
+  as idle — a wrong number rather than a missing one — and `/comm`'s live auto-refresh never
+  fired for room traffic, so an operator watching the page during active messaging saw a
+  static screen.
+
+  Message counters now scope by the SENDER'S ENDPOINT, which already carries and indexes
+  `space_id`, so every scope is covered with no schema change. (`message.space_id` exists
+  from migration 0009 and is written by nothing and read by nothing; populating and
+  backfilling it would have been a data rewrite to reach a fact one join away.) Attachment
+  counters deliberately keep the channel join — a file offer still binds a channel rowid, so
+  there is nothing room-scoped to miss yet.
+
+  **`ken_comm_messages_unacked` will step up once on upgrade.** That is newly counted
+  traffic, not new traffic. See docs/UPGRADING.md.
+
+
 ## [3.5.0] — 2026-08-14
 
 ### Added

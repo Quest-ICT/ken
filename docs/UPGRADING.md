@@ -34,6 +34,30 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### `ken_comm_messages_unacked` steps up once — warn whoever alerts on it BEFORE upgrading
+
+**What changes.** The operator console's message counters and the
+`ken_comm_messages_unacked` metric now include room and broadcast traffic. They previously
+joined `channel`, and room messages carry no channel, so every one of them was invisible.
+
+**What an operator will observe.** On the first scrape after the upgrade, the unacked count
+**jumps** by however much room and broadcast mail is currently outstanding. `/comm`'s message
+counts and retained-body byte total jump the same way, and the page's live auto-refresh
+starts firing for room traffic where it never did.
+
+**This is not new traffic.** It was always there and was never counted. Nothing changed about
+delivery, retention, or expiry.
+
+**What to do first — this is the one step that matters.** If anything alerts or trends on
+`ken_comm_messages_unacked`, tell whoever owns it before you deploy. A one-time step change
+on a backlog gauge looks exactly like an incident, and the on-call response to "unacked
+messages spiked" is to go looking for a stuck consumer that does not exist. A deployment
+using rooms heavily will see a large jump.
+
+**There is no schema change**, and no backfill: the counters reach the sender's space through
+`message.sender_endpoint`, which was always populated.
+
+
 ## 3.5.0
 
 ### Revoking a station link now closes channels it could not previously reach
