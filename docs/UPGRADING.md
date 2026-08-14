@@ -41,9 +41,17 @@ outcomes rather than from a promotion count and a fetch count.
 
 **What an operator will observe.** Badges change immediately and everywhere, including on
 databases restored from backup — `maturity()` is computed per row per query with no cache, so
-there is no migration and nothing to rebuild. **Expect most `battle-tested` entries to drop to
-`curated`**, because the old rule could be satisfied without any evidence that the entry helped
-anyone, and the new one cannot.
+there is no migration and nothing to rebuild.
+
+**On most installs you will probably see NO change at all, and that is expected.** The old rule
+needed `curated_rev >= 3` AND `use_count >= 10` together, which is a high bar: measured on a
+real deployment of 108 entries, six cleared the first, exactly one cleared the second, and **none
+cleared both** — so there was nothing to demote. Do not read "no visible change" as the upgrade
+having failed.
+
+**`battle-tested` will then be earned gradually rather than found on day one.** It now requires
+three distinct sessions reporting `helped`, and that evidence only begins accumulating with this
+release: outcomes recorded earlier carry no session identity (see below) and cannot be counted.
 
 **Why the old one had to go.** `curated_rev` counts promotions, and `Repromote` — the recovery
 path for promotions applied in the wrong order — increments it too. Repairing a curation mistake

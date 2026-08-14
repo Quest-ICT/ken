@@ -141,6 +141,35 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
 > is unaffected**: it was built against the four behaviours prod measured on the live deployment,
 > not against that framing — which is the whole argument for measuring.
 
+- [x] **`kb_record_outcome`'s session identity is derived by the server**, not taken from the
+      caller — *unreleased*. ken-prod-ops measured the live deployment and falsified the reader
+      before it shipped: **37 of 37 `entry_outcome` rows had `session_id` NULL, and 282 of 282
+      `curation_event` rows.** With N=3 distinct sessions required, the top tier was not merely
+      empty, it was **unreachable by accumulating more evidence** — the exact failure I had named
+      as worse than the one being fixed. Root cause: the field carried no `jsonschema`, the tool
+      description never mentioned it, and the instructions never mentioned it. Two AI actors,
+      three weeks, not one identity recorded — which is what an undescribed optional field
+      predicts. Fixed by reading `req.Session.ID()` (falling back to the token), because a
+      caller-supplied identity is unreliable *and* unfalsifiable.
+- [ ] **N=3 needs re-deciding with the numbers in front of it — Vlad's call.** Prod's ceiling:
+      30 `helped` rows over 108 entries means **at most 10 entries (9.3%) could ever qualify**
+      under perfect distribution, and only two distinct actors have ever recorded an outcome.
+      N=3 may be right for a mature knowledge base; on three weeks of data it is a bar almost
+      nothing clears. Historical rows stay uncounted — evidence recorded without identity should
+      not retroactively mint badges.
+- [ ] **`station_task_defer` is date-shaped and the problem is state-shaped.** Prod's
+      observation, and it explains why neither station has ever called it: `defer` takes
+      `remind_after`, modelling "not yet" as a TIME, while almost all real staleness is "the
+      condition may already be satisfied and nobody rechecked". Consider whether the verb the
+      list actually needs is a recheck rather than a postponement.
+
+**A fifth verdict, from prod, that the audit's categories did not have: EXERCISED, NEVER USED.**
+Count 1, in a burst, at the moment someone was systematically trying the surface — then never
+again in three weeks of work. That is the whole locker plus `station_directory` (all five calls
+inside 61 seconds on 2026-08-11). A bare count says "used"; usage in the course of work is zero.
+It changes the CONFIDENCE of a verdict, not just its label: a capability that survives contact
+with a curious operator and still finds no use is a stronger signal than one nobody opened.
+
 - [ ] **Work through the remaining confirmed findings** in the appendix, prose-first. The rule
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of

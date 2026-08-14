@@ -145,6 +145,41 @@ func (d Deps) viaComm(ctx context.Context) (bool, string) {
 	return d.CommProvenance(ctx, id)
 }
 
+// sessionIdentity is WHO IS CALLING, derived by the server and never taken from the caller.
+//
+// It used to be a caller-supplied `session_id` field — optional, with no jsonschema
+// description, unmentioned in the tool's own Description and unmentioned in the
+// server-delivered instructions. ken-prod-ops measured the result on a live deployment:
+// **37 of 37 entry_outcome rows had it NULL, and 282 of 282 curation_event rows.** Two
+// independent AI actors, three weeks, not one identity recorded. That is not careless
+// callers; it is exactly what an undescribed optional field predicts.
+//
+// The consequence was severe and self-inflicted: the maturity badge counts DISTINCT
+// sessions reporting `helped`, so with every id NULL the top tier was unreachable — not
+// merely empty today, but unreachable by accumulating more evidence, because the evidence
+// being accumulated carried no identity. A worse failure than the inverted counter it
+// replaced.
+//
+// DESCRIBING THE FIELD BETTER WOULD NOT HAVE FIXED IT, and this is prod's argument rather
+// than mine: a caller-supplied identity is unreliable AND unfalsifiable. A session that
+// wants a badge sends three different strings. Ken already knows who is calling, so it
+// should look rather than ask.
+//
+// The MCP transport's own session id is preferred; a token falls back when the transport
+// has none (stdio, or a client that does not negotiate one). Both are server-side facts.
+// Empty only when neither exists, which is a dev-token bypass.
+func sessionIdentity(ctx context.Context, req *mcp.CallToolRequest) string {
+	if req != nil && req.Session != nil {
+		if id := req.Session.ID(); id != "" {
+			return "mcp:" + id
+		}
+	}
+	if p := principalFrom(ctx); p != nil && p.TokenID != "" {
+		return "tok:" + p.TokenID
+	}
+	return ""
+}
+
 func actorID(ctx context.Context) int64 {
 	if p := principalFrom(ctx); p != nil {
 		return p.ActorID
@@ -310,7 +345,7 @@ type outcomeIn struct {
 	Slug      string `json:"slug"`
 	Outcome   string `json:"outcome" jsonschema:"helped | didnt-apply | was-wrong"`
 	Note      string `json:"note,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
+	SessionID string `json:"session_id,omitempty" jsonschema:"IGNORED. Kept only so a caller that still sends it is not rejected. Ken derives the recording session from the connection itself — a caller-supplied identity is both unreliable and unfalsifiable"`
 }
 
 type outcomeOut struct {
@@ -562,7 +597,7 @@ func NewServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "kb_record_outcome",
 		Description: "Report whether a fetched entry actually resolved your problem: helped | didnt-apply | was-wrong. 'was-wrong' flags the entry stale for human review. This feeds the self-curating signal — use it after acting on an entry.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in outcomeIn) (*mcp.CallToolResult, outcomeOut, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in outcomeIn) (*mcp.CallToolResult, outcomeOut, error) {
 		if err := requireScope(ctx, scopePropose); err != nil {
 			return nil, outcomeOut{}, err
 		}
@@ -571,7 +606,8 @@ func NewServer(d Deps) *mcp.Server {
 		default:
 			return nil, outcomeOut{}, errors.New("outcome must be one of: helped, didnt-apply, was-wrong")
 		}
-		st, err := d.Store.RecordOutcome(ctx, in.Slug, in.Outcome, actorID(ctx), "ai", in.SessionID, in.Note)
+		st, err := d.Store.RecordOutcome(ctx, in.Slug, in.Outcome, actorID(ctx), "ai",
+			sessionIdentity(ctx, req), in.Note)
 		if err != nil {
 			return nil, outcomeOut{}, mcpError(err)
 		}
