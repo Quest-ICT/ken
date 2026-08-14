@@ -39,6 +39,16 @@ same change — never "docs later".
 
 ### Fixed
 
+- **Revoking a station link did not close channels opened by pairing code.** Migration 0008
+  moved link revocation onto `channel.station_a`/`station_b` — a snapshot of who was authorised
+  when the channel opened — precisely so authorisation could not be re-derived from a binding an
+  agent can change with one tool call. Only the linked-open path was taught to write those
+  columns. A channel opened by PAIRING CODE between two station-bound endpoints carried NULLs, so
+  the predicate that finds "open channels between these two stations" could not see it: revoking
+  the link left the channel open while the console counted zero live channels and reported the
+  revocation complete. Both seats now record their station as they join; an unbound joiner
+  records none, which is correct — there is no link that could authorise it.
+
 - **Archiving a station did nothing on COMM, and it was not merely cosmetic.** `docs/STATIONS.md`
   has promised since stations shipped that archiving severs live endpoints. Nothing did: `auth()`
   checked endpoint revocation and station-*key* revocation and never station state, and

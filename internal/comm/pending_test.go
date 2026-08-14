@@ -807,3 +807,76 @@ func TestWakeTargetsSkipRevokedEndpoints(t *testing.T) {
 		t.Fatalf("the live endpoint on the station is not a wake target: %v", targets)
 	}
 }
+
+// A CHANNEL OPENED BY PAIRING CODE MUST BE REACHABLE BY LINK REVOCATION.
+//
+// Migration 0008 moved revocation onto channel.station_a/station_b precisely so
+// authorisation could not be re-derived from a binding an agent can change with one tool
+// call. Only the LINKED open path was taught to write them, so a channel opened by pairing
+// code between two station-bound endpoints carried NULLs — and the predicate that finds
+// "open channels between these two stations" could not see it.
+//
+// The failure is silent and reassuring: revoking the link leaves the channel open while the
+// console counts zero live channels and reports the revocation as complete.
+func TestAPairingCodeChannelRecordsItsAuthorisingStations(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a := stationEndpoint(t, st, "tok-a", "st-alpha")
+	b := stationEndpoint(t, st, "tok-b", "st-beta")
+
+	code, err := st.MintPairingCode(ctx, 1, 42, "alpha<->beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, b, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.CountOpenChannelsBetweenStations(ctx, "st-alpha", "st-beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("link revocation sees %d open channels between the two stations, want 1.\n"+
+			"A code-paired channel is invisible to the revocation meant to end it, and the console "+
+			"reports zero live channels while the channel keeps working. Channel %s.", n, ch.ChannelID)
+	}
+}
+
+// AN UNBOUND JOINER LEAVES IT NULL, which is correct rather than a gap: there is no station
+// whose link could authorise the channel, so there is nothing for a revocation to reach.
+func TestAnUnboundJoinerRecordsNoAuthorisingStation(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a := stationEndpoint(t, st, "tok-a", "st-alpha")
+	plain, _, err := st.RegisterEndpoint(ctx, owner("tok-plain"), "plain", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.MintPairingCode(ctx, 1, 42, "alpha<->somebody")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, a, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, plain, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sa, sb any
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT station_a, station_b FROM channel WHERE channel_id=?`, ch.ChannelID).Scan(&sa, &sb); err != nil {
+		t.Fatal(err)
+	}
+	if sa == nil {
+		t.Error("the bound joiner's station was not recorded")
+	}
+	if sb != nil {
+		t.Errorf("an UNBOUND joiner recorded station_b=%v — the snapshot must be a fact, not a guess", sb)
+	}
+}

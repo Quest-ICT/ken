@@ -99,9 +99,21 @@ WHERE code_sha256=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 			if err != nil {
 				return err
 			}
+			// THE AUTHORISING PAIR IS SNAPSHOTTED HERE TOO, not only on the linked
+			// path. Migration 0008 moved link revocation onto these columns precisely so
+			// authorisation could not be re-derived from a binding an agent can change —
+			// but only OpenLinkedChannel was taught to write them. A channel opened by
+			// PAIRING CODE between two station-bound endpoints therefore carried NULLs,
+			// and the predicate that finds "open channels between these two stations"
+			// could not see it: revoking the link left the channel open, while the console
+			// counted zero live channels and reported the revocation as complete.
+			//
+			// NULL when the joiner is unbound, which is correct rather than a gap: there is
+			// no station whose link could authorise it, so there is nothing for a link
+			// revocation to reach.
 			res, err := t.ExecContext(ctx, `
-INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, state, label)
-VALUES(?,?,?,?, 'pending', ?)`, channelID, spaceID, humanID, ep.ID, nullStr(pcLabel.String))
+INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, state, label, station_a)
+VALUES(?,?,?,?, 'pending', ?, ?)`, channelID, spaceID, humanID, ep.ID, nullStr(pcLabel.String), nullStr(ep.StationID))
 			if err != nil {
 				return err
 			}
@@ -142,8 +154,8 @@ VALUES(?,?,?,?, 'pending', ?)`, channelID, spaceID, humanID, ep.ID, nullStr(pcLa
 		// this UPDATE are separate statements: a concurrent RevokeChannel runs on
 		// another connection and could land between them.
 		res, err := t.ExecContext(ctx, `
-UPDATE channel SET endpoint_b=?, state='open', opened_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE id=? AND endpoint_b IS NULL AND state='pending'`, ep.ID, cur.ID)
+UPDATE channel SET endpoint_b=?, station_b=?, state='open', opened_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE id=? AND endpoint_b IS NULL AND state='pending'`, ep.ID, nullStr(ep.StationID), cur.ID)
 		if err != nil {
 			return err
 		}
