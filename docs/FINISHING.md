@@ -38,15 +38,13 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.5.1.** Production is on it.
+**Released: 3.6.0.** Production was on 3.5.1 and has been asked to upgrade and verify.
 
-**Unreleased on `main`: 5 commits** — the unacked-unit metric split, the install.sh comment
-correction, the bytes-not-characters fixes, the task-staleness figures, and the file-download
-party fix.
+**Unreleased on `main`: nothing.** The next work starts at Batch 2, and only after prod reports.
 
 ---
 
-## Batch 1 — ship what is already done  `[~]`
+## Batch 1 — ship what is already done  `[x]`  *(3.6.0, awaiting prod's verification)*
 
 No schema change. Everything here is written, tested and sitting on `main`.
 
@@ -69,7 +67,7 @@ No schema change. Everything here is written, tested and sitting on `main`.
       decision record is marked superseded rather than rewritten. **About 20 further mentions
       remain** — mostly inside decision records and rationale, where the reasoning is still worth
       keeping and only the tense is wrong. Go through them once; do not delete the reasoning.
-- [ ] **Cut and release.** Then ask prod to upgrade and verify. **Then wait.**
+- [x] **Cut and release** — **3.6.0**. Prod asked to upgrade and verify; awaiting their report.
 
 ---
 

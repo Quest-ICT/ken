@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.6.0] — 2026-08-14
+
 ### Fixed
 
 - **A replacement session could not download its own station's file.** `GrantDownload`

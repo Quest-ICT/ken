@@ -34,6 +34,63 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.6.0
+
+### `ken_comm_deliveries_unacked` is new, and two byte figures step up slightly
+
+**What changes.**
+
+- **New series `ken_comm_deliveries_unacked`** — one per recipient who has not acknowledged.
+  It equals `ken_comm_messages_unacked` until a room or broadcast message has more than one
+  recipient still outstanding. **Neither existing series changed what it counts**; the unacked
+  gauge's HELP text now states its unit explicitly, because since rooms "messages unacked" and
+  "deliveries unacked" are different numbers and neither is wrong.
+- **`ken_comm_message_bytes` steps UP by a fraction of a percent**, as does a station's notebook
+  usage figure on the console. Both summed SQLite's `LENGTH()` over a TEXT column, which returns
+  CHARACTERS, so both under-reported by however much non-ASCII the content carried. Measured on
+  production: 0.55%, affecting 65 of 70 message rows.
+
+**What to do first.** Nothing, unless something alerts on an exact value. The byte figures are
+now slightly larger and correct; the notebook one is compared against a byte CAP, so a station
+that appeared to have headroom may now show marginally less.
+
+### `station_me` reports how much of your task list it is NOT showing
+
+**What changes.** Three new fields on the briefing: `never_briefed` (open tasks that have never
+appeared in any briefing head), `oldest_blocked_on_human_days`, and `blocked_on_human_and_stale`.
+
+**What an operator will observe.** Sessions should start telling you when your task list is
+larger than the briefing implies — the head holds at most seven items, and on a station with
+forty open tasks the rest were previously invisible to the session and to you. Measured across
+this estate before the change: roughly 45 tasks blocked on one human, the large majority never
+surfaced to him once.
+
+`blocked_on_human_and_stale` names the ones most likely to be **already done**: `blocked_on` is
+set once at creation and nothing ever revisits it, so a satisfied condition looks identical to a
+waiting one. Expect sessions to start checking before telling you that you owe something.
+
+### A replacement session can now download its station's file
+
+**What changes.** `comm_file_grant` authorised by endpoint rowid, so a successor session
+staffing the same station was refused an attachment its station owns — it polls the offer,
+sees the descriptor, asks for the bytes, and is told the file does not exist.
+
+**What an operator will observe.** Downloads that previously failed after a session takeover now
+succeed. An unrelated station is still refused, and still with "not found" rather than "denied",
+so it cannot confirm the id exists.
+
+### The COMM and stations opt-out variables are documented as gone
+
+**What changes.** No code change. `KEN_COMM_ENABLED` and `KEN_STATION_ENABLED` were removed in
+**2.0.0**, and seven documents still described them as usable — including this file's siblings
+`INSTALL.md`, which gave the systemd drop-in recipe, and `AI-INTEGRATION.md`, which told AI
+sessions to ask their operator about the setting.
+
+**What to do first.** If you carry a drop-in setting either variable, it has been doing nothing
+since 2.0.0 — remove it so the next operator is not misled. COMM still disables ITSELF if
+`comm.db` cannot be opened; that is a runtime state, not a setting, and it is unchanged.
+
+
 ## 3.5.1
 
 ### `ken_comm_messages_unacked` steps up once — warn whoever alerts on it BEFORE upgrading
