@@ -104,10 +104,24 @@ ORDER BY p.created_at DESC`, spaceID)
 type Stats struct {
 	Endpoints    int
 	OpenChannels int
-	Unacked      int
-	BodyBytes    int64 // retained message bodies; the thing that grows a disk
-	Files        int   // live attachments (offered or awaiting delivery)
-	FileBytes    int64 // relay bytes currently held on disk
+	// Unacked counts MESSAGES with at least one outstanding delivery.
+	Unacked int
+	// DeliveriesUnacked counts the outstanding DELIVERIES themselves.
+	//
+	// Before rooms these two were always equal, so nothing distinguished them and nothing
+	// had to. One body sent to three members is 1 message and 3 deliveries, and the pair
+	// answers two different operational questions: "how many things have not landed" is
+	// messages, "how much work is stuck" is deliveries. Neither is wrong, which is exactly
+	// why the ambiguity is expensive — the numbers simply differ and nothing ever looks
+	// inconsistent enough to prompt a question.
+	//
+	// ken-prod-ops predicted a metric step in deliveries, observed it in messages, and
+	// chased a phantom 3-unit gap through three sampler ticks before finding that both
+	// numbers were right.
+	DeliveriesUnacked int
+	BodyBytes         int64 // retained message bodies; the thing that grows a disk
+	Files             int   // live attachments (offered or awaiting delivery)
+	FileBytes         int64 // relay bytes currently held on disk
 }
 
 // StatsFor reports counters for one space.
@@ -142,14 +156,19 @@ SELECT
   (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
      WHERE e.space_id=? AND EXISTS (SELECT 1 FROM delivery d
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
+  (SELECT COUNT(*) FROM delivery d
+     JOIN message m ON m.id = d.message_row
+     JOIN endpoint e ON e.id = m.sender_endpoint
+     WHERE e.space_id=? AND d.state IN ('queued','delivered')),
   (SELECT COALESCE(SUM(LENGTH(m.body)),0) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
      WHERE e.space_id=? AND m.body IS NOT NULL),
   (SELECT COUNT(*) FROM attachment a JOIN channel c ON c.id=a.channel_id
      WHERE c.space_id=? AND a.state IN ('offered','ready')),
   (SELECT COALESCE(SUM(a.stored_bytes),0) FROM attachment a JOIN channel c ON c.id=a.channel_id
      WHERE c.space_id=? AND a.state IN ('offered','ready'))`,
-		spaceID, spaceID, spaceID, spaceID, spaceID, spaceID).
-		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.BodyBytes, &st.Files, &st.FileBytes)
+		spaceID, spaceID, spaceID, spaceID, spaceID, spaceID, spaceID).
+		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.DeliveriesUnacked,
+			&st.BodyBytes, &st.Files, &st.FileBytes)
 	return st, err
 }
 

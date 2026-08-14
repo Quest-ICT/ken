@@ -999,3 +999,67 @@ func TestStatsStillScopeToOneSpace(t *testing.T) {
 			"the rewrite dropped the space filter and every counter is now global", one.Unacked)
 	}
 }
+
+// MESSAGES AND DELIVERIES ARE DIFFERENT NUMBERS NOW, and the pair must say so.
+//
+// Before rooms they were always equal, so nothing distinguished them and nothing had to.
+// One body to three members is 1 message and 3 deliveries. ken-prod-ops predicted a metric
+// step in deliveries, observed it in messages, and chased a phantom 3-unit gap through three
+// sampler ticks before establishing that both numbers were correct — which is the cost of an
+// ambiguity where neither value is wrong and nothing ever looks inconsistent.
+func TestUnackedCountsMessagesWhileDeliveriesCountsRecipients(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	stationEndpoint(t, st, "tok-g", "st-gamma")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta", "s:st-gamma")
+
+	// ONE body, TWO recipients (the sender is excluded from its own audience).
+	if _, err := st.SendToRoom(ctx, alpha, "ops", "one body, two recipients", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Unacked != 1 {
+		t.Fatalf("Unacked = %d, want 1 — it counts MESSAGES", got.Unacked)
+	}
+	if got.DeliveriesUnacked != 2 {
+		t.Fatalf("DeliveriesUnacked = %d, want 2 — it counts RECIPIENTS who have not acknowledged", got.DeliveriesUnacked)
+	}
+	// THE TWO MUST ACTUALLY DIFFER HERE. A fixture with one recipient makes both 1 and the
+	// test passes against an implementation where they are the same expression — which is
+	// precisely the state the world was in before rooms, and why nobody noticed.
+	if got.Unacked == got.DeliveriesUnacked {
+		t.Fatal("the fixture does not distinguish the two units, so this test cannot fail")
+	}
+
+	// AND SETTLED DELIVERIES DROP OUT. Without a settled one in the fixture, "all
+	// deliveries" and "outstanding deliveries" are the same number and the state filter is
+	// untested — mutation testing caught exactly that. One member reads and acks; the
+	// message is still outstanding for the other, so Unacked stays 1 while deliveries falls.
+	if _, err := st.Poll(ctx, beta, 10); err != nil {
+		t.Fatal(err)
+	}
+	var mid string
+	if err := st.R.QueryRowContext(ctx, `SELECT message_id FROM message ORDER BY id DESC LIMIT 1`).Scan(&mid); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.Ack(ctx, beta, mid); err != nil || n != 1 {
+		t.Fatalf("setup ack: (%d, %v)", n, err)
+	}
+	after, err := st.StatsFor(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.DeliveriesUnacked != 1 {
+		t.Fatalf("DeliveriesUnacked = %d after one of two recipients acked, want 1 — "+
+			"the state filter is missing and settled work is still counted as stuck", after.DeliveriesUnacked)
+	}
+	if after.Unacked != 1 {
+		t.Fatalf("Unacked = %d — the message is still outstanding for the other member", after.Unacked)
+	}
+}

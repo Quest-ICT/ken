@@ -991,8 +991,23 @@ func registerCommCollectors(reg *metrics.Registry, cs *comm.Store, h *commserver
 		if s, err := cs.StatsFor(ctx, 1); err == nil {
 			add("ken_comm_endpoints", "Registered inter-session endpoints (sessions).", float64(s.Endpoints))
 			add("ken_comm_channels_open", "Open inter-session channels.", float64(s.OpenChannels))
-			add("ken_comm_messages_unacked", "Messages delivered or queued but not yet acknowledged.", float64(s.Unacked))
-			add("ken_comm_message_bytes", "Bytes of retained message bodies (deleted at acknowledgement).", float64(s.BodyBytes))
+			// THE UNIT IS STATED, because since rooms these two numbers differ and neither
+			// is wrong. One body to three members is 1 message and 3 deliveries; before
+			// rooms they were always equal, so nothing had to say which was which.
+			// ken-prod-ops predicted a step in deliveries, saw it in messages, and chased a
+			// phantom gap through three sampler ticks before finding both were correct.
+			add("ken_comm_messages_unacked",
+				"Messages with at least one outstanding delivery. MESSAGES, not deliveries: a room message counts once regardless of how many members have not acknowledged it. For the amount of outstanding work see ken_comm_deliveries_unacked.",
+				float64(s.Unacked))
+			add("ken_comm_deliveries_unacked",
+				"Outstanding deliveries: one per recipient who has not acknowledged. Equals ken_comm_messages_unacked until a room or broadcast message has more than one recipient still outstanding. This is the one that measures how much work is stuck.",
+				float64(s.DeliveriesUnacked))
+			// "deleted at acknowledgement" was the PRE-1.6.0 rule and had been false for
+			// months — that rule destroyed 97% of one deployment's bodies and was replaced
+			// by a retention window measured from when a message settles.
+			add("ken_comm_message_bytes",
+				"Bytes of retained message bodies. Bodies are kept for the configured retention window after a message settles, then blanked; the metadata row outlives them under its own, longer window.",
+				float64(s.BodyBytes))
 			add("ken_comm_files", "Live file attachments (offered or awaiting delivery).", float64(s.Files))
 			add("ken_comm_file_bytes", "Relay bytes currently held on disk.", float64(s.FileBytes))
 		}

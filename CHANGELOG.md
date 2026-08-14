@@ -15,6 +15,30 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **`ken_comm_deliveries_unacked`** — outstanding deliveries, one per recipient who has not
+  acknowledged. It equals `ken_comm_messages_unacked` until a room or broadcast message has
+  more than one recipient still outstanding, and it is the number that measures **how much
+  work is stuck**, where the messages gauge measures **how many things have not landed**.
+
+### Fixed
+
+- **Two metric HELP strings were ambiguous or false.** `ken_comm_messages_unacked` said
+  "Messages delivered or queued but not yet acknowledged" — correct, and insufficient since
+  rooms: one body sent to three members is 1 message and 3 deliveries, and before rooms those
+  numbers were always equal so nothing had to say which was which. ken-prod-ops predicted an
+  upgrade step in deliveries, observed it in messages, and chased a phantom 3-unit gap
+  through three sampler ticks before establishing that both numbers were right. The unit is
+  now stated explicitly, and neither existing series changed what it counts — a gauge that
+  silently changes meaning invalidates every archived sample.
+
+  `ken_comm_message_bytes` said bodies are "deleted at acknowledgement". That was the
+  pre-1.6.0 rule — the one that destroyed 97% of one deployment's message bodies — and had
+  been false for months. Bodies are retained for a configured window after a message settles,
+  with the metadata outliving them under its own.
+
+
 ## [3.5.1] — 2026-08-14
 
 ### Fixed
