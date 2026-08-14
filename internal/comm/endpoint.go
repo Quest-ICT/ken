@@ -443,3 +443,36 @@ func nullStr(s string) any {
 	}
 	return s
 }
+
+// EndpointIDsForStation lists the PUBLIC endpoint ids currently bound to a station.
+//
+// Exists so station_me can tell a session which comm endpoint is its own. There was no
+// machine-checkable answer to that from either side: station_me knew the station and not the
+// endpoint, and a session comparing its credentials file against its memory was comparing two
+// things it had itself chosen. One estate host carries eight endpoint credential files across
+// five directories in six naming schemes, all owned by one UNIX user — every session having
+// followed the "0600, outside a git repo" instruction correctly, and the result being a
+// directory of interchangeable-looking secrets. A session used the wrong one.
+//
+// Revoked endpoints are excluded: the question is "which endpoint should I be using", and a
+// revoked one is not an answer.
+func (s *Store) EndpointIDsForStation(ctx context.Context, stationID string) ([]string, error) {
+	if stationID == "" {
+		return nil, nil
+	}
+	rows, err := s.R.QueryContext(ctx,
+		`SELECT endpoint_id FROM endpoint WHERE station_id=? AND revoked_at IS NULL ORDER BY id`, stationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

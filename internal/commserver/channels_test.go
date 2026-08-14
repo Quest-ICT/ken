@@ -282,3 +282,38 @@ func callChannels(t *testing.T, sess *mcp.ClientSession, ctx context.Context) ch
 	}
 	return out
 }
+
+// THE SERVER SAYS WHO IT THINKS IS CALLING.
+//
+// A session ran with another endpoint's credentials and nothing anywhere told it. Every call
+// succeeded, because the credentials were valid — just not its own. comm_directory already
+// echoed this; the surfaces a session reads every loop did not, so the one place the mismatch
+// was visible was the one place nobody looks when things are working.
+func TestCommChannelsSaysWhoTheCallerIs(t *testing.T) {
+	sess, _, ctx := dirHarness(t)
+
+	if got := callChannels(t, sess, ctx).YouAre; got != "mine" {
+		t.Fatalf("you_are = %q, want the caller's station name %q.\n"+
+			"A session cannot detect it is using another endpoint's credentials if no result "+
+			"ever names whose endpoint it is.", got, "mine")
+	}
+}
+
+// AND AN UNBOUND ENDPOINT IS TOLD SO IN WORDS, not with an empty string.
+//
+// "" is indistinguishable from a field the server failed to populate, and the entire purpose
+// of an identity echo is that a caller can check it.
+func TestTheIdentityEchoIsNeverSilentlyEmpty(t *testing.T) {
+	sess, _, ctx := dirHarness(t)
+	if err := dirComm.UnbindEndpointFromStation(ctx, dirEP); err != nil {
+		t.Fatal(err)
+	}
+	got := callChannels(t, sess, ctx).YouAre
+	if got == "" {
+		t.Fatal("you_are is empty for an unbound endpoint — a caller cannot tell that from a " +
+			"server that did not fill the field in")
+	}
+	if !strings.Contains(got, "no station") {
+		t.Errorf("you_are = %q for an unbound endpoint; it should say so plainly", got)
+	}
+}

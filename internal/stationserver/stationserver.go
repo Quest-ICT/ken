@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Quest-ICT/ken/internal/version"
+	"log"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -53,6 +54,15 @@ type Deps struct {
 	// every station as unstaffed — "unknown" and "nobody is there" are different
 	// facts, and a directory that conflates them is worse than one that says less.
 	Staffing func(ctx context.Context) (map[string]StationStaffing, error)
+	// CommEndpoints reports the PUBLIC comm endpoint ids bound to a station, so the
+	// briefing every session is told to call first can say which endpoint is its own.
+	//
+	// A hook rather than a comm import, for the same reason as Staffing and Hearsay: this
+	// package must not depend on COMM. Nil when COMM is off, and the field is then OMITTED
+	// rather than reported empty — "COMM is not running here" and "you are bound to no
+	// endpoint" are different facts, and a briefing that conflates them sends a session
+	// hunting for a credentials problem it does not have.
+	CommEndpoints func(ctx context.Context, stationID string) ([]string, error)
 
 	// Limits bound the assets. Every one is a BACKUP decision (S12). These are the
 	// STARTING values; SetLimits replaces them live.
@@ -797,6 +807,21 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 			DeferredRepeatedly: b.RepeatedlyDefer, Remainder: b.Remainder,
 			Head: taskViews(b.Head),
 		},
+	}
+	// WHICH COMM ENDPOINT IS MINE. Absent when COMM is off — the field is omitted, not
+	// emptied, because "COMM is not running here" and "you are bound to no endpoint" would
+	// otherwise look identical and only one of them is a problem to chase.
+	//
+	// A lookup failure is NOT fatal: this briefing carries open tasks and what is waiting on
+	// a human, and losing all of that because a secondary lookup failed would be a poor
+	// trade. It is omitted instead, which reads the same as COMM being off — acceptable
+	// precisely because neither state asserts anything false.
+	if d.CommEndpoints != nil {
+		if ids, err := d.CommEndpoints(ctx, p.StationID); err != nil {
+			log.Printf("stations: comm endpoints for %s: %v", p.StationID, err)
+		} else {
+			out.CommEndpointIDs = ids
+		}
 	}
 	switch {
 	case activities < 0:

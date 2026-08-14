@@ -555,6 +555,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			// all. `[]` says "asked, and you are in none" — which is the answer.
 			Rooms:      []channelRoomView{},
 			KenVersion: version.Version,
+			YouAre:     whoAmI(ctx, d, ep),
 		}
 		for _, c := range list {
 			out.Channels = append(out.Channels, channelView{
@@ -713,7 +714,8 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		}
 
 		out := pollOut{Waited: waited, WaitSecondsGranted: granted, WaitClampedFrom: clampedFrom,
-			KenVersion: version.Version, Messages: make([]messageView, 0, len(msgs))}
+			KenVersion: version.Version, YouAre: whoAmI(ctx, d, ep),
+			Messages: make([]messageView, 0, len(msgs))}
 		for _, m := range msgs {
 			v := viewOf(&m)
 			// The sender's NAME, resolved here because this is the one layer holding
@@ -1008,6 +1010,18 @@ func recordsDuration(tool string) bool { return tool != "comm_poll" }
 // stationLabel resolves a station's human name for a default channel label, falling
 // back to the opaque id. A label is decoration shown in the console; it is never an
 // address, so a miss costs readability and nothing else.
+// whoAmI names the station this endpoint is bound to, for echoing back to the caller.
+//
+// Says so PLAINLY when there is no station, rather than returning an empty string: "" is
+// indistinguishable from a field the server did not fill in, and the whole purpose of the
+// echo is to be checkable.
+func whoAmI(ctx context.Context, d Deps, ep *comm.Endpoint) string {
+	if ep.StationID == "" {
+		return "an endpoint bound to no station"
+	}
+	return stationLabel(ctx, d, ep.StationID)
+}
+
 // partyLabel renders a room member's party key as something a reader can act on.
 //
 // ONE resolver for every surface that lists members, because comm_channels and

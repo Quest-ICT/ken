@@ -98,6 +98,14 @@ type channelsOut struct {
 	// conversation older than it, and this is the only zero-side-effect version read an
 	// unbound endpoint has.
 	KenVersion string `json:"ken_version"`
+	// YouAre is WHO THE SERVER THINKS IS CALLING — the station this endpoint is bound to,
+	// or a plain statement that it is bound to none.
+	//
+	// A session ran with another endpoint's credentials, and nothing anywhere told it. Every
+	// call succeeded, because the credentials were valid — just not its own. comm_directory
+	// already returned this; the surfaces a session actually reads every loop did not, so the
+	// one place the mismatch was visible was the one place nobody looks when things work.
+	YouAre string `json:"you_are" jsonschema:"the station whose inbox you are reading. If this is not who you think you are, you are using another endpoint's credentials"`
 }
 
 // channelRoomView is one room from this endpoint's point of view.
@@ -250,6 +258,10 @@ type pollOut struct {
 	// which put a failure signal behind the same delivery that had just failed, gave it
 	// its own expiry, and made a deleting pass into a writing one.
 	Notices []noticeView `json:"notices,omitempty"`
+	// YouAre is the station this endpoint is bound to — see channelsOut.YouAre. Carried on
+	// the poll because that is the call a session makes most, and a credential mix-up is
+	// cheapest to catch on the first loop rather than after a reply has gone out.
+	YouAre string `json:"you_are"`
 }
 
 // noticeView is one thing that happened to a message this caller sent.

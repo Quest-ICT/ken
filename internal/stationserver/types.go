@@ -70,7 +70,18 @@ type meOut struct {
 	// before 3.1.0, and there is no handle to call something you cannot see — parameters
 	// travel across the freeze, whole tools do not. A RESULT is the only channel that
 	// always arrives, so the answer rides in one.
-	KenVersion string `json:"ken_version"`
+	// CommEndpointIDs are the comm endpoints bound to this station — the answer to "which
+	// endpoint_id should I be calling comm_* with?".
+	//
+	// Here because station_me is the call every session is already instructed to make FIRST,
+	// so a pre-flight that costs nothing is cheapest in the place it is already mandatory.
+	// A session whose credentials file names an endpoint absent from this list is using
+	// somebody else's, which is a thing that happened and which nothing could detect.
+	//
+	// Omitted entirely when COMM is off, never reported as empty: empty would mean "you are
+	// bound to nothing", which is a different and more alarming fact.
+	CommEndpointIDs []string `json:"comm_endpoint_ids,omitempty" jsonschema:"the comm endpoint ids bound to this station. If the endpoint_id in your credentials file is not in this list, you are using another session's credentials"`
+	KenVersion      string   `json:"ken_version"`
 	// VersionNote says what to do with it, because a bare number in a briefing is a
 	// number a session reads past.
 	VersionNote string `json:"ken_version_note"`

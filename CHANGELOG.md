@@ -15,6 +15,28 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **Every COMM result now says who the server thinks is calling.** `comm_channels` and
+  `comm_poll` carry `you_are` — the station this endpoint is bound to, or a plain statement that
+  it is bound to none. `comm_directory` already did this; the surfaces a session reads on every
+  loop did not, so the one place a credential mix-up was visible was the one place nobody looks
+  while things appear to work.
+
+- **`station_me` reports which comm endpoints belong to this station** (`comm_endpoint_ids`).
+  There was no machine-checkable answer to "which endpoint_id should I be using?" from either
+  side: `station_me` knew the station and not the endpoint. It rides the briefing because that
+  is the call every session is already instructed to make first, so the pre-flight costs
+  nothing and is mandatory where it is cheapest. Omitted entirely when COMM is off rather than
+  reported empty — "COMM is not running here" and "you are bound to no endpoint" are different
+  facts and only one is worth chasing.
+
+  Context for both: one estate host carries **eight endpoint credential files across five
+  directories in six naming schemes**, every session having correctly followed the "0600,
+  outside a git repo" instruction. The instruction constrains permissions and location and says
+  nothing about identity, so the result was a directory of interchangeable-looking secrets. A
+  session used the wrong one and every call succeeded.
+
 ### Fixed
 
 - **Room and broadcast sends woke no parked `comm_poll`.** The wakeup is keyed by endpoint
