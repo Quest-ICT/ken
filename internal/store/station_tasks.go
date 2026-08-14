@@ -380,6 +380,35 @@ type TaskBriefing struct {
 	StuckCount      int // briefed repeatedly, unchanged and never deferred
 	RepeatedlyDefer int
 	Remainder       int
+
+	// NeverBriefed is how many OPEN tasks have never appeared in a briefing head at all.
+	//
+	// THIS IS THE NUMBER THAT WAS MISSING, and it is large. The head holds at most seven
+	// items; a station with forty open tasks surfaces the same handful and the rest are
+	// invisible to the session AND to the human — never counted, never aged, never
+	// reviewed. Measured across this estate on 2026-08-14: roughly 45 tasks blocked on one
+	// human, and the large majority had never been surfaced to him even once.
+	//
+	// Remainder already said how many were not shown THIS TIME. That reads as a queue
+	// waiting its turn, which is what makes it harmless-looking. This says how many have
+	// never had a turn.
+	NeverBriefed int
+
+	// OldestBlockedDays is the age in days of the longest-standing task blocked on the
+	// human. A count alone ("2 waiting on you") carries no urgency and no sense of whether
+	// it is new or has been sitting for a month.
+	OldestBlockedDays int
+
+	// StaleRisk is how many open tasks are blocked on the human AND have not been briefed
+	// in a long time — the population most likely to be ALREADY DONE and still counted.
+	//
+	// blocked_on is set once at creation and nothing ever revisits it, so a task whose
+	// condition has been satisfied is indistinguishable from one still waiting. Both are
+	// briefed with equal weight and both are counted in "waiting on you". Two of this
+	// station's own were found done-but-open on 2026-08-14, one of them five releases out
+	// of date, and production reported the same thing about itself the same day — twice
+	// telling its human he owed something he had already finished.
+	StaleRisk int
 }
 
 // BriefStationTasks builds the briefing AND performs the only stamping in the system.
@@ -400,14 +429,23 @@ SELECT COUNT(*),
   SUM(CASE WHEN blocked_on='human' THEN 1 ELSE 0 END),
   SUM(CASE WHEN remind_after IS NOT NULL AND remind_after <= strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 1 ELSE 0 END),
   SUM(CASE WHEN briefed_count >= 5 AND defer_count = 0 THEN 1 ELSE 0 END),
-  SUM(CASE WHEN defer_count >= 3 THEN 1 ELSE 0 END)
+  SUM(CASE WHEN defer_count >= 3 THEN 1 ELSE 0 END),
+  SUM(CASE WHEN briefed_count = 0 THEN 1 ELSE 0 END),
+  COALESCE(MAX(CASE WHEN blocked_on='human'
+        THEN CAST(julianday('now') - julianday(created_at) AS INTEGER) END), 0),
+  SUM(CASE WHEN blocked_on='human'
+        AND (last_briefed_at IS NULL
+             OR last_briefed_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days'))
+      THEN 1 ELSE 0 END)
 FROM station_task WHERE station_id=? AND state='open'`, stationID)
-	var human, overdue, stuck, deferred sql.NullInt64
-	if err := row.Scan(&b.OpenTotal, &human, &overdue, &stuck, &deferred); err != nil {
+	var human, overdue, stuck, deferred, never, oldest, staleRisk sql.NullInt64
+	if err := row.Scan(&b.OpenTotal, &human, &overdue, &stuck, &deferred,
+		&never, &oldest, &staleRisk); err != nil {
 		return nil, err
 	}
 	b.BlockedOnHuman, b.Overdue = int(human.Int64), int(overdue.Int64)
 	b.StuckCount, b.RepeatedlyDefer = int(stuck.Int64), int(deferred.Int64)
+	b.NeverBriefed, b.OldestBlockedDays, b.StaleRisk = int(never.Int64), int(oldest.Int64), int(staleRisk.Int64)
 
 	pick := func(clause string, n int, seen map[string]bool) []StationTask {
 		rows, err := s.R.QueryContext(ctx, `SELECT `+taskCols+` FROM station_task

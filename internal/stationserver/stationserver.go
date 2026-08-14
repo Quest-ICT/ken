@@ -204,6 +204,18 @@ TASKS — the list exists because pending things decay out of a conversation:
 - If an item has been briefed repeatedly and nothing changed, say what is blocking it or
   defer it with a reason. Do NOT silently leave it, and do NOT drop something your human
   owes — that is theirs to abandon, not yours.
+- BEFORE YOU TELL YOUR HUMAN THEY OWE SOMETHING, CHECK THE UNDERLYING STATE — NOT THE FLAG.
+  blocked_on is set once when the task is created and NOTHING EVER REVISITS IT, so a task
+  whose condition has already been satisfied looks exactly like one still waiting, and both
+  are counted in "waiting on you". For a knowledge-base item that check is one kb_search;
+  for a release or a deployment it is one command. It is far cheaper than telling your
+  human twice that he owes something he finished last week — which has happened, on more
+  than one station, to more than one human.
+- THE BRIEFING IS A SAMPLE, NOT A SUMMARY. The head holds at most seven items. Read
+  'never_briefed': if it is large, most of your list has never been shown to anyone, and
+  the things most likely to be stale are the ones you have never seen. 'not_shown' reads as
+  a queue awaiting its turn; 'never_briefed' is how many have never had one. When it is
+  non-zero, go and read the full list with station_task_list rather than trusting the head.
 
 NOTEBOOK — working state, not knowledge:
 - Keep the 'handoff' page current as you go — with mode='replace' and if_rev, NOT append.
@@ -326,7 +338,11 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_me",
 		Description: "Your briefing: who you are staffing, open tasks (named), handoff staleness, and what is " +
 			"waiting on your human. Call it FIRST in every session, and relay what it says to your human in words — " +
-			"it is a tool result and reaches nobody otherwise. Optionally updates how you describe yourself.",
+			"it is a tool result and reaches nobody otherwise. Optionally updates how you describe yourself. " +
+			"THE HEAD IS A SAMPLE, NOT A SUMMARY: it holds at most seven items. Read `never_briefed` (open tasks " +
+			"never shown to anyone), `oldest_blocked_on_human_days`, and `blocked_on_human_and_stale` — that last " +
+			"one is the population most likely to be ALREADY DONE, because blocked_on is set at creation and " +
+			"nothing revisits it. Check the underlying state before telling your human they still owe something.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in meIn) (*mcp.CallToolResult, meOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -805,7 +821,9 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 			Open: b.OpenTotal, BlockedOnHuman: b.BlockedOnHuman, Overdue: b.Overdue,
 			NotBriefedRecently: b.AgingCount, BriefedUnchanged: b.StuckCount,
 			DeferredRepeatedly: b.RepeatedlyDefer, Remainder: b.Remainder,
-			Head: taskViews(b.Head),
+			NeverBriefed: b.NeverBriefed, OldestBlockedDays: b.OldestBlockedDays,
+			StaleRisk: b.StaleRisk,
+			Head:      taskViews(b.Head),
 		},
 	}
 	// WHICH COMM ENDPOINT IS MINE. Absent when COMM is off — the field is omitted, not

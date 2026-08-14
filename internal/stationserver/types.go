@@ -42,14 +42,25 @@ type meIn struct {
 }
 
 type briefingView struct {
-	Open               int        `json:"open"`
-	BlockedOnHuman     int        `json:"blocked_on_human"`
-	Overdue            int        `json:"overdue"`
-	NotBriefedRecently int        `json:"not_briefed_recently"`
-	BriefedUnchanged   int        `json:"briefed_repeatedly_unchanged"`
-	DeferredRepeatedly int        `json:"deferred_repeatedly"`
-	Remainder          int        `json:"not_shown"`
-	Head               []taskView `json:"head"`
+	Open               int `json:"open"`
+	BlockedOnHuman     int `json:"blocked_on_human"`
+	Overdue            int `json:"overdue"`
+	NotBriefedRecently int `json:"not_briefed_recently"`
+	BriefedUnchanged   int `json:"briefed_repeatedly_unchanged"`
+	DeferredRepeatedly int `json:"deferred_repeatedly"`
+	Remainder          int `json:"not_shown"`
+	// NeverBriefed is how many open tasks have NEVER appeared in a briefing head.
+	//
+	// `not_shown` reads as a queue waiting its turn. This is how many have never had one —
+	// the head holds at most seven, so on a station with forty open tasks the same handful
+	// surfaces and the rest are invisible to the session and the human alike.
+	NeverBriefed int `json:"never_briefed" jsonschema:"open tasks that have never appeared in any briefing. If this is large, the list you are being shown is not a summary of your work — it is a sample of it"`
+	// OldestBlockedDays ages the human-blocked pile. A bare count carries no urgency and
+	// no way to tell a fresh request from one that has sat for a month.
+	OldestBlockedDays int `json:"oldest_blocked_on_human_days" jsonschema:"age in days of the longest-standing item blocked on your human"`
+	// StaleRisk is the population most likely to be ALREADY DONE and still counted.
+	StaleRisk int        `json:"blocked_on_human_and_stale" jsonschema:"items blocked on your human that have not been briefed in over a week. blocked_on is set once at creation and nothing revisits it, so these are the ones most likely to be finished already — CHECK THE UNDERLYING STATE before you say your human still owes them"`
+	Head      []taskView `json:"head"`
 }
 
 type meOut struct {

@@ -17,6 +17,36 @@ same change — never "docs later".
 
 ### Added
 
+- **The station briefing now says how much of your task list it is NOT showing you.** Three
+  figures on `station_me`: `never_briefed` (open tasks that have never appeared in any
+  briefing head), `oldest_blocked_on_human_days`, and `blocked_on_human_and_stale` — items
+  waiting on a human that nobody has revisited in over a week.
+
+  **Why:** the head holds at most seven items, and `not_shown` reported how many were not
+  shown *this time*, which reads as a queue awaiting its turn. It is not. On a station with
+  forty open tasks the same handful surfaces every time and the rest are never shown, never
+  counted, never aged, and invisible to the session and the human alike. Measured across
+  this estate on 2026-08-14 by ken-prod-ops: roughly **45 tasks blocked on one human, the
+  large majority never surfaced to him once**; one station held 42 open with 37 never
+  briefed.
+
+  `blocked_on_human_and_stale` names the population most likely to be **already done**.
+  `blocked_on` is set once at creation and nothing ever revisits it, so a task whose
+  condition has been satisfied is indistinguishable from one still waiting — and both are
+  counted in "waiting on you". Two of this station's own were found done-but-open the same
+  day, one five releases out of date, while production had twice told its human he owed
+  something he had already finished.
+
+  The connect-time instructions now carry the corresponding rule: **before telling your
+  human they owe something, check the underlying state, not the flag** — and the briefing
+  head is a sample, not a summary.
+
+  **Deliberately NOT added: closing anything on age.** Detection is the ask. Dropping
+  something a human actually owes is theirs to abandon, not a session's.
+
+
+### Added
+
 - **`ken_comm_deliveries_unacked`** — outstanding deliveries, one per recipient who has not
   acknowledged. It equals `ken_comm_messages_unacked` until a room or broadcast message has
   more than one recipient still outstanding, and it is the number that measures **how much
