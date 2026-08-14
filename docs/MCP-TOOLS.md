@@ -5,9 +5,8 @@ endpoint. This document is the contract: shapes here are stable API; change them
 *adding* optional fields, never by removing or retyping an existing one.
 
 - **Endpoint:** `https://<ken-host>/mcp` (TLS-only). **This document covers the knowledge-base
-  surface only.** Ken has two other MCP endpoints, both **core and on by default** (each with an
-  independent opt-out — `KEN_COMM_ENABLED=0`, `KEN_STATION_ENABLED=0`; turning COMM off leaves
-  stations fully working), each with
+  surface only.** Ken has two other MCP endpoints, both **core, with no switch for either**
+  (the opt-out variables were removed in 2.0.0), each with
   its own token family and its own contract document — a client registers Ken once per surface it
   uses, which is a security property rather than packaging taste (a knowledge-base token cannot send
   messages, and a comm token cannot write knowledge):
@@ -63,7 +62,9 @@ it never collides with the `ken_` shape) and always resolves to the **same agent
 > AI-session-to-AI-session messaging and file exchange. They require a **dedicated** token carrying
 > the `comm` (and, for files, `comm-file`) scope — a token may hold comm scopes or knowledge-base
 > scopes, never both, so a client registers Ken **twice**. That surface is **core and on by
-> default**, with `KEN_COMM_ENABLED=0` kept as an opt-OUT: Ken already degrades to a "COMM off"
+> default**, with `KEN_COMM_ENABLED=0` kept as an opt-OUT *(that variable was itself removed in
+> 2.0.0; the paragraph records the reasoning as it stood, and the runtime degradation it
+> describes is still real)*: Ken already degrades to a "COMM off"
 > state when `comm.db` cannot be opened — on purpose, so an expendable database can never take the
 > durable knowledge base down — and removing the variable would not remove that state, only the
 > operator's control of it, which is their one remedy if COMM misbehaves in production. It still

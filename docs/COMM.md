@@ -98,6 +98,12 @@ tools are **not registered** and its instruction section is **not appended** whe
   *mechanical* rather than documentary: COMPATIBILITY.md already excluded anything
   optional-and-off-by-default, so the interface was genuinely free to evolve additively.
 
+> **SUPERSEDED, 2.0.0 — read this block as history.** The variables described below were REMOVED
+> entirely: `KEN_COMM_ENABLED` and `KEN_STATION_ENABLED` do nothing today, and setting either has
+> no effect. The reasoning is kept because the *runtime* "COMM off" state it describes is still
+> real (an unopenable `comm.db` still degrades COMM rather than taking the knowledge base down) —
+> only the operator-facing switch is gone. See docs/UPGRADING.md for the release that removed it.
+
 **What changed:** COMM and [stations](STATIONS.md) are now **core** — on by default. The variable
 survives **inverted**, as an opt-*out*: `KEN_COMM_ENABLED=0` (also `false`, `off`, `no`) turns COMM
 off, and an unrecognised or malformed value leaves it **on**, because a typo must never silently
@@ -581,7 +587,7 @@ Eight tools, all `comm_*`, all requiring the `comm` scope (the two file tools ad
 the bearer token identifies a *machine*, so the endpoint pair is what identifies the *session* within
 it.
 
-On by default; opt out with `KEN_COMM_ENABLED=0` (C2). The message database defaults to
+Core, with no switch — the C2 opt-out variable was itself removed in 2.0.0. The message database defaults to
 `<db dir>/comm/comm.db` (`KEN_COMM_DB`). Mint a **dedicated** token. There are **three** scope families — knowledge-base,
 comm, and station — and the rule is not "one family per token" but which pairs may combine:
 knowledge-base scopes may not be mixed with either of the others, while `station` and `comm` MAY be

@@ -77,8 +77,9 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
   wants — assets against their caps — is on the `/stations` console instead.
 - **Knowledge base** — `ken_kb_entries`, `ken_kb_versions`, `ken_kb_proposals_pending`,
   `ken_kb_embeddings` / `ken_kb_embeddable_versions`, `ken_users`, `ken_tokens_active`.
-- **Inter-session comms** (on by default; absent only where COMM is off — an operator set
-  `KEN_COMM_ENABLED=0`, or `comm.db` could not be opened and COMM degraded to disabled; see
+- **Inter-session comms** (core, always registered; these series are absent only if `comm.db`
+  could not be opened and COMM degraded to disabled — a runtime state, not a setting, and
+  deliberately so: an expendable database must never take the durable knowledge base down; see
   [`COMM.md`](COMM.md)) —
   `ken_comm_endpoints`, `ken_comm_channels_open`, `ken_comm_messages_unacked`,
   `ken_comm_message_bytes`, `ken_comm_poll_waiters`, `ken_comm_files`, `ken_comm_file_bytes`. COMM is deliberately **absent from

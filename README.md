@@ -54,10 +54,11 @@ OAuth-connector management, the COMM console at `/comm` and the stations console
 **themeable** (dark/light) and **multilingual** (English, Spanish + French, with
 drop-in translations) design system that makes **zero external requests**. An optional
 **OAuth 2.1 authorization server** lets claude.ai add Ken as a custom connector.
-**Inter-session comms (COMM) and stations are core surfaces, on by default** —
-`KEN_COMM_ENABLED=0` and `KEN_STATION_ENABLED=0` opt out of either one
-independently, and stations keep working with COMM off because a notebook and a
-task list need no peers.
+**Inter-session comms (COMM) and stations are core surfaces, and there is no
+switch for either** — the opt-out variables were removed in 2.0.0, because a
+switch nobody used still cost a hedge in every document and instruction, and the
+hedges rotted. Stations work whether or not COMM has a peer to talk to, because a
+notebook and a task list need no peers.
 Embeddings, health/metrics, in-process ACME TLS, and self-extracting release
 installers are built and tested.
 
@@ -67,10 +68,11 @@ installers are built and tested.
 - [docs/MCP-TOOLS.md](docs/MCP-TOOLS.md) — the AI-facing MCP tool contracts.
 - [docs/AI-INTEGRATION.md](docs/AI-INTEGRATION.md) — how to make your AI use Ken (token strategy + the operating loop).
 - [docs/OAUTH.md](docs/OAUTH.md) — connect claude.ai as a custom connector (the optional OAuth server).
-- [docs/COMM.md](docs/COMM.md) — inter-session communication: let two AI sessions hand work to each other (**core, on by default**; `KEN_COMM_ENABLED=0` opts out).
-- [docs/STATIONS.md](docs/STATIONS.md) — stations: durable, human-named AI working identities with a notebook, a task list and a small file locker, which also become what COMM addresses so a peer relationship outlives the session that made it (**core, on by default**; `KEN_STATION_ENABLED=0` opts out, independently of COMM — the notebook and task list work with COMM off).
+- [docs/COMM.md](docs/COMM.md) — inter-session communication: let two AI sessions hand work to each other (**core; there is no switch**).
+- [docs/STATIONS.md](docs/STATIONS.md) — stations: durable, human-named AI working identities with a notebook, a task list and a small file locker, which also become what COMM addresses so a peer relationship outlives the session that made it (**core; there is no switch** — the notebook and task list work whether or not COMM has a peer to talk to).
 - [docs/I18N.md](docs/I18N.md) — the multilingual UI: add a language or override any string at runtime (drop-in `.properties`).
 - [docs/INSTALL.md](docs/INSTALL.md) — install / deploy (self-extracting `.bin`, systemd, TLS posture).
+- [docs/FINISHING.md](docs/FINISHING.md) — **the working checklist**: what is half-built, what finishing it means, and exactly where we are. Read this before starting work.
 - [docs/MONITORING.md](docs/MONITORING.md) — health, metrics, and the Grafana/Prometheus bundle.
 - [docs/REMOTE-UPGRADE.md](docs/REMOTE-UPGRADE.md) — the scoped, least-privilege remote-upgrade tooling.
 - [docs/BACKUP.md](docs/BACKUP.md) — backup & restore runbook.

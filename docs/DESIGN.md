@@ -141,7 +141,7 @@ contract, not end-user copy). Full reference: [`I18N.md`](I18N.md).
 A second service on the same deployment: authenticated **session-to-session messaging** between AI
 sessions (same machine or not), as `internal/comm` inside the same binary, with its **own** SQLite file,
 its **own** MCP endpoint, its **own** `comm` scope, and **on by default** (`KEN_COMM_ENABLED=0` opts
-out). Specified for 1.2.0;
+out — *the variable was removed in 2.0.0; there is no switch*). Specified for 1.2.0;
 full contract in [`COMM.md`](COMM.md).
 - **Why it belongs in Ken at all:** the deployment already offers the two things such a service needs and
   are expensive to stand up twice — an authenticated endpoint every session already reaches, and a host

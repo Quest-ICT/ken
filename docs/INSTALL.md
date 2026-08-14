@@ -232,10 +232,12 @@ URL when TLS is on, `http://<host>:8080/` only behind a TLS-terminating proxy):
 
    A station key is bound to its station, so `ken token add` cannot mint one.
 
-   **Opting out:** `KEN_COMM_ENABLED=0` and `KEN_STATION_ENABLED=0` (a systemd drop-in,
-   as with OAuth below); any unrecognised value leaves the surface **on**, so a typo
-   cannot silently disable core functionality. They are independent — stations keep
-   working with COMM off, because the notebook and task list are worth having to a
+   **There is no opt-out.** `KEN_COMM_ENABLED` and `KEN_STATION_ENABLED` were removed in
+   2.0.0 — setting either does nothing. Both surfaces are core and always registered.
+   COMM still turns ITSELF off if `comm.db` cannot be opened, which is a runtime state
+   rather than a setting: an expendable database must never take the durable knowledge
+   base down. Stations keep working in that state, because the notebook and task list
+   are worth having to a
    session with no peers. The variables were kept rather than deleted because Ken
    *already* has a runtime "COMM off" state: an unopenable `comm.db` degrades into it on
    purpose, so an expendable database can never take the durable knowledge base down.
