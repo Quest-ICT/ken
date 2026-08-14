@@ -43,7 +43,7 @@ func TestNoteAppendReplaceAndRevisions(t *testing.T) {
 		t.Fatalf("want 1 retained revision, got %d", revs)
 	}
 
-	n, err = st.WriteStationNote(ctx, lim, sid, "handoff", "Handoff", "only this", nil, "replace", 0, "tok", actorID, false)
+	n, err = st.WriteStationNote(ctx, lim, sid, "handoff", "Handoff", "only this", nil, "replace", curRev(t, st, sid, "handoff"), "tok", actorID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestRevisionHistoryPrunesOldestFirstAndKeepsHead(t *testing.T) {
 	st, ctx, _, sid, actorID := noteFixture(t)
 	lim := StationNoteLimits{MaxPageBytes: 1 << 10, MaxRevisionBytes: 40, MaxNotebookBytes: 1 << 20}
 	for i := 0; i < 8; i++ {
-		if _, err := st.WriteStationNote(ctx, lim, sid, "p", "", strings.Repeat("abcdefghij", 2), nil, "replace", 0, "tok", actorID, false); err != nil {
+		if _, err := st.WriteStationNote(ctx, lim, sid, "p", "", strings.Repeat("abcdefghij", 2), nil, "replace", curRev(t, st, sid, "p"), "tok", actorID, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -234,7 +234,7 @@ func TestTheNoteListingRevealsRevisionsAlreadyPruned(t *testing.T) {
 
 	for i := 0; i < 12; i++ {
 		if _, err := st.WriteStationNote(ctx, lim, station.StationID, "handoff", "t",
-			strings.Repeat("x", 100), nil, "replace", 0, "tok", actorID, false); err != nil {
+			strings.Repeat("x", 100), nil, "replace", curRev(t, st, station.StationID, "handoff"), "tok", actorID, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -307,7 +307,7 @@ func TestRevisionsLostCountsWhatIsMissingNotWhatSurvived(t *testing.T) {
 	// revision from 1 up is still held.
 	for i := 0; i < 6; i++ {
 		if _, err := st.WriteStationNote(ctx, lim, station.StationID, "healthy", "t",
-			strings.Repeat("a", 50), nil, "replace", 0, "tok", actorID, false); err != nil {
+			strings.Repeat("a", 50), nil, "replace", curRev(t, st, station.StationID, "healthy"), "tok", actorID, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -316,7 +316,7 @@ func TestRevisionsLostCountsWhatIsMissingNotWhatSurvived(t *testing.T) {
 	tight.MaxRevisionBytes = 300
 	for i := 0; i < 12; i++ {
 		if _, err := st.WriteStationNote(ctx, tight, station.StationID, "damaged", "t",
-			strings.Repeat("b", 100), nil, "replace", 0, "tok", actorID, false); err != nil {
+			strings.Repeat("b", 100), nil, "replace", curRev(t, st, station.StationID, "damaged"), "tok", actorID, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -381,7 +381,7 @@ func TestAStationCanReadTheRevisionsItStillHas(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		if _, err := st.WriteStationNote(ctx, lim, station.StationID, "handoff", "t",
 			fmt.Sprintf("version %d %s", i, strings.Repeat("x", 90)),
-			nil, "replace", 0, "tok", actorID, false); err != nil {
+			nil, "replace", curRev(t, st, station.StationID, "handoff"), "tok", actorID, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -422,4 +422,16 @@ func TestAStationCanReadTheRevisionsItStillHas(t *testing.T) {
 	if head.Rev != n.Rev {
 		t.Errorf("asked for revision %d and got %d", n.Rev, head.Rev)
 	}
+}
+
+// curRev reads a page's current revision, the way a REPLACEMENT session must: read before you
+// overwrite. These tests previously passed if_rev=0 on writes to existing pages — the exact
+// blind-overwrite path the guard now refuses, and the reason five of them failed when it landed.
+func curRev(t *testing.T, st *Store, stationID, key string) int {
+	t.Helper()
+	n, err := st.ReadStationNote(context.Background(), stationID, key)
+	if err != nil {
+		return 0 // page does not exist yet; a first write needs no rev
+	}
+	return n.Rev
 }

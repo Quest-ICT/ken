@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -155,4 +157,64 @@ func staleHarness(t *testing.T) (*Store, context.Context, string) {
 		t.Fatal(err)
 	}
 	return st, ctx, s.StationID
+}
+
+// A BLIND OVERWRITE OF AN EXISTING PAGE IS REFUSED, and this is the case a replacement
+// session actually hits.
+//
+// ken-prod-ops measured all four on a live 3.6.0 deployment: read returns the rev, a correct
+// if_rev succeeds, a STALE if_rev is refused cleanly with no partial write — and NO if_rev at
+// all overwrote SILENTLY. The mechanism was correct and complete when used, and nothing
+// required using it.
+//
+// WHY IT IS SHARPER THAN "REMEMBER TO PASS IT": `mode` defaults to append, which is
+// non-destructive, so this is not a trap you fall into by default — it is one you fall into by
+// doing the RIGHT thing. A handoff page's own header says never to append (history grows with
+// the square of the page), so a successor obeying that reaches for replace, and unless it ALSO
+// knows to read first it destroys the page it was told to read. Two correct instructions
+// composing into the loss. Neither of the two stations that maintain handoff pages had ever
+// called station_note_read, so the path most important to a takeover was the least exercised.
+func TestReplacingAnExistingPageWithoutIfRevIsRefused(t *testing.T) {
+	st, ctx, station := staleHarness(t)
+	lim := DefaultStationNoteLimits()
+
+	// A first write to a NEW key needs no rev — creating a page must stay unaffected.
+	if _, err := st.WriteStationNote(ctx, lim, station, "handoff", "H", "first", nil, "replace", 0, "tok", 1, false); err != nil {
+		t.Fatalf("creating a new page required a rev: %v", err)
+	}
+
+	// THE DEFECT: replacing it blind used to succeed silently.
+	_, err := st.WriteStationNote(ctx, lim, station, "handoff", "H", "clobbered", nil, "replace", 0, "tok", 1, false)
+	if !errors.Is(err, ErrNoteRevRequired) {
+		t.Fatalf("a blind mode=replace over an existing page returned %v, want ErrNoteRevRequired.\n"+
+			"This is the write a replacement session makes after being told never to append.", err)
+	}
+	// The refusal must NAME THE CURRENT REV, because an error is the only channel that
+	// reaches a session whose tool description predates this rule — descriptions pin at
+	// conversation start and never refresh.
+	if !strings.Contains(err.Error(), "rev 1") {
+		t.Errorf("the refusal does not name the current rev, so a refused session cannot retry "+
+			"without a second call: %v", err)
+	}
+	// AND NOTHING WAS WRITTEN.
+	n, err := st.ReadStationNote(ctx, station, "handoff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Body != "first" || n.Rev != 1 {
+		t.Fatalf("the refused write still changed the page: rev %d, body %q", n.Rev, n.Body)
+	}
+
+	// CONTROLS — the three cases that must keep working, so the guard is proved to be
+	// narrow rather than a blanket refusal.
+	if _, err := st.WriteStationNote(ctx, lim, station, "handoff", "H", "proper", nil, "replace", 1, "tok", 1, false); err != nil {
+		t.Fatalf("a correct if_rev was refused: %v", err)
+	}
+	if _, err := st.WriteStationNote(ctx, lim, station, "handoff", "H", "stale", nil, "replace", 1, "tok", 1, false); !errors.Is(err, ErrNoteRevConflict) {
+		t.Fatalf("a STALE if_rev returned %v, want ErrNoteRevConflict — the two mistakes want "+
+			"different remedies and must not be conflated", err)
+	}
+	if _, err := st.WriteStationNote(ctx, lim, station, "handoff", "H", "\nmore", nil, "append", 0, "tok", 1, false); err != nil {
+		t.Fatalf("append without a rev was refused (%v) — append is non-destructive and must stay open", err)
+	}
 }

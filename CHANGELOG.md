@@ -15,6 +15,31 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **`station_note_write` with `mode=replace` could overwrite an existing page blind.** `if_rev`
+  was optional: supplying a stale one was refused cleanly, supplying none at all overwrote
+  silently. Replacing an EXISTING page now requires it, and the refusal names the current rev so a
+  session can retry without a second call. Creating a new page still needs none, and `append` is
+  unaffected.
+
+  **This is not a trap you fall into by default — it is one you fall into by doing the right
+  thing.** `mode` defaults to `append`, which is non-destructive. But a handoff page's own header
+  says never to append, because append stores a full copy per write and history grows with the
+  square of the page. So a replacement session, obeying that, reaches for `replace` — and unless
+  it *also* knows to read first, it destroys the page it was told to read. Two correct
+  instructions composing into the loss.
+
+  The old enforcement lived in the tool description, which pins at conversation start and never
+  refreshes — so a session whose text predates the advice could never learn it. An error is the
+  one channel that always arrives.
+
+  Measured on a live 3.6.0 deployment by ken-prod-ops, after ken-promo pointed out that **neither
+  station maintaining a handoff page had ever called `station_note_read`** — the path most
+  important to a takeover was the least exercised. Five existing tests were writing blind and
+  now read the rev first, which is what a replacement session must do.
+
+
 ## [3.6.0] — 2026-08-14
 
 ### Fixed

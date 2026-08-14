@@ -86,6 +86,15 @@ type StationNote struct {
 // staff one station (S4), so a blind write would silently destroy the other's page.
 var ErrNoteRevConflict = errors.New("notebook page changed underneath this write")
 
+// ErrNoteRevRequired is returned when mode=replace would overwrite an EXISTING page and the
+// caller supplied no if_rev at all — a blind overwrite rather than a losing race.
+//
+// Separate from ErrNoteRevConflict because they are different mistakes and want different
+// remedies: a conflict means "somebody moved it, re-read and retry"; this means "you did not
+// look before writing". Conflating them would tell a session to retry when what it must do is
+// read first.
+var ErrNoteRevRequired = errors.New("mode=replace on an existing page requires if_rev")
+
 // ErrNotebookCapReached refuses rather than evicting (S12): silent eviction of a working
 // note is data loss the session cannot see, a refusal is an error the model reacts to.
 var ErrNotebookCapReached = errors.New("notebook cap reached")
@@ -179,6 +188,35 @@ func (s *Store) WriteStationNote(ctx context.Context, lim StationNoteLimits, sta
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
+	}
+	// REPLACING AN EXISTING PAGE REQUIRES if_rev. It used to be optional, and optional was
+	// a guard that could not fire for the session that needed it most.
+	//
+	// ken-prod-ops measured the four cases on a live deployment: read returns the rev,
+	// a correct if_rev succeeds, a STALE if_rev is refused cleanly with no partial write —
+	// and NO if_rev at all overwrote silently. The mechanism was correct and complete when
+	// used, and nothing required using it.
+	//
+	// WHY THAT IS SHARPER THAN "REMEMBER TO PASS IT": `mode` defaults to append, which is
+	// non-destructive, so this is not a trap you fall into by default. It is one you fall
+	// into by doing the RIGHT thing. A handoff page's own header says never to append —
+	// correct, because append stores a full copy per write and history grows with the
+	// square of the page. So a replacement session, obeying that instruction, reaches for
+	// mode=replace; and unless it ALSO knows to read first and pass if_rev, it destroys the
+	// page it was told to read. Two instructions, each right alone, composing into the loss.
+	//
+	// AND THE OLD ENFORCEMENT COULD NOT REACH A RUNNING SESSION. It lived in the tool
+	// description, and descriptions pin at conversation start — so a session whose text
+	// predates the advice never learns it and the server has no way to tell it. An ERROR is
+	// the one channel that always arrives, which is why this refusal names the current rev:
+	// a session that is refused can retry correctly without a second call.
+	//
+	// A first write to a NEW key needs no rev, so creating a page is unaffected.
+	if mode == "replace" && exists && ifRev == 0 {
+		return nil, fmt.Errorf("%w: this page is at rev %d and mode=replace would overwrite it blind — "+
+			"read it with station_note_read and pass if_rev=%d. (Creating a NEW page needs no if_rev; "+
+			"append needs none either, but do not append to a page you maintain — history grows with the "+
+			"square of its length.)", ErrNoteRevRequired, curRev, curRev)
 	}
 	if ifRev > 0 && exists && ifRev != curRev {
 		return nil, fmt.Errorf("%w: you wrote against rev %d but the page is at rev %d — read it again before overwriting", ErrNoteRevConflict, ifRev, curRev)
