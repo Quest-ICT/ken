@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.5.1] — 2026-08-14
+
 ### Fixed
 
 - **The operator console and `ken_comm_messages_unacked` were blind to room and broadcast

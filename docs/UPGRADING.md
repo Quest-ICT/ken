@@ -34,6 +34,8 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.5.1
+
 ### `ken_comm_messages_unacked` steps up once — warn whoever alerts on it BEFORE upgrading
 
 **What changes.** The operator console's message counters and the
