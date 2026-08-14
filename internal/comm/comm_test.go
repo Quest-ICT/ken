@@ -202,7 +202,7 @@ func TestSendPollAckRoundTrip(t *testing.T) {
 		t.Fatalf("first delivery should not be marked redelivered: %+v", got[0])
 	}
 
-	if err := st.Ack(ctx, b, sent.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, sent.MessageID); err != nil {
 		t.Fatalf("ack: %v", err)
 	}
 	after, err := st.Poll(ctx, b, 10)
@@ -256,7 +256,7 @@ func TestAckDropsBodyButKeepsMetadata(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, sent.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, sent.MessageID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -295,7 +295,7 @@ func TestZeroRetentionRestoresBlankOnAck(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, sent.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, sent.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	m, err := st.MessageByID(ctx, sent.MessageID)
@@ -322,11 +322,11 @@ func TestAckIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		if err := st.Ack(ctx, b, sent.MessageID); err != nil {
+		if _, err := st.Ack(ctx, b, sent.MessageID); err != nil {
 			t.Fatalf("ack %d: %v", i, err)
 		}
 	}
-	if err := st.Ack(ctx, b, "nosuchmessage"); err != nil {
+	if _, err := st.Ack(ctx, b, "nosuchmessage"); err != nil {
 		t.Fatalf("acking an unknown id must succeed, got %v", err)
 	}
 }
@@ -485,7 +485,7 @@ func TestRequiresResponseRetainsBodyUntilReplied(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, req.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, req.MessageID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -528,7 +528,7 @@ func TestBackpressureCapsUnackedDepth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, got[0].MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, got[0].MessageID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Send(ctx, a, channelID, "now-ok", SendOpts{}); err != nil {
@@ -615,7 +615,7 @@ func TestSweepPurgesSettledMetadata(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, sent.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, sent.MessageID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -721,7 +721,7 @@ func TestReceivedSinceSurvivesAck(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, m.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, m.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := st.ReceivedSince(ctx, 7, 3600); !got {
@@ -960,7 +960,7 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 		t.Fatalf("wrong message inherited: %q", got[0].Body)
 	}
 	// And it can settle it for the station: one ack, not one per reader.
-	if err := st.Ack(ctx, b, got[0].MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, got[0].MessageID); err != nil {
 		t.Fatal(err)
 	}
 	again, err := st.Poll(ctx, b, 10)
@@ -1149,7 +1149,7 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 		t.Fatalf("the replacement cannot reply on the inherited channel: %v — polling mail it cannot answer is a half-feature", err)
 	}
 	// And settle it cumulatively, the form the tool description advertises.
-	if err := st.AckUpTo(ctx, b, ch.ChannelID, got[len(got)-1].Seq); err != nil {
+	if _, err := st.AckUpTo(ctx, b, ch.ChannelID, got[len(got)-1].Seq); err != nil {
 		t.Fatalf("cumulative ack failed for the replacement: %v", err)
 	}
 	again, err := st.Poll(ctx, b, 10)

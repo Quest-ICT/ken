@@ -101,7 +101,7 @@ func TestSequenceSurvivesMetadataPurge(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, first.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, first.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	if _, purged, err := st.Sweep(ctx); err != nil || purged == 0 {
@@ -271,7 +271,7 @@ func TestAnsweredRequestBodyIsDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Ack BEFORE replying — the case that used to leak.
-	if err := st.Ack(ctx, b, req.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, req.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	if m, _ := st.MessageByID(ctx, req.MessageID); m.Body == "" {
@@ -413,7 +413,7 @@ func TestSweepKeepsAccountingWhenBytesRemain(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, msg.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, msg.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := st.Sweep(ctx); err != nil {
@@ -505,7 +505,7 @@ func TestProvenanceSeesRedelivery(t *testing.T) {
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("redelivery: %v %d", err, len(msgs))
 	}
-	if err := st.Ack(ctx, b, msgs[0].MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, msgs[0].MessageID); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := st.ReceivedSince(ctx, 7, 3600); !got {

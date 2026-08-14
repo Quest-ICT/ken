@@ -277,6 +277,15 @@ type ackIn struct {
 
 type ackOut struct {
 	OK bool `json:"ok"`
+	// Acked is how many deliveries this call actually settled.
+	//
+	// NOT omitempty, and that is the entire point: 0 is the informative answer. This call
+	// used to return only ok:true and could not fail — a fabricated id, an empty string and
+	// acking somebody else's message all reported success. A session running with the wrong
+	// endpoint's credentials acked into the void and believed it was finished.
+	Acked int `json:"acked" jsonschema:"how many deliveries this settled. 0 means nothing was settled — the call still succeeded, but you did not acknowledge what you thought you did"`
+	// Note appears only when nothing was settled, explaining the likely reasons.
+	Note string `json:"note,omitempty"`
 }
 
 // --- file exchange (comm-file scope; docs/COMM.md §11) ---

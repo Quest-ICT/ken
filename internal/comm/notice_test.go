@@ -84,7 +84,7 @@ func TestNoNoticeForAMessageThatWasActuallyRead(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, m.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, m.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	age(t, st, m.MessageID, "-31 days")
@@ -324,7 +324,7 @@ func TestARoomMessageOneStationReadAndAnotherIgnoredStillTellsTheSender(t *testi
 	if _, err := st.Poll(ctx, beta, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, beta, m.MessageID); err != nil {
+	if _, err := st.Ack(ctx, beta, m.MessageID); err != nil {
 		t.Fatal(err)
 	}
 	// AGED BY TWO DAYS, NOT THIRTY, and the difference is a real property rather than a

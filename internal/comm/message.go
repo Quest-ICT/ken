@@ -719,10 +719,27 @@ WHERE message_row = (SELECT id FROM message WHERE message_id=?)
 // A message that requires a response keeps its body until the reply arrives or its
 // deadline passes: a responder that crashed and recovered plausibly needs to
 // re-read what it owes.
-func (s *Store) Ack(ctx context.Context, ep *Endpoint, messageID string) error {
+// RETURNS HOW MANY DELIVERIES IT ACTUALLY SETTLED, and that number is the whole point.
+//
+// This call could not fail. It ran an UPDATE and discarded the row count, so a fabricated
+// message id, an empty string, and acking a message addressed to somebody else ALL returned
+// success — in the one call whose entire contract is "I have PROCESSED this", and which the
+// instructions most insist a session trust.
+//
+// It was found the expensive way: a session ran with the WRONG endpoint's credentials, acked
+// on it, got ok:true, and had no signal at all. Nothing was lost, because ack-means-processed
+// plus redelivery meant the bogus ack settled nothing and the message came back on the correct
+// endpoint — but the session believed it was done.
+//
+// THE FIX IS NOT TO MAKE A BAD ACK FAIL HARD. That redelivery is the safety net, and an ack
+// that errors on an unknown id would break the legitimate case it exists for: acking something
+// already settled, or already swept, must stay harmless. The no-op stays; it stops being
+// SILENT. A caller reading acked=0 knows it settled nothing and can ask why; a caller reading
+// ok:true knows nothing at all.
+func (s *Store) Ack(ctx context.Context, ep *Endpoint, messageID string) (int, error) {
 	pred, pargs := partyPredicate(ep, "")
 	args := append([]any{ep.ID, messageID}, pargs...)
-	if _, err := s.W.ExecContext(ctx, `
+	res, err := s.W.ExecContext(ctx, `
 UPDATE delivery
 SET state='acked',
     acked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
@@ -730,10 +747,16 @@ SET state='acked',
     claimed_by_endpoint=NULL, claim_expires_at=NULL
 WHERE message_row = (SELECT id FROM message WHERE message_id=?)
   AND `+pred+`
-  AND state IN ('queued','delivered')`, args...); err != nil {
-		return err
+  AND state IN ('queued','delivered')`, args...)
+	if err != nil {
+		return 0, err
 	}
-	return s.blankIfFullySettled(ctx, messageID)
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// Nothing settled, so there is nothing to blank and no reason to spend the query.
+		return 0, nil
+	}
+	return int(n), s.blankIfFullySettled(ctx, messageID)
 }
 
 // partyPredicate is Poll's recipient rule, stated ONCE so Ack and AckUpTo cannot
@@ -814,9 +837,21 @@ WHERE message_id=? AND body IS NOT NULL
 	return err
 }
 
-func (s *Store) AckUpTo(ctx context.Context, ep *Endpoint, channelID string, seq int64) error {
-	if _, _, err := s.ChannelFor(ctx, ep, channelID); err != nil {
-		return err
+// AckUpTo settles everything up to `seq` in one scope — a channel OR A ROOM.
+//
+// IT USED TO GATE ON ChannelFor, so passing a room id returned the caller-safe text written
+// for comm_send: "address it with to_room instead of channel_id". comm_ack HAS NO to_room, so
+// a session holding a room id was told to use a parameter that does not exist on the call it
+// was making, and looped. Measured: acking eight room messages took eight separate calls.
+//
+// The room id is accepted in `channel_id` deliberately, rather than adding a to_room parameter.
+// A session that has just polled room mail holds a room id and one addressing parameter, and
+// that is what it will try; a new parameter would also have to be discovered, and tool schemas
+// pin at conversation start.
+func (s *Store) AckUpTo(ctx context.Context, ep *Endpoint, scopeID string, seq int64) (int, error) {
+	scope, err := s.cumulativeAckScope(ctx, ep, scopeID)
+	if err != nil {
+		return 0, err
 	}
 	// The range is over the SCOPE sequence — one ascending stream across every sender
 	// rather than two interleaved ones. That is what makes a cumulative ack safe:
@@ -828,32 +863,65 @@ func (s *Store) AckUpTo(ctx context.Context, ep *Endpoint, channelID string, seq
 	// in exactly one place. A range that settled rows with its own UPDATE is how the
 	// two paths drifted apart the first time.
 	pred, pargs := partyPredicate(ep, "d")
-	args := append([]any{channelScope(channelID), seq}, pargs...)
+	args := append([]any{scope, seq}, pargs...)
 	rows, err := s.W.QueryContext(ctx, `
 SELECT m.message_id FROM delivery d JOIN message m ON m.id = d.message_row
  WHERE m.scope_id=? AND m.scope_seq<=? AND d.state='delivered' AND `+pred, args...)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		ids = append(ids, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
+	// SUMS WHAT EACH ACK ACTUALLY SETTLED, not len(ids).
+	//
+	// The two differ only when a row selected as a candidate is settled by somebody else
+	// before this loop reaches it — another endpoint of the SAME station racing the same
+	// inbox, which is the one case stations make ordinary. NO TEST COVERS THAT: the select
+	// and the acks happen inside this function, so a single-threaded test cannot interleave
+	// anything between them, and the two expressions are indistinguishable from outside.
+	// Stated rather than papered over, because a mutation swapping them survives the suite
+	// and someone will eventually "simplify" it.
+	total := 0
 	for _, id := range ids {
-		if err := s.Ack(ctx, ep, id); err != nil {
-			return err
+		n, err := s.Ack(ctx, ep, id)
+		if err != nil {
+			return total, err
 		}
+		total += n
 	}
-	return nil
+	return total, nil
+}
+
+// cumulativeAckScope resolves an id the caller passed as `channel_id` to the scope it may
+// cumulatively ack in — refusing anything it does not belong to.
+//
+// The room branch keys on MEMBERSHIP, not existence, for the same reason the room-vs-channel
+// error does: telling a non-member "that is a room" confirms the room exists, which is exactly
+// the oracle comm_open_channel's uniform refusal is built to close.
+func (s *Store) cumulativeAckScope(ctx context.Context, ep *Endpoint, id string) (string, error) {
+	if _, _, err := s.ChannelFor(ctx, ep, id); err == nil {
+		return channelScope(id), nil
+	} else if !errors.Is(err, ErrNotFound) {
+		// A real failure — a revoked channel, a database error — is not a licence to go
+		// looking for a room with the same id.
+		return "", err
+	}
+	if s.callerIsInRoom(ctx, ep, id) {
+		return roomScope(id), nil
+	}
+	return "", CallerSafe(fmt.Errorf("%w: no channel or room %q that you belong to. "+
+		"comm_ack takes the SAME id you polled the message from — a room_id works here, in channel_id", ErrNotFound, id))
 }
 
 // PendingReplies lists this endpoint's sent messages that still owe a response.

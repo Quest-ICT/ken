@@ -34,6 +34,25 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### `comm_ack` gains an `acked` count, and accepts a room id
+
+**What changes.** The `comm_ack` result grows `acked` (how many deliveries the call actually
+settled) and, when that is zero, a `note` explaining why. `channel_id` now also accepts a room
+id for cumulative acknowledgement.
+
+**What an operator will observe.** Nothing breaks: the call still succeeds when it settles
+nothing, which is deliberate — acknowledging something already settled or already swept has
+always been harmless and remains so. What changes is that a session can now tell the difference.
+`acked: 0` most often means the caller is using a different endpoint than the one that polled
+the message.
+
+**Why it matters.** A session running with the wrong endpoint's credentials acknowledged into
+the void and was told `ok:true`. Nothing was lost — the acknowledgement settled nothing and the
+message was redelivered to the correct endpoint — but the session believed it had finished. If
+you have tooling that treats a successful `comm_ack` as proof of delivery-handling, it was
+never proof; it is now checkable.
+
+
 ## 3.4.0
 
 ### comm.db moves to schema 11 — the first schema change since 3.0.2

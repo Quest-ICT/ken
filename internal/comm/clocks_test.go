@@ -211,7 +211,7 @@ func TestAckUpToCannotSettleUndeliveredMail(t *testing.T) {
 	}
 
 	// A cumulative ack covering BOTH sequence numbers.
-	if err := st.AckUpTo(ctx, b, channelID, second.Seq); err != nil {
+	if _, err := st.AckUpTo(ctx, b, channelID, second.Seq); err != nil {
 		t.Fatal(err)
 	}
 	m1, err := st.MessageByID(ctx, first.MessageID)

@@ -735,25 +735,40 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name:        "comm_ack",
-		Description: "Acknowledge a message AFTER you have acted on it — ack means processed, not received. Un-acked messages are redelivered, which is the safety net if your turn ends early. Pass message_id, or channel_id + ack_up_to_seq to ack cumulatively.",
+		Description: "Acknowledge a message AFTER you have acted on it — ack means processed, not received. Un-acked messages are redelivered, which is the safety net if your turn ends early. Pass message_id, or channel_id + ack_up_to_seq to ack cumulatively — and channel_id accepts a ROOM id too, so room mail can be settled in one call. CHECK THE acked FIELD: it is how many deliveries this actually settled. acked=0 means nothing was settled and the call still succeeded — usually because the message is already acked or swept, or because you are calling with a different endpoint than the one that polled it.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in ackIn) (*mcp.CallToolResult, ackOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
 			return nil, ackOut{}, err
 		}
+		var acked int
 		switch {
 		case in.MessageID != "":
-			if err := d.Comm.Ack(ctx, ep, in.MessageID); err != nil {
+			n, err := d.Comm.Ack(ctx, ep, in.MessageID)
+			if err != nil {
 				return nil, ackOut{}, commError(err)
 			}
+			acked = n
 		case in.ChannelID != "" && in.AckUpToSeq > 0:
-			if err := d.Comm.AckUpTo(ctx, ep, in.ChannelID, in.AckUpToSeq); err != nil {
+			n, err := d.Comm.AckUpTo(ctx, ep, in.ChannelID, in.AckUpToSeq)
+			if err != nil {
 				return nil, ackOut{}, commError(err)
 			}
+			acked = n
 		default:
 			return nil, ackOut{}, errors.New("pass message_id, or channel_id together with ack_up_to_seq")
 		}
-		return nil, ackOut{OK: true}, nil
+		out := ackOut{OK: true, Acked: acked}
+		if acked == 0 {
+			// SAID OUT LOUD, because ok:true alone is what let a session ack on the wrong
+			// endpoint and believe it was finished. The call still succeeds — settling
+			// nothing is legitimate for something already acked or already swept — but the
+			// caller now learns it happened instead of having to already suspect it.
+			out.Note = "nothing was settled: no message by that id is currently awaiting YOUR acknowledgement. " +
+				"It may already be acked, already swept, or addressed to a different endpoint than the one you are using — " +
+				"check that the endpoint_id you are calling with is the one that POLLED this message"
+		}
+		return nil, out, nil
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{

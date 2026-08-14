@@ -333,7 +333,7 @@ func TestSweepDeletesDeliveredFileBytes(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Ack(ctx, b, msg.MessageID); err != nil {
+	if _, err := st.Ack(ctx, b, msg.MessageID); err != nil {
 		t.Fatal(err)
 	}
 

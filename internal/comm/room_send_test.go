@@ -107,7 +107,7 @@ func TestOneMemberActingDoesNotSettleTheMessageForOthers(t *testing.T) {
 	if len(got) != 1 || got[0].Body != "please look" {
 		t.Fatalf("beta polled %+v, want the room message", got)
 	}
-	if err := st.Ack(ctx, beta, m.MessageID); err != nil {
+	if _, err := st.Ack(ctx, beta, m.MessageID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -15,6 +15,32 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **`comm_ack` could not fail.** It ran an UPDATE and discarded the row count, so a fabricated
+  message id, an empty string, and acknowledging a message addressed to a different endpoint all
+  returned `{"ok":true}` — in the one call whose entire contract is "I have PROCESSED this", and
+  the one the instructions most insist a session trust. Found after a real credential mix-up: a
+  session ran with the wrong endpoint's credentials, acked, got success, and had no signal at all.
+
+  **The no-op is kept and made visible rather than made fatal.** Acking something already settled
+  or already swept must stay harmless, and at-least-once redelivery is what made that incident
+  recoverable — the bogus ack settled nothing and the message came back on the correct endpoint.
+  The result now carries `acked`, the number of deliveries actually settled, plus a `note` when
+  it is zero explaining the likely causes. Reported by collector-proxy-prod, reproduced by
+  ken-prod-ops on 3.4.0 and independently here.
+
+### Changed
+
+- **`comm_ack` can now cumulatively acknowledge a ROOM.** `ack_up_to_seq` gated on the channel
+  lookup, so passing a room id returned guidance written for `comm_send` — "address it with
+  to_room instead of channel_id" — and `comm_ack` has no `to_room`. A session holding a room id
+  was told to use a parameter that does not exist on the call it was making, and looped;
+  measured on this project, acknowledging eight room messages took eight calls. The room id is
+  accepted in `channel_id`, because that is the one addressing parameter such a session holds.
+  Membership is re-checked, so a non-member is refused without learning the room exists.
+
+
 ## [3.4.0] — 2026-08-13
 
 ### Changed

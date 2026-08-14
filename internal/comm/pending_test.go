@@ -3,6 +3,7 @@ package comm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -548,5 +549,136 @@ func TestBackpressureStillCountsOnlyItsOwnScope(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "side", "unrelated conversation", SendOpts{}); err != nil {
 		t.Fatalf("a full room blocked an unrelated ROOM: %v.\n"+
 			"The cap counts the scope's own backlog; widening it makes one noisy room a global brake.", err)
+	}
+}
+
+// AN ACK THAT CANNOT FAIL IS NOT AN ACK.
+//
+// This call ran an UPDATE and discarded the row count, so a fabricated message id, an empty
+// string, and acking a message addressed to somebody else ALL returned success — in the one
+// call whose entire contract is "I have PROCESSED this", and the one the instructions most
+// insist a session trust.
+//
+// Found the expensive way: a session ran with the WRONG endpoint's credentials, acked, got
+// ok:true, and had no signal at all. Nothing was lost — ack-means-processed plus redelivery
+// meant the bogus ack settled nothing and the message came back on the right endpoint — but
+// the session believed it was finished.
+func TestAckReportsThatItSettledNothing(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	a, b, ch := pair(t, st)
+
+	m, err := st.Send(ctx, a, ch, "for b only", SendOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		label string
+		ep    *Endpoint
+		id    string
+	}{
+		{"a fabricated id", b, "ThisMessageIdDoesNotExist99"},
+		{"an empty id", b, ""},
+		{"a real message addressed to somebody else", a, m.MessageID},
+	} {
+		n, err := st.Ack(ctx, c.ep, c.id)
+		// STILL SUCCEEDS, deliberately. Making a bad ack fail hard would break the
+		// legitimate no-op — acking something already settled or already swept — and
+		// redelivery is the safety net that made the real incident recoverable.
+		if err != nil {
+			t.Errorf("%s returned an error (%v); the no-op must stay harmless", c.label, err)
+		}
+		if n != 0 {
+			t.Errorf("%s reported settling %d deliveries, want 0", c.label, n)
+		}
+	}
+
+	// CONTROL: the same call on the right endpoint settles exactly one, so a zero above is
+	// evidence about the ack rather than about a fixture in which nothing was ackable.
+	if _, err := st.Poll(ctx, b, 10); err != nil {
+		t.Fatal(err)
+	}
+	n, err := st.Ack(ctx, b, m.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("the legitimate ack settled %d, want 1 — the count is not measuring anything", n)
+	}
+	// And acking it AGAIN settles nothing, which is the case that must not become an error.
+	if again, err := st.Ack(ctx, b, m.MessageID); err != nil || again != 0 {
+		t.Fatalf("re-acking a settled message returned (%d, %v), want (0, nil)", again, err)
+	}
+}
+
+// A ROOM CAN BE ACKED CUMULATIVELY, in the parameter a session actually holds.
+//
+// AckUpTo gated on ChannelFor, so a room id came back with the caller-safe text written for
+// comm_send — "address it with to_room instead of channel_id" — and comm_ack has no to_room.
+// A session holding a room id was told to use a parameter that does not exist on the call it
+// was making. Measured on this project: acking eight room messages took eight calls.
+func TestARoomCanBeAckedCumulatively(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
+
+	var last int64
+	for i := 0; i < 3; i++ {
+		m, err := st.SendToRoom(ctx, beta, "ops", "one of three", SendOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = m.Seq
+	}
+	// Cumulative ack only settles DELIVERED mail, so poll first — as a real session would.
+	if _, err := st.Poll(ctx, alpha, 10); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.AckUpTo(ctx, alpha, "ops", last)
+	if err != nil {
+		t.Fatalf("cumulative ack on a room failed: %v.\n"+
+			"A session holding a room id has one addressing parameter and this is the call it makes.", err)
+	}
+	if n != 3 {
+		t.Fatalf("cumulative room ack settled %d of 3", n)
+	}
+	// CONTROL: they really are settled, not merely reported.
+	var open int
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM delivery WHERE party_key=? AND state IN ('queued','delivered')`,
+		stationParty("st-alpha")).Scan(&open); err != nil {
+		t.Fatal(err)
+	}
+	if open != 0 {
+		t.Fatalf("%d deliveries still open after a cumulative ack that reported 3", open)
+	}
+}
+
+// AND THE RELAXED GATE MUST NOT ADMIT A NON-MEMBER — the defect this fix could create.
+//
+// Accepting a room id in channel_id means the gate now consults room membership. If it
+// consulted room EXISTENCE instead, a caller could learn a room exists by acking into it,
+// which is precisely the oracle comm_open_channel's uniform refusal is built to close.
+func TestCumulativeAckRefusesARoomYouAreNotIn(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	outsider := stationEndpoint(t, st, "tok-x", "st-outsider")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
+
+	if _, err := st.SendToRoom(ctx, beta, "ops", "not for you", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := st.AckUpTo(ctx, outsider, "ops", 99)
+	if err == nil {
+		t.Fatalf("a non-member cumulatively acked room 'ops' and settled %d — "+
+			"the gate checks existence rather than membership", n)
+	}
+	if strings.Contains(err.Error(), "is a ROOM") {
+		t.Fatalf("the refusal confirms the room exists: %v", err)
 	}
 }
