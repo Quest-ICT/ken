@@ -34,6 +34,41 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.5.0
+
+### Revoking a station link now closes channels it could not previously reach
+
+**What changes.** Channels opened by PAIRING CODE between two station-bound endpoints were
+invisible to link revocation: the predicate matches on a snapshot of the authorising pair, and
+only the linked-open path ever wrote it. Both seats now record their station as they join.
+
+**What an operator will observe.** The "this will disconnect N live sessions" count shown before
+revoking a link **will go up** for pairs that have code-paired channels between them, and
+revoking will now actually close them.
+
+**What to do first — this one is retrospective.** If you have revoked a station link in the past
+and the console told you there were **0 live channels**, that number may have been wrong, and a
+channel you intended to end may still be open. Check `/comm` for open channels between pairs
+whose link you have revoked. Channels opened through `comm_open_channel` (the linked path) were
+always counted correctly; only code-paired ones were missed.
+
+### `you_are` and `comm_endpoint_ids` — new result fields for catching a credential mix-up
+
+**What changes.** `comm_channels` and `comm_poll` gain `you_are` (the station this endpoint is
+bound to, or a plain statement that it is bound to none). `station_me` gains `comm_endpoint_ids`,
+the comm endpoints bound to that station.
+
+**What an operator will observe.** Additive result fields only, arriving in every already-running
+session on its next call — the same exposure 3.4.0 took, so a client that pins or validates tool
+result shapes will see keys it does not know. `comm_endpoint_ids` is **omitted entirely when COMM
+is off**, never reported as an empty list: "COMM is not running here" and "you are bound to no
+endpoint" are different facts and only one is worth chasing.
+
+**Why.** A session ran with another endpoint's credentials and nothing anywhere told it — every
+call succeeded, because the credentials were valid, just not its own. Nothing in the system could
+answer "is this the right endpoint for this station?" from either side.
+
+
 ### Archiving a station now stops it on COMM
 
 **What changes.** Archiving a station drops it out of the room roster and refuses COMM calls from

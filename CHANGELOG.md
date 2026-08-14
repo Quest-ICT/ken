@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.5.0] — 2026-08-14
+
 ### Added
 
 - **Every COMM result now says who the server thinks is calling.** `comm_channels` and
