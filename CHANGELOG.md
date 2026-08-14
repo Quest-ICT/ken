@@ -15,6 +15,17 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **A replacement session could not download its own station's file.** `GrantDownload`
+  authorised with an ENDPOINT ROWID comparison, so a successor staffing the same station was
+  refused an attachment the station legitimately owns — it polls the offer normally, sees the
+  descriptor, calls `comm_file_grant`, and is told the attachment does not exist. Worst in
+  exactly the case stations exist for: a takeover. It is the endpoint-versus-party mistake
+  migration 0010 names explicitly, left standing in the one call that mints bytes.
+  Authorisation is now by party; an unrelated station still gets `ErrNotFound` rather than
+  anything that would confirm the id exists.
+
 ### Added
 
 - **The station briefing now says how much of your task list it is NOT showing you.** Three

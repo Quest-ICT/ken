@@ -371,8 +371,23 @@ func (s *Store) GrantDownload(ctx context.Context, ep *Endpoint, attachmentID st
 		if err != nil {
 			return err
 		}
+		// AUTHORISED BY PARTY, NOT BY ENDPOINT ROWID.
+		//
+		// This compared a.recipientRow against ep.ID, so a REPLACEMENT session staffing the
+		// same station was refused an attachment its station legitimately owns. The offer
+		// message is delivered to the station's party and a successor polls it normally —
+		// sees the file descriptor, calls comm_file_grant, and is told the attachment does
+		// not exist. Worst in exactly the case stations exist for: a takeover.
+		//
+		// It is the endpoint-versus-party mistake that migration 0010 names by name, left
+		// standing in the one place that mints bytes.
+		//
 		// ErrNotFound, not ErrDenied, for a non-recipient: they must not learn the id exists.
-		if a.recipientRow != ep.ID {
+		theirs, err := endpointParty(ctx, t, a.recipientRow)
+		if err != nil {
+			return err
+		}
+		if theirs != PartyOf(ep) {
 			return ErrNotFound
 		}
 		if a.Transfer != "upload" || a.State != "ready" {

@@ -370,3 +370,111 @@ func TestSweepExpiresStaleAttachments(t *testing.T) {
 		}
 	}
 }
+
+// A SUCCESSOR SESSION MUST BE ABLE TO DOWNLOAD ITS STATION'S FILE.
+//
+// GrantDownload authorised with `a.recipientRow != ep.ID` — an ENDPOINT ROWID comparison —
+// so a replacement session staffing the same station was refused an attachment its station
+// legitimately owns. The offer message is delivered to the station's PARTY, so the successor
+// polls it normally, sees the descriptor, calls comm_file_grant, and is told the attachment
+// does not exist. Worst in exactly the case stations exist for: a takeover.
+//
+// It is the endpoint-versus-party mistake migration 0010 names explicitly, left standing in
+// the one call that mints bytes. Found by a survey that was looking at something else.
+func TestAReplacementSessionCanDownloadItsStationsAttachment(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+
+	sender := stationEndpoint(t, st, "tok-send", "st-sender")
+	first := stationEndpoint(t, st, "tok-1", "st-recv")
+	code, err := st.MintPairingCode(ctx, 1, 42, "sender<->recv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, sender, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, first, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := []byte("bytes for whoever is staffing st-recv")
+	res, err := st.OfferFile(ctx, sender, ch.ChannelID, FileOffer{
+		Name: "data.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content),
+		Transfer: "upload", Note: "for the station",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gi, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL: the original recipient can download it, so a refusal below is about the
+	// successor rather than about an attachment that was never grantable.
+	msgs, err := st.Poll(ctx, first, 10)
+	if err != nil || len(msgs) != 1 || msgs[0].File == nil {
+		t.Fatalf("setup: the original recipient polled %d messages", len(msgs))
+	}
+	attID := msgs[0].File.AttachmentID
+	if _, _, err := st.GrantDownload(ctx, first, attID); err != nil {
+		t.Fatalf("the ORIGINAL recipient cannot download: %v", err)
+	}
+
+	// The predecessor goes away; a new session takes the same station.
+	successor := stationEndpoint(t, st, "tok-2", "st-recv")
+	if _, _, err := st.GrantDownload(ctx, successor, attID); err != nil {
+		t.Fatalf("a replacement session on the same station cannot download its station's "+
+			"attachment: %v.\nIt polled the offer legitimately and is then told the file does "+
+			"not exist — the endpoint-versus-party mistake, in the one call that mints bytes.", err)
+	}
+}
+
+// AND A STRANGER STILL LEARNS NOTHING. Widening from endpoint to party must not widen past
+// the station — the refusal is ErrNotFound precisely so a non-recipient cannot confirm the
+// id exists, and that property is the reason this check is written the way it is.
+func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+
+	sender := stationEndpoint(t, st, "tok-send", "st-sender")
+	recv := stationEndpoint(t, st, "tok-r", "st-recv")
+	code, err := st.MintPairingCode(ctx, 1, 42, "sender<->recv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, sender, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, recv, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("not for you")
+	res, err := st.OfferFile(ctx, sender, ch.ChannelID, FileOffer{
+		Name: "x.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := st.Poll(ctx, recv, 10)
+	if len(msgs) != 1 || msgs[0].File == nil {
+		t.Fatal("setup: recipient did not receive the offer")
+	}
+
+	outsider := stationEndpoint(t, st, "tok-x", "st-outsider")
+	_, _, err = st.GrantDownload(ctx, outsider, msgs[0].File.AttachmentID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("an unrelated station got %v, want ErrNotFound — anything else confirms the "+
+			"attachment id exists to somebody who should not know", err)
+	}
+}
