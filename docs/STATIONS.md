@@ -680,9 +680,26 @@ gated on that flag alone — never on `KEN_COMM_ENABLED`, because stations work 
   marked, and the `hearsay_at_write` badge shown exactly as S9 badges a peer-prompted request. This is
   the human's whole-pile view and the only surface where the pile is visible at once;
 - the **key list** with retire / revoke and revoke's "this will disconnect N live sessions" count;
-- **archive / unarchive** — reversible: keys stop binding, live endpoints are severed, links go
-  *dormant* rather than revoked so unarchiving restores them, and the name is held unless explicitly
-  released (S3);
+- **archive / unarchive** — reversible, and it means **no new mail is addressed to this post and no
+  session may act as it on COMM**. Concretely: the station drops out of the room roster, so room and
+  broadcast sends stop counting it as a recipient; a COMM call from an endpoint bound to it is
+  refused at use with an error naming the remedy; keys stop binding; links go *dormant* rather than
+  revoked; the name is held unless explicitly released (S3).
+
+  **Everything it already holds stays.** Its notebook, tasks and locker remain readable — a retired
+  post's record is still the human's record — and mail queued before the archive is left alone
+  rather than tidied away. Unarchiving restores routing and sessions in one click, with the SAME
+  endpoint credentials: refusal is at use rather than by revoking the endpoint, because revocation
+  is one-way and would turn unarchiving into a re-registration (a new secret onto disk, a fresh
+  voucher, channels re-opened).
+
+  **What this costs, stated because it is a real loss:** parking a live conversation is no longer
+  possible. Archiving cuts a running session's COMM immediately and it finds out through a tool
+  error. Nothing is destroyed, and unarchive puts it back — but "archive it for now, it is still
+  talking to someone" is not a thing this operation does. Before 3.5.0 archiving severed nothing
+  on COMM at all: a retired post kept receiving room mail nobody could read or acknowledge, its
+  permanent backlog consumed the live room's backpressure budget, and its sender got a spurious
+  expiry notice naming it on every message;
 - **asset transfer** — an atomic move, per asset class, in one writer transaction, **refused on any
   name collision**, returning the colliding page names so the human renames or drops them first. Since
   every station is expected to have a `handoff` page, a collision on it is the *common* case. The

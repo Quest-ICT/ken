@@ -317,3 +317,89 @@ func TestTheIdentityEchoIsNeverSilentlyEmpty(t *testing.T) {
 		t.Errorf("you_are = %q for an unbound endpoint; it should say so plainly", got)
 	}
 }
+
+// AN ARCHIVED STATION'S SESSION IS REFUSED ON COMM — the promise docs/STATIONS.md has been
+// making since stations shipped, which nothing implemented.
+//
+// auth() checked endpoint revocation and station-KEY revocation and never station state, so a
+// session bound before the archive polled, sent, broadcast and acked forever. The doc and the
+// code disagreed and the code is the one users met.
+func TestAnArchivedStationCannotUseComm(t *testing.T) {
+	sess, st, ctx := dirHarness(t)
+
+	// CONTROL FIRST: these exact credentials work while the station is active, so a refusal
+	// below is about archiving rather than about a harness that never authenticated.
+	if res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: dirCreds()}); err != nil || res.IsError {
+		t.Fatalf("the control call failed before archiving: err=%v res=%+v", err, res)
+	}
+
+	if err := st.ArchiveStation(ctx, dirStation, true); err != nil {
+		t.Fatal(err)
+	}
+	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: dirCreds()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("a session bound to an ARCHIVED station still uses COMM.\n" +
+			"docs/STATIONS.md promises archiving severs live endpoints; nothing did it, so a retired " +
+			"post kept polling, sending and acking indefinitely.")
+	}
+	msg := ""
+	for _, ct := range res.Content {
+		if tc, ok := ct.(*mcp.TextContent); ok {
+			msg += tc.Text
+		}
+	}
+	// The refusal must carry the REMEDY. Under the freeze an error string is the only
+	// channel that reaches a session already running — it cannot be sent a corrected
+	// description, so what it needs to know has to be in the refusal itself.
+	if !strings.Contains(msg, "archived") || !strings.Contains(msg, "unarchive") {
+		t.Errorf("the refusal does not name the state and the remedy: %q", msg)
+	}
+
+	// REVERSIBLE WITH THE SAME CREDENTIALS. This is what makes refuse-at-use the right shape
+	// rather than revoking the endpoint: revocation is one-way and would turn unarchiving
+	// into a re-registration — a new secret onto disk and a fresh voucher.
+	if err := st.ArchiveStation(ctx, dirStation, false); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: dirCreds()}); err != nil || res.IsError {
+		t.Fatalf("unarchiving did not restore the SAME endpoint: err=%v res=%+v", err, res)
+	}
+}
+
+// AND ARCHIVE STATE MUST NOT BECOME AN ORACLE. The check is ordered after the secret
+// verifies, so a wrong secret answers identically whatever the station's state.
+func TestArchiveStateIsNotReadableWithoutTheSecret(t *testing.T) {
+	sess, st, ctx := dirHarness(t)
+	bad := map[string]any{"endpoint_id": dirEP, "endpoint_secret": "wrong-secret-entirely"}
+
+	call := func() string {
+		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: bad})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError {
+			t.Fatal("a wrong secret was accepted")
+		}
+		out := ""
+		for _, ct := range res.Content {
+			if tc, ok := ct.(*mcp.TextContent); ok {
+				out += tc.Text
+			}
+		}
+		return out
+	}
+
+	active := call()
+	if err := st.ArchiveStation(ctx, dirStation, true); err != nil {
+		t.Fatal(err)
+	}
+	archived := call()
+
+	if active != archived {
+		t.Fatalf("a wrong secret is answered differently depending on archive state:\n active:   %q\n archived: %q\n"+
+			"That makes a station's retirement readable by anyone who can guess an endpoint id.", active, archived)
+	}
+}

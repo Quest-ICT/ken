@@ -160,12 +160,28 @@ SELECT m.station_id, COALESCE(st.name,''), m.added_at
 // Archived rooms are omitted rather than mirrored-and-filtered: the mirror's only job is
 // answering "may this party send here", and an archived room's answer is no. Filtering
 // at the source means the send path cannot forget to.
+//
+// ARCHIVED STATIONS ARE OMITTED FOR THE SAME REASON, and their absence was a defect with
+// consequences beyond tidiness. An archived station stayed a full first-class recipient:
+// counted in `recipients`, `audience_size` and `broadcast_reaches`, with delivery rows
+// nobody could read and nobody could ack. Two things followed, both live:
+//
+//   - The SENDER got a spurious `expired` notice naming that station about one message-TTL
+//     later, on every room message — continuous poll-path noise reporting a failure that
+//     is really a retired post.
+//   - Backpressure counts open deliveries PER SCOPE, so the dead member's permanent backlog
+//     consumed the LIVE room's budget. Enough traffic inside one TTL window and every member
+//     of that room is refused.
+//
+// The inner join is safe: comm_room_member.station_id references station(station_id) ON
+// DELETE CASCADE, so it can drop no row that is not already an orphan.
 func (s *Store) RoomMirrorRows(ctx context.Context) (map[string][]string, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT m.room_id, m.station_id
   FROM comm_room_member m
   JOIN comm_room r ON r.room_id = m.room_id
- WHERE r.state='active'`)
+  JOIN station st ON st.station_id = m.station_id
+ WHERE r.state='active' AND st.state='active'`)
 	if err != nil {
 		return nil, err
 	}

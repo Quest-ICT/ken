@@ -34,6 +34,30 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### Archiving a station now stops it on COMM
+
+**What changes.** Archiving a station drops it out of the room roster and refuses COMM calls from
+endpoints bound to it. Before this, archiving affected links and the console and nothing else.
+
+**What an operator will observe.**
+
+- A running session on a station you archive **loses COMM immediately** and finds out through a
+  tool error naming the remedy. Its knowledge-base and station surfaces are unaffected: notebook,
+  tasks and locker stay readable, because a retired post's record is still your record.
+- **Room and broadcast sends stop counting it.** `recipients`, `audience_size` and
+  `broadcast_reaches` all drop accordingly, and a room whose remaining members are all archived
+  refuses the send with a message that says so.
+- **Two long-standing annoyances disappear.** Senders stop receiving spurious `expired` notices
+  naming retired stations, and rooms containing one stop having their backpressure budget consumed
+  by a backlog nobody could ever drain.
+- **Mail queued before the archive is left alone** — not delivered, not deleted. It becomes
+  readable again on unarchive, subject to the ordinary undelivered backstop.
+
+**What to do first.** If you use archiving to "park" a station whose session is still working,
+stop — that is no longer what it does. Unarchiving restores everything in one click **with the
+same endpoint credentials**, so recovery is immediate, but the interruption is real.
+
+
 ### `comm_ack` gains an `acked` count, and accepts a room id
 
 **What changes.** The `comm_ack` result grows `acked` (how many deliveries the call actually

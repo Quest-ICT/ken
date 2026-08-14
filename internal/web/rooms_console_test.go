@@ -253,6 +253,7 @@ func stationsHarnessWithComm(t *testing.T) (*store.Store, context.Context, *http
 	if err != nil {
 		t.Fatal(err)
 	}
+	harnessComm = cs
 	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs, StationsEnabled: true}))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
@@ -262,3 +263,7 @@ func stationsHarnessWithComm(t *testing.T) (*store.Store, context.Context, *http
 		url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
 	return st, ctx, cli, srv.URL, actorID
 }
+
+// harnessComm is the comm store built by stationsHarnessWithComm, exposed so a test can
+// assert on what SendToRoom actually DELIVERS rather than on what a page renders.
+var harnessComm *comm.Store

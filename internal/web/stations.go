@@ -528,6 +528,11 @@ func (a *app) handleStationArchive(w http.ResponseWriter, r *http.Request, sess 
 		flashRedirect(w, r, "/stations", "flash.station_archive_failed", err.Error())
 		return
 	}
+	// PUSH THE ROSTER, exactly as the room archive handler does. Archiving changes which
+	// parties a room delivers to, and without this the change does not reach comm.db until
+	// the next boot rebuild or the next unrelated room-console write — so the operator sees
+	// "archived", the station keeps receiving, and nothing connects the two.
+	a.syncRoomMirror(r)
 	if archived {
 		flashRedirect(w, r, "/stations", "flash.station_archived", "")
 		return

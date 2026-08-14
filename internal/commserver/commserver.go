@@ -896,6 +896,30 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 			return nil, store.ErrStationKeyRevoked
 		}
 	}
+	// AN ARCHIVED STATION DOES NOT USE COMM. Archiving was inert here: a session bound
+	// before the archive kept polling, sending, broadcasting and acking forever, while
+	// docs/STATIONS.md promised archiving severs live endpoints. The doc and the code
+	// disagreed, and the code was the one users met.
+	//
+	// ORDERED AFTER THE SECRET HAS VERIFIED, like the check above it, so this answer only
+	// ever reaches a proven holder of the credentials — a station's archive state must not
+	// become something a prober can read by guessing an endpoint id.
+	//
+	// The property is enforced by a DATA DEPENDENCY rather than by the order of two
+	// statements, which is the stronger form: the station id comes from the authenticated
+	// endpoint, so there is nothing to check until the secret has already verified. A
+	// mutation that merely reworded this guard could not create the oracle, and that is a
+	// fact about the shape rather than about the care taken here.
+	//
+	// FAILS OPEN on a database error, matching its neighbour — deliberately, and said out
+	// loud rather than inherited: ken.db being briefly unreadable should not cut messaging
+	// for every station at once, and the failure mode of guessing "not archived" is that a
+	// retired post keeps working for a moment longer.
+	if err == nil && ep.StationID != "" {
+		if archived, aerr := d.Store.IsStationArchived(ctx, ep.StationID); aerr == nil && archived {
+			return nil, store.ErrStationArchived
+		}
+	}
 	if err != nil {
 		// Carry the recovery path in-band. A bare "not found" leaves the session with
 		// nothing to tell its human, which turns a two-minute fix into however long it

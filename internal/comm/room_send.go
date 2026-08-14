@@ -27,7 +27,15 @@ import (
 // the outcome hardest to notice and most expensive to debug — the sender has a
 // message_id, the result looks ordinary, and nothing anywhere says the audience was
 // zero.
-var ErrRoomEmpty = errors.New("that room has no members — nothing was sent, and nothing was lost")
+//
+// SAYS "CANNOT CURRENTLY RECEIVE", NOT "HAS NO MEMBERS", because those stopped being the
+// same thing when archived stations began dropping out of the roster. A room whose other
+// members are all retired shows two members on the console and delivers to none — and an
+// error saying the room is empty sends its reader to look for a membership problem that the
+// console will flatly contradict.
+var ErrRoomEmpty = errors.New("no member of that room can currently receive mail — nothing was sent, and nothing was lost. " +
+	"The room may genuinely be empty, or every other member may be an ARCHIVED station: a retired post keeps its " +
+	"membership and stops receiving, so the console still lists it. Ask your human to check the /stations console")
 
 // ErrNotInRoom refuses a send from a party that is not a member.
 //

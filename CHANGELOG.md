@@ -39,6 +39,22 @@ same change — never "docs later".
 
 ### Fixed
 
+- **Archiving a station did nothing on COMM, and it was not merely cosmetic.** `docs/STATIONS.md`
+  has promised since stations shipped that archiving severs live endpoints. Nothing did: `auth()`
+  checked endpoint revocation and station-*key* revocation and never station state, and
+  `ArchiveStation` touched no room membership. A retired post stayed a full first-class recipient
+  of room and broadcast mail — counted in `recipients`, `audience_size` and `broadcast_reaches` —
+  holding deliveries nobody could read and nobody could ack. Two live consequences followed: the
+  **sender** got a spurious `expired` notice naming the retired station about a message-TTL later,
+  on every room message; and because backpressure counts open deliveries per scope, the dead
+  member's permanent backlog consumed the **live** room's budget until every member was refused.
+
+  Archived stations now drop out of the room roster, the roster epoch moves in both directions, the
+  console pushes the change to comm.db immediately, and a COMM call from an endpoint bound to an
+  archived station is refused with an error naming the remedy. Refusal is **at use**, not by
+  revoking the endpoint: revocation is one-way and would turn unarchiving into a re-registration.
+  See docs/UPGRADING.md — this changes what archiving does to a running session.
+
 - **Room and broadcast sends woke no parked `comm_poll`.** The wakeup is keyed by endpoint
   rowid, and a room delivery is addressed to a party with `recipient_endpoint` NULL — which
   endpoint is staffing a station is not decided until somebody polls — so the send path had no
