@@ -97,11 +97,42 @@ No schema change. Everything here is written, tested and sitting on `main`.
 We know COMM's seams because a survey mapped them. **We have not done the same for stations,**
 and guessing would repeat the mistake this whole plan exists to fix.
 
-- [ ] **Audit stations for half-built seams**, the same way COMM was audited: what was replaced
-      and left coexisting, what is written and never read, what is admitted by a constraint and
-      never built. Produces new checklist items, not code.
-- [ ] **Audit the knowledge base the same way.** Expected to be small — its open questions are
-      policy decisions waiting on a human, not debt — but *expected* is not *checked*.
+- [x] **Audit stations for half-built seams** — done. 91 candidates, **63 confirmed**, 4 rejected.
+      Full evidence in [audits/batch2-stations-kb.md](audits/batch2-stations-kb.md).
+- [x] **Audit the knowledge base the same way** — done, **and my expectation was wrong.** I
+      predicted it would be small because its open items are policy decisions rather than debt.
+      It holds the single worst finding of the batch. "Expected is not checked" was exactly the
+      assumption worth testing.
+
+**THE HEADLINE: stations are NOT half-built in COMM's shape.** COMM had two live mechanisms
+competing and every defect lived in the seam. Stations are internally consistent; what they have
+instead is **one-sidedness** — a write path with no read path, an agent surface with no human
+surface, a store function with no caller — plus **a large body of prose describing controls
+nobody can reach**. Roughly a third of the findings are text that is false *today*.
+
+### The two that matter most, both re-verified by hand before being written here
+
+- [ ] **`kb_record_outcome` writes a table NOTHING READS, and every session is told to call it
+      every time.** `entry_outcome` is INSERTed at `internal/store/v1tools.go:89`; there is not a
+      single SELECT against it anywhere. The connect-time instruction every session captures
+      says: *"Act, then close the loop EVERY time: kb_record_outcome … **This is how Ken
+      self-curates — do not skip it.**"* Four migrations of collected evidence, a promise in the
+      one text that reaches everyone, and no reader. **The decision on how to use it already
+      exists** (station task `t-G3QnWfv6`, 2026-08-04: maturity = curation gate + deduped outcome
+      evidence) and still needs three numbers from Vlad. *Build the reader or stop asking — the
+      present state solicits work and discards it.*
+- [ ] **"Retire" tells the operator connected sessions are safe; it cuts them off.**
+      `AuthenticateStationKey` requires `retired_at IS NULL` (`internal/store/stations.go:391`)
+      and the middleware re-authenticates every request, so retiring a key kills the holding
+      session's notebook, tasks, locker **and vault** at its next call. The console says
+      *"Sessions already connected with it are left alone."* Ten sites, three languages. The
+      behaviour was corrected in code in 1.5.2 by a commit that touched no `.properties` and no
+      template. *A destructive control with a tooltip promising it is safe.*
+
+- [ ] **Work through the remaining confirmed findings** in the appendix, prose-first. The rule
+      this batch confirms: **text asserting a control that does not exist is the class that
+      propagates** — it is what put "off by default" on the public site, and it is a third of
+      what was found here.
 - [ ] **Age EVERY open task, not just the human-blocked ones.** 3.6.0 added
       `oldest_blocked_on_human_days`, which covers only `blocked_on='human'`. ken-promo audited
       their own station and found a third staleness category neither of us had: a task that is
