@@ -183,7 +183,17 @@ inside 61 seconds on 2026-08-11). A bare count says "used"; usage in the course 
 It changes the CONFIDENCE of a verdict, not just its label: a capability that survives contact
 with a curious operator and still finds no use is a stronger signal than one nobody opened.
 
-- [ ] **Work through the remaining confirmed findings** in the appendix, prose-first. The rule
+- [x] **"Retire" no longer promises that connected sessions are safe** — *unreleased*. Seven
+      sites corrected (six shipped strings across three locales, plus `RetireStationKey`'s own
+      doc comment, which made the same claim). Behaviour pinned by a test, because the code has
+      been right since 1.5.2 and only the words were wrong — so nothing in the suite would have
+      noticed the words coming back.
+- [ ] **Work through the remaining confirmed findings** in the appendix, prose-first. Next:
+      `stations.key_not_audited` (a tooltip saying the last-used column is never populated,
+      shipped *inside the commit that made it false*), `stations.archive_help` (states the
+      inverse of what archiving does), `ken station requests` (prints an approval instruction
+      that strands the queue row), and `station_vault_get`'s description (claims the caller's
+      identity reaches the console; only the name and time do). The rule
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of
       what was found here.

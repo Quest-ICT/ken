@@ -218,3 +218,42 @@ func TestReplacingAnExistingPageWithoutIfRevIsRefused(t *testing.T) {
 		t.Fatalf("append without a rev was refused (%v) — append is non-destructive and must stay open", err)
 	}
 }
+
+// RETIRING A KEY CUTS OFF THE SESSION HOLDING IT. Six shipped strings said the opposite,
+// in three languages, for four releases — "Sessions already connected with it are left
+// alone" — while AuthenticateStationKey has required `retired_at IS NULL` since 1.5.2 and
+// the middleware re-authenticates every request.
+//
+// A destructive control with a reassuring tooltip is worse than an undocumented one: the
+// operator is not merely uninformed, they have been told the opposite of what will happen.
+// Pinned here because the behaviour is right and only the words were wrong, so nothing in
+// the suite would notice if the words came back.
+func TestRetiringAKeyStopsItAuthenticating(t *testing.T) {
+	st, ctx, station := staleHarness(t)
+	actor, err := st.FindOrCreateActor(ctx, "human", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.IssueStationKey(ctx, actor, station, "for the session", []string{"station"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL: it authenticates before retirement, so a refusal after is about retiring
+	// rather than about a key that never worked.
+	if _, err := st.AuthenticateStationKey(ctx, key); err != nil {
+		t.Fatalf("a fresh key does not authenticate: %v", err)
+	}
+
+	tokenID := strings.Split(strings.TrimPrefix(key, "kens_"), "_")[0]
+	if err := st.RetireStationKey(ctx, tokenID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.AuthenticateStationKey(ctx, key); err == nil {
+		t.Fatal("a RETIRED key still authenticates.\n" +
+			"If this ever passes, the six operator-facing strings that used to say " +
+			"'sessions already connected are left alone' become true again — and they have " +
+			"been rewritten to say the opposite.")
+	}
+}

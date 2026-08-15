@@ -315,9 +315,21 @@ VALUES(?,?,?,?,?,?)`,
 	return "kens_" + tokenID + "_" + secret, nil
 }
 
-// RetireStationKey stops the key binding NEW endpoints and leaves live ones alone — the
-// graceful "I moved machines" path. Revocation is the other verb and it SEVERS; see
-// RevokeToken plus the endpoint-severing pass in the comm layer (S6).
+// RetireStationKey stops the key working — INCLUDING for a session holding it right now.
+//
+// IT DOES NOT "LEAVE LIVE ONES ALONE", and six shipped strings said it did until 2026-08-14.
+// AuthenticateStationKey requires `retired_at IS NULL` (below) and the middleware
+// re-authenticates EVERY request, so the holder loses the notebook, task list, locker and
+// vault at its next call. What survives is the COMM endpoints the key already bound: those
+// authenticate on the endpoint secret, not on this key.
+//
+// So the difference from revocation is narrower than the words suggest — Retire severs the
+// STATION surface and spares COMM; Revoke severs both (RevokeToken plus the endpoint-severing
+// pass, S6). Neither is the graceful "I moved machines" path this comment used to promise.
+//
+// The behaviour was corrected in code in 1.5.2 by a commit that touched no .properties and no
+// template, so the operator-facing text kept promising the old behaviour for four releases.
+// ken-prod-ops found it by reading the auth query rather than the tooltip.
 func (s *Store) RetireStationKey(ctx context.Context, tokenID string) error {
 	res, err := s.W.ExecContext(ctx,
 		`UPDATE api_token SET retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
