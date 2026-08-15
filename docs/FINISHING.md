@@ -235,9 +235,28 @@ so a replacement session inherits its station's inbox. Six places compared endpo
 instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
 `waiting_for_you`, the room mirror, and file downloads. Finishing means no seventh.
 
-- [ ] **Sweep every comparison against an endpoint rowid** and classify each: correct (it really
+- [x] **Sweep every comparison against an endpoint rowid** — done, *unreleased*. and classify each: correct (it really
       is about one connection) or wrong (it is about an inbox). This is a finite, greppable list
-      — do it once rather than find the seventh in production.
+      — do it once rather than find the seventh in production. **109 sites classified across five
+      independent lenses, every finding adversarially verified; evidence in
+      [audits/batch3-party-model-sweep.md](audits/batch3-party-model-sweep.md).** There WAS a
+      seventh, and it was five lines below the sixth fix: `GrantDownload` authorises by party and
+      then re-checked the attachment's frozen recipient rowid for revocation — permanent for the
+      CHANNEL, because every later offer is stamped with the same dead seat. Four of the five
+      lenses landed on that one line.
+
+      Fixed in this batch: the file grant (`a4e1f32`), the idle sweep deleting channels by
+      cascade (`28c4c63`), a station able to take both seats of one channel and its own missing
+      outstanding-request list (`b7c573b`), the authorisation check re-deriving authorisation
+      from a column an agent tool can clear (`bcd60dd`), both stale wakeups (`6f58037`), and the
+      revoke dialog's blast radius (`f8f2740`).
+
+      **The root the critic named, which is worth more than any single fix:**
+      `LiveEndpointForStation` is an explicitly APPROXIMATE heuristic — "whichever endpoint is
+      chosen, the message lands in the STATION's inbox" — whose answer is written into
+      `channel.endpoint_b` and never updated. That is true for ADDRESSING, which is what it was
+      written for, and false for every other use the value was then put to. Three separately
+      confirmed defects were one frozen approximation read as an identity.
 - [ ] **`attachment` is channel-shaped and must become scope-shaped.** `channel_id` is
       `NOT NULL`; `recipient_endpoint` is `NOT NULL` and holds ONE endpoint where a room needs a
       party set. Migration 0010 already added and backfilled `attachment.scope_id` — and
@@ -265,6 +284,40 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       has fooled this project four times. The room arm exists because a revocation test between
       two endpoints in no room cannot tell a correct `LEFT JOIN` from an `INNER` one: both return
       zero.
+
+---
+
+### Raised by the Batch 3 sweep, not fixed in it
+
+- [ ] **The "an endpoint cannot move between stations" invariant is one boolean on a column
+      another tool clears.** `comm_bind` refuses when `station_id` is set; `comm_unbind` clears it
+      and its own success note says "You can bind again later". So unbind-then-bind moves an
+      endpoint between stations, and the tool performing the bypass advertises it. **The stated
+      harm is also the wrong harm**: the error says a moved endpoint would carry the first
+      station's unread mail across, which cannot happen — party keys are recorded at write time
+      and no delivery row moves. What actually moves is channel MEMBERSHIP, because the seat is
+      re-derived from the live binding. Enforce the invariant or delete the claim; leaving both is
+      how the next reader concludes the live join is safe. Belongs with the credential model.
+- [ ] **Backfill `channel.station_a` / `station_b`, then make the snapshot authoritative.**
+      `bcd60dd` consults the snapshot IN ADDITION to the live binding because the column is NULL
+      on every pairing-code channel opened before migration 0008 — six of seven on a real
+      deployment — so making it authoritative today would strand them. *Migration; ships alone.*
+- [ ] **The four pending counters do not agree, in the file that says they must not.**
+      `pendingScopeSQL` carries an expiry predicate and states why; `RoomsFor` and
+      `PendingForEndpoint` do not. Between a message expiring and the next sweep, one
+      `comm_channels` result can report `pending_total=0` beside a per-channel count of 1 — and
+      the frozen instruction block tells sessions to read `pending_total` FIRST. Bounded by the
+      sweep interval; over-reports, never under.
+- [ ] **The hearsay rule tells every session to record the disposable identity.** The frozen
+      instruction block says to attribute knowledge from a peer to "the sending endpoint". Endpoint
+      rows are deleted by the idle sweep; the knowledge base has no TTL, so the attribution names a
+      row that no longer exists — and three sessions of one correspondent become three unrelated
+      opaque ids. `messageView` already carries `from_station_id` and `from_station_name`. Adjacent:
+      the loop in that same block never mentions `comm_bind` or stations at all, so a successor
+      reading only the instructions is told to re-pair — the precise cost stations abolish.
+- [ ] **89 keys are missing from both `messages_es` and `messages_fr`.** Pre-existing and unchanged
+      by this batch; noticed while checking that new keys landed in all three. A missing key renders
+      raw, so this is visible to any non-English operator.
 
 ---
 
