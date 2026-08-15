@@ -135,7 +135,7 @@ modality nobody ran.
 
 ```
 SWEEP-COMPLETENESS REPORT — internal/comm, endpoint-rowid-vs-party class
-Working tree: /home/me/CC/ken-public @ a8221f3 (main, clean). Read-only; no files written, no tests run.
+Working tree: <repo> @ a8221f3 (main, clean). Read-only; no files written, no tests run.
 
 ════════════════════════════════════════════════════════════════════
 1. FILE DIFF — WHAT NO LENS EVER OPENED
@@ -144,13 +144,13 @@ Working tree: /home/me/CC/ken-public @ a8221f3 (main, clean). Read-only; no file
 internal/comm holds 14 non-test .go files and 11 migrations. Ten .go files and
 four migrations appear in the merged result. The remainder, opened and classified:
 
-/home/me/CC/ken-public/internal/comm/comm.go (503 lines) — GENUINELY CLEAN, not unswept.
+internal/comm/comm.go (503 lines) — GENUINELY CLEAN, not unswept.
   Contains no query that names an endpoint. `grep -n "endpoint" comm.go` returns 7 hits,
   all prose (sentinel doc comments at :58-72, Limits doc at :141/:181/:205, sha256Hex at
   :474). The only Store methods are Close/Limits/SetLimits/lim/Migrate/appliedVersions/
   tx/Path. Nothing here decides an inbox, a relationship or an obligation.
 
-/home/me/CC/ken-public/internal/comm/room_mirror.go (153 lines) — GENUINELY CLEAN of the
+internal/comm/room_mirror.go (153 lines) — GENUINELY CLEAN of the
   rowid class, but see finding N4 below. Every one of its five methods takes or writes a
   PARTY STRING; the word "endpoint" does not appear in the file. ReplaceRoomMirror,
   MirrorEpoch, RoomsForParty, RoomsFor, BroadcastAudience all key on party_key.
@@ -217,8 +217,8 @@ and .issued_for_endpoint, both credential-shaped and already covered).
 ────────────────────────────────────────────────────────────────────
 N1. THE "AN ENDPOINT CANNOT MOVE BETWEEN STATIONS" INVARIANT IS ASSERTED,
     RELIED ON, AND TRIVIALLY BYPASSED BY THE TOOL SITTING 30 LINES BELOW IT.
-    /home/me/CC/ken-public/internal/commserver/commserver.go:262-270
-    /home/me/CC/ken-public/internal/comm/endpoint.go:190-192, :198, :236
+    internal/commserver/commserver.go:262-270
+    internal/comm/endpoint.go:190-192, :198, :236
     Severity: MEDIUM as a defect in its own right; it is the RELIABILITY ARGUMENT the
     already-confirmed ChannelFor defect (channel.go:194) rests on.
 
@@ -266,7 +266,7 @@ delete the claim; leaving both is how the next reader concludes the live join is
 ────────────────────────────────────────────────────────────────────
 N2. THE HEARSAY RULE TELLS EVERY SESSION TO WRITE THE DISPOSABLE IDENTITY INTO THE
     PERMANENT RECORD.
-    /home/me/CC/ken-public/internal/commserver/commserver.go:188
+    internal/commserver/commserver.go:188
     Severity: LOW-MEDIUM. Guidance, not mechanism — but it is in the FROZEN instruction
     block, so no running session can ever receive a corrected version.
 
@@ -298,8 +298,8 @@ FAILURE string (:934-936), so a successor whose credentials work never sees it.
 ────────────────────────────────────────────────────────────────────
 N3. AN EXPLICITLY APPROXIMATE HEURISTIC IS FROZEN INTO A DURABLE SEAT AND THEN READ AS
     AN IDENTITY. THIS IS THE COMMON ROOT OF THREE ALREADY-CONFIRMED DEFECTS.
-    /home/me/CC/ken-public/internal/comm/channel.go:554-567 (LiveEndpointForStation)
-    → /home/me/CC/ken-public/internal/comm/channel.go:466 (seat write)
+    internal/comm/channel.go:554-567 (LiveEndpointForStation)
+    → internal/comm/channel.go:466 (seat write)
     Severity: reported as ROOT CAUSE, not as a seventh site. Do not double-count.
 
     SELECT id FROM endpoint WHERE station_id=? AND revoked_at IS NULL
@@ -326,9 +326,9 @@ endpoint of a station" is decided by an ORDER BY … LIMIT 1, and the answer is 
 
 ────────────────────────────────────────────────────────────────────
 N4. THE FOUR PENDING COUNTERS DO NOT AGREE, IN THE FILE THAT SAYS THEY MUST.
-    /home/me/CC/ken-public/internal/comm/room_mirror.go:96-104 (RoomsFor)
-    /home/me/CC/ken-public/internal/comm/channel.go:634-643 (PendingForEndpoint)
-    vs /home/me/CC/ken-public/internal/comm/pending.go:49-56 (pendingScopeSQL)
+    internal/comm/room_mirror.go:96-104 (RoomsFor)
+    internal/comm/channel.go:634-643 (PendingForEndpoint)
+    vs internal/comm/pending.go:49-56 (pendingScopeSQL)
     Severity: LOW. Adjacent to the class, not an instance of it.
 
 pending.go:10-16 names four counters and says "THEY MUST NOT DISAGREE". pendingScopeSQL
@@ -359,9 +359,9 @@ in the mirror.
 ────────────────────────────────────────────────────────────────────
 N5. LEAK: station_me RETURNS THE STATION'S ENDPOINTS PREDECESSOR-FIRST, UNDER A FIELD
     NAME THAT ASKS A SINGULAR QUESTION.
-    /home/me/CC/ken-public/internal/comm/endpoint.go:464 (`ORDER BY id`)
-    /home/me/CC/ken-public/internal/stationserver/types.go:84-94
-    /home/me/CC/ken-public/internal/stationserver/stationserver.go:838-844
+    internal/comm/endpoint.go:464 (`ORDER BY id`)
+    internal/stationserver/types.go:84-94
+    internal/stationserver/stationserver.go:838-844
     Severity: LOW. No authorization consequence.
 
     SELECT endpoint_id FROM endpoint WHERE station_id=? AND revoked_at IS NULL ORDER BY id
