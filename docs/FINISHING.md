@@ -243,11 +243,18 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       party set. Migration 0010 already added and backfilled `attachment.scope_id` — and
       `internal/comm/file.go` contains the string "scope" **zero times**. The seam was cut and
       never used, so a file cannot be offered to a room. *Needs a migration; ships alone.*
-- [ ] **`comm_room.kind='dm'`** — the CHECK constraint at `migrations/0017_comm_rooms.sql:36`
+- [x] **`comm_room.kind='dm'`** — resolved as DOCUMENTED, not built and not dropped, *unreleased*. — the CHECK constraint at `migrations/0017_comm_rooms.sql:36`
       permits a value `CreateRoom` cannot produce (`internal/store/rooms.go:57-59` hardcodes
       `'topic'`). *Moved here from Batch 4 on prod's correction: it is an unfinished migration, not
       a duplicated generation.* It is also the natural two-party container, so Batch 5's second
-      decision may settle it.
+      decision may settle it. **Settled for this batch:** the value stays
+      reserved and `internal/store/rooms.go` now says plainly that nothing produces it, because
+      building `dm` is a new feature AND the shape it would take is Batch 5's decision. **Migration
+      0017 is deliberately left unedited** even though its comment is the sentence that misleads:
+      SQLite stores a table's CREATE statement verbatim, comments included — verified, not assumed
+      — so editing an applied migration's prose makes `.schema` differ between a fresh install and
+      an existing deployment while changing nothing about either, and prod runs a schema band over
+      exactly that. Correcting the Go model reaches every reader at no drift.
 - [x] **A regression test for retroactive revocation** — *unreleased*. Revoking a channel stops mail already
       queued; that property is held by three hand-mirrored SQL predicates and the only test
       asserts a *send* fails afterwards. Nothing pins the retroactive half. **The three are
