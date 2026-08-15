@@ -611,3 +611,104 @@ func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
 	}
 	_, _ = a, b
 }
+
+// A CHANNEL SEAT IS NOT AN IDLE ROW.
+//
+// `channel.endpoint_a/endpoint_b` cascade on delete, so an endpoint swept for idleness took
+// the CHANNEL with it — the human-authorised relationship a successor is promised it
+// inherits without re-pairing. The sweep's own comment ("its channels cascade") was written
+// when an endpoint WAS the party; under stations it is a disposable reader.
+//
+// The guards above it did not cover this: they retain an endpoint that still has message or
+// delivery rows, and those age out on the metadata TTL long before a quiet channel does.
+//
+// The control arm is the point. Zero surviving channels is also what this test would see if
+// the pairing never happened, so it asserts the channel EXISTS before the sweep and that a
+// genuinely idle non-seat endpoint is STILL collected afterwards — otherwise "fixed" is
+// indistinguishable from "the sweep stopped deleting anything", which is exactly what a
+// stray NULL in either NOT IN set would cause.
+func TestSweepDoesNotDeleteAChannelByCollectingItsIdleSeat(t *testing.T) {
+	ctx := context.Background()
+	l := DefaultLimits()
+	l.EndpointIdleTTLSeconds = 60
+	st := newStore(t, l)
+
+	a, b, channelID := pair(t, st)
+	ghost, _, err := st.RegisterEndpoint(ctx, owner("tok-ghost"), "ghost", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A HALF-JOINED CHANNEL, so that `channel.endpoint_b` actually contains a NULL. Without
+	// one, the NULL arm of the guard is untested and the control below cannot fail — every
+	// channel in the fixture would have both seats filled, which is not the state a pairing
+	// passes through.
+	halfJoiner, _, err := st.RegisterEndpoint(ctx, owner("tok-half"), "half", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingCode, err := st.MintPairingCode(ctx, 1, 42, "never-completed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, halfJoiner, pendingCode); err != nil {
+		t.Fatal(err)
+	}
+	var nulls int
+	if err := st.R.QueryRow(`SELECT COUNT(*) FROM channel WHERE endpoint_b IS NULL`).Scan(&nulls); err != nil {
+		t.Fatal(err)
+	}
+	if nulls == 0 {
+		t.Fatal("setup: no channel has a NULL endpoint_b, so the NULL arm of the guard is not exercised")
+	}
+
+	// Both seats look idle and carry no traffic — the state a live channel reaches once
+	// its messages have aged out on the metadata TTL.
+	for _, id := range []string{a.EndpointID, b.EndpointID, ghost.EndpointID, halfJoiner.EndpointID} {
+		if _, err := st.W.Exec(
+			`UPDATE endpoint SET last_seen_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day') WHERE endpoint_id=?`,
+			id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var before int
+	if err := st.R.QueryRow(`SELECT COUNT(*) FROM channel WHERE channel_id=?`, channelID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if before != 1 {
+		t.Fatalf("setup: the channel does not exist before the sweep (%d rows)", before)
+	}
+
+	if _, _, err := st.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var after int
+	if err := st.R.QueryRow(`SELECT COUNT(*) FROM channel WHERE channel_id=?`, channelID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != 1 {
+		t.Errorf("the sweep deleted an OPEN channel by collecting its idle seat: %d rows remain.\n"+
+			"A successor inherits its station's channels without re-pairing; cascading them "+
+			"away on the endpoint's idleness destroys the relationship a human authorised.", after)
+	}
+
+	// CONTROL: the sweep must still do its job. Without this, a guard that accidentally
+	// matched everything — a NULL in either NOT IN set does exactly that — would read as a
+	// pass.
+	eps, err := st.ListEndpoints(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range eps {
+		if e.EndpointID == ghost.EndpointID {
+			t.Error("the idle non-seat endpoint survived: the sweep has stopped collecting " +
+				"anything, which is what a NULL in either NOT IN set produces — silently")
+		}
+	}
+	if len(eps) != 3 {
+		t.Errorf("expected exactly the three seats to remain (two open, one half-joined), "+
+			"got %d endpoints", len(eps))
+	}
+}

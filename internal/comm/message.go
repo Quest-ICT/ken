@@ -1128,13 +1128,33 @@ WHERE consumed_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		//    everything. This is exactly the failure a dropped settings mapping caused
 		//    in 1.2.0, so the sweep now refuses to run without a positive window
 		//    regardless of how the window was configured.
+		//
+		//    A CHANNEL SEAT IS NOT AN IDLE ROW, however quiet its endpoint is.
+		//    `channel.endpoint_a/endpoint_b` are ON DELETE CASCADE, and the sentence
+		//    above — "its channels cascade" — was written when an endpoint WAS the party.
+		//    Under stations it is a disposable reader of a relationship a human
+		//    authorised, and the successor is promised it inherits that relationship
+		//    without re-pairing. So a seat whose messages had merely aged out took the
+		//    CHANNEL with it, plus any of the successor's own queued mail on it, plus the
+		//    attachment rows that are the only record of which bytes to unlink — silently,
+		//    since Sweep reports only expired and purged counts.
+		//
+		//    The endpoint rows are still bounded: the channel-deletion pass below releases
+		//    a seat as soon as its channel is gone, and the next sweep collects it.
+		//
+		//    Both guards must exclude NULL explicitly. `id NOT IN (…, NULL)` is NULL, not
+		//    true, so a single NULL in either set would silently stop the sweep deleting
+		//    anything at all — a retention leak that presents as no error and no log line.
 		if idle := s.lim().EndpointIdleTTLSeconds; idle > 0 {
 			if _, err := t.ExecContext(ctx, `
 DELETE FROM endpoint
 WHERE last_seen_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
   AND id NOT IN (SELECT sender_endpoint FROM message
                  UNION SELECT recipient_endpoint FROM delivery WHERE recipient_endpoint IS NOT NULL)
-  AND id NOT IN (SELECT sender_endpoint FROM attachment WHERE stored_bytes > 0)`,
+  AND id NOT IN (SELECT sender_endpoint FROM attachment WHERE stored_bytes > 0
+                 UNION SELECT recipient_endpoint FROM attachment WHERE stored_bytes > 0)
+  AND id NOT IN (SELECT endpoint_a FROM channel
+                 UNION SELECT endpoint_b FROM channel WHERE endpoint_b IS NOT NULL)`,
 				nowExpr(-idle)); err != nil {
 				return err
 			}
