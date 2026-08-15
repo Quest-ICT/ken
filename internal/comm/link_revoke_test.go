@@ -389,3 +389,50 @@ func TestASuccessorSeesTheRequestsItsPredecessorIsStillOwed(t *testing.T) {
 			"the answer will arrive in, and is told it is waiting for nothing.", len(got))
 	}
 }
+
+// AUTHORISATION IS A FACT ABOUT THE PAST, INCLUDING IN THE CHECK THAT ENFORCES IT.
+//
+// ChannelFor derived each seat's station from a LIVE join on endpoint.station_id, a column
+// `comm_unbind` clears — and comm_unbind is prescribed BY NAME in the guidance a session
+// receives when a sequence collides. After it, the successor matched no seat arm and got
+// ErrNotFound, while Poll (party-keyed) kept handing it the station's mail: it could read
+// and neither reply nor ack cumulatively.
+//
+// openChannelsBetweenStations already states the principle in full and reads the snapshot
+// for exactly this reason. The authorisation check itself did not.
+func TestAnUnboundPredecessorDoesNotCostItsStationTheChannel(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+
+	first := stationEndpoint(t, st, "tok-1", "st-home")
+	peer := stationEndpoint(t, st, "tok-peer", "st-away")
+	code, err := st.MintPairingCode(ctx, 1, 42, "home<->away")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, first, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL: a successor can act on the channel while the predecessor is still bound.
+	successor := stationEndpoint(t, st, "tok-2", "st-home")
+	if _, _, err := st.ChannelFor(ctx, successor, ch.ChannelID); err != nil {
+		t.Fatalf("setup: a successor cannot reach the channel even before the unbind: %v", err)
+	}
+
+	// The predecessor unbinds — the remediation the collision guidance names.
+	if err := st.UnbindEndpointFromStation(ctx, first.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := st.ChannelFor(ctx, successor, ch.ChannelID); err != nil {
+		t.Errorf("after its predecessor called comm_unbind, the station cannot reach its own "+
+			"channel: %v.\nThe channel row still names st-home as seat A; only the mutable "+
+			"binding moved. Poll keeps delivering the mail, so the session reads messages it "+
+			"cannot answer.", err)
+	}
+}

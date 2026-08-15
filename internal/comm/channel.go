@@ -210,16 +210,18 @@ func (s *Store) ChannelFor(ctx context.Context, ep *Endpoint, channelID string) 
 		opn sql.NullString
 	)
 	var stnA, stnB string
+	var snapA, snapB string
 	err := s.R.QueryRowContext(ctx, `
 SELECT c.id, c.channel_id, c.space_id, c.owner_actor_id, c.endpoint_a, c.endpoint_b,
        c.state, c.created_at, c.opened_at,
-       COALESCE(ea.station_id,''), COALESCE(eb.station_id,'')
+       COALESCE(ea.station_id,''), COALESCE(eb.station_id,''),
+       COALESCE(c.station_a,''), COALESCE(c.station_b,'')
 FROM channel c
 LEFT JOIN endpoint ea ON ea.id = c.endpoint_a
 LEFT JOIN endpoint eb ON eb.id = c.endpoint_b
 WHERE c.channel_id=?`, channelID).
 		Scan(&ch.ID, &ch.ChannelID, &ch.SpaceID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn,
-			&stnA, &stnB)
+			&stnA, &stnB, &snapA, &snapB)
 	if errors.Is(err, sql.ErrNoRows) {
 		// D2. A ROOM ID PASSED AS channel_id LANDS HERE, and a bare "not found" is what
 		// made a working station conclude the feature did not exist.
@@ -266,15 +268,36 @@ WHERE c.channel_id=?`, channelID).
 	// Widening this means any reader of a station can act on any channel one of its
 	// siblings joined. That IS the model: S4 makes the STATION the party to the
 	// relationship, and the endpoint merely a credentialed reader of it.
+	//
+	// THE SNAPSHOT ON THE CHANNEL ROW IS CONSULTED AS WELL AS THE LIVE BINDING, because
+	// the live one is mutable by an agent tool. `comm_unbind` clears endpoint.station_id
+	// — and it is prescribed BY NAME in the guidance a session gets when a sequence
+	// collides — after which the join above yields '' while channel.station_a still names
+	// the station. The successor then matched no arm and got ErrNotFound, while Poll,
+	// which is party-keyed, kept handing it the mail: it could read its station's messages
+	// and neither reply, offer a file, nor ack cumulatively. That is precisely the
+	// poll-but-cannot-answer half-feature the paragraph above says this branch exists to
+	// prevent, reintroduced through a column the same tool can clear.
+	//
+	// `openChannelsBetweenStations` already states the principle in full — authorisation
+	// is a fact about the past and must not be re-derived from state that has moved — and
+	// reads the snapshot for exactly this reason. The authorisation check itself did not.
+	//
+	// THE SNAPSHOT IS NOT MADE AUTHORITATIVE HERE, deliberately. It is NULL on every
+	// channel opened by a pairing code before migration 0008, which is most of them on a
+	// real deployment — dropping the live join would strand those channels' successors
+	// rather than fix anything. Backfilling the column is a migration, and a migration
+	// ships alone. Until then the two are consulted together: the snapshot can only add
+	// membership the human authorised, never remove any that works today.
 	var peer int64
 	switch {
 	case ep.ID == ch.EndpointA:
 		peer = ch.EndpointB
 	case ep.ID == ch.EndpointB:
 		peer = ch.EndpointA
-	case ep.StationID != "" && ep.StationID == stnA:
+	case ep.StationID != "" && (ep.StationID == stnA || ep.StationID == snapA):
 		peer = ch.EndpointB
-	case ep.StationID != "" && ep.StationID == stnB:
+	case ep.StationID != "" && (ep.StationID == stnB || ep.StationID == snapB):
 		peer = ch.EndpointA
 	default:
 		// Not a member. ErrNotFound, not ErrDenied: a non-member must not learn
