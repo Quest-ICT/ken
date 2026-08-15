@@ -47,7 +47,12 @@ is open.**
 `CHANGELOG.md`'s `## [Unreleased]` section — it is the machine-conventional home and this line is
 prose that drifted from it within an hour of being written.
 
-> **This file broke its own Rule 2 on its first release.** Six items sat marked *unreleased* after
+> **This file has broken its own Rule 2 twice.** The second time was worse: two Batch 2
+> headline items sat open after being fixed in the same session that wrote them, and I only
+> caught it by READING the list instead of recalling it. The rule needs a habit attached —
+> **tick the item in the commit that closes it**, not when someone asks what is left.
+>
+> **First time:** Six items sat marked *unreleased* after
 > shipping in 3.6.0, and prod found it, not me. The rule is right; I did not apply it in the release
 > commit itself. Marking an item done and naming its release is part of cutting, not a follow-up.
 
@@ -112,8 +117,9 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
 
 ### The two that matter most, both re-verified by hand before being written here
 
-- [ ] **`kb_record_outcome` writes a table NOTHING READS, and every session is told to call it
-      every time.** `entry_outcome` is INSERTed at `internal/store/v1tools.go:89`; there is not a
+- [x] **`kb_record_outcome` writes a table NOTHING READS** — FIXED, *unreleased*. The reader is
+      the maturity badge (`396a4df`), and the identity it counts is server-derived (`811bdb8`)
+      after prod measured 37/37 NULL session ids. Original finding: `entry_outcome` is INSERTed at `internal/store/v1tools.go:89`; there is not a
       single SELECT against it anywhere. The connect-time instruction every session captures
       says: *"Act, then close the loop EVERY time: kb_record_outcome … **This is how Ken
       self-curates — do not skip it.**"* Four migrations of collected evidence, a promise in the
@@ -121,7 +127,8 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
       exists** (station task `t-G3QnWfv6`, 2026-08-04: maturity = curation gate + deduped outcome
       evidence) and still needs three numbers from Vlad. *Build the reader or stop asking — the
       present state solicits work and discards it.*
-- [ ] **"Retire" tells the operator connected sessions are safe; it cuts them off.**
+- [x] **"Retire" told the operator connected sessions are safe; it cuts them off** — FIXED in
+      `e965bb8`, seven sites, behaviour pinned by a test. Original finding:
       `AuthenticateStationKey` requires `retired_at IS NULL` (`internal/store/stations.go:391`)
       and the middleware re-authenticates every request, so retiring a key kills the holding
       session's notebook, tasks, locker **and vault** at its next call. The console says
