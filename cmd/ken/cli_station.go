@@ -116,8 +116,15 @@ func runStation(args []string) {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.RequestID, r.Kind, r.NameHint, r.Purpose+r.Reason, r.CreatedAt)
 		}
 		_ = w.Flush()
-		fmt.Println("\nApprove by creating the station with the name YOU choose:")
-		fmt.Println("  ken station add --name <your-name> --purpose \"…\"")
+		// DO NOT tell the operator to approve with `ken station add`. CreateStation never
+		// touches station_request, so the row is left pending forever while a station
+		// exists — the exact split state ApproveStationRequest's transaction exists to
+		// prevent. The stranded row then renders a live Approve form: clicking it later
+		// creates a SECOND station or fails on the name, and the only other exit is Deny,
+		// which records a refusal for a request that was granted.
+		fmt.Println("\nApprove or deny from the /stations console — that is the only path that")
+		fmt.Println("resolves the request and creates the station in one transaction.")
+		fmt.Println("(`ken station add` creates an UNRELATED station and leaves the request pending.)")
 
 	default:
 		die("usage: ken station add|list|key|requests")

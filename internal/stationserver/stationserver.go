@@ -721,9 +721,10 @@ func newServer(d Deps) *mcp.Server {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_vault_get",
-		Description: "Read one secret back. THIS CALL IS LOGGED — the name, the time and your identity appear in your " +
-			"human's console, which is the point of keeping credentials here rather than in a file. Use the value; " +
-			"do not repeat it into the conversation unless you have to.",
+		Description: "Read one secret back. THIS CALL IS LOGGED — the secret's name, the time, and whether it was " +
+			"read from a station or the console appear in your human's console, which is the point of keeping " +
+			"credentials here rather than in a file. Use the value; do not repeat it into the conversation unless " +
+			"you have to.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, vaultGetOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {

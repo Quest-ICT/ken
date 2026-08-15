@@ -195,12 +195,24 @@ with a curious operator and still finds no use is a stronger signal than one nob
       doc comment, which made the same claim). Behaviour pinned by a test, because the code has
       been right since 1.5.2 and only the words were wrong — so nothing in the suite would have
       noticed the words coming back.
-- [ ] **Work through the remaining confirmed findings** in the appendix, prose-first. Next:
-      `stations.key_not_audited` (a tooltip saying the last-used column is never populated,
-      shipped *inside the commit that made it false*), `stations.archive_help` (states the
-      inverse of what archiving does), `ken station requests` (prints an approval instruction
-      that strands the queue row), and `station_vault_get`'s description (claims the caller's
-      identity reaches the console; only the name and time do). The rule
+- [x] **The four remaining prose findings are corrected** — *unreleased*.
+      `stations.key_not_audited` said key use is never recorded; `TouchToken` has recorded it
+      since 1.5.3 and the string shipped *inside the commit that made it false*, denying the one
+      signal an operator needs before retiring a key. `stations.archive_help` said keys stop
+      working; archiving never touches keys — it stops COMM. `ken station requests` told the
+      operator to approve with `ken station add`, which creates a station and leaves the request
+      pending forever, producing the split state `ApproveStationRequest`'s transaction exists to
+      prevent. `station_vault_get` promised the caller's identity reaches the console. All in
+      three locales where they were translated.
+- [ ] **Render WHO read a vault secret, or stop carrying the actor id.** Sharper than the audit
+      had it: `by_actor_id` IS recorded, and `StationVaultReads` DOES select it into
+      `StationVaultRead.ActorID` — and `stations.html:405` renders `{{.Name}} · {{.Via}} ·
+      {{.ReadAt}}` and drops it. So the data is collected, carried to the view model, and thrown
+      away at the last step. The description now promises only what is shown; either render the
+      actor (resolved to a name — a bare integer is not an identity a human can read) or stop
+      selecting it.
+- [ ] **Work through the remaining confirmed findings** in the appendix — the prose class is
+      done; what is left is the one-sidedness. The rule
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of
       what was found here.
