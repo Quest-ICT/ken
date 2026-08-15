@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.7.0] — 2026-08-15
+
 ### Changed
 
 - **The maturity badge is computed from recorded outcomes instead of a promotion count.** Every

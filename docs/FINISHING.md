@@ -38,7 +38,8 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.6.0**, and **verified on production 2026-08-14T22:02Z** — band clean on both
+**Released: 3.7.0** — prod asked to upgrade and verify; **the Batch 3 gate is that report.**
+Previously 3.6.0, verified on production 2026-08-14T22:02Z — band clean on both
 databases, no migration ran at all (`schema_migration`'s rows still carry their original
 timestamps, and the `migrations/` tree hash is identical between the two tags). **The Batch 2 gate
 is open.**
@@ -149,7 +150,7 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
 > not against that framing — which is the whole argument for measuring.
 
 - [x] **`kb_record_outcome`'s session identity is derived by the server**, not taken from the
-      caller — *unreleased*. ken-prod-ops measured the live deployment and falsified the reader
+      caller — **3.7.0**. ken-prod-ops measured the live deployment and falsified the reader
       before it shipped: **37 of 37 `entry_outcome` rows had `session_id` NULL, and 282 of 282
       `curation_event` rows.** With N=3 distinct sessions required, the top tier was not merely
       empty, it was **unreachable by accumulating more evidence** — the exact failure I had named
@@ -190,12 +191,12 @@ inside 61 seconds on 2026-08-11). A bare count says "used"; usage in the course 
 It changes the CONFIDENCE of a verdict, not just its label: a capability that survives contact
 with a curious operator and still finds no use is a stronger signal than one nobody opened.
 
-- [x] **"Retire" no longer promises that connected sessions are safe** — *unreleased*. Seven
+- [x] **"Retire" no longer promises that connected sessions are safe** — **3.7.0**. Seven
       sites corrected (six shipped strings across three locales, plus `RetireStationKey`'s own
       doc comment, which made the same claim). Behaviour pinned by a test, because the code has
       been right since 1.5.2 and only the words were wrong — so nothing in the suite would have
       noticed the words coming back.
-- [x] **The four remaining prose findings are corrected** — *unreleased*.
+- [x] **The four remaining prose findings are corrected** — **3.7.0**.
       `stations.key_not_audited` said key use is never recorded; `TouchToken` has recorded it
       since 1.5.3 and the string shipped *inside the commit that made it false*, denying the one
       signal an operator needs before retiring a key. `stations.archive_help` said keys stop

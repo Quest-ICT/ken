@@ -34,6 +34,60 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.7.0
+
+### `station_note_write` with `mode=replace` now REQUIRES `if_rev` on an existing page
+
+**What changes.** A call that used to succeed now refuses. Replacing a page that already exists
+without supplying `if_rev` returns an error naming the page's current revision; creating a new
+page still needs none, and `append` is unaffected.
+
+**What a session will observe.** A refusal with the rev in it, so it can read and retry without
+a second call. **Any tooling that replaces a notebook page blind will break, and that is the
+point** — it was overwriting whatever another session had written.
+
+**Why.** `if_rev` was optional: a *stale* one was refused cleanly, and **none at all overwrote
+silently**. The mechanism was correct and complete when used, and nothing required using it. It
+is not a trap you fall into by default — `mode` defaults to `append`, which is non-destructive —
+it is one you fall into by doing the right thing: a handoff page's own header says never to
+append (history grows with the square of the page), so a replacement session obeying that
+reaches for `replace` and destroys the page it was told to read. Measured on a live deployment
+by ken-prod-ops.
+
+### `session_id` on `kb_record_outcome` is ignored; Ken derives it
+
+**What changes.** The `session_id` input is no longer read. Ken takes the recording session's
+identity from the MCP connection, falling back to the token.
+
+**What an operator will observe.** Nothing immediately. Going forward, outcomes carry an
+identity — which they did not: measured on a live deployment, **37 of 37 `entry_outcome` rows
+and 282 of 282 `curation_event` rows had it NULL**, because the field carried no description and
+neither the tool nor the instructions ever mentioned it. The new maturity badge counts distinct
+sessions, so without this it could never have been earned.
+
+**The field is kept and marked ignored rather than removed**, so a caller still sending one is
+not rejected.
+
+### Four operator-facing strings described controls Ken does not have
+
+**What changes.** No behaviour change — the console and CLI now say what Ken actually does.
+
+**Re-read these if you have acted on them:**
+
+- **"Retire" is not the gentle option.** It said *"sessions already connected with it are left
+  alone"*. Retiring a key **cuts off the session holding it at its next call**, taking the
+  notebook, tasks, locker and vault. COMM endpoints it already bound keep working. True since
+  1.5.2; the strings said otherwise for four releases.
+- **Archiving does not stop keys.** It said *"keys stop working"*. Archiving stops COMM and
+  drops room membership; the station surface stays reachable.
+- **The last-used column IS recorded**, since 1.5.3. Its tooltip said the opposite, so an
+  operator was told not to trust the one signal that says whether a key is still in use.
+- **`ken station requests` told you to approve with `ken station add`.** That creates the
+  station and leaves the request pending forever. **If you followed it, check `/stations` for a
+  pending request whose station already exists** — approve/deny it from the console, which is
+  the only path that resolves both in one transaction.
+
+
 ### Every entry's maturity badge is recomputed on the first search after upgrade
 
 **What changes.** The `seed` / `curated` / `battle-tested` badge is now derived from recorded
