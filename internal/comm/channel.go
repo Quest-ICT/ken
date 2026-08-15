@@ -137,6 +137,28 @@ VALUES(?,?,?,?, 'pending', ?, ?)`, channelID, spaceID, humanID, ep.ID, nullStr(p
 			ch = cur // idempotent re-join
 			return nil
 		}
+		// A STATION MUST NOT BECOME ITS OWN PEER. The rowid comparison above answers
+		// "is this exact connection already seated", and the schema's
+		// CHECK (endpoint_b <> endpoint_a) enforces only the same literal rowid — so a
+		// SECOND endpoint of a station that already holds a seat matched neither, fell
+		// through, and took the free one. The channel then had station_a = station_b, and
+		// ChannelFor's station arms resolved that station's peer to itself.
+		//
+		// It is not an exotic path: a replacement session re-redeeming the code its
+		// predecessor was given is the ordinary way to reach it, and the code is still
+		// valid for its TTL. What that session actually wants is this branch — its station
+		// is already a party, so the join is a no-op and the channel is returned as it
+		// stands.
+		var stnA, stnB string
+		if err := t.QueryRowContext(ctx,
+			`SELECT COALESCE(station_a,''), COALESCE(station_b,'') FROM channel WHERE id=?`,
+			cur.ID).Scan(&stnA, &stnB); err != nil {
+			return err
+		}
+		if ep.StationID != "" && (ep.StationID == stnA || ep.StationID == stnB) {
+			ch = cur // the STATION is already on it; a second reader changes nothing
+			return nil
+		}
 		if cur.EndpointB != 0 {
 			// Both seats are taken by other endpoints: a third session must not be
 			// able to join, and a consumed code must not create a second channel.

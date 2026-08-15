@@ -283,3 +283,109 @@ func TestListChannelsIsStationScopedLikePollAndChannelFor(t *testing.T) {
 		t.Fatalf("an unrelated station lists %d channels (err=%v), want 0 — the predicate is too wide", len(l), err)
 	}
 }
+
+// A STATION MUST NOT BECOME ITS OWN PEER.
+//
+// JoinChannel's re-join check compared endpoint ROWIDS, and the schema's
+// CHECK (endpoint_b <> endpoint_a) catches only the same literal rowid — so a second
+// endpoint of a station that already held a seat matched neither guard and took the free
+// one. A replacement session re-redeeming its predecessor's still-valid code is the
+// ordinary way to get there.
+func TestASecondEndpointOfOneStationCannotTakeBothSeats(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+
+	first := stationEndpoint(t, st, "tok-1", "st-solo")
+	code, err := st.MintPairingCode(ctx, 1, 42, "solo<->peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := st.JoinChannel(ctx, first, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Open() {
+		t.Fatal("setup: the channel opened on one join")
+	}
+
+	// The successor redeems the same code. Its station already holds seat A.
+	second := stationEndpoint(t, st, "tok-2", "st-solo")
+	got, err := st.JoinChannel(ctx, second, code)
+	if err != nil {
+		t.Fatalf("a successor re-redeeming its predecessor's code was refused: %v", err)
+	}
+	if got.ChannelID != pending.ChannelID {
+		t.Fatalf("the successor got a DIFFERENT channel (%s, not %s)", got.ChannelID, pending.ChannelID)
+	}
+	if got.Open() {
+		t.Error("the channel is OPEN with one station on both sides — st-solo is now its " +
+			"own peer, and every message it sends is addressed to itself")
+	}
+
+	var stnA, stnB string
+	if err := st.R.QueryRow(
+		`SELECT COALESCE(station_a,''), COALESCE(station_b,'') FROM channel WHERE channel_id=?`,
+		pending.ChannelID).Scan(&stnA, &stnB); err != nil {
+		t.Fatal(err)
+	}
+	if stnB != "" {
+		t.Errorf("seat B was filled by station %q while seat A holds %q", stnB, stnA)
+	}
+
+	// CONTROL: a genuinely different station still completes the pairing. Without this,
+	// a guard that refused EVERY second join would read as a pass.
+	other := stationEndpoint(t, st, "tok-3", "st-peer")
+	opened, err := st.JoinChannel(ctx, other, code)
+	if err != nil {
+		t.Fatalf("a different station cannot complete the pairing: %v", err)
+	}
+	if !opened.Open() {
+		t.Fatalf("the channel did not open for a real peer: state=%q", opened.State)
+	}
+}
+
+// AN OUTSTANDING REQUEST BELONGS TO THE STATION THAT MADE IT.
+//
+// PendingReplies filtered sender_endpoint, so the reading whose entire purpose is to
+// outlive the session that made the request returned nothing to that session's successor.
+func TestASuccessorSeesTheRequestsItsPredecessorIsStillOwed(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, DefaultLimits())
+
+	asker := stationEndpoint(t, st, "tok-ask", "st-asker")
+	peer := stationEndpoint(t, st, "tok-peer", "st-peer")
+	code, err := st.MintPairingCode(ctx, 1, 42, "asker<->peer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, asker, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, peer, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, asker, ch.ChannelID, "please do X", SendOpts{RequiresResponse: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL: the asking session itself sees it, so an empty list below is about the
+	// successor and not about a request that was never outstanding.
+	mine, err := st.PendingReplies(ctx, asker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mine) != 1 {
+		t.Fatalf("setup: the asking session sees %d outstanding requests, want 1", len(mine))
+	}
+
+	successor := stationEndpoint(t, st, "tok-ask-2", "st-asker")
+	got, err := st.PendingReplies(ctx, successor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a successor sees %d outstanding requests, want 1.\nIt inherits the inbox "+
+			"the answer will arrive in, and is told it is waiting for nothing.", len(got))
+	}
+}

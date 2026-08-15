@@ -776,11 +776,35 @@ func partyPredicate(ep *Endpoint, alias string) (string, []any) {
 	if alias != "" {
 		alias += "."
 	}
+	return partyColumnPredicate(ep, alias+"party_key")
+}
+
+// senderPartyPredicate is the same rule on the SENDING side: which messages did this
+// party write? `message.sender_party` is the column that answers it, and the two-form
+// match is needed there for the identical reason — a message written before the endpoint
+// was bound carries the endpoint form, and its own author must still find it.
+//
+// It exists because the obligation-shaped read below asked `sender_endpoint = ?`, which is
+// a question about one connection.
+func senderPartyPredicate(ep *Endpoint, alias string) (string, []any) {
+	if alias != "" {
+		alias += "."
+	}
+	return partyColumnPredicate(ep, alias+"sender_party")
+}
+
+// partyColumnPredicate states the two-form rule ONCE, for whichever column carries a party.
+//
+// The rule was already written out twice by hand before a third caller wanted it, and this
+// package has just spent a release proving what hand-mirrored predicates cost: the
+// retroactive half of channel revocation is held by three copies of one clause, and the
+// copy nobody edited is the one that let a console counter drift from the poll.
+func partyColumnPredicate(ep *Endpoint, qualified string) (string, []any) {
 	if ep.StationID != "" {
-		return `(` + alias + `party_key = ? OR ` + alias + `party_key = ?)`,
+		return `(` + qualified + ` = ? OR ` + qualified + ` = ?)`,
 			[]any{stationParty(ep.StationID), endpointPartyKey(ep.ID)}
 	}
-	return alias + `party_key = ?`, []any{endpointPartyKey(ep.ID)}
+	return qualified + ` = ?`, []any{endpointPartyKey(ep.ID)}
 }
 
 // queuedForEndpoint counts what is waiting for this endpoint EVERYWHERE, for the
@@ -927,12 +951,20 @@ func (s *Store) cumulativeAckScope(ctx context.Context, ep *Endpoint, id string)
 // PendingReplies lists this endpoint's sent messages that still owe a response.
 // Exposed as a query so a sender can ask what is outstanding rather than inferring
 // it from a reference message that may already have been superseded.
+// AN OBLIGATION BELONGS TO THE STATION, NOT TO THE CONNECTION THAT INCURRED IT.
+//
+// This filtered `sender_endpoint = ?`, so a replacement session saw an EMPTY outstanding
+// list — the one reading whose entire purpose is to survive the session that made the
+// request. A predecessor asks a peer for something and dies; the successor inherits the
+// inbox, polls the peer's eventual answer, and is meanwhile told it is waiting for nothing.
+// Every other obligation-shaped read in this package already keys on the party.
 func (s *Store) PendingReplies(ctx context.Context, ep *Endpoint) ([]Message, error) {
+	pred, args := senderPartyPredicate(ep, "m")
 	rows, err := s.R.QueryContext(ctx, `
 SELECT m.message_id FROM message m
-WHERE m.sender_endpoint=? AND m.requires_response=1 AND m.answered_at IS NULL
+WHERE `+pred+` AND m.requires_response=1 AND m.answered_at IS NULL
   AND EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = m.id AND d.state <> 'expired')
-ORDER BY m.created_at`, ep.ID)
+ORDER BY m.created_at`, args...)
 	if err != nil {
 		return nil, err
 	}
