@@ -23,9 +23,21 @@ import (
 // Room is one room, with its member count already resolved — every surface that lists
 // rooms wants it, and asking per row is the N+1 this avoids.
 type Room struct {
-	RoomID    string
-	Name      string
-	Kind      string // 'topic' or 'dm'
+	RoomID string
+	Name   string
+	// Kind is ALWAYS 'topic' today. The column's CHECK also admits 'dm' and the
+	// name-uniqueness index deliberately excludes that value — but nothing creates one, so
+	// no 'dm' row has ever existed. Migration 0017's comment describes them in the present
+	// tense ("are created implicitly for a pair"); that sentence describes an intention,
+	// not a behaviour, and this is the correction. The value stays reserved rather than
+	// being dropped because a two-party container is exactly the shape the private-
+	// conversation decision needs, and that decision is Vlad's to make.
+	//
+	// The migration file itself is left alone on purpose: SQLite stores a table's CREATE
+	// statement verbatim, comments included, so editing an applied migration's prose makes
+	// `.schema` differ between a fresh install and an existing deployment while changing
+	// nothing about either. Correcting it here reaches every reader without the drift.
+	Kind      string
 	Purpose   string
 	State     string
 	Members   int
