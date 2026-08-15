@@ -15,7 +15,7 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-## [3.7.0] — 2026-08-15
+## [3.7.0] — 2026-08-14
 
 ### Changed
 
