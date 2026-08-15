@@ -343,7 +343,7 @@ func TestRevokedChannelStopsDownloadGrants(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
-	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+	if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := st.GrantDownload(ctx, b, res.Attachment.AttachmentID); err != nil {
@@ -406,7 +406,7 @@ func TestSweepKeepsAccountingWhenBytesRemain(t *testing.T) {
 	if err := os.WriteFile(st.FilePath(gi.AttachmentID), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	msg, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
+	msg, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
 	if err != nil {
 		t.Fatal(err)
 	}

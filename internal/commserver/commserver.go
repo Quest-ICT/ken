@@ -633,17 +633,17 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		}
 
 		var m *comm.Message
-		var peer int64
 		switch {
 		case in.ToRoom == "all":
 			m, err = d.Comm.Broadcast(ctx, ep, in.Body, opts)
 		case in.ToRoom != "":
 			m, err = d.Comm.SendToRoom(ctx, ep, in.ToRoom, in.Body, opts)
 		default:
-			// Resolve the peer before sending so a successful send can wake a poll
-			// parked on the recipient. Cheap indexed read; the send re-checks
-			// membership itself, so this is not the authorization step.
-			if _, peer, err = d.Comm.ChannelFor(ctx, ep, in.ChannelID); err != nil {
+			// Kept for its CALLER-FACING ERROR, not for authorisation: this is where a
+			// room id passed as channel_id earns the guidance that told a working station
+			// rooms were receive-only. The send re-checks membership itself. It no longer
+			// resolves a peer — the wake below asks the party instead.
+			if _, _, err = d.Comm.ChannelFor(ctx, ep, in.ChannelID); err != nil {
 				return nil, sendOut{}, commError(err)
 			}
 			m, err = d.Comm.Send(ctx, ep, in.ChannelID, in.Body, opts)
@@ -657,9 +657,16 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		// Room sends previously woke nobody at all, so room mail waited out the poll
 		// interval while channel mail arrived at once — a latency difference readable as
 		// a capability difference.
-		if peer != 0 {
-			w.notify(peer)
-		} else if targets, wErr := d.Comm.WakeTargetsFor(ctx, m.MessageID); wErr != nil {
+		//
+		// EVERY PATH RESOLVES LIVE ENDPOINTS FROM THE PARTY. The channel path used to wake
+		// the `peer` rowid ChannelFor returns, which is the SEAT — chosen once, by an
+		// explicitly approximate "most recently seen endpoint of that station" heuristic,
+		// and never updated. Once the session holding it was gone, every channel message to
+		// that station woke a rowid with no waiter for the rest of the channel's life. The
+		// delivery itself was filed correctly, so the successor still got its mail — at the
+		// end of its parked wait instead of at once, on the one surface whose instructions
+		// tell it to sit in a long poll.
+		if targets, wErr := d.Comm.WakeTargetsFor(ctx, m.MessageID); wErr != nil {
 			// A wakeup is an OPTIMISATION — the poll re-reads the database when its wait
 			// elapses — so failing to compute one must never fail the send that succeeded.
 			log.Printf("comm: wake targets for %s: %v", m.MessageID, wErr)

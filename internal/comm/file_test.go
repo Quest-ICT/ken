@@ -146,12 +146,21 @@ func TestUploadOfferDeliversOnlyAfterCompletion(t *testing.T) {
 	if gi.EndpointToken != a.Owner.TokenID || gi.SHA256 != shaOf(content) {
 		t.Fatalf("grant info mismatch: %+v", gi)
 	}
-	msg, recipient, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
+	msg, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if recipient != b.ID {
-		t.Fatalf("recipient = %d, want %d", recipient, b.ID)
+	// The delivery is filed against the recipient's PARTY. This asserted the returned
+	// endpoint rowid instead — the frozen seat, which is the thing that must NOT be
+	// relied upon; the Poll below already proves the message reaches b.
+	var party string
+	if err := st.R.QueryRow(
+		`SELECT d.party_key FROM delivery d JOIN message m ON m.id=d.message_row WHERE m.message_id=?`,
+		msg.MessageID).Scan(&party); err != nil {
+		t.Fatal(err)
+	}
+	if want := endpointPartyKey(b.ID); party != want {
+		t.Fatalf("delivery party = %q, want %q", party, want)
 	}
 
 	got, err := st.Poll(ctx, b, 10)
@@ -213,7 +222,7 @@ func TestGrantDownloadIsRecipientOnly(t *testing.T) {
 		t.Fatal("download granted before the upload completed")
 	}
 	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
-	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+	if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -274,7 +283,7 @@ func TestFileBudgetFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
-	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, 8); err != nil {
+	if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, 8); err != nil {
 		t.Fatal(err)
 	}
 	// 8 of 10 bytes held: a 3-byte offer must be refused.
@@ -326,7 +335,7 @@ func TestSweepDeletesDeliveredFileBytes(t *testing.T) {
 	if err := os.WriteFile(st.FilePath(gi.AttachmentID), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	msg, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
+	msg, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +374,7 @@ func TestSweepExpiresStaleAttachments(t *testing.T) {
 	// The expired attachment no longer accepts a completion.
 	gi, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
 	if err == nil {
-		if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, 1); err == nil {
+		if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, 1); err == nil {
 			t.Fatal("an expired attachment accepted an upload completion")
 		}
 	}
@@ -411,7 +420,7 @@ func TestAReplacementSessionCanDownloadItsStationsAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+	if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -463,7 +472,7 @@ func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
-	if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+	if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := st.Poll(ctx, recv, 10)
@@ -524,7 +533,7 @@ func TestARevokedPredecessorDoesNotStrandItsStationsFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("consume %s: %v", name, err)
 		}
-		if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+		if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
 			t.Fatalf("complete %s: %v", name, err)
 		}
 		return res.Attachment.AttachmentID

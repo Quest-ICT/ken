@@ -146,7 +146,7 @@ func (f *FileHandler) upload(w http.ResponseWriter, r *http.Request, p *principa
 		f.failUpload(ctx, gi, w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	msg, recipient, err := f.d.Comm.CompleteUpload(context.Background(), gi.AttachmentRow, n)
+	msg, err := f.d.Comm.CompleteUpload(context.Background(), gi.AttachmentRow, n)
 	if err != nil {
 		// The bytes are on disk and verified; only the envelope failed. Keep them:
 		// the attachment stays 'offered' and its TTL still governs, so the sender can
@@ -162,7 +162,16 @@ func (f *FileHandler) upload(w http.ResponseWriter, r *http.Request, p *principa
 		httpError(w, code, text)
 		return
 	}
-	f.notify(recipient)
+	// WAKE THE PARTY, NOT THE STAMPED ROWID. `recipient` is the attachment's frozen
+	// recipient_endpoint, and the offer→completion interval is exactly when the receiver
+	// has been told to sit in a long poll — so a successor waited it out in full.
+	if targets, wErr := f.d.Comm.WakeTargetsFor(r.Context(), msg.MessageID); wErr != nil {
+		log.Printf("comm: wake targets for %s: %v", msg.MessageID, wErr)
+	} else {
+		for _, id := range targets {
+			f.notify(id)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

@@ -490,7 +490,7 @@ WHERE g.id=?`, grantRow).
 // CompleteUpload marks an upload's bytes verified and enqueues the message the
 // receiver will poll. Called by the HTTP handler after the streamed sha256
 // matched the offer — which is why the receiver can never observe partial state.
-func (s *Store) CompleteUpload(ctx context.Context, attachmentRow int64, storedBytes int64) (*Message, int64, error) {
+func (s *Store) CompleteUpload(ctx context.Context, attachmentRow int64, storedBytes int64) (*Message, error) {
 	var msg *Message
 	var recipient int64
 	err := s.tx(ctx, func(t *sql.Tx) error {
@@ -523,9 +523,13 @@ UPDATE attachment SET state='ready', stored_bytes=?, ready_at=strftime('%Y-%m-%d
 		return nil
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return msg, recipient, nil
+	// `recipient` is still resolved above and handed to enqueueLocked, which files the
+	// delivery against that endpoint's PARTY. It is no longer returned: its one consumer
+	// woke it directly, and it is a seat rowid — the frozen output of an approximate
+	// heuristic. Returning it invited exactly that use.
+	return msg, nil
 }
 
 // FailUpload marks an upload failed (checksum mismatch, overrun, aborted stream).
