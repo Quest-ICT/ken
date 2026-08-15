@@ -478,3 +478,82 @@ func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
 			"attachment id exists to somebody who should not know", err)
 	}
 }
+
+// THE PREDECESSOR IS REVOKED, WHICH IS THE ORDINARY REASON A SUCCESSOR EXISTS.
+//
+// The test above says "the predecessor goes away" and then does nothing to it — a death
+// leaves the row untouched, so it exercises the mildest version of a takeover. An operator
+// revoking a wedged endpoint is the case RevokeEndpoint's own comment describes ("revoked a
+// wedged session precisely so someone else could take over"), and it was refused: the
+// download re-check joined `endpoint` on the attachment's frozen recipient rowid, which is
+// the predecessor's.
+//
+// The second offer matters as much as the first. OfferFile stamps recipient_endpoint with
+// the seat rowid ChannelFor returns, and the seat never moves, so a file offered AFTER the
+// revocation carried the same dead rowid — the denial belonged to the channel, not to one
+// stale attachment, and re-offering could not clear it.
+func TestARevokedPredecessorDoesNotStrandItsStationsFiles(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+
+	sender := stationEndpoint(t, st, "tok-send", "st-sender")
+	first := stationEndpoint(t, st, "tok-1", "st-recv")
+	code, err := st.MintPairingCode(ctx, 1, 42, "sender<->recv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, sender, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, first, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	offer := func(name string) string {
+		t.Helper()
+		content := []byte("bytes for whoever is staffing st-recv: " + name)
+		res, err := st.OfferFile(ctx, sender, ch.ChannelID, FileOffer{
+			Name: name, SizeBytes: int64(len(content)), SHA256: shaOf(content),
+			Transfer: "upload", Note: "for the station",
+		})
+		if err != nil {
+			t.Fatalf("offer %s: %v", name, err)
+		}
+		gi, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+		if err != nil {
+			t.Fatalf("consume %s: %v", name, err)
+		}
+		if _, _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+			t.Fatalf("complete %s: %v", name, err)
+		}
+		return res.Attachment.AttachmentID
+	}
+
+	before := offer("before-revocation.bin")
+
+	// CONTROL: grantable while the predecessor is live, so a refusal below is about the
+	// revocation and not about an attachment that was never grantable.
+	if _, _, err := st.GrantDownload(ctx, first, before); err != nil {
+		t.Fatalf("setup: the original recipient cannot download: %v", err)
+	}
+
+	if err := st.RevokeEndpoint(ctx, first.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	successor := stationEndpoint(t, st, "tok-2", "st-recv")
+
+	if _, _, err := st.GrantDownload(ctx, successor, before); err != nil {
+		t.Errorf("a successor cannot download a file offered BEFORE its predecessor was "+
+			"revoked: %v.\nThe channel is open and the file belongs to its station; the only "+
+			"revoked thing is the connection that is gone.", err)
+	}
+
+	after := offer("after-revocation.bin")
+	if _, _, err := st.GrantDownload(ctx, successor, after); err != nil {
+		t.Errorf("a successor cannot download a file offered AFTER its predecessor was "+
+			"revoked: %v.\nThis is the half that makes the defect permanent: the seat rowid "+
+			"never moves, so every later offer is stamped with the dead endpoint and "+
+			"re-offering cannot clear it.", err)
+	}
+}

@@ -396,16 +396,31 @@ func (s *Store) GrantDownload(ctx context.Context, ep *Endpoint, attachmentID st
 		// Revocation must stop BYTES, not just new messages. Without this re-check a
 		// recipient could keep minting fresh download grants for an already-offered
 		// file until its TTL, on a channel the human has already killed.
+		//
+		// THE CHANNEL'S STATE IS THE WHOLE TEST. This also joined `endpoint` on
+		// a.recipient_endpoint and refused when that row carried a revoked_at — the same
+		// endpoint-versus-party mistake the party check EIGHT LINES ABOVE exists to
+		// correct, re-answering the settled question from one connection.
+		//
+		// That half could never mean what it says. A revoked CALLER never reaches here:
+		// AuthenticateEndpoint refuses it before any tool body runs. And the party check
+		// above guarantees a.recipient_endpoint is either the caller or a station-mate. So
+		// a non-NULL revoked_at was only ever reachable for a PREDECESSOR — the endpoint an
+		// operator revoked precisely so that someone else could take over.
+		//
+		// It was permanent for the CHANNEL, not for one stale attachment: OfferFile stamps
+		// recipient_endpoint with the seat rowid ChannelFor returns, and the seat never
+		// moves, so every LATER offer to that station was stamped with the same revoked row
+		// and was equally ungrantable. Re-offering — the remedy the relay's own errors
+		// prescribe — could not clear it.
 		var chState string
-		var epRevoked sql.NullString
 		if err := t.QueryRowContext(ctx, `
-SELECT c.state, e.revoked_at FROM attachment a
+SELECT c.state FROM attachment a
 JOIN channel c ON c.id = a.channel_id
-JOIN endpoint e ON e.id = a.recipient_endpoint
-WHERE a.id=?`, a.rowID).Scan(&chState, &epRevoked); err != nil {
+WHERE a.id=?`, a.rowID).Scan(&chState); err != nil {
 			return err
 		}
-		if chState != "open" || epRevoked.Valid {
+		if chState != "open" {
 			return ErrChannelClosed
 		}
 		g, err := mintGrant(ctx, t, a.rowID, ep.ID, "download", s.lim().GrantTTLSeconds)
