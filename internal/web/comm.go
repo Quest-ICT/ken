@@ -97,8 +97,22 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		comm.Endpoint
 		OpenChannels int
 		ChannelsLine string // human channel names, comma-joined; "" when none
+		// Bound decides which WARNING the confirm dialog shows. Revoking an UNBOUND
+		// endpoint ends the relationship — nobody else can act on its channels, and the
+		// peer really must re-pair. Revoking a BOUND one cuts off a reader: the station
+		// keeps its channels and a successor inherits them with a voucher. One sentence
+		// cannot be true of both, and the one that shipped was the unbound case.
+		Bound bool
 	}
+	//
+	// GROUPED BY STATION WHERE THERE IS ONE, because a channel belongs to the station and
+	// every reader of that station is affected by anything done to it. Keyed by endpoint
+	// id, the blast radius landed on the wrong row in both directions: the successor —
+	// the station's ONLY live reader, which joined nothing — showed zero channels, so the
+	// row whose revocation actually silences the station carried no warning at all, while
+	// a predecessor that had merely died still carried the full list.
 	byEndpoint := map[string][]string{}
+	byStation := map[string][]string{}
 	for _, ch := range channels {
 		if ch.State != "open" {
 			continue
@@ -107,18 +121,27 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		if name == "" {
 			name = ch.ChannelID
 		}
-		if ch.EndpointA != "" {
-			byEndpoint[ch.EndpointA] = append(byEndpoint[ch.EndpointA], name)
-		}
-		if ch.EndpointB != "" {
-			byEndpoint[ch.EndpointB] = append(byEndpoint[ch.EndpointB], name)
+		for _, seat := range []struct{ ep, station string }{
+			{ch.EndpointA, ch.StationA}, {ch.EndpointB, ch.StationB},
+		} {
+			if seat.station != "" {
+				byStation[seat.station] = append(byStation[seat.station], name)
+				continue
+			}
+			if seat.ep != "" {
+				byEndpoint[seat.ep] = append(byEndpoint[seat.ep], name)
+			}
 		}
 	}
 	eps := make([]epView, 0, len(endpoints))
 	for _, ep := range endpoints {
 		names := byEndpoint[ep.EndpointID]
+		if ep.StationID != "" {
+			names = byStation[ep.StationID]
+		}
 		eps = append(eps, epView{
 			Endpoint: ep, OpenChannels: len(names), ChannelsLine: strings.Join(names, ", "),
+			Bound: ep.StationID != "",
 		})
 	}
 

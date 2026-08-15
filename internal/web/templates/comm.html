@@ -190,7 +190,7 @@
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--sm" type="submit" title="{{$.T "comm.rotate_help"}}">{{$.T "comm.rotate"}}</button>
               </form>
-              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{$.T "comm.revoke_endpoint_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{$.T "comm.confirm_will_close"}} ({{.OpenChannels}}): {{.ChannelsLine}}{{end}}">
+              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{if .Bound}}{{$.T "comm.revoke_bound_endpoint_confirm"}}{{else}}{{$.T "comm.revoke_endpoint_confirm"}}{{end}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{if .Bound}}{{$.T "comm.confirm_station_keeps"}}{{else}}{{$.T "comm.confirm_will_close"}}{{end}} ({{.OpenChannels}}): {{.ChannelsLine}}{{end}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--danger btn--sm" type="submit" title="{{$.T "comm.revoke_endpoint_help"}}">{{$.T "comm.revoke"}}</button>
               </form>

@@ -22,9 +22,16 @@ type AdminChannel struct {
 	LabelA       string
 	EndpointB    string // empty until the second party joins
 	LabelB       string
-	Unacked      int // messages queued or delivered but not yet acked
-	CreatedAt    string
-	OpenedAt     string
+	// StationA/StationB name the STATION seated at each end, empty when that seat is
+	// unbound. The console groups by these rather than by endpoint id: a channel belongs
+	// to the station, and every reader of that station is affected by anything done to it.
+	// Preferring the snapshot over the live binding matches ChannelFor — the operator is
+	// looking at what was authorised, not at where a binding has since moved.
+	StationA  string
+	StationB  string
+	Unacked   int // messages queued or delivered but not yet acked
+	CreatedAt string
+	OpenedAt  string
 }
 
 // ListChannelsForSpace returns every channel owned by one space, newest first.
@@ -37,6 +44,7 @@ func (s *Store) ListChannelsForSpace(ctx context.Context, spaceID int64) ([]Admi
 SELECT c.channel_id, COALESCE(c.label,''), c.state, c.space_id, c.owner_actor_id,
        ea.endpoint_id, COALESCE(ea.label,''),
        COALESCE(eb.endpoint_id,''), COALESCE(eb.label,''),
+       COALESCE(c.station_a, ea.station_id, ''), COALESCE(c.station_b, eb.station_id, ''),
        (SELECT COUNT(*) FROM message m
          WHERE m.channel_id = c.id AND EXISTS (SELECT 1 FROM delivery d
                 WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
@@ -55,6 +63,7 @@ ORDER BY c.created_at DESC`, spaceID)
 		var c AdminChannel
 		if err := rows.Scan(&c.ChannelID, &c.Label, &c.State, &c.SpaceID, &c.OwnerActorID,
 			&c.EndpointA, &c.LabelA, &c.EndpointB, &c.LabelB,
+			&c.StationA, &c.StationB,
 			&c.Unacked, &c.CreatedAt, &c.OpenedAt); err != nil {
 			return nil, err
 		}
