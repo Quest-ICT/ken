@@ -248,12 +248,16 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       `'topic'`). *Moved here from Batch 4 on prod's correction: it is an unfinished migration, not
       a duplicated generation.* It is also the natural two-party container, so Batch 5's second
       decision may settle it.
-- [ ] **A regression test for retroactive revocation.** Revoking a channel stops mail already
+- [x] **A regression test for retroactive revocation** — *unreleased*. Revoking a channel stops mail already
       queued; that property is held by three hand-mirrored SQL predicates and the only test
       asserts a *send* fails afterwards. Nothing pins the retroactive half. **The three are
       `message.go:583`, `message.go:813` and `pending.go:56`** — prod's own first pass found two and
       nearly corrected me; the third is the predicate behind `pending_total`, so a test that misses
-      it lets the console counter drift from the poll.
+      it lets the console counter drift from the poll. **Five mutants, all killed**, each gated on the
+      edit actually applying and the tree still building — an inert mutant reads as SURVIVED and
+      has fooled this project four times. The room arm exists because a revocation test between
+      two endpoints in no room cannot tell a correct `LEFT JOIN` from an `INNER` one: both return
+      zero.
 
 ---
 
