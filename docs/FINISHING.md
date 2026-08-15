@@ -151,12 +151,25 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
       three weeks, not one identity recorded — which is what an undescribed optional field
       predicts. Fixed by reading `req.Session.ID()` (falling back to the token), because a
       caller-supplied identity is unreliable *and* unfalsifiable.
-- [ ] **N=3 needs re-deciding with the numbers in front of it — Vlad's call.** Prod's ceiling:
-      30 `helped` rows over 108 entries means **at most 10 entries (9.3%) could ever qualify**
-      under perfect distribution, and only two distinct actors have ever recorded an outcome.
-      N=3 may be right for a mature knowledge base; on three weeks of data it is a bar almost
-      nothing clears. Historical rows stay uncounted — evidence recorded without identity should
-      not retroactively mint badges.
+- [x] **N=3 is CONFIRMED by Vlad**, on evidence rather than deference. The "at most 10 entries"
+      ceiling I recorded here was prod's own figure and they retracted it: it divided recorded
+      outcomes by 3, which measures how rarely the loop is closed, not what N=3 can support. The
+      honest ceiling is **39 of 108 entries (36%) have `use_count >= 3`**, so at full loop closure
+      N=3 marks about a third of the knowledge base — slow, not unreachable. Lowering it would
+      make the badge appear without making it truer, and misfire later: at healthy closure N=2
+      marks half the KB and the tier stops distinguishing anything.
+- [ ] **THE REAL CONSTRAINT: the loop is closed one time in seven.** 250 recorded uses, 37
+      outcomes — **14.8%** — and only 22 of 108 entries have any outcome at all. The instructions
+      say *"close the loop EVERY time … do not skip it"* and it is skipped 85% of the time, by
+      every session including this one. **Verified from source that the denominator is honest:**
+      `use_count` is bumped ONLY by `Store.Get`, whose sole caller is `kb_get` (`server.go:493`);
+      the human console uses `GetEntry`, which deliberately does not bump, and `kb_search` does
+      not bump either. So a "use" is exactly *an agent fetched the full entry to apply it* — the
+      precise occasion an outcome is owed. If anything 14.8% is generous: one `kb_get` may carry
+      several slugs and bumps each, while a session is likely to record at most one outcome for
+      the batch. **This is upstream of every badge question and it is a defect, not a preference**
+      — the same family as `session_id`: something the instructions request that nothing prompts
+      for at the moment it matters.
 - [ ] **`station_task_defer` is date-shaped and the problem is state-shaped.** Prod's
       observation, and it explains why neither station has ever called it: `defer` takes
       `remind_after`, modelling "not yet" as a TIME, while almost all real staleness is "the
