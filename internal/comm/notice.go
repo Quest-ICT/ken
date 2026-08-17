@@ -92,9 +92,7 @@ SELECT m.message_id, m.scope_id, 'reply_overdue' AS reason, d.reply_deadline_at 
  WHERE m.sender_party = ?1
    AND m.kind = 'message'
    AND m.requires_response = 1
-   AND d.replied_by IS NULL
-   AND d.reply_deadline_at IS NOT NULL
-   AND d.reply_deadline_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   AND `+replyOverdueEligible+`
    AND d.reply_deadline_at > mark.seen_at
 
  ORDER BY at
@@ -129,12 +127,43 @@ SELECT m.message_id, m.scope_id, 'reply_overdue' AS reason, d.reply_deadline_at 
 	return out, nil
 }
 
+// replyOverdueEligible is the reply_overdue rule, stated ONCE because it is asked in two
+// places and a second copy that drifted would name recipients for a notice the main query
+// had already decided not to send.
+//
+// THE LAST CLAUSE IS A LOWER BOUND ON THE MECHANISM ITSELF, and it is the whole point.
+// `delivery.replied_by` — the column that records "this was answered" — has existed since
+// 0001, and NOTHING WROTE IT until migration 0009 created the delivery table and Send began
+// linking replies. So on any deployment upgraded through 0009, every earlier
+// requires_response message has replied_by NULL FOREVER, whatever actually happened in the
+// conversation. Notices then became a derived query, and a derived query has no memory of
+// when its inputs started being written: it read NULL as "nobody replied" where the truth
+// was "this predates the column being written", and reported a peer as owing answers it had
+// given within minutes.
+//
+// ken-prod-ops caught it by holding the other side of the conversation — 4 notices
+// received, 136 rows permanently eligible on their deployment, and the thread reply_to-
+// linked end to end. Nobody without that transcript could have disbelieved it: the notice
+// names real ids, real deadlines and a real peer. It MANUFACTURES work, which is the
+// expensive failure direction.
+//
+// The boundary is read from `schema_migration.applied_at`, so it is a fact each deployment
+// records about ITSELF rather than a date compiled in — right on a fresh install (where
+// everything postdates it) and right on one upgraded years later. COALESCE to ” rather
+// than letting a missing row make the comparison NULL: that would silently disable every
+// reply_overdue notice everywhere, which is a worse failure than the one being fixed, and
+// it fails back to exactly today's behaviour in a state that cannot occur while the
+// delivery table exists.
+const replyOverdueEligible = `d.replied_by IS NULL
+   AND d.reply_deadline_at IS NOT NULL
+   AND d.reply_deadline_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   AND d.first_delivered_at >= COALESCE((SELECT applied_at FROM schema_migration WHERE version = 9), '')`
+
 // noticeRecipients names the parties a notice concerns.
 func (s *Store) noticeRecipients(ctx context.Context, messageID, reason string) ([]string, error) {
 	pred := `d.state = 'expired'`
 	if reason == "reply_overdue" {
-		pred = `d.replied_by IS NULL AND d.reply_deadline_at IS NOT NULL
-		        AND d.reply_deadline_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+		pred = replyOverdueEligible
 	}
 	rows, err := s.R.QueryContext(ctx, `
 SELECT d.party_key FROM delivery d JOIN message m ON m.id = d.message_row
