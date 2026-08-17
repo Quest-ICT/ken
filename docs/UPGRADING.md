@@ -34,6 +34,78 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.8.0
+
+### Fewer `reply_overdue` notices — and the ones that stop were false
+
+**What changes.** A `reply_overdue` notice is no longer produced for a delivery that predates
+the migration which introduced reply-linking (comm.db migration 9, shipped in 3.0.0).
+
+**What you will observe.** On a deployment upgraded through 3.0.0, a possibly large backlog of
+overdue notices simply stops arriving. **On the production deployment this was 136 rows, of
+which 4 had already been delivered.** Do not read the drop as notices breaking.
+
+**Why they were false.** `delivery.replied_by` — the column the notice reads — has existed
+since migration 1 and was **written by nothing** until migration 9. So every earlier
+`requires_response` message has it NULL permanently, whatever actually happened in the
+conversation, and the derived query read NULL as *"nobody replied"* rather than *"this predates
+the column being written"*. It reported a peer as owing answers it had given within minutes.
+
+**The boundary is read from your own `schema_migration.applied_at`**, not compiled in, so it is
+correct on a fresh install (where everything postdates it) and on one upgraded years from now.
+Genuine overdue replies on current traffic are unaffected.
+
+### `ken token list` has a new STATION column — positional parsing will break
+
+**What changes.** The header is now
+`TOKEN_ID ACTOR KIND STATION SCOPES LABEL LAST_USED REVOKED`. `STATION` is inserted as the
+**fourth** column. Any script slicing this output by position must be updated. The console
+token table gains the same column.
+
+**Why.** Every other field is identical across station keys minted by one human on one machine
+— actor, kind, scopes, and a label defaulting to the hostname. On production **eight station
+keys rendered as three distinct-looking rows**, four of them indistinguishable. Revoking a
+station key severs the endpoints bound to it, so choosing among identical rows was a
+one-in-four chance of cutting off a different station's COMM.
+
+### Two revoke confirmations now say something different
+
+No behaviour change; the dialogs describe what actually happens.
+
+- **Revoking a bound endpoint** no longer claims every peer must re-pair from a new code. The
+  station keeps its channels and a successor inherits them with a voucher; what stops is the
+  session holding that secret. The unbound wording is unchanged, because there it is true.
+- **Revoking a station key** now names the station and states that every session bound to it
+  is cut off — notebook, tasks, locker and vault — at its next call.
+
+### A replacement session can download its station's files after the predecessor was revoked
+
+**What changes.** A call that used to fail now succeeds. `comm_file_grant` no longer refuses
+when the attachment's recorded recipient endpoint carries a `revoked_at`.
+
+**Why.** That check could only ever fire for a *predecessor* — a revoked caller is refused at
+authentication, before any tool body runs. Its only reachable effect was to deny the successor
+the operator revoked the endpoint to make room for. It was permanent for the **channel**, not
+one attachment: every later offer is stamped with the same seat, so re-offering could not clear
+it. Channel revocation still stops bytes, unchanged.
+
+### Idle endpoint rows now persist while they seat a channel
+
+**What changes.** The idle sweep no longer deletes an endpoint that occupies a channel seat, so
+`endpoint` rows for quiet pairings survive longer than before.
+
+**Why.** Those rows cascade: collecting one deleted the CHANNEL a human authorised, any queued
+mail on it, and the attachment rows that are the only record of which files to unlink — with no
+log line. Growth is still bounded; the channel-deletion pass releases a seat once its channel is
+gone and the next sweep collects it.
+
+### Re-redeeming a pairing code from a second endpoint of the same station is now a no-op
+
+**What changes.** It returns the existing channel instead of filling the free seat. Previously
+the station ended up on **both** sides, resolved its own peer to itself, and the real peer was
+then refused — the pairing consumed by a station talking to itself.
+
+
 ## 3.7.0
 
 ### `station_note_write` with `mode=replace` now REQUIRES `if_rev` on an existing page

@@ -53,7 +53,7 @@ prose that drifted from it within an hour of being written.
 > caught it by READING the list instead of recalling it. The rule needs a habit attached —
 > **tick the item in the commit that closes it**, not when someone asks what is left.
 >
-> **First time:** Six items sat marked *unreleased* after
+> **First time:** Six items sat marked **3.8.0** after
 > shipping in 3.6.0, and prod found it, not me. The rule is right; I did not apply it in the release
 > commit itself. Marking an item done and naming its release is part of cutting, not a follow-up.
 
@@ -118,7 +118,7 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
 
 ### The two that matter most, both re-verified by hand before being written here
 
-- [x] **`kb_record_outcome` writes a table NOTHING READS** — FIXED, *unreleased*. The reader is
+- [x] **`kb_record_outcome` writes a table NOTHING READS** — FIXED, **3.8.0**. The reader is
       the maturity badge (`396a4df`), and the identity it counts is server-derived (`811bdb8`)
       after prod measured 37/37 NULL session ids. Original finding: `entry_outcome` is INSERTed at `internal/store/v1tools.go:89`; there is not a
       single SELECT against it anywhere. The connect-time instruction every session captures
@@ -235,7 +235,7 @@ so a replacement session inherits its station's inbox. Six places compared endpo
 instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
 `waiting_for_you`, the room mirror, and file downloads. Finishing means no seventh.
 
-- [x] **Sweep every comparison against an endpoint rowid** — done, *unreleased*. and classify each: correct (it really
+- [x] **Sweep every comparison against an endpoint rowid** — done, **3.8.0**. and classify each: correct (it really
       is about one connection) or wrong (it is about an inbox). This is a finite, greppable list
       — do it once rather than find the seventh in production. **109 sites classified across five
       independent lenses, every finding adversarially verified; evidence in
@@ -262,7 +262,7 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       party set. Migration 0010 already added and backfilled `attachment.scope_id` — and
       `internal/comm/file.go` contains the string "scope" **zero times**. The seam was cut and
       never used, so a file cannot be offered to a room. *Needs a migration; ships alone.*
-- [x] **`comm_room.kind='dm'`** — resolved as DOCUMENTED, not built and not dropped, *unreleased*. — the CHECK constraint at `migrations/0017_comm_rooms.sql:36`
+- [x] **`comm_room.kind='dm'`** — resolved as DOCUMENTED, not built and not dropped, **3.8.0**. — the CHECK constraint at `migrations/0017_comm_rooms.sql:36`
       permits a value `CreateRoom` cannot produce (`internal/store/rooms.go:57-59` hardcodes
       `'topic'`). *Moved here from Batch 4 on prod's correction: it is an unfinished migration, not
       a duplicated generation.* It is also the natural two-party container, so Batch 5's second
@@ -274,7 +274,7 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       — so editing an applied migration's prose makes `.schema` differ between a fresh install and
       an existing deployment while changing nothing about either, and prod runs a schema band over
       exactly that. Correcting the Go model reaches every reader at no drift.
-- [x] **A regression test for retroactive revocation** — *unreleased*. Revoking a channel stops mail already
+- [x] **A regression test for retroactive revocation** — **3.8.0**. Revoking a channel stops mail already
       queued; that property is held by three hand-mirrored SQL predicates and the only test
       asserts a *send* fails afterwards. Nothing pins the retroactive half. **The three are
       `message.go:583`, `message.go:813` and `pending.go:56`** — prod's own first pass found two and
