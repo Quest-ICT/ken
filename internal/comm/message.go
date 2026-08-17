@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
-	"strings"
 )
 
 // Message is one atomic transfer over a channel.
@@ -332,104 +330,31 @@ WHERE id=? AND answered_at IS NULL`, replyToRow); err != nil {
 		}
 		return err
 	})
-	if isSeqCollision(err) {
-		return nil, ErrSequenceCollision
-	}
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// nextSeq allocates the next sequence number for one direction of a channel.
+// THE PER-CHANNEL SEQUENCE GENERATION IS GONE, along with the error it could raise.
 //
-// The high-water mark lives in its own table rather than being derived as
-// MAX(seq)+1 over the message rows, because those rows are swept: once a
-// direction's history was purged the derived counter RESET to 1, breaking the
-// strictly-ascending promise and — the real damage — letting a retried cumulative
-// ack computed against the old numbering settle brand-new messages that had been
-// reissued the same low numbers.
+// `channel_seq` numbered the `message.seq` column per (channel, sender). Migration 0009
+// rebuilt `message` WITHOUT that column and replaced the whole scheme with `scope_counter`,
+// one counter per SCOPE across every sender — because two interleaved sequences in one
+// channel made `ack_up_to_seq`, which is a RANGE, able to settle mail from the other
+// direction that nobody had read, and because a room has no "direction" among five
+// participants at all.
 //
-// Safe as an upsert-then-read under the single-writer discipline.
+// The code half was converted in the same slice and `nextSeq` lost both its call sites, but
+// nothing deleted it. It sat here with zero callers, still writing a table nothing read.
 //
-// The counter is keyed on the SENDER'S STATION when it has one, and on its endpoint
-// rowid otherwise (docs/STATIONS.md S4). Keyed on the endpoint alone, a replacement
-// session — a different endpoint of the same station — starts a fresh counter at 1
-// while its predecessor already reached 20, and two messages in one channel and
-// direction then share a sequence number. Ordering breaks, but the real damage is
-// that `ack_up_to_seq` is a RANGE: acking up to 2 after a takeover settles the new
-// session's messages AND old ones nobody read.
-func nextSeq(ctx context.Context, t *sql.Tx, chRow, sender int64) (int64, error) {
-	key, err := senderKey(ctx, t, sender)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := t.ExecContext(ctx, `
-INSERT INTO channel_seq(channel_id, sender_key, next_seq) VALUES(?,?,2)
-ON CONFLICT(channel_id, sender_key) DO UPDATE SET next_seq = next_seq + 1`,
-		chRow, key); err != nil {
-		return 0, err
-	}
-	var next int64
-	if err := t.QueryRowContext(ctx,
-		`SELECT next_seq FROM channel_seq WHERE channel_id=? AND sender_key=?`,
-		chRow, key).Scan(&next); err != nil {
-		return 0, err
-	}
-	return next - 1, nil
-}
-
-// ErrSequenceCollision reports that a message could not be numbered because this
-// endpoint's per-channel counter has fallen behind its own history on that channel.
+// ErrSequenceCollision went with it, and that one was worse than dead code. Its detector
+// matched on error text naming `message.seq` and `message.sender_endpoint` — a UNIQUE index
+// 0009 DROPPED — so it could never return true, while its handler carried operator
+// instructions telling a session to call `comm_unbind`. That is the one remediation the
+// party-model sweep found costs a station its channel, recommended for a condition that has
+// been impossible since 3.0.0, in the one channel that always reaches a running session.
 //
-// It exists because the failure it names is otherwise a bare "internal error", and an
-// operator who has just adopted a station has no path from that string to a sequence
-// counter — they will suspect the network, the token, the peer, or the restart they
-// happened to do. A production operator hit exactly this and said so: they only knew
-// where to look because a report arrived first.
-//
-// The condition is repaired by comm_unbind, which is the remediation path for anyone
-// who bound on a release before the counter was carried across.
-var ErrSequenceCollision = errors.New("sequence collision")
-
-// isSeqCollision recognises the UNIQUE index on (channel_id, sender_endpoint, seq).
-// Matched on the index's own columns rather than a driver code, so it cannot quietly
-// start matching some other constraint.
-func isSeqCollision(err error) bool {
-	if err == nil {
-		return false
-	}
-	e := err.Error()
-	return strings.Contains(e, "UNIQUE") &&
-		strings.Contains(e, "message.seq") &&
-		strings.Contains(e, "message.sender_endpoint")
-}
-
-// senderKey resolves the counter key for a sender, INSIDE the send transaction so it
-// cannot observe a binding that changes underneath it.
-//
-// The prefix tags the two namespaces apart. Without it, a station whose id happened to
-// be the decimal string of some endpoint's rowid would silently share that endpoint's
-// counter — a collision that never appears in testing and is unrecoverable once it
-// does.
-func senderKey(ctx context.Context, t *sql.Tx, sender int64) (string, error) {
-	var station sql.NullString
-	err := t.QueryRowContext(ctx, `SELECT station_id FROM endpoint WHERE id=?`, sender).Scan(&station)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The endpoint is gone mid-send. Fall back to the rowid form rather than
-		// failing: the message is already authorized, and an unbound key is the
-		// conservative choice — it can only ever under-share a counter.
-		return "e:" + strconv.FormatInt(sender, 10), nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if station.Valid && station.String != "" {
-		return "s:" + station.String, nil
-	}
-	return "e:" + strconv.FormatInt(sender, 10), nil
-}
-
 // enqueueLocked inserts one plain message inside an open write transaction:
 // backpressure, sequence assignment, insert, read-back. The FILE surface uses it
 // (offers and completed uploads become ordinary poll-able messages).
