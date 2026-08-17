@@ -38,8 +38,21 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.8.0** (2026-08-17) — prod asked to upgrade and verify; **that report is the gate
-for the next batch.** Batch 3 shipped in it.
+**Released: 3.8.0** (2026-08-17), **verified on production 2026-08-17T16:03Z** — band clean on
+both databases, migrations 18/11 with original timestamps intact, and the `reply_overdue` fix
+confirmed in BOTH directions (31 historical notices eliminated; a genuinely unanswered request on
+current traffic still fired one). Batch 3 shipped in it. **The Batch 4 gate is open.**
+
+> **One item in that report is a VERIFICATION GAP, not a pass, and ken-prod-ops refused to
+> record it as one.** The idle-sweep fix — an endpoint seating a channel must survive collection —
+> could not be exercised on production at all: `comm_endpoint_idle_sec` is overridden there to
+> **7776000 (90 days)** and the most idle endpoint is 14 days old, so nothing was ever eligible
+> and the sweep had no opportunity to exhibit the bug in either direction. Twelve channels before
+> and after is the same green a broken build would produce. **The evidence for that fix is the
+> mutation-verified unit test and nothing else**, which is adequate but should not be mistaken for
+> production confirmation. The earliest natural opportunity there is **~2026-11-01**; prod offered
+> a deliberate window sooner and I did not take it, because the local test already pins the
+> property and a staged window would mostly re-test the harness.
 
 Previously **3.7.0**, verified on production 2026-08-15T04:00Z; before that **3.6.0**, verified
 2026-08-14T22:02Z — band clean on both databases, and no migration ran at all in either
