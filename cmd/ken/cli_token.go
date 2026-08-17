@@ -122,10 +122,11 @@ func runToken(args []string) {
 		rows, err := st.ListTokens(ctx)
 		must(err)
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "TOKEN_ID\tACTOR\tKIND\tSCOPES\tLABEL\tLAST_USED\tREVOKED")
+		fmt.Fprintln(w, "TOKEN_ID\tACTOR\tKIND\tSTATION\tSCOPES\tLABEL\tLAST_USED\tREVOKED")
 		for _, r := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				r.TokenID, r.ActorName, r.Kind, r.Scopes, dash(r.Label), dash(r.LastUsedAt), dash(r.RevokedAt))
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				r.TokenID, r.ActorName, r.Kind, dash(r.Station), r.Scopes, dash(r.Label),
+				dash(r.LastUsedAt), dash(r.RevokedAt))
 		}
 		_ = w.Flush()
 

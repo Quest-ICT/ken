@@ -66,14 +66,31 @@ func (s *Store) IssueToken(ctx context.Context, actorID int64, scopes []string, 
 // TokenRow is a row for `ken token list`.
 type TokenRow struct {
 	TokenID, ActorName, Kind, Scopes, Label, CreatedAt, LastUsedAt, RevokedAt string
+	// Station is the station this key staffs, by NAME, empty for an ordinary token.
+	//
+	// Without it the listing cannot tell station keys apart: actor, kind, scopes and label
+	// are all identical across every key one human minted from one machine, so eight keys
+	// rendered as three distinct-looking rows on a live deployment. That is not cosmetic —
+	// revoking a station key SEVERS the endpoints bound to it, so an operator picking one
+	// of four identical rows had a one-in-four chance of cutting off a different station's
+	// COMM. The only thing discriminating them was last_used_at, which stops discriminating
+	// the moment two are used in the same window.
+	//
+	// The value was already stored on api_token.station_id and populated on every station
+	// key; only the rendering omitted it. Falls back to the raw station_id if the station
+	// row is gone, so a dangling key still says which one it was rather than looking
+	// ordinary.
+	Station string
 }
 
 // ListTokens lists all API tokens, newest first.
 func (s *Store) ListTokens(ctx context.Context) ([]TokenRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT t.token_id, a.display_name, a.kind, t.scopes, COALESCE(t.label,''),
-       t.created_at, COALESCE(t.last_used_at,''), COALESCE(t.revoked_at,'')
+       t.created_at, COALESCE(t.last_used_at,''), COALESCE(t.revoked_at,''),
+       COALESCE(st.name, t.station_id, '')
 FROM api_token t JOIN actor a ON a.id=t.actor_id
+LEFT JOIN station st ON st.station_id = t.station_id
 ORDER BY t.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -82,7 +99,7 @@ ORDER BY t.created_at DESC`)
 	var out []TokenRow
 	for rows.Next() {
 		var r TokenRow
-		if err := rows.Scan(&r.TokenID, &r.ActorName, &r.Kind, &r.Scopes, &r.Label, &r.CreatedAt, &r.LastUsedAt, &r.RevokedAt); err != nil {
+		if err := rows.Scan(&r.TokenID, &r.ActorName, &r.Kind, &r.Scopes, &r.Label, &r.CreatedAt, &r.LastUsedAt, &r.RevokedAt, &r.Station); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

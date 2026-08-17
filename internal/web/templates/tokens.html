@@ -70,18 +70,19 @@
   <div class="table-wrap">
     <div class="table-scroll">
       <table class="data">
-        <thead><tr><th>{{.T "tokens.col_agent"}}</th><th>{{.T "tokens.col_scopes"}}</th><th>{{.T "tokens.col_label"}}</th><th>{{.T "tokens.col_last_used"}}</th><th>{{.T "tokens.col_status"}}</th><th></th></tr></thead>
+        <thead><tr><th>{{.T "tokens.col_agent"}}</th><th>{{.T "tokens.col_station"}}</th><th>{{.T "tokens.col_scopes"}}</th><th>{{.T "tokens.col_label"}}</th><th>{{.T "tokens.col_last_used"}}</th><th>{{.T "tokens.col_status"}}</th><th></th></tr></thead>
         <tbody>
         {{range .Data.Tokens}}
           <tr{{if .RevokedAt}} style="opacity:.6"{{end}}>
             <td class="cell-title"><b class="mono">{{.ActorName}}</b> <span class="badge badge--plain badge--sm">{{$.Enum "actorkind" .Kind}}</span><span class="slug">{{.TokenID}}</span></td>
+            <td class="mono">{{if .Station}}{{.Station}}{{else}}<span class="muted">—</span>{{end}}</td>
             <td class="mono">{{.Scopes}}</td>
             <td class="muted">{{.Label}}</td>
             <td class="mono muted" style="font-size:.82rem">{{if .LastUsedAt}}{{.LastUsedAt}}{{else}}{{$.T "tokens.never"}}{{end}}</td>
             <td>{{if .RevokedAt}}<span class="badge badge--danger badge--sm">{{$.T "tokens.status_revoked"}}</span>{{else}}<span class="badge badge--success badge--sm">{{$.T "tokens.status_active"}}</span>{{end}}</td>
             <td>
               {{if not .RevokedAt}}
-              <form class="inline" method="post" action="/tokens/{{.TokenID}}/revoke" data-confirm="{{$.T "tokens.revoke_confirm"}}">
+              <form class="inline" method="post" action="/tokens/{{.TokenID}}/revoke" data-confirm="{{$.T "tokens.revoke_confirm"}}{{if .Station}}&#10;&#10;{{$.T "tokens.revoke_station_warning"}} {{.Station}}{{end}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--danger btn--sm" type="submit">{{$.T "tokens.revoke"}}</button>
               </form>
