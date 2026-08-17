@@ -38,30 +38,45 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.7.0** — prod asked to upgrade and verify; **the Batch 3 gate is that report.**
-Previously 3.6.0, verified on production 2026-08-14T22:02Z — band clean on both
-databases, no migration ran at all (`schema_migration`'s rows still carry their original
-timestamps, and the `migrations/` tree hash is identical between the two tags). **The Batch 2 gate
-is open.**
+**Released: 3.8.0** (2026-08-17) — prod asked to upgrade and verify; **that report is the gate
+for the next batch.** Batch 3 shipped in it.
+
+Previously **3.7.0**, verified on production 2026-08-15T04:00Z; before that **3.6.0**, verified
+2026-08-14T22:02Z — band clean on both databases, and no migration ran at all in either
+(`schema_migration`'s rows still carry their original timestamps, and the `migrations/` tree hash
+is identical between the tags).
 
 **Unreleased on `main`: documentation only.** For what is actually pending, read
 `CHANGELOG.md`'s `## [Unreleased]` section — it is the machine-conventional home and this line is
 prose that drifted from it within an hour of being written.
 
-> **This file has broken its own Rule 2 twice.** The second time was worse: two Batch 2
+> **This file has broken its own Rule 2 three times, and failed in a fourth way once.**
+> The second time was worse: two Batch 2
 > headline items sat open after being fixed in the same session that wrote them, and I only
 > caught it by READING the list instead of recalling it. The rule needs a habit attached —
 > **tick the item in the commit that closes it**, not when someone asks what is left.
 >
-> **First time:** Six items sat marked **3.8.0** after
+> **First time:** Six items sat marked *unreleased* after
 > shipping in 3.6.0, and prod found it, not me. The rule is right; I did not apply it in the release
 > commit itself. Marking an item done and naming its release is part of cutting, not a follow-up.
+>
+> **Third time**, hours after the sentence above was written: `9219414` shipped the `dm` change and
+> its tick landed separately in `a8221f3`, because the script that was meant to write it asserted,
+> failed, and the `git commit` on the next line ran anyway with nothing chaining them. Knowing the
+> rule was not enough; the shell has to enforce it.
+>
+> **And a fourth failure, of a different kind, in the 3.8.0 release commit** — the checklist WAS
+> stamped in the release commit, which is what Rule 2 asks, but by a blanket find-and-replace of
+> `*unreleased*`. It stamped 3.8.0 onto two items that had shipped in **3.7.0**, mangled two
+> sentences mid-clause, and rewrote the narrative sentence directly above this one so that it
+> described a past mistake in the wrong tense. Stamping blind is not stamping.
 
 ---
 
-## Batch 1 — ship what is already done  `[x]`  *(3.6.0, awaiting prod's verification)*
+## Batch 1 — ship what is already done  `[~]`  *(3.6.0, verified on production 2026-08-14T22:02Z; **two items still open**)*
 
-No schema change. Everything here is written, tested and sitting on `main`.
+No schema change. Everything named here shipped in 3.6.0 — but the last two items below were
+never done, so this batch is not closed.
 
 - [x] `comm_ack` reports what it settled; cumulative ack takes a room id — **3.5.0**
 - [x] Room sends wake parked polls; notice recipients are station names — **3.5.0**
@@ -76,15 +91,17 @@ No schema change. Everything here is written, tested and sitting on `main`.
 - [x] A replacement session can download its station's file — **3.6.0**
 - [x] `install.sh`'s `_ken_unit_env` says what it is for now — **3.6.0**
 - [x] Live claims that COMM and stations can be switched off, corrected — **3.6.0**
-- [x] `docs/COMM.md`'s C2 record no longer contradicts its own SUPERSEDED banner six lines later,
+- [x] `docs/COMM.md`'s C2 record no longer contradicts its own SUPERSEDED banner six lines later — **3.6.0**,
       and `docs/STATIONS.md` — which had **no banner anywhere** and asserted the opt-out in its
       status line — is corrected. *(Both found by peers: promo hit the contradiction while fixing
       the public site, prod established that STATIONS.md was the worse half.)*
 - [ ] **Finish the retired-switch sweep.** `KEN_COMM_ENABLED` / `KEN_STATION_ENABLED` were removed
       in 2.0.0. The instructions that told an OPERATOR or an AGENT to use them are fixed
-      (README, INSTALL, AI-INTEGRATION, MONITORING, MCP-TOOLS, COMM §6, DESIGN), and COMM's C2
-      decision record is marked superseded rather than rewritten. **About 20 further mentions
-      remain. **Split them on promo's line, which prod confirmed is the right one:** "wrong tense,
+      (README, INSTALL, AI-INTEGRATION, MONITORING, MCP-TOOLS, COMM §6 — **but NOT `docs/DESIGN.md`,
+      which still carries two unannotated present-tense assertions that the opt-out exists**, and that
+      is the kind to do first), and COMM's C2
+      decision record is marked superseded rather than rewritten. **About 20 further mentions remain.**
+      Split them on promo's line, which prod confirmed is the right one: "wrong tense,
       keep the reasoning" is cosmetic; **"asserts a live capability that does not exist" is the kind
       that propagates** — it is what put "off by default" on the public site in three languages,
       four majors after it stopped being true. Do the second kind first.
@@ -94,14 +111,15 @@ No schema change. Everything here is written, tested and sitting on `main`.
       every artifact a human installs. Either add it to the bundle or say plainly that its audience
       is people with a git checkout. Found by prod, who verified it against the build script rather
       than assuming.
-- [x] **Cut and release** — **3.6.0**. Prod asked to upgrade and verify; awaiting their report.
+- [x] **Cut and release** — **3.6.0**, verified on production 2026-08-14T22:02Z. Superseded twice since: **3.7.0** (verified 2026-08-15T04:00Z) and **3.8.0** (released 2026-08-17, verification outstanding).
 
 ---
 
-## Batch 2 — find out what is actually half-built  `[ ]`
+## Batch 2 — find out what is actually half-built  `[~]`  *(both surveys done; the findings they produced are still being worked)*
 
-We know COMM's seams because a survey mapped them. **We have not done the same for stations,**
-and guessing would repeat the mistake this whole plan exists to fix.
+We knew COMM's seams because a survey mapped them, and stations had never been surveyed at all —
+guessing would have repeated the mistake this whole plan exists to fix. **So this batch surveyed
+stations and the knowledge base.** Both are done; what follows is what they found.
 
 - [x] **Audit stations for half-built seams** — done. 91 candidates, **63 confirmed**, 4 rejected.
       Full evidence in [audits/batch2-stations-kb.md](audits/batch2-stations-kb.md).
@@ -118,7 +136,7 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
 
 ### The two that matter most, both re-verified by hand before being written here
 
-- [x] **`kb_record_outcome` writes a table NOTHING READS** — FIXED, **3.8.0**. The reader is
+- [x] **`kb_record_outcome` writes a table NOTHING READS** — FIXED, **3.7.0**. The reader is
       the maturity badge (`396a4df`), and the identity it counts is server-derived (`811bdb8`)
       after prod measured 37/37 NULL session ids. Original finding: `entry_outcome` is INSERTed at `internal/store/v1tools.go:89`; there is not a
       single SELECT against it anywhere. The connect-time instruction every session captures
@@ -138,10 +156,18 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
       template. *A destructive control with a tooltip promising it is safe.*
 
 - [x] **`kb_record_outcome` has a reader** — the maturity badge now reads the outcome evidence
-      instead of a promotion count. *Unreleased.* Vlad settled the three open numbers: dedup by
+      instead of a promotion count — **3.7.0**. Vlad settled the three open numbers: dedup by
       distinct `session_id`, N=3, and a `was-wrong` since the last promotion blocks the top tier.
-> **Record correction, 2026-08-14.** `9ec2e5c`'s commit message says *"neither of the two
-> stations that maintain handoff pages had ever called `station_note_read`"*. ken-prod-ops has
+> **Record correction, 2026-08-14, itself corrected 2026-08-17.** The over-general claim is
+> that **neither station maintaining a handoff page had ever called `station_note_read`**. I first
+> recorded it here as living in `9ec2e5c`'s COMMIT MESSAGE. **It does not** — that message
+> attributes the observation narrowly and correctly, to ken-promo about ken-promo. The sentence
+> `9ec2e5c` actually added is in **`CHANGELOG.md`, inside the released `## [3.7.0]` entry**, which
+> is a tracked, editable file that an ordinary commit can correct — and which is what people read.
+> So the justification below for leaving it standing was pointed at the wrong artifact, and a
+> claim I had already retracted went on shipping. It is annotated at the source now. The
+> misattribution does survive unamendably in `981675f`'s own commit message, which is where the
+> reasoning below genuinely applies. ken-prod-ops has
 > since MEASURED their own usage and it is false for them — they called it on 2026-08-12 and used
 > the locker on 2026-08-11; both of their earlier claims were recalled rather than measured.
 > promo's statements about themselves stand. The commit is pushed and force-push is blocked on
@@ -186,14 +212,20 @@ nobody can reach**. Roughly a third of the findings are text that is false *toda
 
 **A fifth verdict, from prod, that the audit's categories did not have: EXERCISED, NEVER USED.**
 Count 1, in a burst, at the moment someone was systematically trying the surface — then never
-again in three weeks of work. That is the whole locker plus `station_directory` (all five calls
+again. That is the whole locker plus `station_directory` (all five calls
 inside 61 seconds on 2026-08-11). A bare count says "used"; usage in the course of work is zero.
 It changes the CONFIDENCE of a verdict, not just its label: a capability that survives contact
 with a curious operator and still finds no use is a stronger signal than one nobody opened.
 
-- [x] **"Retire" no longer promises that connected sessions are safe** — **3.7.0**. Seven
-      sites corrected (six shipped strings across three locales, plus `RetireStationKey`'s own
-      doc comment, which made the same claim). Behaviour pinned by a test, because the code has
+- [x] **"Retire" no longer promises that connected sessions are safe** — **3.7.0**, for every
+      OPERATOR-VISIBLE site. Seven corrected: six shipped strings across three locales, plus
+      `RetireStationKey`'s own doc comment, which made the same claim. **The finding named ten,
+      and the three left are developer-facing comments** — `internal/web/stations.go`,
+      `internal/store/stations.go` near the `retired_at` note, and `migrations/0012_stations.sql`,
+      which still calls it "the \"I moved machines\" path" that the corrected comment in the same
+      tree now explicitly disowns. The migration file is deliberately not edited (same reasoning as
+      Batch 3's `dm` item: SQLite stores CREATE text verbatim, so editing applied migration prose
+      drifts `.schema` between fresh and existing installs). The other two are ordinary fixes. Behaviour pinned by a test, because the code has
       been right since 1.5.2 and only the words were wrong — so nothing in the suite would have
       noticed the words coming back.
 - [x] **The four remaining prose findings are corrected** — **3.7.0**.
@@ -212,8 +244,15 @@ with a curious operator and still finds no use is a stronger signal than one nob
       away at the last step. The description now promises only what is shown; either render the
       actor (resolved to a name — a bare integer is not an identity a human can read) or stop
       selecting it.
-- [ ] **Work through the remaining confirmed findings** in the appendix — the prose class is
-      done; what is left is the one-sidedness. The rule
+- [ ] **Work through the remaining confirmed findings** in the appendix. **The prose class is NOT
+      done** — that sentence stood here until 2026-08-17 and was wrong. Five findings are corrected
+      (the Retire strings, and the four in `ea4443c`); the rest of the appendix's prose section is
+      still live. Three verified by hand today, all operator- or session-facing:
+      `docs/STATIONS.md:878` documents a `merge_into?` parameter on `station_task_add` that appears
+      **zero** times in `internal/`; the same table gives `station_task_defer(ids[], until, reason)`
+      while `taskDeferIn` takes a single `task_id`; and **`stations.vault*` has 19 keys in English
+      and ZERO in Spanish and French**, so a non-English operator sees raw keys where the vault's
+      warnings should be. What is left is therefore prose AND one-sidedness, not one-sidedness. The rule
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of
       what was found here.
@@ -222,20 +261,20 @@ with a curious operator and still finds no use is a stronger signal than one nob
       their own station and found a third staleness category neither of us had: a task that is
       **overtaken rather than stale** — not wrong, just no longer the point. Their example was
       "read the 1.5.1 and 1.5.2 promo briefs", created 2026-07-30, still accurate and pointless
-      because Ken is at 3.6.0. It was `blocked_on='self'`, so the field I shipped misses it, and
+      because Ken was already at 3.6.0 when promo found it on 2026-08-14. It was `blocked_on='self'`, so the field I shipped misses it, and
       `briefed_count` could never have caught it. Age since creation would have.
 - [ ] Fold the findings into Batch 3/4 below, then re-read this file with Vlad.
 
 ---
 
-## Batch 3 — finish the party model  `[ ]`
+## Batch 3 — finish the party model  `[~]`  *(shipped in **3.8.0**; only the `attachment` scope migration remains, and it ships alone)*
 
 **The recurring defect.** A message is addressed to a PARTY (`s:<station>` or `e:<endpoint>`)
 so a replacement session inherits its station's inbox. Six places compared endpoint rowids
 instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
 `waiting_for_you`, the room mirror, and file downloads. Finishing means no seventh.
 
-- [x] **Sweep every comparison against an endpoint rowid** — done, **3.8.0**. and classify each: correct (it really
+- [x] **Sweep every comparison against an endpoint rowid** — **3.8.0**. Classifying each as correct (it really
       is about one connection) or wrong (it is about an inbox). This is a finite, greppable list
       — do it once rather than find the seventh in production. **109 sites classified across five
       independent lenses, every finding adversarially verified; evidence in
@@ -262,7 +301,7 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       party set. Migration 0010 already added and backfilled `attachment.scope_id` — and
       `internal/comm/file.go` contains the string "scope" **zero times**. The seam was cut and
       never used, so a file cannot be offered to a room. *Needs a migration; ships alone.*
-- [x] **`comm_room.kind='dm'`** — resolved as DOCUMENTED, not built and not dropped, **3.8.0**. — the CHECK constraint at `migrations/0017_comm_rooms.sql:36`
+- [x] **`comm_room.kind='dm'`** — resolved as DOCUMENTED, not built and not dropped, **3.8.0**. The CHECK constraint at `migrations/0017_comm_rooms.sql:36`
       permits a value `CreateRoom` cannot produce (`internal/store/rooms.go:57-59` hardcodes
       `'topic'`). *Moved here from Batch 4 on prod's correction: it is an unfinished migration, not
       a duplicated generation.* It is also the natural two-party container, so Batch 5's second

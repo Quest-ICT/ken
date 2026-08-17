@@ -70,7 +70,15 @@ same change — never "docs later".
 
   Measured on a live 3.6.0 deployment by ken-prod-ops, after ken-promo pointed out that **neither
   station maintaining a handoff page had ever called `station_note_read`** — the path most
-  important to a takeover was the least exercised. Five existing tests were writing blind and
+  important to a takeover was the least exercised.
+
+  > **Correction, 2026-08-17.** The clause in bold above is FALSE as written and is left in place
+  > rather than deleted, because this entry is released. It is true of ken-promo, who measured
+  > themselves; it is NOT true of ken-prod-ops, who subsequently measured their own usage and found
+  > they called `station_note_read` on 2026-08-12. Both of their earlier statements about
+  > themselves had been recalled rather than measured. **The fix this entry describes is
+  > unaffected** — it was built against four behaviours prod measured on the live deployment, not
+  > against this framing, which is the whole argument for measuring. Five existing tests were writing blind and
   now read the rev first, which is what a replacement session must do.
 
 
