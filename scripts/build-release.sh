@@ -165,6 +165,12 @@ for arch in $ARCHES; do
     # Operator docs + optional Litestream template.
     [ -f "$REPO/docs/INSTALL.md" ] && install -m 0644 "$REPO/docs/INSTALL.md" "$stage/docs/INSTALL.md"
     [ -f "$REPO/docs/BACKUP.md" ]  && install -m 0644 "$REPO/docs/BACKUP.md"  "$stage/docs/BACKUP.md"
+    # OPERATION.md is the manual for the person running this, written BY a production operator.
+    # It shipped nowhere until 3.10.0: an operator without a git checkout could not read the one
+    # document addressed to them. FINISHING.md travels with it for the same reason in miniature —
+    # its stated purpose is that a human can open it and know where things stand.
+    [ -f "$REPO/docs/OPERATION.md" ] && install -m 0644 "$REPO/docs/OPERATION.md" "$stage/docs/OPERATION.md"
+    [ -f "$REPO/docs/FINISHING.md" ] && install -m 0644 "$REPO/docs/FINISHING.md" "$stage/docs/FINISHING.md"
     [ -f "$REPO/configs/litestream.yml" ] && install -m 0640 "$REPO/configs/litestream.yml" "$stage/configs/litestream.yml"
 
     # License + third-party notices (required for AGPL distribution).

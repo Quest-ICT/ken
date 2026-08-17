@@ -140,8 +140,8 @@ contract, not end-user copy). Full reference: [`I18N.md`](I18N.md).
 ### D9 — Inter-session communication: in-process, core, ephemeral  *(chosen: embed)*
 A second service on the same deployment: authenticated **session-to-session messaging** between AI
 sessions (same machine or not), as `internal/comm` inside the same binary, with its **own** SQLite file,
-its **own** MCP endpoint, its **own** `comm` scope, and **on by default** (`KEN_COMM_ENABLED=0` opts
-out — *the variable was removed in 2.0.0; there is no switch*). Specified for 1.2.0;
+its **own** MCP endpoint, its **own** `comm` scope, and **core and unconditional**
+(`KEN_COMM_ENABLED` was removed in 2.0.0; there is no switch). Specified for 1.2.0;
 full contract in [`COMM.md`](COMM.md).
 - **Why it belongs in Ken at all:** the deployment already offers the two things such a service needs and
   are expensive to stand up twice — an authenticated endpoint every session already reaches, and a host
@@ -154,7 +154,11 @@ full contract in [`COMM.md`](COMM.md).
   README promises — no second operating loop in every agent's connect-time instructions. That reasoning
   expired: stations depend on COMM for the hearsay marker, the operator console carries a page for it, and
   a feature every deployment was expected to turn on was an option in name only.
-- **Why the switch survives, inverted (`KEN_COMM_ENABLED=0`):** Ken already has a runtime "COMM off"
+- **Why the switch survives, inverted (`KEN_COMM_ENABLED=0`) — SUPERSEDED BY 2.0.0, which
+  removed the variable.** The reasoning is kept because it is the record of a decision that was
+  later reversed, not because it describes Ken. What survives from it is the runtime degraded
+  state, which is a FAILURE mode and never a configuration choice. Original text follows.
+  Ken already has a runtime "COMM off"
   state — a `comm.db` that cannot be opened degrades to disabled *on purpose*, so an expendable database
   can never take the durable knowledge base down. Deleting the variable would not remove that state, only
   the operator's control of it, which is their one remedy if COMM misbehaves in production. An
@@ -434,8 +438,9 @@ runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); deci
 
 **Resolved:** MCP tool prefix = `kb_*`; project renamed to `ken`; `git init` done; `Migrate()` applies all migrations (embeddings table always present, empty when unused).
 
-**Built — inter-session communication** (decision **D9**), shipped in 1.2.0 and now **core, on
-by default** (`KEN_COMM_ENABLED=0` opts out): authenticated session-to-session messaging between
+**Built — inter-session communication** (decision **D9**), shipped in 1.2.0 and now **core and
+unconditional** (`KEN_COMM_ENABLED` was REMOVED in 2.0.0; there is no switch): authenticated
+session-to-session messaging between
 AI sessions on the same or different machines. `internal/comm` (own SQLite file, own migrations) + `internal/commserver` (eight
 `comm_*` tools on their own `/comm/mcp` endpoint, the `comm` and `comm-file` scopes, long-poll wakeups
 with a shutdown drain), a human console at `/comm` where the operator mints the pairing codes that are
@@ -452,9 +457,9 @@ reason C-series decisions exist at all: the load-bearing choices (who owns a mes
 sessions staff one identity, what a credential revocation actually severs, where durable state may
 point) were cheap to argue on paper and would have been expensive to discover in code. That paid off
 literally — implementing against the written contract is what surfaced a sequence-numbering defect that
-would have made a cumulative acknowledge settle messages nobody had read. Core and on by default, like COMM —
-but resolved independently of it (`KEN_STATION_ENABLED=0` is stations' own opt-out, and turning COMM
-off leaves stations fully working): a notebook and a task list are worth having with no peers at all (S2).
+would have made a cumulative acknowledge settle messages nobody had read. Core and unconditional, like COMM —
+but resolved independently of it (`KEN_STATION_ENABLED` was REMOVED in 2.0.0 alongside COMM's;
+neither can be switched off, and a COMM failure still leaves stations fully working): a notebook and a task list are worth having with no peers at all (S2).
 
 **Still open / deferred:** at-rest whole-file encryption timing (VFS) · git/Markdown mirror (deferred by D5) · local ONNX embedder + background re-embed job · `kb_link`/`kb_related` graph tools · reaching an idle COMM session (COMM.md §12) · COMM's per-IP strike exemption and poll-interval advertisement (COMM.md §5.5) · COMM console re-labelling + endpoint identity (COMM.md §12) · **client-side sortable listing tables** (below). *(All §1 security-priority items are now implemented.)*
 
