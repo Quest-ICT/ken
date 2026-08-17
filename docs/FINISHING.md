@@ -377,7 +377,7 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
 
 Two generations of the same idea coexist. Each item is *delete one of them*, not build a third.
 
-- [ ] **`message.space_id`** — written by nothing, read by nothing. Proven while fixing the
+- [x] **`message.space_id`** — migration written, *unreleased*. Written by nothing, read by nothing. Proven while fixing the
       console counters, which reach the sender's space through `sender_endpoint` instead. Drop
       the column. *Migration.*
 - [x] **`channel_seq` vs `scope_counter`** — settled, and the Go half is deleted, *unreleased*.
@@ -391,7 +391,7 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
       remediation the party-model sweep found costs a station its channel, recommended for a
       condition impossible since 3.0.0, in an ERROR STRING, which is the one channel that DOES
       reach an already-running session. Gone in `2478ef2`.
-      - [ ] **Drop the `channel_seq` table.** *Migration; ships alone.* Nothing writes it now, so
+      - [x] **Drop the `channel_seq` table** — migration written, *unreleased*. Nothing writes it now, so
             it is inert until then. Note the one enumeration error an adversarial verifier caught:
             `DELETE FROM channel` cascades into it via FK, so it is not true that "no write path
             exists" — the cascade simply has one fewer target after the drop.
@@ -415,6 +415,21 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
 
 ---
 
+### Vlad's rulings, 2026-08-17
+
+- **Rule 4 means "a release containing schema change carries nothing else", NOT one migration
+  per release.** So the four schema-only changes below ship TOGETHER in one solo release —
+  three inert column/table drops and one trigger rebuild — costing prod one upgrade and one
+  verification instead of four. **Batch 3's `attachment` scope-shaping is deliberately NOT in
+  it**: that one is a restructure carrying code changes in `file.go`, so bundling it would
+  destroy the property that makes bundling safe — that every change in the release is provably
+  inert. It ships on its own, and it is the one case where Rule 4 and the code it needs are in
+  genuine tension.
+- **`station_block` is DEFERRED TO BATCH 5**, neither wired nor deleted. It is the safety
+  mechanism that makes a permissive addressing default defensible, so the real question is
+  about that default, not about this table. Left in place, unwired, and recorded as pending —
+  which is the one state this plan normally forbids, taken deliberately and with a date on it.
+
 ### Found by the Batch 4 sweep, not listed in it
 
 Four lenses over "two generations coexist", each adversarially verified. Two of the four analyses
@@ -425,7 +440,7 @@ were refuted on details — one would not have compiled — which is the argumen
       names comm as "the source of truth" that it mirrors — so the declared authority was the one
       that was wrong. Production was never affected (boot takes the settings value, and 900 matches
       `docs/STATIONS.md`), but **the test suite was exercising a lease production has never used.**
-- [ ] **`delivery.notified_at` is dead.** 0003 added `message.notified_at` so a repeating sweep
+- [x] **`delivery.notified_at` is dead** — migration written, *unreleased*. 0003 added `message.notified_at` so a repeating sweep
       notified exactly once; 0009 carried it onto `delivery`; 0011 replaced written notices with a
       derived query and moved exactly-once into `notice_watermark`. The column survived all three.
       *Migration; ships alone.*
@@ -434,7 +449,7 @@ were refuted on details — one would not have compiled — which is the argumen
       here, because MCP tool lists pin at conversation start; `NoticesForPoll` supersedes it by
       promoting the previous poll's mark automatically. Deleting it needs NO migration, but the two
       tests must be rewritten through `NoticesForPoll` rather than having the call deleted.
-- [ ] **The second generation did not inherit the first's invariant.** Migration 0010 rebuilt the
+- [x] **The second generation did not inherit the first's invariant** — migration written, *unreleased*. Migration 0010 rebuilt the
       `entry_version_immutable` trigger for the sole purpose of freezing `via_comm`, stating that
       "a mutable marker could simply be UPDATEd away — which would defeat the point". Migration 0018
       then added `via_comm_kind`, which is written and read like its sibling and is **not in the

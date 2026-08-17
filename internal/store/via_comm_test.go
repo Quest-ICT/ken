@@ -136,3 +136,59 @@ func TestProposalRowCarriesViaComm(t *testing.T) {
 		t.Fatal("an unmarked proposal was flagged")
 	}
 }
+
+// THE SHARPER MARKER WAS THE UNFROZEN ONE.
+//
+// Migration 0010 rebuilt the immutability trigger for the sole purpose of freezing
+// `via_comm`, arguing that "a mutable marker could simply be UPDATEd away — which would
+// defeat the point". Migration 0018 then split that boolean into a KIND — directed versus
+// broadcast — because one send to a nine-station room marked nine actors and a badge that
+// is almost always on says less than no badge. `via_comm_kind` is written and read exactly
+// like its sibling, and was never added to the frozen set.
+//
+// So the field that distinguishes "somebody addressed YOU" from "you were in the room" was
+// the one that could be quietly rewritten. The rule was right; it did not travel to the
+// field that superseded the one it was written for.
+func TestViaCommKindIsImmutable(t *testing.T) {
+	st := viaCommStore(t)
+	// Saved directly rather than through saveWith, which never sets ViaCommKind — the
+	// control below caught that, and a fixture with an empty column would have made this
+	// whole test pass against a trigger that froze nothing.
+	r, err := st.Save(context.Background(), SaveInput{
+		Slug: "kind-frozen", Kind: "reference",
+		Content:    Content{Title: "T kind-frozen", Summary: "S", Problem: "P", Solution: "S"},
+		AuthorKind: "ai", Confidence: 0.5, ViaComm: true, ViaCommKind: "directed",
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// CONTROL: it has a value to begin with, so an abort below is the trigger firing and
+	// not an update that matched no rows.
+	var kind string
+	if err := st.R.QueryRow(`SELECT COALESCE(via_comm_kind,'') FROM entry_version WHERE id=?`,
+		r.VersionID).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind == "" {
+		t.Fatalf("setup: via_comm_kind is empty on a marked version, so this test would " +
+			"pass against a trigger that froze nothing")
+	}
+
+	if _, err := st.W.Exec(`UPDATE entry_version SET via_comm_kind='broadcast' WHERE id=?`,
+		r.VersionID); err == nil {
+		t.Errorf("rewriting via_comm_kind was allowed — the marker that distinguishes a "+
+			"directed message from a room broadcast can be edited after the fact, which is "+
+			"exactly what freezing via_comm (%q here) exists to prevent", kind)
+	}
+	if _, err := st.W.Exec(`UPDATE entry_version SET via_comm_kind=NULL WHERE id=?`,
+		r.VersionID); err == nil {
+		t.Error("clearing via_comm_kind was allowed")
+	}
+
+	// AND THE TRIGGER IS NOT OVER-BROAD: a mutable status column on the same row still
+	// updates. Without this arm, a trigger that rejected every UPDATE would read as a pass.
+	if _, err := st.W.Exec(`UPDATE entry_version SET verify_ttl_days=30 WHERE id=?`, r.VersionID); err != nil {
+		t.Fatalf("a mutable-status update was wrongly blocked: %v", err)
+	}
+}
