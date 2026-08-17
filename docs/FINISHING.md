@@ -38,7 +38,24 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.8.0** (2026-08-17), **verified on production 2026-08-17T16:03Z** — band clean on
+**Released: 3.9.0** (2026-08-17), **verified on production 2026-08-17T18:32Z** — the first
+release in four to RUN migrations (comm.db 11→14, ken.db 18→19), and the check that carried the
+previous three inverted: three releases were verified by proving no migration had run, this one
+by proving exactly four had. Earlier `applied_at` rows byte-identical, `foreign_key_check` empty
+and `integrity_check` ok on both databases.
+
+> **The row accounting is the part worth keeping.** All three drops were claimed inert, and prod
+> measured rather than assumed: `message` 417→417, `delivery` 466→466, `channel` 14→14 — delta
+> zero on every one. The whole-database arithmetic closes too: comm.db 979→960, which is
+> `channel_seq`'s 22 rows removed plus 3 new `schema_migration` rows. **Not one surviving table
+> changed row count.** Their schema band went LOUD (R8/R2) and every violation reconciles to a
+> declared change, while **R4 and R5 — the rules that need no declaration — stayed silent
+> through a migration that removed a table and rewrote two others.** They ran it undeclared on
+> purpose, because declaring first would have let them rationalise whatever appeared.
+
+**Batch 4 is closed.** Batch 5 is next and contains no code.
+
+Previously **3.8.0**, verified on production 2026-08-17T16:03Z — band clean on
 both databases, migrations 18/11 with original timestamps intact, and the `reply_overdue` fix
 confirmed in BOTH directions (31 historical notices eliminated; a genuinely unanswered request on
 current traffic still fired one). Batch 3 shipped in it. **The Batch 4 gate is open.**
@@ -373,7 +390,7 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
 
 ---
 
-## Batch 4 — retire the duplicated generation  `[ ]`
+## Batch 4 — retire the duplicated generation  `[x]`  *(**3.9.0**, verified on production 2026-08-17T18:32Z; `station_block` deferred to Batch 5 by Vlad)*
 
 Two generations of the same idea coexist. Each item is *delete one of them*, not build a third.
 
