@@ -11,8 +11,8 @@
 > tools on their own `/comm/mcp` endpoint (`internal/commserver`) with the `comm` scope and
 > dedicated-token enforcement, long-poll wakeups with a shutdown drain, the instruction section, the
 > human console at `/comm` (mint a pairing code, see endpoints and channels with pending counts, revoke
-> either), English, Spanish and French translations, and the `ken serve` wiring (on by default; `KEN_COMM_ENABLED=0` opts out) with a
-> one-minute sweeper. Two sessions can register, be paired by a human, exchange a message and
+> either), English, Spanish and French translations, and the `ken serve` wiring (core and
+> unconditional; the `KEN_COMM_ENABLED` opt-out was removed in 2.0.0) with a one-minute sweeper. Two sessions can register, be paired by a human, exchange a message and
 > acknowledge it.
 >
 > Also built: the live settings group (every limit is operator-tunable without a restart), the
@@ -87,7 +87,7 @@ migrations.
   keeps its boundary clean enough (own store, own migrations, `Deps` injection, no reach into KB
   internals beyond auth) that extraction stays a mechanical refactor.
 
-### C2 — ~~Off by default~~ → **core, on by default** *(reversed; the opt-out variable stays)*
+### C2 — ~~Off by default~~ → **core and unconditional** *(reversed twice: 1.6.0 inverted the switch, 2.0.0 removed it)*
 
 **What was decided (1.2.0):** COMM is disabled unless the operator sets `KEN_COMM_ENABLED=1`. Its
 tools are **not registered** and its instruction section is **not appended** when off.

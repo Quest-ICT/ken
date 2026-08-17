@@ -125,7 +125,11 @@ never done, so this batch is not closed.
       and `docs/STATIONS.md` — which had **no banner anywhere** and asserted the opt-out in its
       status line — is corrected. *(Both found by peers: promo hit the contradiction while fixing
       the public site, prod established that STATIONS.md was the worse half.)*
-- [ ] **Finish the retired-switch sweep.** `KEN_COMM_ENABLED` / `KEN_STATION_ENABLED` were removed
+- [x] **The retired-switch sweep is finished** — **3.10.0**. `docs/DESIGN.md` carried two live
+      assertions plus a decision record explaining "why the switch survives"; `docs/COMM.md`'s status
+      block and C2 heading carried two more. Every remaining mention in the docs now states the
+      removal, sits inside a block banner-marked as history, or is a released CHANGELOG entry.
+      Original finding: `KEN_COMM_ENABLED` / `KEN_STATION_ENABLED` were removed
       in 2.0.0. The instructions that told an OPERATOR or an AGENT to use them are fixed
       (README, INSTALL, AI-INTEGRATION, MONITORING, MCP-TOOLS, COMM §6 — **but NOT `docs/DESIGN.md`,
       which still carries two unannotated present-tense assertions that the opt-out exists**, and that
@@ -135,7 +139,8 @@ never done, so this batch is not closed.
       keep the reasoning" is cosmetic; **"asserts a live capability that does not exist" is the kind
       that propagates** — it is what put "off by default" on the public site in three languages,
       four majors after it stopped being true. Do the second kind first.
-- [ ] **`docs/FINISHING.md` does not ship.** `scripts/build-release.sh` stages only `INSTALL.md`,
+- [x] **`docs/FINISHING.md` does not ship** — FIXED, **3.10.0**. It and `docs/OPERATION.md` are
+      now staged into the release bundle. Original finding: `scripts/build-release.sh` stages only `INSTALL.md`,
       `BACKUP.md` and `configs/litestream.yml`, and no docs are embedded in the binary — so a file
       whose stated purpose is that a human can open it and know where things stand is absent from
       every artifact a human installs. Either add it to the bundle or say plainly that its audience

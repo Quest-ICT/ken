@@ -34,6 +34,73 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.10.0
+
+### Ken now sends a keepalive ping on idle MCP streams — it previously sent NOTHING
+
+**What changes.** All three MCP surfaces send a JSON-RPC ping every 30 seconds on an otherwise
+idle stream.
+
+**What you will observe.** **MCP transports should stop being torn down and reconnected.** If you
+have been watching sessions lose their connection every few minutes and blaming the network, this
+was us.
+
+**Why it happened.** The SDK ships a server-side keepalive and Ken never enabled it — every
+`ServerOptions` literal set only `Instructions`, from 1.x through 3.9.0. A stream carrying no
+bytes is indistinguishable, from the client's side, from a stream whose server has gone away, so
+clients timed out and reconnected. ken-prod-ops measured **804 teardowns across three surfaces
+over 17 days**, clustering at ~299, ~599 and ~900 seconds — the first, second and third idle
+windows of a ~300s client read timeout.
+
+**30 seconds** is chosen against that window with an order of magnitude to spare, and sits inside
+Ken's own 120s `IdleTimeout`. `Server.ReadTimeout` (60s) does not interact with it: Go's HTTP/2
+server arms a per-stream deadline from that value, but it closes the REQUEST body and never
+touches the response stream.
+
+**If teardowns continue after this upgrade**, the pings are not reaching the path that matters —
+that is a more specific failure than "it still happens", and worth reporting as such.
+
+### The console can mint `comm` tokens — and now REFUSES an unknown scope instead of dropping it
+
+**What changes.** `/tokens` offers `comm` and `comm-file` alongside the knowledge-base scopes, in
+a separate group. A submitted scope Ken does not recognise is now **refused by name**; previously
+it was silently discarded.
+
+**What that fixes.** The console could not mint a comm token at all, so an operator following
+Ken's own posture — console first, CLI last resort — minted a token, handed it to a session, and
+watched `comm_register` refuse it for a missing scope. Nothing said why, because the scope had
+been dropped without comment.
+
+**The one-family rule is unchanged and now enforced in BOTH mint paths.** A token is dedicated to
+knowledge base, comm, or station; `station`+`comm` is the one permitted pair. Previously that rule
+lived only in `ken token add`, and the console was safe from breaking it only because its menu was
+too narrow to express a violation.
+
+**Station scopes remain unmintable from either path**, for the reason they always were:
+`/station/mcp` needs a `kens_` key BOUND to a station, and both of these paths issue an unbound
+`ken_` token that would authenticate nowhere while looking like a working credential. Station keys
+are minted on the Stations page.
+
+### The release artifact now contains the operations manual
+
+`docs/OPERATION.md` and `docs/FINISHING.md` are staged into the bundle alongside `INSTALL.md` and
+`BACKUP.md`. The operations manual — written by a production operator, for whoever runs Ken —
+previously shipped nowhere, so its entire audience could read it only from a git checkout.
+
+### Three documents stopped advertising a switch removed in 2.0.0
+
+No behaviour change. `docs/DESIGN.md` asserted `KEN_COMM_ENABLED=0` and `KEN_STATION_ENABLED=0`
+opt-outs in two places and explained "why the switch survives" in a third; `docs/COMM.md`'s status
+block and its C2 heading said the same. The variables were removed in 2.0.0 and setting either has
+no effect. The reversed decision records are marked superseded rather than rewritten.
+
+### The station vault speaks Spanish and French
+
+All 19 `stations.vault*` strings were missing from both locales, so a non-English operator saw raw
+keys where the vault's warnings belong — **including the one stating that values are kept
+UNENCRYPTED and the protection is the host and the backup rather than Ken.**
+
+
 ## 3.9.0
 
 ### THIS RELEASE RUNS MIGRATIONS. The last three did not.
