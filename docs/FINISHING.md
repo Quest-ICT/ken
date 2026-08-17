@@ -490,6 +490,12 @@ were refuted on details — one would not have compiled — which is the argumen
 These block slice 7 and are **Vlad's**, not a session's. Listed here so they are visible rather
 than implicit.
 
+> **The evidence for both is assembled in
+> [DECISIONS-BATCH5.md](DECISIONS-BATCH5.md)** — options with costs, the facts that decide each,
+> a recommendation, and the five numbers only production can supply. Written 2026-08-17 because
+> listing a decision as pending is not the same as making it decidable, and these had been
+> pending while a week of relevant evidence accumulated elsewhere.
+
 - [ ] **The credential model.** ken-prod-ops proposes authenticating a bound endpoint with the
       STATION KEY and deriving the endpoint, which removes the loose credential file entirely.
       Vlad's posture — *every session must hold a station, always* — is what makes it possible.
