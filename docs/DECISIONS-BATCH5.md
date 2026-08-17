@@ -69,15 +69,33 @@ reintroduces the shared-inbox accident it was never meant to touch.
 
 ### Recommendation
 
-**B now, C later — and only if a measurement supports C.**
+**B now. Then D — but not until two things are true that are not true today.**
 
-B is small, closes the exposure that was actually measured, breaks nothing at deploy (keep the
-arguments optional for a release), and does not require settling the per-session identity
-question. C is the better end state *if* endpoint churn on reconnect turns out to be rare — and
-that is a production measurement, not a judgement.
+*Updated 2026-08-17, after production answered.* The measurements moved this, and in both
+directions at once.
 
-What would change this recommendation: if the live deployment turns out to have **no** station
-with two concurrent live endpoints, D becomes viable and is much simpler than C.
+**D became available.** No station has ever had two live endpoints — not once, live or revoked,
+across every row that has ever existed. So the simplest derivation (one endpoint per station key,
+no session-id dependency, no SDK coupling) is not blocked by anything in the data. Carry
+ken-prod-ops' caveat with it: *"never used" and "unnecessary" are not the same finding, and from
+inside the repository they look identical.* Choosing D deletes something untested, not something
+proven useless.
+
+**C became less attractive.** The teardown baseline that was gathered to measure the keepalive fix
+is also an endpoint-churn measurement: ~31 comm teardowns per day, each of which would mint a new
+endpoint under C — and since the idle sweep no longer collects an endpoint seating a channel,
+those accumulate rather than age out. **The keepalive fix is therefore a prerequisite for C, not
+a neighbour of it**, and even then the clustering is only about a quarter of the teardowns, so the
+question is what the churn FLOOR is, not whether it reaches zero.
+
+**And the worst break is real, not hypothetical.** Six of thirteen live endpoints are unbound, and
+two were active the same day: one holds **seven channel seats**. So "every session holds a
+station, always" is a posture the deployment does not yet satisfy, and any station-key option
+strands those six until they are migrated onto stations.
+
+**Therefore: B now** — it closes the measured exposure, needs none of the above settled, and
+breaks nothing. **D after** the six unbound endpoints have somewhere to go and the keepalive fix
+has been verified. The order is not a preference; each step removes a blocker for the next.
 
 ---
 
@@ -157,16 +175,28 @@ not permissive and `station_block` stays optional.
 These decide between options and cannot be measured from this repository. They are questions for
 ken-prod-ops, not guesses to be made here.
 
-1. **How many endpoints are unbound?** This is the real size of the "every session holds a
-   station" posture. If it is zero, options C/D lose their worst break.
-2. **Has any station ever had two live endpoints at once?** If never, option D becomes viable and
-   is far simpler than C.
-3. **Do two sessions ever run on one machine against one station simultaneously?** This is the
-   exact case option D collapses.
+1. **How many endpoints are unbound?** **ANSWERED: six of thirteen, and two are load-bearing
+   TODAY.** `ep 6` holds **seven channel seats** and was active at 19:42Z; `ep 13` holds three.
+   Three of the six are genuinely idle. **So the worst break does NOT disappear** — "every
+   session holds a station" would strand six endpoints, and one of them takes seven channels.
+2. **Has any station ever had two live endpoints at once?** **ANSWERED: never, not once, live or
+   revoked** — verified across every endpoint row that has ever existed. **So option D is
+   available on the evidence.** ken-prod-ops attach a caveat that belongs with it: *"never used"
+   and "unnecessary" are not the same finding, and from inside the repository they look
+   identical.* S4's multi-reader has never been exercised on this deployment — a fact about its
+   shape, not a verdict on the feature. Choosing D deletes something untested, not something
+   proven useless.
+3. **Do two sessions ever run on one machine against one station simultaneously?**
+   **UNANSWERABLE, WHICH IS NOT THE SAME AS NO.** The question is about SESSIONS and Ken records
+   ENDPOINTS: `last_seen_at` moves and does not record overlap, so two sessions sharing one
+   endpoint pair are indistinguishable from one session polling twice. Claims name the endpoint,
+   not the session. This needs an instrument that does not exist, not a query.
 4. **How often does an MCP transport reconnect within one conversation?** This is the cost of
    option C, expressed as endpoint churn.
-5. **Does `station_block` have rows?** Measured as 0 on 2026-08-17; worth re-checking before
-   anything is built on the assumption.
+5. **Does `station_block` have rows?** **Answered 2026-08-17: zero rows.** *(Correction: the
+   figure previously recorded here credited ken-prod-ops with a row count they had not taken —
+   what they measured on the 17th was zero CALLERS, by grep. Both are zero, so nothing downstream
+   changes, but only one of the two claims was theirs.)*
 
 ---
 
