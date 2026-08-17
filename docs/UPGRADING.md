@@ -34,6 +34,64 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.9.0
+
+### THIS RELEASE RUNS MIGRATIONS. The last three did not.
+
+**comm.db 11 → 14, ken.db 18 → 19.** Four migrations, and they are the whole release: three
+drop dead schema objects, one adds a column to a trigger's frozen set. **No tool, console page,
+metric, CLI output or error message changes.** If anything observable differs after this
+upgrade, that is a finding.
+
+**Snapshot before upgrading.** `ken-upgrade` already does; if you upgrade another way, do it
+yourself. Three of these drop things.
+
+**Verification changes shape.** The last three releases were verified partly by confirming that
+`schema_migration`'s rows still carried their original timestamps — that no migration ran. That
+check now inverts: **exactly four new rows should appear** (comm 12, 13, 14; ken 19), every
+earlier row's `applied_at` should be untouched, and `PRAGMA foreign_key_check` should be empty
+on both databases.
+
+**Downgrading past this release is not supported**, which is the standing policy for any
+migration and matters more than usual here because columns are removed. No released binary ever
+read any of the three — that was verified with `git log -S` over the whole history, not assumed
+— so a rollback still runs; but the columns do not come back.
+
+### What is dropped, and why none of it can be missed
+
+- **`message.space_id`** held the literal `1` on every row of every deployment. The pre-0009
+  `message` table had no such column, so 0009's backfill could not carry a value into it and
+  does not list it. A message's space is reachable through `sender_endpoint → endpoint.space_id`
+  — the join the console counters already use, and the one that answers for rooms and broadcast
+  too rather than only for channels.
+- **`channel_seq`** numbered the `message.seq` column. Migration 0009 rebuilt `message` **without
+  that column**, so this was never a rival numbering of the same stream — it is a stranded
+  remnant whose only writer had lost both call sites in the same slice.
+- **`delivery.notified_at`** outlived two redesigns of its own mechanism: the stamp was the
+  exactly-once guarantee in 0003, was carried onto `delivery` in 0009, and was replaced by
+  `notice_watermark` in 0011. Nobody removed it; they stopped writing it.
+
+### `via_comm_kind` becomes immutable
+
+**What changes.** An `UPDATE` that alters `entry_version.via_comm_kind` now aborts, as one
+altering `via_comm` already did.
+
+**What an operator will observe.** Nothing, unless something was editing it — nothing in Ken
+does. If a hand-written `UPDATE` of yours starts failing, it was rewriting provenance.
+
+**Why.** Migration 0010 rebuilt this trigger for the sole purpose of freezing `via_comm`,
+because "a mutable marker could simply be UPDATEd away — which would defeat the point". 0018
+then split that boolean into a *kind* — directed versus broadcast — and never added it to the
+frozen set, leaving the sharper of the two markers editable.
+
+### The claim-lease default moves 300 → 900 in the comm package
+
+**Configured deployments are unaffected** — boot takes the value from settings, which has always
+been 900, matching `docs/STATIONS.md`. This only changes what a caller constructing a COMM store
+directly gets, which in practice means the test suite, and which had been exercising a lease a
+third of the real one.
+
+
 ## 3.8.0
 
 ### Fewer `reply_overdue` notices — and the ones that stop were false

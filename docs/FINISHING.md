@@ -377,11 +377,11 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
 
 Two generations of the same idea coexist. Each item is *delete one of them*, not build a third.
 
-- [x] **`message.space_id`** — migration written, *unreleased*. Written by nothing, read by nothing. Proven while fixing the
+- [x] **`message.space_id`** — **3.9.0**. Written by nothing, read by nothing. Proven while fixing the
       console counters, which reach the sender's space through `sender_endpoint` instead. Drop
       the column. *Migration.*
-- [x] **`channel_seq` vs `scope_counter`** — settled, and the Go half is deleted, *unreleased*.
-      `scope_counter` won in 3.0.0. `channel_seq` numbered the `message.seq` column, and migration
+- [x] **`channel_seq` vs `scope_counter`** — settled; Go half and table both gone — **3.9.0**.
+      `scope_counter` won in 3.0.0. Go half **3.8.0**+, table dropped **3.9.0**. `channel_seq` numbered the `message.seq` column, and migration
       0009 rebuilt `message` **without that column** — so it was never a rival numbering of the
       same stream, it is a stranded remnant. `nextSeq` lost both call sites in the same slice and
       nobody deleted it: zero callers, still writing a table nothing read.
@@ -391,7 +391,7 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
       remediation the party-model sweep found costs a station its channel, recommended for a
       condition impossible since 3.0.0, in an ERROR STRING, which is the one channel that DOES
       reach an already-running session. Gone in `2478ef2`.
-      - [x] **Drop the `channel_seq` table** — migration written, *unreleased*. Nothing writes it now, so
+      - [x] **Drop the `channel_seq` table** — **3.9.0**. Nothing writes it now, so
             it is inert until then. Note the one enumeration error an adversarial verifier caught:
             `DELETE FROM channel` cascades into it via FK, so it is not true that "no write path
             exists" — the cascade simply has one fewer target after the drop.
@@ -435,12 +435,12 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
 Four lenses over "two generations coexist", each adversarially verified. Two of the four analyses
 were refuted on details — one would not have compiled — which is the argument for the verify pass.
 
-- [x] **The claim-lease default had genuinely DRIFTED, not merely been duplicated** — *unreleased*.
+- [x] **The claim-lease default had genuinely DRIFTED, not merely been duplicated** — **3.9.0**.
       `comm.DefaultLimits()` said 300 while `internal/settings` said 900, and settings' own comment
       names comm as "the source of truth" that it mirrors — so the declared authority was the one
       that was wrong. Production was never affected (boot takes the settings value, and 900 matches
       `docs/STATIONS.md`), but **the test suite was exercising a lease production has never used.**
-- [x] **`delivery.notified_at` is dead** — migration written, *unreleased*. 0003 added `message.notified_at` so a repeating sweep
+- [x] **`delivery.notified_at` is dead** — **3.9.0**. 0003 added `message.notified_at` so a repeating sweep
       notified exactly once; 0009 carried it onto `delivery`; 0011 replaced written notices with a
       derived query and moved exactly-once into `notice_watermark`. The column survived all three.
       *Migration; ships alone.*
@@ -449,7 +449,7 @@ were refuted on details — one would not have compiled — which is the argumen
       here, because MCP tool lists pin at conversation start; `NoticesForPoll` supersedes it by
       promoting the previous poll's mark automatically. Deleting it needs NO migration, but the two
       tests must be rewritten through `NoticesForPoll` rather than having the call deleted.
-- [x] **The second generation did not inherit the first's invariant** — migration written, *unreleased*. Migration 0010 rebuilt the
+- [x] **The second generation did not inherit the first's invariant** — **3.9.0**. Migration 0010 rebuilt the
       `entry_version_immutable` trigger for the sole purpose of freezing `via_comm`, stating that
       "a mutable marker could simply be UPDATEd away — which would defeat the point". Migration 0018
       then added `via_comm_kind`, which is written and read like its sibling and is **not in the
