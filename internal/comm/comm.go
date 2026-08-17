@@ -222,7 +222,13 @@ func DefaultLimits() Limits {
 		MetadataTTLSeconds:    7 * 24 * 3600,
 		ReplyDeadlineSeconds:  3600,
 		PairingCodeTTLSeconds: 900,
-		ClaimLeaseSeconds:     300,
+		// 900 = 15 minutes, matching docs/STATIONS.md and what every configured
+		// deployment actually runs. This said 300 while internal/settings said 900 — and
+		// settings' own comment names THIS as the source of truth that it mirrors, so the
+		// declared authority was the one that had drifted. Nothing in production was
+		// affected (boot takes the settings value), but the test suite exercised a lease
+		// production has never used.
+		ClaimLeaseSeconds: 900,
 
 		FilesEnabled:     false,
 		FileMaxBytes:     16 << 20,

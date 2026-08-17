@@ -380,14 +380,76 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
 - [ ] **`message.space_id`** — written by nothing, read by nothing. Proven while fixing the
       console counters, which reach the sender's space through `sender_endpoint` instead. Drop
       the column. *Migration.*
-- [ ] **`channel_seq` vs `scope_counter`** — establish which is authoritative, whether either is
-      dead, and remove the loser.
-- [ ] **`station_block`** — `BlockStationPair`, `UnblockStationPair` and `BlockedPairs` have
+- [x] **`channel_seq` vs `scope_counter`** — settled, and the Go half is deleted, *unreleased*.
+      `scope_counter` won in 3.0.0. `channel_seq` numbered the `message.seq` column, and migration
+      0009 rebuilt `message` **without that column** — so it was never a rival numbering of the
+      same stream, it is a stranded remnant. `nextSeq` lost both call sites in the same slice and
+      nobody deleted it: zero callers, still writing a table nothing read.
+      **`ErrSequenceCollision` was worse than dead code.** Its detector matched error text naming
+      `message.seq` and `message.sender_endpoint` — a UNIQUE index 0009 dropped — so it could
+      never fire, while the branch consuming it told a session to call `comm_unbind`: the one
+      remediation the party-model sweep found costs a station its channel, recommended for a
+      condition impossible since 3.0.0, in an ERROR STRING, which is the one channel that DOES
+      reach an already-running session. Gone in `2478ef2`.
+      - [ ] **Drop the `channel_seq` table.** *Migration; ships alone.* Nothing writes it now, so
+            it is inert until then. Note the one enumeration error an adversarial verifier caught:
+            `DELETE FROM channel` cascades into it via FK, so it is not true that "no write path
+            exists" — the cascade simply has one fewer target after the drop.
+- [ ] **`station_block` — VLAD'S DECISION, and the evidence is now in.** Verified empirically
+      rather than by grep: the table holds **0 rows** in the live `ken.db`, and the only objects in
+      `sqlite_master` naming it are the table and its own index — no FK, trigger or view in either
+      direction. The three functions and the table arrived together in `2458b02` (v3.0.0) and
+      nothing has referenced either since except two doc commits. So it is provably unused in every
+      deployment that ever ran Ken code.
+      **What it would cost to keep:** its migration calls it "a targeted deny that beats the roster
+      and beats a link… what makes a broad addressing default safe to offer". Wiring it honestly
+      means a send-path check on all three paths (channel, room, broadcast) plus a console surface,
+      and a decision about which database owns it, since COMM keeps only a derived mirror of room
+      membership. **What it costs to delete:** that capability, and a migration.
+      Original finding: `BlockStationPair`, `UnblockStationPair` and `BlockedPairs` have
       **zero callers anywhere, including tests**. Its own migration describes it as the targeted
       deny that "beats the roster and beats a link". Either wire it to a console surface and a
       send-path check, or delete it. Leaving designed-and-unwired code is how a future session
       concludes the capability exists.
 
+
+---
+
+### Found by the Batch 4 sweep, not listed in it
+
+Four lenses over "two generations coexist", each adversarially verified. Two of the four analyses
+were refuted on details — one would not have compiled — which is the argument for the verify pass.
+
+- [x] **The claim-lease default had genuinely DRIFTED, not merely been duplicated** — *unreleased*.
+      `comm.DefaultLimits()` said 300 while `internal/settings` said 900, and settings' own comment
+      names comm as "the source of truth" that it mirrors — so the declared authority was the one
+      that was wrong. Production was never affected (boot takes the settings value, and 900 matches
+      `docs/STATIONS.md`), but **the test suite was exercising a lease production has never used.**
+- [ ] **`delivery.notified_at` is dead.** 0003 added `message.notified_at` so a repeating sweep
+      notified exactly once; 0009 carried it onto `delivery`; 0011 replaced written notices with a
+      derived query and moved exactly-once into `notice_watermark`. The column survived all three.
+      *Migration; ships alone.*
+- [ ] **`Store.MarkNoticesSeen` has zero production callers** — only two tests. It is the explicit
+      "I have read my notices" call that migration 0011's own comment argues at length is unusable
+      here, because MCP tool lists pin at conversation start; `NoticesForPoll` supersedes it by
+      promoting the previous poll's mark automatically. Deleting it needs NO migration, but the two
+      tests must be rewritten through `NoticesForPoll` rather than having the call deleted.
+- [ ] **The second generation did not inherit the first's invariant.** Migration 0010 rebuilt the
+      `entry_version_immutable` trigger for the sole purpose of freezing `via_comm`, stating that
+      "a mutable marker could simply be UPDATEd away — which would defeat the point". Migration 0018
+      then added `via_comm_kind`, which is written and read like its sibling and is **not in the
+      frozen set**. *Migration; ships alone.*
+- [ ] **One function, two copies, only one hardened.** `internal/comm`'s `Migrate` pins a
+      connection, sets `foreign_keys=OFF` outside the transaction for the whole run and runs
+      `foreign_key_check` afterwards — with the measurement that bought it in the comment. The
+      `internal/store` runner does not.
+- [ ] **The nightly backup does not cover `comm.db` at all.** `cli_backup.go` and
+      `scripts/ken-snapshot.sh` both target `ken.db` only. Not a duplicated generation and not in
+      this batch's scope — but comm.db holds the delivery ledger, and finding it while proving that
+      nothing enumerates columns is exactly the kind of thing that gets lost if it is not written
+      down.
+- [-] **`message.response_mode`** — not a duplicate. Its string occurs exactly ONCE in the repo,
+      in its own column definition: an unbuilt seam, not a superseded generation. Leave it.
 
 ---
 
