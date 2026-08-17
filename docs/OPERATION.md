@@ -4,14 +4,18 @@
 > 2026-08-14, and **partially re-verified against `v3.9.0` on 2026-08-17** by the development
 > session before commit.
 >
-> **PARTIALLY. Read that word literally, because this document's whole subject is stamps that
-> claim more than they cover.** Every claim was re-checked against the tree — 262 of them — and
-> 50 were wrong by v3.9.0. The high-severity ones are corrected here, along with the sections
-> an operator acts on under pressure: §2.3's vault defaults, §2.4(c) and (h), §3.2, §4.1, §5.1
-> and §6. **A number of lower-severity corrections are NOT yet applied**, and the sections
-> below still carry `v3.6.0` stamps where that is the honest statement of what was verified.
-> Do not read an unqualified sentence in this document as re-verified at v3.9.0 unless its
-> section says so.
+> **What that re-verification was.** All 262 checkable claims were re-derived from the tree at
+> `v3.9.0` by eight independent readers, one per section, each with an adversarial verifier
+> behind it. **Fifty were wrong**, and all fifty are corrected here. The settings reference
+> needed almost none of it — `internal/settings/settings.go` is byte-identical to its v3.6.0
+> revision — while §4, §5 and §6 needed the most, because behaviour moved under them.
+>
+> **Two of the fifty are worth knowing about before you trust anything else here.** §5.1's
+> migration query named a column that does not exist, so the check in the upgrade procedure did
+> not execute; and `ken backup snapshot` without `KEN_DB` does not fail — it snapshots a
+> brand-new empty database and reports it healthy, so a pre-upgrade backup taken from the wrong
+> directory succeeds and verifies while protecting nothing. Both are fixed below, and both were
+> found by RUNNING them rather than reading them.
 >
 > **What the verification stamp actually covers.** Every setting key, default and bound below
 > was read from `internal/settings/settings.go` at tag `v3.6.0`. Every SQL recipe was checked
@@ -38,16 +42,19 @@ are traps, and what to look at when something feels wrong.
 
 **The console is the main method for any operation. The CLI is a last resort.**
 
-That is a deliberate ordering, not a description of which was built first. The console
-validates what you type, shows you the current value beside the one you are changing, and
-cannot be typo'd into starting a second server. The CLI can do none of that.
+That is a deliberate ordering, not a description of which was built first. The console pre-fills every field with its EFFECTIVE value (the compiled default folded with
+your overrides), validates what you type, re-renders the page with a per-field error when it
+refuses, and cannot be typo'd into starting a second server. The CLI can do none of that. It
+does NOT show the previous value beside the new one — once you type over a field, the old value
+is gone from the page.
 
 | Task | Surface |
 |---|---|
-| Every setting | Console → **Settings** |
+| Every setting the console can change — 45 of 47 (`tls_mode` and `tls_email` are display-only; see §2.1) | Console → **Settings** |
 | Review, promote, reject proposals | Console → **Proposals** |
 | Browse, search, read entries | Console → **Browse** / **Search** |
-| Stations, notebooks, tasks, **rooms**, station vault | Console → **Stations** |
+| Stations, station keys, **rooms**, station vault, link + promotion queues | Console → **Stations** |
+| Notebook pages and tasks | Console shows notebook COUNTS only, plus the body of any page a session has asked to promote. Tasks are listed and filterable but **read-only** — writing pages and closing, deferring or reopening tasks is the station MCP surface, not an operator one. |
 | Endpoints, channels, secret rotation | Console → **Inter-session comms** |
 | Mint a knowledge-base token (`read` / `write-draft` / `propose`) | Console → **Tokens** *(or CLI)* |
 | Mint a **`comm`** token (add `comm-file` for file exchange) | **CLI only today** — `ken token add --actor comm-<name> --scopes comm,comm-file`. The console form offers only the three knowledge-base scopes and **silently discards anything else**, so a comm token cannot be minted there. *Being fixed: the console will mint these too.* |
@@ -81,23 +88,31 @@ existence. That is doing real containment work — see §2.4(f).
 /login  /lang  /oauth/authorize              supporting pages
 /setup            first-run      REQUIRES a one-time token printed at startup
 /healthz          liveness       plain text, no auth — see §4.1 for what it does NOT mean
+/health           readiness      public JSON; 503 when a component is DOWN. Pings the DB and
+                                 proves the data dir is writable. Component detail only to
+                                 loopback / KEN_METRICS_TOKEN / KEN_METRICS_CIDRS.
 /metrics          Prometheus     access-controlled; 404s rather than 403s when refused
 ```
 
-**Three machine endpoints, each taking a differently-scoped credential:**
+**Four machine endpoints, each taking a differently-scoped credential:**
 
 ```
-/mcp           knowledge base        agent token (read / write-draft / propose)
-/comm/mcp      inter-session comms   a token carrying the `comm` scope
-/station/mcp   station identity      a station key
+/mcp             knowledge base        agent token (read / write-draft / propose)
+/comm/mcp        inter-session comms   a token carrying the `comm` scope
+/station/mcp     station identity      a station key
+/comm/files/{g}  file transfer         a token carrying `comm-file` that OWNS the endpoint the
+                                       grant was minted for, PLUS the single-use grant in the
+                                       path — and the live `comm_files_enabled` switch on top
 ```
 
 Earlier text listed only `/mcp`. An operator debugging "the agent cannot reach X" needs all
-three, because the failure is almost always a credential scoped for one of them being
+four, because the failure is almost always a credential scoped for one of them being
 pointed at another.
 
-**`/setup` is not open.** While no admin exists every other path redirects to it, but it
-requires a one-time token generated at startup and printed to the log. That token is what
+**`/setup` is not open.** While no admin exists every other CONSOLE path redirects to it —
+`/healthz`, `/lang`, `/favicon.ico` and `/static/**` are exempt, and the machine endpoints
+above are mounted outside the gate entirely. It requires a one-time token generated at startup
+and printed to the log. That token is what
 stops a first-run window from being an open door.
 
 ---
@@ -119,13 +134,16 @@ a live Snapshot    (swapped atomically)
 **The database only holds what you have overridden.** If you query `app_setting` directly
 you will see a handful of rows, not the full list. A setting absent from that table is not
 unset — it is running on its compiled default. **The console is the only place that shows
-the effective value.** The database can answer "have I changed it?" but never "what is this
-set to?".
+every effective value, and the only one still current after a live edit.** The database can
+answer "have I changed it?" but never "what is this set to?". The startup log is a partial
+exception: it prints either `rate limit: OFF` or the effective rate-limiting numbers, after the
+saved overrides were folded in — so it answers "is the limiter on, and at what?" for the moment
+the process started, and for nothing since.
 
-**There is no such thing as a restart-level setting at v3.6.0.** Of 47 fields, **45 are
+**There is no such thing as a restart-level setting** (re-verified at v3.9.0). Of 47 fields, **45 are
 `Live: true`** and the other two — `tls_mode` and `tls_email` — are `ReadOnly: true`,
 display-only, set through `KEN_TLS` / `KEN_TLS_EMAIL` in the unit. The console form still
-contains a "restart to apply" branch; at v3.6.0 it is unreachable dead code. If you are
+contains a "restart to apply" branch; it is unreachable dead code. If you are
 waiting for a restart to make a saved setting take effect, you are waiting for nothing.
 
 **Only 13 of the 47 fields read an environment variable at all.** Every COMM field, every
@@ -198,7 +216,9 @@ beside every label.
 
 ### 2.3 Settings reference
 
-**Every default and bound below was read from `internal/settings/settings.go` at v3.6.0.**
+**Every default and bound below was read from `internal/settings/settings.go`, which is
+BYTE-IDENTICAL at v3.9.0 to its v3.6.0 revision** — no key, default, bound or label moved in
+3.7.0, 3.8.0 or 3.9.0.
 Between v1.5.5 and v3.6.0, **six keys were added and none were removed**, and not one default
 or bound of a pre-existing field changed.
 
@@ -219,10 +239,13 @@ or bound of a pre-existing field changed.
 | Auto-block lockout (seconds) | `rl_lockout_sec` | 900 | 1–604800 |
 | Always-allowed CIDRs | `rl_allow_cidrs` | *(empty)* | CIDR list |
 
-**These "defaults" are compiled FALLBACKS, not fixed values.** Seven of the eight
-rate-limiting rows, plus `trusted_proxies`, read an environment variable at startup — so the
-value shown here is what you get *when the unit sets nothing*. Check the unit before
-concluding the table is wrong.
+**These "defaults" are compiled FALLBACKS, not fixed values.** ALL EIGHT rate-limiting rows —
+`rl_enabled` included, via `KEN_RATELIMIT` — plus `trusted_proxies`, `tls_mode`, `tls_domains`,
+`tls_email` and `curation_langs` read an environment variable at startup. That is the 13 of 47
+counted in §2.1. The value shown here is what you get *when the unit sets nothing and nothing
+has been saved over it*. Check the unit before concluding the table is wrong, and check
+`KEN_RATELIMIT` first — it is the one that can have switched the whole limiter off before the
+console ever rendered.
 
 **`/healthz` is exempt from rate limiting**, alongside loopback and the configured CIDRs. A
 health prober cannot lock itself out.
@@ -375,8 +398,6 @@ per-secret read count stays exact regardless, so lowering it shortens the audit 
 hiding how often a secret was read, and its minimum of 10 means read auditing cannot be turned
 off from this form.
 
----
-
 ### 2.4 Interactions that bite
 
 These are the combinations where each setting is individually sensible and the pair is not.
@@ -451,10 +472,15 @@ The retention pass requires: no delivery still `queued` or `delivered`, and at l
 delivery settled. **Acknowledging does not destroy the body.** There is an afterwards, and by
 default it is a day long.
 
-**Trap 1 — raising body retention above `comm_message_ttl_sec` does not lengthen retention
-for delivered-but-never-acked mail.** That mail expires on the delivery clock first, and the
-retention window starts from *that*. The lever you reached for is downstream of the one that
-fires.
+**Trap 1 — for delivered-but-never-acked mail, `comm_body_retention_sec` does nothing at all,
+in either direction.** The retention pass only touches a message once NO delivery is still
+`queued` or `delivered` — and a delivery polled but never acked stays `delivered` until it
+expires, so retention can never fire while that mail is alive. When `expires_at` passes, the
+expiry sweep flips those deliveries to `expired` and blanks the body in the SAME pass. So the
+text lives exactly first-delivery + `comm_message_ttl_sec`: raising retention above the TTL
+adds nothing, lowering it below removes nothing, and **there is no window after expiry**.
+Retention governs mail that settled by ACK, where the window runs from the LAST recipient's
+ack.
 
 **Trap 2 — a body that was NEVER DELIVERED cannot be reclaimed by body retention at any
 value above zero**, because retention measures from settlement and an undelivered message has
@@ -531,6 +557,39 @@ Measured on a live 3.6.0 deployment, where one station had already lost seventee
 
 ---
 
+### 2.5 The controls that cannot be undone
+
+§2 is otherwise about Settings. These are the console's destructive buttons, and **three of the
+four had their operator-facing text corrected in 3.7.0 and 3.8.0 because the old wording named
+the wrong blast radius** — which is the failure this whole document exists to prevent. If you
+are holding an older Ken, the button does what is written here, not what your console says.
+
+**Tokens page.** The table's columns are Agent, **Station**, Scopes, Label, Last used, Status.
+The Station column arrived in 3.8.0: before it, station keys minted by one human on one machine
+rendered as identical rows, and on a real deployment eight keys showed as three distinguishable
+ones. **Revoking a token whose row names a station also cuts off every session bound to that
+station** — notebook, tasks, locker and vault — at its next call.
+
+**Comm page.** *Rotate* keeps the endpoint id and every channel: it is the right answer to a
+leaked or lost secret, and the session carries on. *Revoke* is permanent, and its blast radius
+depends on whether the endpoint is BOUND. A bound endpoint's STATION keeps its channels and a
+successor inherits them with a voucher — no re-pairing. An unbound endpoint's channels are
+effectively over and the peer must re-pair from a new code. The dialog says which.
+
+**Stations page.** *Archive* stops COMM and dormants links but **leaves keys working**, so the
+notebook, tasks, locker and vault stay reachable. *Retire* stops a key immediately — **including
+for a session holding it right now**, which loses the notebook, tasks, locker and vault at its
+next call — but leaves COMM endpoints that key already bound alive. *Revoke* is what also
+severs those.
+
+**And check "Last used" before retiring a key.** It HAS been recorded since 1.5.3, throttled to
+about once a minute. A blank means the key has not authenticated since then — not that use goes
+unrecorded, which is what the tooltip claimed for four releases.
+
+---
+
+---
+
 ## 3. The CLI
 
 ### 3.1 Read this before you run anything
@@ -538,7 +597,8 @@ Measured on a live 3.6.0 deployment, where one station had already lost seventee
 **An unrecognised subcommand starts a server.**
 
 Dispatch matches a fixed list — `token`, `user`, `backup`, `import`, `embed`, `station`,
-`serve`, `version`, `help` — and anything else falls through to "treat the arguments as
+`serve`, `version` (also `--version`, `-v`), `help` (also `-h`, `--help`) — and anything else
+falls through to "treat the arguments as
 serve flags". There is no error for an unknown verb.
 
 So a typo, or a command half-remembered from a newer release, does not fail. It launches a
@@ -560,10 +620,16 @@ ken user  add|list          human users for web login
 ken backup snapshot|verify  make or verify a consistent database snapshot
 ken import --dir DIR        import flat .md memory files as curated entries
 ken embed backfill|status   compute embeddings for semantic search
-ken station add|list|key    create stations and mint their keys
+ken station add|list|key|requests   create stations, mint keys, list pending requests
 ken version                 build version and source location
 ken help                    this list
 ```
+
+**`ken help` under-reports `ken station`.** Its printed list is `add|list|key`; the verb
+`requests` exists and lists the station requests sessions have raised. **Do not approve one
+with `ken station add`** — that creates an unrelated station and leaves the request pending
+forever. Approve or deny from the `/stations` console, which resolves the request and creates
+the station in one transaction.
 
 **The backup commands do not run as bare verbs.**
 
@@ -603,9 +669,22 @@ yourself; do not have an agent run them for you, and do not paste the output any
 will be recorded.
 
 **Token scopes** are the access-control boundary that makes the review queue meaningful:
-`read`, `write-draft`, `propose` let an agent search, draft and propose. `curate` is the
-promotion right. **An agent token should never carry `curate`** — that exclusion *is* the
-curation gate, and there is nothing else enforcing it.
+`read`, `write-draft`, `propose` — the default for `ken token add` — let an agent search, draft
+and propose.
+
+**A token is dedicated to ONE surface family.** The other mintable scopes are `comm` /
+`comm-file` (inter-session messaging) and `station` / `station-locker`. Knowledge-base scopes
+cannot be combined with either: `ken token add --scopes read,comm` is refused with "mint two
+tokens and register Ken twice". Station scopes are not mintable with `ken token add` at all —
+`/station/mcp` needs a `kens_` key BOUND to a station, so use `ken station add` then
+`ken station key`, which issues `station` + `station-locker` together.
+
+**An agent token should never carry `curate`** — but do not mistake that exclusion for the
+whole gate. **No MCP tool requires `curate`**: the only scopes any tool checks are `read`,
+`write-draft` and `propose`, and moving the curated head is a human-only act in the web UI
+behind a logged-in session. Keep minting `read,write-draft,propose` anyway — the scope is
+reserved vocabulary, and a token already carrying it would gain that power the day a curation
+surface ships.
 
 ---
 
@@ -617,7 +696,7 @@ curation gate, and there is nothing else enforcing it.
 curl -fsS https://<your-ken-host>/healthz
 ```
 
-**`/healthz` is LIVENESS ONLY.** At v3.6.0 the handler writes the literal bytes `ok\n` and
+**`/healthz` is LIVENESS ONLY.** At v3.9.0 — unchanged since v3.6.0 — the handler writes the literal bytes `ok\n` and
 touches nothing else. **It returns 200 from a process whose database is unreachable and whose
 data directory is read-only.**
 
@@ -633,17 +712,31 @@ directory is writable by creating and removing a temp file, which are exactly th
 to a caller carrying `KEN_METRICS_TOKEN` / inside `KEN_METRICS_CIDRS`; everyone else gets the
 verdict without the internals.
 
-**Point your monitoring at `/health`, and use `/healthz` only for "is the process alive".**
+```bash
+curl -sS https://<your-ken-host>/health
+```
 
-**COMM is deliberately excluded from BOTH**, and the reason is sound: a failure in an ephemeral
-subsystem should not mark the whole service DOWN and take a healthy knowledge base with it.
-COMM's state belongs in `/metrics`.
+It returns `{"status":"UP","components":{"db":{…},"storage":{…}}}` — `db` pings the reader
+pool, `storage` creates and removes a temp file in the data directory to prove it is writable.
+**A single component DOWN flips the overall status to DOWN and the HTTP code to 503**, so a
+proxy or orchestrator can act on it.
+
+**Point your monitoring at `/health`, and use `/healthz` only for "is the process alive".**
+Note the asymmetry: `/healthz` is exempt from the rate limiter, and **`/health` is not** — a
+prober hitting it hard enough can be throttled like any other client.
+
+**COMM is deliberately excluded from the READINESS check**, and the reason is sound: `/health`
+returns 503 on any component failure, so including an ephemeral subsystem would pull a healthy
+knowledge base out of load-balancer rotation. COMM's state belongs in `/metrics`. (Nothing is
+"excluded" from `/healthz` — it checks nothing in the first place.)
 
 **Use the real hostname.** Two plausible-looking variants fail indistinguishably from an
 outage:
 
 - **`localhost:8080`** — correct for a plain-HTTP deployment, wrong for one terminating TLS
-  in-process, which listens on 443 and 80 with nothing on 8080. Connection refused.
+  in-process: with `KEN_ADDR` unset that listens on **:443**, plus **:80** for the redirect and
+  ACME HTTP-01, and nothing on 8080. Connection refused. Both are only DEFAULTS — derive the
+  URL from this instance's `KEN_ADDR` / `KEN_TLS` rather than from habit.
 - **`https://localhost/healthz`** — with ACME, the certificate manager refuses a non-FQDN
   server name and **aborts the handshake**, so `-k` does not help.
 
@@ -654,7 +747,12 @@ outage from one failed check.
 ### 4.2 Metrics
 
 `/metrics` is access-controlled and **404s rather than 403s** when refused — so a wrong
-source address looks like a missing endpoint, not a permission error.
+source address looks like a missing endpoint, not a permission error. **Three different states
+produce that same 404**: `KEN_METRICS=off` (the route is never registered at all), a caller
+that is neither loopback nor inside `KEN_METRICS_CIDRS`, and a caller with a missing or wrong
+`KEN_METRICS_TOKEN`. The gate resolves the client IP through the trusted-proxy machinery, so a
+reverse proxy on the same host makes every scraper look like loopback **unless** it is declared
+in `KEN_TRUSTED_PROXIES`. Read the startup log line before concluding the endpoint is gone.
 
 Series worth knowing:
 
@@ -665,6 +763,13 @@ Series worth knowing:
 - **`ken_comm_message_bytes` changed what it counts in 3.6.0** — it summed characters and now
   sums bytes. **Samples either side of that upgrade are not comparable**, and nothing in the
   data announces it. Annotate your archive at the upgrade boundary.
+- **`ken_build_info{version}`** — constant 1, with the build version in the label. After an
+  upgrade this is the only signal that the RUNNING PROCESS moved, rather than just the binary
+  on disk.
+
+The full metric reference is [MONITORING.md](MONITORING.md); ready-made Prometheus alert rules
+and a Grafana dashboard ship in [`monitoring/`](../monitoring/). **Install the rules — they are
+not on by default.**
 
 ### 4.3 What "slow" usually is
 
@@ -676,6 +781,12 @@ curl -sS -o /dev/null -w \
   'tls=%{time_appconnect} ttfb=%{time_starttransfer} total=%{time_total}\n' \
   https://<your-ken-host>/healthz
 ```
+
+Two things about that sample. **`/healthz`, `/health` and `/metrics` are skipped by the
+counting middleware**, so this request appears in no Ken metric; and `/healthz` is the cheapest
+handler in the process, so its `ttfb` is a FLOOR for Ken's work rather than a sample of a real
+page. For per-surface latency use the histograms — `ken_http_request_duration_seconds` for web
+and `ken_mcp_tool_duration_seconds` for per-tool work.
 
 Run it **from the server itself** as well as from your workstation. The TLS handshake is
 typically the largest single component — far larger than Ken's work. A slow call is almost
@@ -713,8 +824,7 @@ exactly that reason.
 
 **There is no migration log to check.** `Store.Migrate()` applies each pending `NNNN_*.sql`
 and emits nothing — no line per migration, no summary, no count. Earlier text said to "check
-the log for a migration you were not expecting"; there is nothing there to see. Read the
-`schema_migration` table instead:
+the log for a migration you were not expecting"; on a clean run there is nothing there to see. Read the `schema_migration` table instead:
 
 ```sql
 SELECT COUNT(*), MAX(version), MAX(applied_at) FROM schema_migration;
@@ -723,7 +833,13 @@ SELECT COUNT(*), MAX(version), MAX(applied_at) FROM schema_migration;
 **An unchanged count with unchanged timestamps proves no migration ran** — a much stronger
 statement than the absence of a log line, and available in one query on each database.
 
-**But read the release note first, because this test inverts.** For a release that ships no
+**A FAILURE is the exception, and the two databases fail differently.** A `ken.db` migration
+failure is fatal — the service does not start. A `comm.db` failure is not: Ken logs
+`COMM: DEGRADED — …` and serves on without messaging, so a moved version and a green
+`/healthz` prove nothing about it. After any upgrade that touches comm.db, grep the journal
+for `COMM: DEGRADED` as well as reading `schema_migration` on both databases.
+
+**And read the release note first, because this test inverts.** For a release that ships no
 migration, unchanged is the pass. For one that does, unchanged is the FAILURE, and the pass is
 *exactly the expected new rows, with every earlier `applied_at` untouched*. 3.9.0 was the first
 release in four to run any: comm.db 11→14 and ken.db 18→19. Run `PRAGMA foreign_key_check` on
@@ -736,7 +852,21 @@ into the unit.
 
 ### 5.2 Backups
 
-Whatever schedule you run, three properties matter more than frequency:
+**Know what a snapshot contains: `ken.db`, and nothing else.** Both `ken backup snapshot` and
+`scripts/ken-snapshot.sh` open `KEN_DB` alone, so `comm.db` — the delivery ledger, retained
+bodies, endpoints and channels — is in no backup tier. That is deliberate rather than a gap:
+comm.db is expendable by design, the durable state (stations, room membership, entries) lives
+in `ken.db`, and the room mirror is rebuilt from `ken.db` at boot. What a lost comm.db costs is
+in-flight conversation and endpoint registrations, which sessions re-create. **A verified
+snapshot is a verified knowledge base** — and any COMM audit trail you need comes from the
+server log, not from comm.db.
+
+The snapshot is compressed plaintext at `0600`. Ken has not encrypted snapshots since 2.0.0
+retired `KEN_AGE_RECIPIENT`, and `0600` is enforced by this host and travels with no copy: the
+moment a snapshot leaves the box it is protected by whatever holds it. See
+[BACKUP.md](BACKUP.md).
+
+Whatever schedule you run, three further properties matter more than frequency:
 
 - **Verify restores, not just that files exist.** A backup job never restored from is an
   untested code path.
@@ -769,10 +899,19 @@ c.close()
 PY
 ```
 
+**Two WAL caveats, because both databases run in WAL.** Run it as the service user or root:
+a read-only connection still has to attach the `-shm` file, so an account that cannot write the
+database's directory fails to open at all. And never investigate a hand-copied `.db` alone —
+the traffic you are chasing may still be in the `-wal`. Either snapshot it (which checkpoints),
+or copy `ken.db`, `ken.db-wal` and `ken.db-shm` together.
+
 **Never `SELECT *` on a table you have not inspected.** This is now literally and
 deliberately true of a named table: **the station vault stores values that can be read
-back** — that is what a vault is for — so `SELECT *` there prints secrets into whatever log
-or transcript is capturing your session. Name your columns, and name them especially there.
+back** — that is what a vault is for — so `SELECT *` prints secrets into whatever log or
+transcript is capturing your session. That is true of **`station_vault`** (current values) AND
+of **`station_vault_history`** (every superseded value, kept so a wrong overwrite is
+reversible). Only `station_vault_read`, the audit trail, is safe to dump. Name your columns,
+and name them especially in those two.
 
 ### 6.2 Has a message been lost?
 
@@ -787,13 +926,15 @@ with `no such table: message`.
 
 ```sql
 -- died before anyone saw it: expired without ever being delivered
-SELECT m.message_id, m.scope_id, m.created_at, m.expires_at, m.body_bytes
+-- ONE ROW PER RECIPIENT: a room message nobody read appears once per station.
+SELECT m.message_id, m.scope_id, d.party_key, m.created_at, m.expires_at, m.body_bytes
 FROM message m
 JOIN delivery d ON d.message_row = m.id
-WHERE d.state = 'expired' AND d.delivery_count = 0;
+WHERE d.state = 'expired' AND d.delivery_count = 0
+ORDER BY m.created_at;
 
 -- consumed without ever being delivered (should be empty)
-SELECT m.message_id, m.scope_id, m.created_at
+SELECT m.message_id, m.scope_id, d.party_key, m.created_at
 FROM message m
 JOIN delivery d ON d.message_row = m.id
 WHERE d.state = 'acked' AND d.delivery_count = 0;
@@ -801,13 +942,21 @@ WHERE d.state = 'acked' AND d.delivery_count = 0;
 
 **Read `scope_id`, not `channel_id`.** `channel_id` still exists on `message` but is now
 **NULL for every room and broadcast message** — so the column an operator reaches for to
-locate a lost message is blank for exactly the traffic most likely to go missing. `scope_id`
-carries `ch:<channel_id>`, `r:<room_id>` or `b:<sender>` and is always populated.
+locate a lost message is blank for exactly the traffic most likely to go missing. `scope_id` carries `ch:<channel_id>`, `r:<room_id>` or `b:<sender party>` — and the sender
+party is itself tagged, so a staffed station's broadcasts are `b:s:<station_id>` and an unbound
+endpoint's are `b:e:<endpoint rowid>`. It is NOT NULL and always populated. To select broadcast
+traffic, match `scope_id LIKE 'b:%'`. `party_key` on `delivery` uses the same two forms, which
+is what the recipes above select.
 
-**`body_bytes` records how much text used to be there** even after the body is gone — and at
-v3.6.0 it is a true byte count, not a character count.
+**`body_bytes` records how much text used to be there** even after the body is gone, and it is
+a true byte count (re-verified at v3.9.0). **Do not substitute `LENGTH(m.body)` for it**:
+SQLite's `LENGTH()` over TEXT counts CHARACTERS and under-reports on any non-ASCII traffic —
+measured 0.55% low on a production 3.5.1 deployment. Where you must size a TEXT column, cast
+first, as §6.3 does.
 
-**A message that expired undelivered still has its body**, deliberately (§2.4(d), Trap 2).
+**A message that expired undelivered still has its body** on any positive
+`comm_body_retention_sec`, deliberately (§2.4(d), Trap 2). At `0` the sweep blanks it like
+everything else — that setting is the one lever reaching never-delivered text (Trap 3).
 Earlier text implied expiry blanked it. The text survives until the metadata purge removes
 the whole row, which makes this recipe more useful than it used to be, not less.
 
@@ -888,14 +1037,17 @@ Every one of these was paid for on a running deployment.
     §2.3
 13. **A field whose group is not on the render list is invisible AND is processed as empty on
     every save.** §2.2.1
-14. **Over-broad trusted proxies let clients forge their IP**, defeating three protections at
-    once. §2.3
+14. **Over-broad trusted proxies let clients forge their IP**, defeating per-IP rate limiting,
+    the auto-block list, the login lockout AND the `/metrics` + detailed-`/health` access check
+    — all four read the same resolved address. §2.3
 15. **An allowlist entry is a total bypass** for everything inside it. §2.3
 16. **`updated_at` on settings means "last saved", not "last changed".** §2.2
 17. **A long-poll wait is a request, not a promise** — capped in code, though now reported
     back via `wait_clamped_from`. §2.3
-18. **A room message is claimed by the first session to poll it** for the claim lease; a
-    second session sees nothing and may call it lost. §2.4(g)
+18. **Any message delivered to a station is claimed by the first of that station's sessions to
+    poll it** — channel, room or broadcast alike — for `comm_claim_lease_sec` (900 s). A second
+    session staffing the same station sees nothing in that window and may call it lost. An
+    unbound endpoint is the sole reader of its own mail, so nothing is claimed there. §2.4(g)
 19. **`channel_id` is NULL for room and broadcast traffic** — the column you reach for is
     blank for the traffic most likely to be missing. §6.2
 20. **A fixed size band on growing data becomes a nightly false alarm**, and false alarms
@@ -905,10 +1057,11 @@ Every one of these was paid for on a running deployment.
 
 ## 8. A note on measurement
 
-Several sections above replace a rule of thumb with a number, because the rules of thumb were
-wrong in the same direction: a reply deadline chosen because an hour "felt reasonable", a size
-band chosen because the file "was about that big", a watch window opened after the event it
-was meant to observe.
+Several sections above replace a rule of thumb with something derived from the system it
+governs, because the rules of thumb were wrong in the same direction: a message lifetime sized
+against a felt absence rather than a measured one (§2.4(a) — 64 hours of weekend against the
+720-hour backstop that actually bounds it), and a backup size band chosen because the file "was
+about that big" (§5.2, which replaces it with an alarm on *change*).
 
 **When something is time-dependent — a TTL, a deadline, a retry interval, a staleness
 threshold — derive it from a measurement of the system it governs.** How long does delivery
