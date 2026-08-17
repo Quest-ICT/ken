@@ -31,6 +31,12 @@
           {{end}}
             <label class="check" style="opacity:.65;cursor:not-allowed"><input type="checkbox" disabled><span class="check__text"><b>curate</b><span>{{$.T "tokens.scope_curate_note"}} <code>curate</code></span></span></label>
           </div>
+          <p class="muted" style="margin:var(--sp-3) 0 var(--sp-2)">{{.T "tokens.scope_family_note"}}</p>
+          <div style="display:grid;gap:var(--sp-2)">
+          {{range .Data.CommScopes}}
+            <label class="check"><input type="checkbox" name="scope" value="{{.}}"><span class="check__text"><b>{{.}}</b></span></label>
+          {{end}}
+          </div>
         </fieldset>
         <button class="btn btn--primary" type="submit" style="margin-top:var(--sp-4)">{{.T "tokens.issue_submit"}}</button>
       </form>

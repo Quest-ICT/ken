@@ -213,10 +213,14 @@ const errStationUnavailable = "no station by that name is available to you — c
 	"see and which you can talk to right now. If the one you want is listed with linked=false, ask for a link with " +
 	"station_link_request on the /station endpoint, then TELL YOUR HUMAN you asked and why; they decide."
 
+// mcpKeepAlive matches the interval on the other MCP surfaces. The measurement behind the 30s,
+// and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
+const mcpKeepAlive = 30 * time.Second
+
 func newServer(d Deps, h *Handler) *mcp.Server {
 	w := h.w
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-comm", Version: "1"},
-		&mcp.ServerOptions{Instructions: instructions + version.InstructionStamp()})
+		&mcp.ServerOptions{Instructions: instructions + version.InstructionStamp(), KeepAlive: mcpKeepAlive})
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_register",

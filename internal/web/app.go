@@ -831,12 +831,35 @@ func (a *app) handleRevert(w http.ResponseWriter, r *http.Request, sess *store.S
 
 // --- agent tokens (superadmin) ---
 
-// agentScopes are the scopes an agent token may hold from the web UI. 'curate' is
-// deliberately excluded — that is the human-only curation gate.
+// agentScopes are the KNOWLEDGE-BASE scopes an agent token may hold from the web UI.
+// 'curate' is deliberately excluded — that is the human-only curation gate.
 var agentScopes = []string{"read", "write-draft", "propose"}
+
+// consoleCommScopes are the COMM scopes the web UI may mint.
+//
+// UNTIL 3.10.0 THE CONSOLE COULD NOT MINT THESE AT ALL, and the omission looked decided but
+// was not: the comment above justifies excluding `curate` and says nothing about comm, because
+// this list was written when knowledge-base scopes were all there were. The comm and station
+// families were added to the CLI later and nobody came back.
+//
+// The cost was not theoretical. Ken's stated posture is that the console is the main method for
+// any operation and the CLI is a last resort — and an operator following it minted a token,
+// handed it to a session, and watched comm_register refuse it for a missing scope. Worse, the
+// handler DROPPED the unknown scope silently, so nothing said why.
+//
+// Station scopes are still not mintable here, for the reason `ken token add` gives: /station/mcp
+// requires a `kens_` key BOUND to a station, and this path issues an unbound `ken_` token, so it
+// would authenticate nowhere while looking exactly like a working credential. Station keys are
+// minted on the Stations page.
+var consoleCommScopes = []string{"comm", "comm-file"}
 
 func agentScopeOK(s string) bool {
 	for _, a := range agentScopes {
+		if a == s {
+			return true
+		}
+	}
+	for _, a := range consoleCommScopes {
 		if a == s {
 			return true
 		}
@@ -866,7 +889,7 @@ func (a *app) renderTokens(w http.ResponseWriter, r *http.Request, sess *store.S
 		connectors, _ = a.store.ListOAuthGrants(r.Context())
 	}
 	a.render(w, r, sess, "tokens", map[string]any{
-		"Tokens": rows, "Scopes": agentScopes, "NewSecret": newSecret, "NewActor": newActor, "MCPURL": mcpURL,
+		"Tokens": rows, "Scopes": agentScopes, "CommScopes": consoleCommScopes, "NewSecret": newSecret, "NewActor": newActor, "MCPURL": mcpURL,
 		"OAuthEnabled": a.oauthEnabled, "Connectors": connectors,
 	})
 }
@@ -987,12 +1010,24 @@ func (a *app) handleTokenCreate(w http.ResponseWriter, r *http.Request, sess *st
 	label := strings.TrimSpace(r.FormValue("label"))
 	var scopes []string
 	for _, s := range r.Form["scope"] {
-		if agentScopeOK(s) {
-			scopes = append(scopes, s)
+		// REFUSE an unrecognised scope rather than dropping it. The old code filtered
+		// silently, so a form carrying `comm` minted a knowledge-base token and said
+		// nothing — the operator found out when the session could not register.
+		if !agentScopeOK(s) {
+			flashRedirect(w, r, "/tokens", "flash.token_scope_unknown", s)
+			return
 		}
+		scopes = append(scopes, s)
 	}
 	if name == "" || len(scopes) == 0 {
 		flashRedirect(w, r, "/tokens", "flash.token_fields_required", "")
+		return
+	}
+	// The SAME rule the CLI enforces, from the same place — a token is dedicated to one
+	// surface family. Before 3.10.0 this path could not violate it only because its menu was
+	// too narrow to express a violation, which is safety by accident rather than by rule.
+	if err := store.CheckScopeMix(scopes); err != nil {
+		flashRedirect(w, r, "/tokens", "flash.token_scope_mix", err.Error())
 		return
 	}
 	if len(name) > 190 || len(label) > 190 {

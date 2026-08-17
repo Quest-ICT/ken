@@ -245,9 +245,13 @@ things about it are worth knowing rather than discovering:
 
 Your human reads all of it. Nothing here is private from them.`
 
+// mcpKeepAlive matches the interval on the other MCP surfaces. The measurement behind the 30s,
+// and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
+const mcpKeepAlive = 30 * time.Second
+
 func newServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-station", Version: "1"},
-		&mcp.ServerOptions{Instructions: instructions + version.InstructionStamp()})
+		&mcp.ServerOptions{Instructions: instructions + version.InstructionStamp(), KeepAlive: mcpKeepAlive})
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_binding_voucher",

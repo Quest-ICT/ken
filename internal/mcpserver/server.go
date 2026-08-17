@@ -432,12 +432,34 @@ var langNames = map[string]string{
 }
 
 // NewServer builds the MCP server with all tools registered.
+// mcpKeepAlive is how often the server sends a JSON-RPC ping on an idle MCP stream.
+//
+// KEN USED TO SEND NOTHING AT ALL, from 1.x through 3.9.0. The SDK ships a server-side
+// keepalive and every ServerOptions literal set only Instructions, so the ping loop never
+// started — and a stream carrying no bytes is indistinguishable, from the client's side, from
+// a stream whose server has gone away. Clients gave up and reconnected.
+//
+// ken-prod-ops measured it across three surfaces over 17 days: 804 teardowns, clustering at
+// ~299, ~599 and ~900 seconds. Those are the first, second and third idle windows of a ~300s
+// CLIENT read timeout that occasional real traffic resets. A fixed server-side deadline would
+// produce ONE mode; harmonics at integer multiples of one interval are what a client timer
+// being reset by intermittent bytes looks like. Nothing on this side was closing them.
+//
+// 30s is chosen against that ~300s window with an order of magnitude to spare, and sits inside
+// Ken's own 120s IdleTimeout so an active stream never looks idle to our own server.
+//
+// Server.ReadTimeout (60s) does NOT interact with this, and that was checked rather than
+// assumed: Go's HTTP/2 server does arm a per-stream deadline from it, but onReadTimeout closes
+// the REQUEST body (st.body.CloseWithError) and never touches the response stream — which is
+// also why it was never the cause of the teardowns.
+const mcpKeepAlive = 30 * time.Second
+
 func NewServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "ken",
 		Title:   "Ken knowledge base",
 		Version: version.Version,
-	}, &mcp.ServerOptions{Instructions: buildInstructions(d.CurationLangs) + version.InstructionStamp()})
+	}, &mcp.ServerOptions{Instructions: buildInstructions(d.CurationLangs) + version.InstructionStamp(), KeepAlive: mcpKeepAlive})
 
 	addTool(s, d, &mcp.Tool{
 		Name: "kb_search",

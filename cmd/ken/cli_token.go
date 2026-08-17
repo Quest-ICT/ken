@@ -7,62 +7,16 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/Quest-ICT/ken/internal/store"
 )
 
-var validScopes = map[string]bool{
-	"read": true, "write-draft": true, "propose": true, "curate": true,
-	// Inter-session communication (docs/COMM.md). `comm-file` is reserved and
-	// required by nothing yet — declared now because splitting a shipped `comm`
-	// into two scopes later would be a MAJOR, while merging two is free.
-	"comm": true, "comm-file": true,
-	// Stations (docs/STATIONS.md). `station-locker` is reserved on exactly the same
-	// reasoning that reserved `comm-file`.
-	"station": true, "station-locker": true,
-}
+// The scope vocabulary and the one-family rule now live in internal/store, so that the
+// console's mint path enforces the same rule this one does. See internal/store/scopes.go.
+var validScopes = store.ValidScopes
+var stationScopes = store.StationScopes
 
-// commScopes are the scopes that belong to the COMM endpoint.
-var commScopes = map[string]bool{"comm": true, "comm-file": true}
-
-// stationScopes are the scopes that belong to the /station endpoint.
-var stationScopes = map[string]bool{"station": true, "station-locker": true}
-
-// checkScopeMix enforces that a token is DEDICATED to one surface family.
-//
-// This is what makes the design's claim true rather than aspirational — "a
-// knowledge-base token cannot send messages and a comm token cannot write
-// knowledge". Without it an operator could quietly widen their everyday agent
-// token, and since API tokens have no expiry (only revocation), every already-
-// copied instance of that token would gain the new capability retroactively.
-//
-// THREE families, not two, and the third had to be added in the same change that
-// added the scope. The previous shape bucketed everything that was not comm as
-// knowledge-base, so the moment `station` became a valid scope it would have been
-// treated as a KB scope: `read,write-draft,propose,station` would have minted
-// silently while `comm,station` was refused — exactly backwards, since a session
-// legitimately staffs a post and talks from it, while a token that can both read
-// working notes and write knowledge is the mixing this function exists to prevent.
-//
-// The one permitted pair is station+comm (docs/STATIONS.md §6).
-func checkScopeMix(scopes []string) error {
-	var comm, station, kb []string
-	for _, s := range scopes {
-		switch {
-		case commScopes[s]:
-			comm = append(comm, s)
-		case stationScopes[s]:
-			station = append(station, s)
-		default:
-			kb = append(kb, s)
-		}
-	}
-	if len(kb) > 0 && len(comm) > 0 {
-		return fmt.Errorf("a comm token must be dedicated: %v cannot be combined with %v — mint two tokens and register Ken twice", comm, kb)
-	}
-	if len(kb) > 0 && len(station) > 0 {
-		return fmt.Errorf("a station token must be dedicated: %v cannot be combined with %v — mint two tokens and register Ken twice", station, kb)
-	}
-	return nil
-}
+func checkScopeMix(scopes []string) error { return store.CheckScopeMix(scopes) }
 
 func runToken(args []string) {
 	if len(args) == 0 {
