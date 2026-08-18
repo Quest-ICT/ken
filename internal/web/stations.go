@@ -383,7 +383,31 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 		case err != nil:
 			flashRedirect(w, r, "/stations", "flash.station_approve_failed", err.Error())
 		default:
-			flashRedirect(w, r, "/stations", "flash.link_approved", l.NameA+" ↔ "+l.NameB)
+			// P3: SPEND THE LINK IMMEDIATELY. A link recorded and never materialised is a
+			// human decision that still costs a pairing code to use — which is the step the
+			// link exists to remove. Approving is the gate; there is nothing left to wait
+			// for, so the conversation comes into existence here.
+			//
+			// BEST EFFORT, AND NEVER FATAL TO THE APPROVAL. Both stations must be staffed
+			// for a channel to exist at all, and one may not be — `proxmox-servers` had a
+			// station and no endpoint for five days. The link is still correct and still
+			// worth recording; comm_open_channel materialises it later when someone shows
+			// up. Failing the human's decision over a messaging detail would be the wrong
+			// thing to fail on.
+			flash := "flash.link_approved"
+			if a.comm != nil {
+				epA, errA := a.comm.LiveEndpointForStation(r.Context(), l.StationA)
+				epB, errB := a.comm.LiveEndpointForStation(r.Context(), l.StationB)
+				if errA == nil && errB == nil && epA != nil && epB != nil {
+					if _, err := a.comm.OpenLinkedChannel(r.Context(), epA, epB, sess.ActorID,
+						l.NameA+" ↔ "+l.NameB); err == nil {
+						flash = "flash.link_approved_open"
+					} else {
+						log.Printf("stations: link %s approved but channel not opened: %v", id, err)
+					}
+				}
+			}
+			flashRedirect(w, r, "/stations", flash, l.NameA+" ↔ "+l.NameB)
 		}
 		return
 	}

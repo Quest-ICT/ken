@@ -218,7 +218,9 @@
           {{if .NameHint}}<p class="help">{{$.T "stations.req_hint"}}: <code>{{.NameHint}}</code> — {{$.T "stations.req_hint_note"}}</p>{{end}}
 
           {{if eq .Kind "link"}}
+          <p class="cell-title"><b class="mono">{{.FromName}}</b> {{$.T "stations.link_wants"}} <b class="mono">{{.ToName}}</b></p>
           <p class="help">{{$.T "stations.link_help"}}</p>
+          <p class="help">{{$.T "stations.link_grants"}}</p>
           <form method="post" action="/stations/requests/{{.RequestID}}/approve">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
             <input type="hidden" name="kind" value="link">

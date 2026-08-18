@@ -456,14 +456,27 @@ VALUES(?,?,'station',?,?,?,?)`,
 type StationRequestRow struct {
 	RequestID, Kind, NameHint, Purpose, Reason, CreatedAt string
 	PromptedByPeerTraffic                                 bool
+	// FromName and ToName are the two stations a LINK request is between, resolved to the
+	// names a human uses. Empty for a 'station' request, which has no counterparty yet.
+	//
+	// THE QUERY DID NOT SELECT THESE UNTIL 3.11.0, so the console could not show who was
+	// asking or who they wanted to reach — the columns were on the table the whole time. An
+	// operator approved two link requests on 2026-08-13 and said afterwards that he had not
+	// been told what he was approving. He was right: the screen could not tell him, because
+	// nothing had fetched it.
+	FromName, ToName string
 }
 
 // PendingStationRequests lists what is waiting on the human.
 func (s *Store) PendingStationRequests(ctx context.Context, spaceID int64) ([]StationRequestRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT request_id, kind, COALESCE(name_hint,''), purpose, reason, created_at,
-       COALESCE(prompted_by_peer_traffic,0)
-FROM station_request WHERE space_id=? AND state='pending' ORDER BY created_at`, spaceID)
+SELECT r.request_id, r.kind, COALESCE(r.name_hint,''), r.purpose, r.reason, r.created_at,
+       COALESCE(r.prompted_by_peer_traffic,0),
+       COALESCE(sf.name, r.from_station, ''), COALESCE(st2.name, r.to_station, '')
+FROM station_request r
+LEFT JOIN station sf  ON sf.station_id  = r.from_station
+LEFT JOIN station st2 ON st2.station_id = r.to_station
+WHERE r.space_id=? AND r.state='pending' ORDER BY r.created_at`, spaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +485,7 @@ FROM station_request WHERE space_id=? AND state='pending' ORDER BY created_at`, 
 	for rows.Next() {
 		var r StationRequestRow
 		if err := rows.Scan(&r.RequestID, &r.Kind, &r.NameHint, &r.Purpose, &r.Reason,
-			&r.CreatedAt, &r.PromptedByPeerTraffic); err != nil {
+			&r.CreatedAt, &r.PromptedByPeerTraffic, &r.FromName, &r.ToName); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
