@@ -528,15 +528,39 @@ Batches 3 and 4 dissolve H2, H3 and H4. Batch 5 dissolves H1 and H5.
 
 The decisions are made; this is what they cost. **The order is load-bearing.**
 
-- [ ] **Migrate the six unbound endpoints onto stations.** OPERATOR work, not code: three are
-      idle (0 seats, last seen 5–14 days ago) and can be revoked; three are live and need
-      stations plus a rebind, one of them holding **seven channel seats**. Until this is done,
-      "every session holds a station, always" is an aspiration and no station-key option is safe.
-- [ ] **B — move the endpoint pair to a request header.** Closes the transcript exposure
+- [ ] **Migrate the unbound endpoints onto stations.** OPERATOR work, not code — the voucher is
+      redeemed by the session itself and the console is Vlad's. **Shape settled 2026-08-18**, and
+      it is smaller than the original six suggested: two were revoked on 2026-08-17, and
+      `endpoint.label` turned out to name the PROJECT, which neither of us had been reading.
+
+      | endpoint | station | action |
+      |---|---|---|
+      | ep 6 | `quest-infra` | **BIND** — key exists, no console step |
+      | ep 14 | `proxmox-servers` | **BIND** — key exists, no console step |
+      | ep 13 | `rb5009-config` | **NEW STATION** (Vlad, 2026-08-18) then bind |
+      | ep 18 | `runway-prod-admin` | **NEW STATION** (Vlad, 2026-08-18) then bind |
+      | ep 10 | `collector-proxy-dev` | **REVOKE** — duplicate, 0 seats / 0 sent / 0 received |
+
+      **ep 6 is first and it is not a tidy-up.** `quest-infra` has 47 station tasks and a live
+      key, 83 deliveries addressed to `e:6` and **zero to `s:JiJm1FZK9Afs08u0`** — its station
+      identity and its messaging identity have never been joined. Zero is not "nobody wrote to
+      it", it is "nobody CAN": a live instance of the 2026-08-13 rooms defect, unnoticed in
+      production for three weeks because nobody happened to put it in a room. Found by
+      ken-prod-ops reading the label column.
+
+      **The set is NOT closed, and that is a design constraint rather than a caveat.** `ep 18`
+      was created two minutes before ken-prod-ops read the table. Anything built on "every
+      session holds a station" must handle a session that registers MID-FLIGHT — which lands
+      directly on D: an authenticated station key with no endpoint yet needs a defined answer,
+      not an assumption that the world was migrated first.
+
+      Also settled: one per-machine comm token, one endpoint per project, so the posture means
+      **one station per PROJECT**, not per machine.
+- [x] **B — move the endpoint pair to a request header** — built `85538ec`, *unreleased*. Closes the transcript exposure
       ken-prod-ops measured. Needs the per-call `withCaller` wrap that `/comm/mcp` lacks; the
       other two surfaces already have it. Keep the arguments accepted-and-ignored for one release
       so running sessions are not broken.
-- [ ] **P3 — approving a link creates the pair conversation.** Nearly free, no new agent verb.
+- [x] **P3 — approving a link creates the pair conversation** — built `d593434`, *unreleased*. Nearly free, no new agent verb.
       **Ship the better approval surface with it**: ken-prod-ops recorded that Vlad approved two
       link requests on 2026-08-13 *without being told what he was approving*. The consent gate
       works; the consent was uninformed, and that is the half worth fixing.
