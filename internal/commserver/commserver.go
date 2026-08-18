@@ -885,13 +885,63 @@ func requireFileScope(ctx context.Context) error {
 // The ownership re-check is what keeps one machine's token from driving another
 // machine's endpoint if an endpoint id ever leaks: the secret proves the session,
 // and this proves the token.
+// Endpoint credentials may travel in REQUEST HEADERS instead of tool arguments.
+//
+// WHY THIS EXISTS. Every comm_* tool takes endpoint_id + endpoint_secret as ARGUMENTS, and tool
+// arguments are recorded by the CLIENT in its conversation transcript — on disk, in the clear,
+// for as long as that transcript is kept. Ken cannot mitigate that by changing what Ken logs:
+// the recording happens in software neither end ships. Moving the credential out of the argument
+// position is the only thing that removes it, which ken-prod-ops established by ruling out every
+// alternative on the server side.
+//
+// The other two MCP surfaces already re-derive their caller per call from req.Extra.Header. This
+// is that, for the surface that carries a secret rather than a bearer token.
+//
+// THE ARGUMENTS STILL WORK, deliberately, and will for at least one release. A tool's input
+// schema is captured by a client when its conversation begins and never refreshes, so a session
+// running right now will go on sending the pair in its arguments no matter what this server
+// prefers. Removing the fields would break every conversation already in flight; the headers are
+// simply preferred when present.
+const (
+	hdrEndpointID     = "X-Ken-Endpoint-Id"
+	hdrEndpointSecret = "X-Ken-Endpoint-Secret"
+)
+
+type endpointCredKey struct{}
+
+type endpointCred struct{ id, secret string }
+
+// withEndpointCred lifts the endpoint credential out of the request headers, if it is there.
+// It does NOT authenticate: auth() below still does that, so every check that hangs off a
+// verified secret — the severed station key, the archived station — stays in one place and
+// cannot be bypassed by arriving through a different door.
+func withEndpointCred(ctx context.Context, req *mcp.CallToolRequest) context.Context {
+	if req == nil || req.Extra == nil || req.Extra.Header == nil {
+		return ctx
+	}
+	id := strings.TrimSpace(req.Extra.Header.Get(hdrEndpointID))
+	secret := strings.TrimSpace(req.Extra.Header.Get(hdrEndpointSecret))
+	if id == "" || secret == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, endpointCredKey{}, endpointCred{id: id, secret: secret})
+}
+
 func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoint, error) {
 	p := principalFrom(ctx)
 	if p == nil {
 		return nil, errors.New("unauthenticated")
 	}
+	// The header pair wins when present. A caller that sends both header and arguments is
+	// not an error — a session mid-migration will do exactly that — but the headers are the
+	// copy that did not end up in a transcript, so they are the copy trusted.
+	if c, ok := ctx.Value(endpointCredKey{}).(endpointCred); ok {
+		endpointID, secret = c.id, c.secret
+	}
 	if endpointID == "" || secret == "" {
-		return nil, errors.New("endpoint_id and endpoint_secret are required — call comm_register first")
+		return nil, errors.New("endpoint_id and endpoint_secret are required — call comm_register first. " +
+			"They may be sent as the X-Ken-Endpoint-Id and X-Ken-Endpoint-Secret headers instead of as " +
+			"tool arguments, which keeps the secret out of your conversation transcript")
 	}
 	ep, err := d.Comm.AuthenticateEndpoint(ctx, endpointID, secret)
 	if err == nil && ep.BoundByStationKeyID != "" {
@@ -1007,6 +1057,14 @@ func commError(err error) error {
 // each call increments the per-tool metric. Mirrors internal/mcpserver's helper.
 func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
 	h func(context.Context, *mcp.CallToolRequest, In) (*mcp.CallToolResult, Out, error)) {
+	// EVERY call re-derives the endpoint credential from its own headers. This surface had no
+	// per-call wrap at all, which was harmless only because the per-call secret in the arguments
+	// pinned identity — the SDK binds a session to the INITIALIZE request's context, so without
+	// this a handler would see whatever opened the connection.
+	inner := h
+	h = func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		return inner(withEndpointCred(ctx, req), req, in)
+	}
 	handler := h
 	if reg != nil {
 		name := t.Name

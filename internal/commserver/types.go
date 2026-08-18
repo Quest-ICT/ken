@@ -37,8 +37,8 @@ type registerOut struct {
 }
 
 type joinIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	PairingCode    string `json:"pairing_code" jsonschema:"required; minted by your human in Ken's web UI. You cannot create one"`
 }
 
@@ -49,8 +49,8 @@ type joinOut struct {
 }
 
 type channelsIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 }
 
 type channelView struct {
@@ -128,8 +128,8 @@ type channelRoomView struct {
 }
 
 type sendIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// EXACTLY ONE of these three. channel_id is the pairing-code channel; to_room is a
 	// room you are in; to_room:"all" broadcasts to every station you share a room with.
 	// No longer `required` individually — the handler enforces the choice, because
@@ -169,8 +169,8 @@ type sendOut struct {
 }
 
 type pollIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	WaitSeconds    int    `json:"wait_seconds,omitempty" jsonschema:"optional; how long to block waiting for a message. CLAMPED server-side, and the result tells you what you actually got: wait_seconds_granted is the real wait, and wait_clamped_from appears when yours was shortened. Prefer one long wait over frequent short polls — a parked call costs one request however long it waits. Pass -1 to return immediately"`
 	Limit          int    `json:"limit,omitempty" jsonschema:"optional; max messages to return (default 50)"`
 }
@@ -280,8 +280,8 @@ type noticeView struct {
 }
 
 type ackIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	MessageID      string `json:"message_id,omitempty" jsonschema:"the message you finished processing. Either this, or channel_id + ack_up_to_seq"`
 	ChannelID      string `json:"channel_id,omitempty" jsonschema:"with ack_up_to_seq, acks everything from the peer up to that sequence number"`
 	AckUpToSeq     int64  `json:"ack_up_to_seq,omitempty" jsonschema:"with channel_id, acks cumulatively"`
@@ -303,8 +303,8 @@ type ackOut struct {
 // --- file exchange (comm-file scope; docs/COMM.md §11) ---
 
 type fileOfferIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	ChannelID      string `json:"channel_id" jsonschema:"required"`
 	Name           string `json:"name" jsonschema:"required; a bare filename (no directories). The receiver will know the file by this name"`
 	SizeBytes      int64  `json:"size_bytes" jsonschema:"required; exact size of the file"`
@@ -324,8 +324,8 @@ type fileOfferOut struct {
 }
 
 type fileGrantIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	AttachmentID   string `json:"attachment_id" jsonschema:"required; from the polled message's file descriptor"`
 }
 
@@ -338,8 +338,8 @@ type fileGrantOut struct {
 }
 
 type directoryIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 }
 
 // directoryEntry keeps the CLAIM fields under their claim-bearing names (S8). A
@@ -403,8 +403,8 @@ type directoryRoom struct {
 }
 
 type openLinkedIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	ToStation      string `json:"to_station" jsonschema:"required; the station to open a channel with, by NAME. A human must already have approved a link between your station and that one"`
 	Label          string `json:"label,omitempty" jsonschema:"optional; a human-readable name for the channel, shown in your human's console"`
 }
@@ -416,8 +416,8 @@ type openLinkedOut struct {
 }
 
 type bindIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	BindingVoucher string `json:"binding_voucher" jsonschema:"required; a fresh voucher from station_binding_voucher on the /station endpoint"`
 }
 
@@ -427,8 +427,8 @@ type bindOut struct {
 }
 
 type unbindIn struct {
-	EndpointID     string `json:"endpoint_id" jsonschema:"required"`
-	EndpointSecret string `json:"endpoint_secret" jsonschema:"required"`
+	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
+	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 }
 
 type unbindOut struct {
