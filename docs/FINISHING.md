@@ -556,11 +556,11 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
 
       Also settled: one per-machine comm token, one endpoint per project, so the posture means
       **one station per PROJECT**, not per machine.
-- [x] **B — move the endpoint pair to a request header** — built `85538ec`, *unreleased*. Closes the transcript exposure
+- [x] **B — move the endpoint pair to a request header** — **3.11.0** (`85538ec`). Closes the transcript exposure
       ken-prod-ops measured. Needs the per-call `withCaller` wrap that `/comm/mcp` lacks; the
       other two surfaces already have it. Keep the arguments accepted-and-ignored for one release
       so running sessions are not broken.
-- [x] **P3 — approving a link creates the pair conversation** — built `d593434`, *unreleased*. Nearly free, no new agent verb.
+- [x] **P3 — approving a link creates the pair conversation** — **3.11.0** (`d593434`). Nearly free, no new agent verb.
       **Ship the better approval surface with it**: ken-prod-ops recorded that Vlad approved two
       link requests on 2026-08-13 *without being told what he was approving*. The consent gate
       works; the consent was uninformed, and that is the half worth fixing.

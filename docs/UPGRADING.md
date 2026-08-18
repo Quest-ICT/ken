@@ -34,6 +34,63 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.11.0
+
+### BEFORE YOU UPGRADE: re-run your MCP teardown census first, if you want a clean 3.10.0 window
+
+**This upgrade restarts the service, and a restart contaminates exactly the measurement the
+keepalive fix is graded on.** ken-prod-ops' 3.10.0 run had one restart inside it and two of the
+four `session expired` events turned out to be connections running out a pre-existing clock —
+which is why that half could not be scored. If you want an uncontaminated 3.10.0 window, take the
+census before this upgrade rather than after. Nothing else here depends on it.
+
+### `comm_*` tools accept the endpoint credential in a HEADER
+
+**What changes.** `endpoint_id` and `endpoint_secret` may now be sent as the
+`X-Ken-Endpoint-Id` and `X-Ken-Endpoint-Secret` request headers instead of as tool arguments.
+When both headers are present they are used; otherwise the arguments are, exactly as before.
+
+**Why.** Tool arguments are recorded by the CLIENT in its conversation transcript — on disk, in
+the clear, for as long as that transcript is kept. Ken cannot mitigate that by changing what Ken
+logs, because the recording happens in software neither end ships. Moving the credential out of
+the argument position is the only thing that removes it.
+
+**Nothing breaks, and the arguments are not going away this release.** A tool's input schema is
+captured when a client's conversation BEGINS and never refreshes, so every session running right
+now will keep sending the pair in its arguments regardless of what this server prefers.
+
+**One schema change worth knowing about:** the two fields are no longer marked *required*.
+Relaxing a required field is additive, so this stays MINOR — but a client that validates Ken's
+schemas will see the change.
+
+### Approving a station link now names both stations, and opens the conversation
+
+**What changes.** The pending-request card on `/stations` shows **"X wants to talk to Y"**, states
+what approval grants, and states what it does not — no room, and no widening of anyone's
+broadcast reach. Approving also opens the private conversation immediately when both stations are
+staffed, so it no longer costs a pairing code to use a link a human already approved.
+
+**Why the screen changed.** It was not a wording problem. `PendingStationRequests` never selected
+`from_station` or `to_station` — columns that have been on the table since migration 0012 — so the
+console could not name who was asking or who they wanted to reach. An operator approved two link
+requests on 2026-08-13 and said afterwards that he had not been told what he was approving; he
+was right, and the screen could not have told him.
+
+**Opening the channel is best-effort and never fails the approval.** Both stations must be
+staffed for a channel to exist, and one may not be. The link is still recorded and
+`comm_open_channel` materialises it later; the flash message says which of the two happened.
+
+### The console can explain a refused token again
+
+**What changes.** A token refused for mixing scope families now says why. It previously rendered
+a literal `%s`.
+
+**Why.** Two flash messages added in 3.10.0 used `%s`, and substitution here is `{0}`-style.
+The mechanism was correct — the token was properly refused — and the operator learned nothing,
+which for a message whose entire purpose is to explain a refusal means the deliverable was the
+part that failed. Every argument-bearing flash key in every locale is now covered by a test.
+
+
 ## 3.10.0
 
 ### Ken now sends a keepalive ping on idle MCP streams — it previously sent NOTHING
