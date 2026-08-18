@@ -284,10 +284,15 @@ with a curious operator and still finds no use is a stronger signal than one nob
       (the Retire strings, and the four in `ea4443c`); the rest of the appendix's prose section is
       still live. Three verified by hand today, all operator- or session-facing:
       `docs/STATIONS.md:878` documents a `merge_into?` parameter on `station_task_add` that appears
-      **zero** times in `internal/`; the same table gives `station_task_defer(ids[], until, reason)`
-      while `taskDeferIn` takes a single `task_id`; and **`stations.vault*` has 19 keys in English
-      and ZERO in Spanish and French**, so a non-English operator sees raw keys where the vault's
-      warnings should be. What is left is therefore prose AND one-sidedness, not one-sidedness. The rule
+      **zero** times in `internal/` — and the FROZEN live surface says it too
+      (`internal/stationserver/stationserver.go:529`, `types.go:197` both offer to "merge"), so a
+      doc-only strike would leave the promise pinned into every session at connect; and the same
+      table gives `station_task_defer(ids[], until, reason)` while `taskDeferIn` takes a single
+      `task_id`. *(A third example stood here — `stations.vault*` having 19 English keys and none in
+      Spanish or French — and it is **no longer true**: all three bundles carry 19, translated in
+      `0c0f687` (3.10.0). It was left standing for a day. The checklist tracking "text that asserts a
+      control that does not exist" had become an instance of its own class; found by the
+      2026-08-18 sweep, not by re-reading.)* What is left is therefore prose AND one-sidedness, not one-sidedness. The rule
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of
       what was found here.
@@ -523,6 +528,14 @@ are H1 (no agent-initiable private path), H2 (file exchange is channel-only), H3
 revocation), H4 (`station_block` is dead), H5 (unbound endpoints have no address).
 
 Batches 3 and 4 dissolve H2, H3 and H4. Batch 5 dissolves H1 and H5.
+
+**That sentence is a forecast, and as of 2026-08-18 two of the three have not happened.** **H2** is
+still open — `attachment` is still channel-shaped, and `grep -c scope internal/comm/file.go`
+returns `0`, so the `scope_id` seam migration 0010 cut and backfilled has never been used; the item
+sits unticked in Batch 3 because Vlad ruled on 2026-08-17 that it ships alone. **H4** is still open —
+`station_block` is neither wired nor deleted; it was deferred into Batch 5, and Batch 5 closed
+without deciding it. Read the sentence as *what these batches are for*, not as a status. (Found by
+the 2026-08-18 sweep; indexed in `PARKING-LOT.md`.)
 
 > **Vlad recorded a target architecture on 2026-08-18 — see
 > [TARGET-ARCHITECTURE.md](TARGET-ARCHITECTURE.md).** It changes NOTHING here, deliberately: the

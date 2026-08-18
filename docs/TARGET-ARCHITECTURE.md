@@ -102,8 +102,17 @@ wrong thing on the way past.
 
 ## 7. Observed problems this destination would have to solve
 
-Everything below was *found*, not proposed. Each is already recorded in its own place; this is
-the index, so that the analysis starts from evidence.
+Everything below was *found*, not proposed. **The complete index is `docs/PARKING-LOT.md`** — 152
+entries swept from `FINISHING.md`, the audits and briefs, every `internal/**` code comment, the
+`docs/` tree and every migration, then filtered against the tree to drop what has since been fixed.
+**50 of them bear on this destination.** What follows is the shape of them; the file is the evidence.
+
+**The single most consequential fact in that index, and it was not in this document before the
+sweep:** `oauth_grant.scope` is written on every grant, echoed to the client, listed in the console
+— and consulted by nothing. `internal/mcpserver/auth.go:200` builds the principal from a hardcoded
+literal (`read | write-draft | propose`) and discards `op.Scope`. So OAuth today **cannot express
+`comm` or `station` even if the surfaces accepted it**. Every route to §2's "OAuth is the only
+mechanism" passes through that one line.
 
 **Provisioning is where it actually breaks.**
 
@@ -157,7 +166,14 @@ the index, so that the analysis starts from evidence.
   registers mid-flight.
 
 **Text that described controls Ken did not have** — the class that propagates fastest, and the one
-this project has paid for most often. Collected in `FINISHING.md`; the pattern is the point.
+this project has paid for most often. **33 entries**, the largest single group in the index. Six
+documents still sell OAuth as an optional feature gated by `KEN_OAUTH_ENABLED`, a variable deleted
+in 2.0.0. `AI-INTEGRATION.md` — the document `README` points agents at — tells every AI *"You cannot
+open a channel"*, which stopped being true when stations shipped, and covers stations nowhere at all.
+
+And the sweep caught the class eating its own tail: the `FINISHING.md` item **whose subject is text
+asserting controls that do not exist** contained a claim that was itself no longer true. Corrected
+in the same commit as the index.
 
 ---
 
@@ -166,6 +182,12 @@ this project has paid for most often. Collected in `FINISHING.md`; the pattern i
 When the current work is finished, this is the input to the conversation Vlad asked for: **do we
 get there by adding and modifying, or was the re-implementation right?** Answering it needs the
 requirements in §2–§4 held exactly as he stated them, the distance in §5 measured rather than
-recalled, and the evidence in §7 counted rather than remembered.
+recalled, and the evidence in §7 counted rather than remembered — which is now possible, because
+`docs/PARKING-LOT.md` counts it.
+
+One entry in that index deserves naming here, because it is the question in miniature. **A full
+re-implementation was declined once, and the decision recorded its own revisit point: after Batch
+5.** Batch 5 closed on 2026-08-18. The condition has been met, by the record, independently of
+anything said since.
 
 Until then it changes nothing.
