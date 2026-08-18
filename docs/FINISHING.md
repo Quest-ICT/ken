@@ -524,6 +524,13 @@ revocation), H4 (`station_block` is dead), H5 (unbound endpoints have no address
 
 Batches 3 and 4 dissolve H2, H3 and H4. Batch 5 dissolves H1 and H5.
 
+> **Vlad recorded a target architecture on 2026-08-18 — see
+> [TARGET-ARCHITECTURE.md](TARGET-ARCHITECTURE.md).** It changes NOTHING here, deliberately: the
+> agreement is still no new features until this list is closed. It is written down so that
+> finishing does not lose it, and because three items below now point somewhere he has said he
+> does not want to go. **That tension is recorded there and resolved after this list, not during
+> it.**
+
 ## Batch 6 — what the Batch 5 decisions make into work  `[ ]`
 
 The decisions are made; this is what they cost. **The order is load-bearing.**
