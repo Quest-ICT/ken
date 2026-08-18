@@ -584,9 +584,26 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
       **Ship the better approval surface with it**: ken-prod-ops recorded that Vlad approved two
       link requests on 2026-08-13 *without being told what he was approving*. The consent gate
       works; the consent was uninformed, and that is the half worth fixing.
-- [ ] **P2 — `comm_send{to_station:"X"}`, authorised by the existing link.** A new scope prefix
-      beside `ch:` / `r:` / `b:`, a `membersOfScope` arm, and reply/sequence numbering per pair.
+- [x] **P2 — `comm_send{to_station:"X"}`, authorised by the existing link** — *unreleased*. A new scope
+      prefix beside `ch:` / `r:` / `b:`, a `membersOfScope` arm, and reply/sequence numbering per pair.
       This is the one that makes `comm_open_channel` redundant, which is slice 7's actual goal.
+      Shipped as specified: `p:<a>|<b>` with the ids sorted, members derived from the scope's own
+      name, one ascending sequence per pair.
+
+      **It needed a migration the plan did not anticipate** — comm **0015**, `station_link_mirror`.
+      `comm.Store` has no `ken.db` handle by construction, so the approved link has to be projected
+      to be checkable inside the writing transaction, exactly as room membership is.
+      **Rule 4 was read against its stated reason** — *"a rollback must never discard behaviour
+      fixes along with a data rewrite"* — and this migration performs no data rewrite: it creates one
+      empty table no prior binary references, so a rollback over it discards nothing. That is a
+      different case from Batch 3's `attachment` restructure, which rewrites a live table. **Flagged
+      for Vlad rather than assumed silently**; if he wants it split, the schema half ships alone
+      first and the code follows.
+
+      Authorising off the CHANNEL row was considered and rejected: 0008 already snapshots the
+      authorising pair, and 3.11.0 opens a channel at approval — but that channel needs both
+      stations staffed, and `proxmox-servers` proves that case is real. The link is the decision;
+      the channel is one way of spending it.
 - [ ] **D — station key authenticates `/comm/mcp`.** AFTER the migration. Two things must land in
       the same commit or it ships a lie: `retired_at` is checked only by `AuthenticateStationKey`,
       so "Retire this key" would silently not sever messaging; and `/comm/mcp` never re-derives

@@ -427,6 +427,21 @@ func runServe(args []string) {
 		} else {
 			log.Printf("COMM: room mirror rebuilt — %d room(s) at roster epoch %d", len(rows), epoch)
 		}
+		// AND THE STATION-LINK MIRROR, for the identical reason and with a sharper
+		// consequence: it gates `comm_send{to_station}`, so an empty one at boot means
+		// every station-addressed message is refused with "no approved link joins you"
+		// — an answer that names a human decision as missing when the decision is
+		// sitting in ken.db, intact. Separate log line rather than folded into the one
+		// above: two projections that failed independently must be readable as two.
+		if pairs, err := st.LinkMirrorRows(bootCtx); err != nil {
+			log.Printf("COMM: station-link mirror read failed, station-addressed sends will refuse until the console is touched: %v", err)
+		} else if epoch, err := st.RosterEpoch(bootCtx); err != nil {
+			log.Printf("COMM: roster epoch read failed: %v", err)
+		} else if err := commStore.ReplaceLinkMirror(bootCtx, pairs, epoch); err != nil {
+			log.Printf("COMM: station-link mirror rebuild failed: %v", err)
+		} else {
+			log.Printf("COMM: station-link mirror rebuilt — %d link(s) at roster epoch %d", len(pairs), epoch)
+		}
 
 		commDeps := commserver.Deps{
 			Comm: commStore, Store: st, TokenLimiter: rlToken, Metrics: reg,

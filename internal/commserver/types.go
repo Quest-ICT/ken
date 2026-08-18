@@ -80,6 +80,12 @@ type channelsOut struct {
 	// and a caller must be able to tell those apart. That distinction is the entire
 	// reason this is a result field rather than a new tool.
 	Rooms []channelRoomView `json:"rooms"`
+	// Pairs is every station an approved link lets you write to directly. Same rule as
+	// Rooms and for the same reason — never omitempty, never nil — and the same lesson
+	// behind it: a conversation this tool cannot enumerate is one whose mail a session
+	// only finds by accident. Built from the SAME mirror the send path authorises
+	// against, so it can never name a peer that comm_send would then refuse.
+	Pairs []channelPairView `json:"pairs"`
 	// BroadcastPending is mail sent to you by a station broadcasting to every room it
 	// shares with you. It gets its own number because broadcast has nowhere else to live:
 	// a channel has a channel row and a room has a room row, but `b:<sender>` appears in
@@ -127,15 +133,39 @@ type channelRoomView struct {
 	AddressWith string `json:"address_with" jsonschema:"how to send here: pass this room_id as to_room, not as channel_id"`
 }
 
+// channelPairView is one station-to-station conversation an approved link authorises.
+//
+// It has NO id of its own, and that absence is the feature: there is nothing to create,
+// nothing to look up and nothing that expires. The address is the peer.
+type channelPairView struct {
+	StationID string `json:"station_id"`
+	// Name, resolved here for the same reason room members are: a session reports to a
+	// human in words, and "quest-infra" is a sentence a human can act on where a
+	// sixteen-character id is not.
+	Name    string `json:"name"`
+	Pending int    `json:"pending" jsonschema:"messages waiting for you from this station, counted without delivering them"`
+	// AddressWith is the literal call shape, carried for the reason the room view states
+	// and this case repeats: knowing a conversation exists and not knowing the verb is
+	// the failure that made a working station believe rooms were receive-only.
+	AddressWith string `json:"address_with" jsonschema:"how to send here: pass this station_id as to_station"`
+}
+
 type sendIn struct {
 	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
 	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// EXACTLY ONE of these three. channel_id is the pairing-code channel; to_room is a
-	// room you are in; to_room:"all" broadcasts to every station you share a room with.
+	// room you are in; to_room:"all" broadcasts to every station you share a room with;
+	// to_station is the peer station an approved link joins you to.
 	// No longer `required` individually — the handler enforces the choice, because
 	// "exactly one of" is not something a JSON schema can say.
-	ChannelID        string `json:"channel_id,omitempty" jsonschema:"a pairing-code channel. Exactly one of channel_id or to_room"`
-	ToRoom           string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of, or the literal \"all\" to reach every station you share a room with. Exactly one of channel_id or to_room"`
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"a pairing-code channel. Exactly one of channel_id, to_room or to_station"`
+	ToRoom    string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of, or the literal \"all\" to reach every station you share a room with. Exactly one of channel_id, to_room or to_station"`
+	// ToStation is the addressing mode that needs no pairing code and no channel: a
+	// human approved a LINK between the two stations, and that approval is the standing
+	// permission. Takes the station id rather than the name because a name is a human
+	// label that can be edited, while the id is what the link and every delivery carry —
+	// comm_channels and comm_directory both hand back the id to use.
+	ToStation        string `json:"to_station,omitempty" jsonschema:"a station_id an approved link joins you to — no pairing code, no channel. Get it from comm_channels (pairs) or comm_directory. Exactly one of channel_id, to_room or to_station"`
 	Body             string `json:"body" jsonschema:"required; the message text. Atomic and size-capped — there is no multi-part send"`
 	RequiresResponse bool   `json:"requires_response,omitempty" jsonschema:"optional; marks the message as owing a reply and arms a reply deadline"`
 	ReplyTo          string `json:"reply_to,omitempty" jsonschema:"optional; message_id of the request you are answering. Must be a message addressed to you on this channel"`
@@ -222,6 +252,10 @@ type messageView struct {
 	ReplyDeadlineAt  string    `json:"reply_deadline_at,omitempty"`
 	File             *fileView `json:"file,omitempty" jsonschema:"present when this message carries a file offer"`
 	Kind             string    `json:"kind" jsonschema:"'message' = a peer wrote it. 'status' = a LEGACY notice Ken wrote about a message of yours before 3.4.0; nothing creates these any more — what became of what you sent now arrives in the poll result's 'notices' array instead. A peer cannot forge a status message"`
+	// ReplyToStation appears only on station-addressed mail and says how to answer it:
+	// pass this as to_station. Absent on channel, room and broadcast traffic, so its
+	// presence is itself the routing answer.
+	ReplyToStation string `json:"reply_to_station,omitempty" jsonschema:"present on station-addressed mail: answer with comm_send{to_station:<this>}"`
 }
 
 type pollOut struct {

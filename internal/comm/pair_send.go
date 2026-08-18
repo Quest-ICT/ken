@@ -1,0 +1,204 @@
+package comm
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"strings"
+)
+
+// Station-addressed send — Batch 6 item P2, and the piece that makes
+// `comm_open_channel` redundant.
+//
+// THE SHAPE, IN ONE SENTENCE: a human approves a link between two stations, and from
+// then on either side writes to the other by NAME, with no pairing code, no channel row
+// and no second human step.
+//
+// It is a third entry point beside Send and SendToRoom rather than a flag on either,
+// for the reason room_send.go already states: each authorises differently, and folding
+// them together means a chain of conditionals in which the wrong branch is a security
+// answer given for the wrong reason. A channel authorises by MEMBERSHIP OF A PAIR a
+// pairing code created; a room by membership of a set a human filled; a pair scope by
+// an APPROVED LINK. Everything after addressing — numbering, idempotency, backpressure,
+// the message and its deliveries — is insertMessageWithDeliveries, shared by all three.
+
+// ErrNotAStation refuses a pair send from an endpoint with no station.
+//
+// Named, and specific about the remedy, because the alternative is the worst error this
+// surface can give: "you are not linked to X" would send a reader looking for a missing
+// human approval when the actual problem is that this session has no station identity to
+// be linked WITH. Two very different next actions.
+var ErrNotAStation = errors.New("to_station addresses one station from another, and this endpoint is not bound to a station. " +
+	"Bind it first (comm_bind with a station binding voucher), or address this message with channel_id instead")
+
+// ErrNotLinked refuses a pair send with no approved link behind it.
+//
+// SAYS WHAT TO DO, because the remedy is a human action and the session cannot take it:
+// station_link_request files the ask, and a human approves it at the console. A session
+// that reads only "not linked" tends to retry, which produces nothing forever.
+var ErrNotLinked = errors.New("no approved link joins you to that station, so nothing was sent. " +
+	"A link is a human decision: file station_link_request and ask your human to approve it at Ken's /stations console. " +
+	"A link that was REVOKED looks identical here, which is intended — revocation is meant to be one click")
+
+// ErrSelfSend refuses a station addressing itself.
+//
+// A pair scope between one station and itself has one member, so the message would be
+// written, delivered to the sender, and returned by its own next poll — a loop that
+// looks like the peer answering.
+var ErrSelfSend = errors.New("that is your own station — a message to yourself would come back as mail from a peer")
+
+// ErrUnknownStation separates "no such station" from "not linked to it".
+//
+// The mirror holds links between ACTIVE stations only, so both failures arrive as an
+// absent row and the temptation is to answer both with ErrNotLinked. They need
+// different sentences: a typo in a station id is fixed by the session in one call,
+// while an unlinked peer needs a human. Distinguished by asking whether ANY link
+// mentions the id, which is the only evidence comm.db has.
+var ErrUnknownStation = errors.New("no station with that id appears in any approved link here — check the id with comm_directory, " +
+	"which lists the stations you can address by name")
+
+// SendToStation delivers one body to another station over the pair scope their link
+// authorises.
+//
+// ONE recipient, so it is a "channel" in every sense a caller cares about — but the
+// conversation is addressed by WHO rather than by WHICH ROW, and it exists the moment
+// the human approves rather than the moment two sessions both happen to be online. That
+// second difference is the one P3 discovered the hard way: a link approved while
+// neither side was staffed materialised no channel, and the permission the human
+// granted had nothing to spend it on until somebody re-ran the dance.
+//
+// THE RECIPIENT HAS NO ENDPOINT ATTACHED, exactly as a room delivery has none. A pair
+// message is addressed to a POST; which connection reads it is decided at poll time, so
+// a successor session inherits the conversation without anything being re-pointed.
+func (s *Store) SendToStation(ctx context.Context, ep *Endpoint, toStation, body string, opts SendOpts) (*Message, error) {
+	if len(body) > s.lim().MaxBodyBytes {
+		return nil, ErrTooLarge
+	}
+	toStation = strings.TrimSpace(toStation)
+	if toStation == "" {
+		return nil, ErrUnknownStation
+	}
+
+	undelivered := s.lim().UndeliveredTTLSeconds
+	if undelivered <= 0 || undelivered < s.lim().MessageTTLSeconds {
+		undelivered = DefaultLimits().UndeliveredTTLSeconds
+	}
+	ttl := clampTTL(opts.TTLSeconds, undelivered)
+	clampedFrom := 0
+	if opts.TTLSeconds > 0 && opts.TTLSeconds != ttl {
+		clampedFrom = opts.TTLSeconds
+	}
+
+	var out *Message
+	err := s.tx(ctx, func(t *sql.Tx) error {
+		senderParty, err := endpointParty(ctx, t, ep.ID)
+		if err != nil {
+			return err
+		}
+		fromStation, ok := strings.CutPrefix(senderParty, "s:")
+		if !ok || fromStation == "" {
+			return ErrNotAStation
+		}
+		if fromStation == toStation {
+			return ErrSelfSend
+		}
+
+		// AUTHORISATION, INSIDE THE WRITING TRANSACTION. Not because the race is
+		// likely — a human revoking a link during this request is rare — but because
+		// the alternative is a rule that holds by timing, and the one thing revocation
+		// must be is reliable.
+		linked, err := areLinked(ctx, t, fromStation, toStation)
+		if err != nil {
+			return err
+		}
+		if !linked {
+			// Which of the two failures it is, decided from evidence rather than
+			// guessed. A station that appears in no link at all is far more likely a
+			// mistyped id than a revoked relationship.
+			var known bool
+			if err := t.QueryRowContext(ctx,
+				`SELECT EXISTS(SELECT 1 FROM station_link_mirror WHERE station_a=?1 OR station_b=?1)`,
+				toStation).Scan(&known); err != nil {
+				return err
+			}
+			if !known {
+				return ErrUnknownStation
+			}
+			return ErrNotLinked
+		}
+
+		out, err = s.insertMessageWithDeliveries(ctx, t, insertSpec{
+			Scope:       pairScope(fromStation, toStation),
+			ChannelRow:  nil,
+			Sender:      ep.ID,
+			SenderParty: senderParty,
+			Recipients:  []scopeMember{{Party: stationParty(toStation)}},
+			Body:        body,
+			TTLSeconds:  ttl,
+			Opts:        opts,
+			Kind:        "message",
+			Endpoint:    ep,
+		})
+		if out != nil {
+			out.TTLClampedFrom, out.Recipients = clampedFrom, 1
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PairConversation is one linked peer and what is waiting on that conversation.
+type PairConversation struct {
+	StationID string
+	Scope     string
+	Pending   int
+}
+
+// PairsFor lists the pair conversations this endpoint's station can address.
+//
+// LISTED EVEN WHEN EMPTY OF MAIL, because the list answers "who may I write to", which
+// is the question a session actually has — and answering it from the same mirror the
+// send path consults means the listing can never name a peer the send would refuse.
+//
+// An endpoint with no station gets an empty list rather than an error: comm_channels is
+// a read, and an unbound session asking what it can reach deserves an honest "nothing by
+// station" instead of a failed call.
+func (s *Store) PairsFor(ctx context.Context, ep *Endpoint) ([]PairConversation, error) {
+	var station sql.NullString
+	if err := s.R.QueryRowContext(ctx,
+		`SELECT station_id FROM endpoint WHERE id=?`, ep.ID).Scan(&station); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !station.Valid || station.String == "" {
+		return nil, nil
+	}
+	peers, err := s.LinkedStations(ctx, station.String)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PairConversation, 0, len(peers))
+	for _, peer := range peers {
+		scope := pairScope(station.String, peer)
+		// Counted per scope with the SAME predicate the other pending counters use, so
+		// a pair row cannot disagree with pending_total the way the four channel/room
+		// counters already do (Batch 4, still open).
+		var pending int
+		if err := s.R.QueryRowContext(ctx, `
+SELECT COUNT(*)
+  FROM delivery d
+  JOIN message m ON m.id = d.message_row
+ WHERE m.scope_id = ? AND d.party_key = ? AND d.state = 'queued'
+   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+			scope, stationParty(station.String)).Scan(&pending); err != nil {
+			return nil, err
+		}
+		out = append(out, PairConversation{StationID: peer, Scope: scope, Pending: pending})
+	}
+	return out, nil
+}

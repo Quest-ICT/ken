@@ -15,6 +15,61 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **`comm_send{to_station:"<id>"}` — a session writes to a linked station by name, with no pairing
+  code, no channel and nobody required to be online.** Batch 6 item P2, and the change that makes
+  `comm_open_channel` redundant, which is what COMM v2's slice 7 is actually for.
+
+  **Why not simply materialise a channel when the link is approved** — which is what 3.11.0 already
+  does. A channel needs **both stations staffed at the moment of creation**, and one may not be:
+  `proxmox-servers` held a station and no endpoint for five days, so an approval in that window
+  created nothing and the permission the human granted had nothing to spend it on until somebody
+  re-ran the dance. A pair conversation is derived from the two station ids, so it exists from the
+  click and is reachable whether or not either side is connected.
+
+  - **The scope is `p:<a>|<b>` with the ids SORTED**, so both directions name one place: one
+    ascending sequence covers the exchange, one backpressure budget, and a cumulative ack that
+    means what it says. Its members are its own name — both ids are in the string — so addressing
+    needs no table at all.
+  - **Authorisation is the approved link, checked inside the writing transaction.** `comm.Store` has
+    no `ken.db` handle by construction, so `station_link` is projected into `station_link_mirror`
+    (comm migration **0015**, additive) under the same rule as the room mirror: **stale, never
+    authoritative**. Nothing in comm.db decides who may talk; it copies a decision. Lose comm.db and
+    every link is still in `ken.db`, and the next boot rebuilds the projection.
+  - **Approving a link refreshes the mirror, and so does revoking one** — the revoke refresh runs
+    *before* the channel sweep that can fail, because a revocation the mirror never learns about is
+    a permission the human believes they withdrew.
+  - `comm_channels` grows a `pairs` array — every station a link lets you address, with what is
+    waiting and the literal call shape — built from the same mirror the send authorises against, so
+    it can never name a peer the send would then refuse. Station-addressed mail carries
+    `reply_to_station`, so a recipient never has to reverse-engineer the reply address from a scope
+    string.
+  - Refusals are separated on purpose: an **unbound endpoint** is told to bind (it has no identity to
+    be linked *with*), an **unknown station id** is told to check `comm_directory`, and an
+    **unlinked** one is told a human must approve. Three different next actions; one error would have
+    sent two of the three looking in the wrong place.
+
+  Eight mutants were run against the clauses that carry this. Four survived the first pass and are
+  the reason four tests exist: dropping `omitempty` from `to_station` (the exact shape item B failed
+  on — it would have made the field *required* and broken every channel and room send on every
+  running session), deleting the mirror refresh from link approval, deleting it from revocation, and
+  removing the state filter from `LinkMirrorRows` so revoked links kept authorising. All eight are
+  killed now.
+
+### Fixed
+
+- **`comm_send`'s "exactly one address" check counts instead of comparing a pair.** The two-address
+  version was a boolean identity that read cleanly and does not generalise: with a third address it
+  admits `channel_id` **and** `to_station` together — precisely the both-were-passed case it exists
+  to reject.
+
+### Known gap
+
+- **Releases 3.8.0 through 3.11.0 carry a heading here and no entry.** Their narrative exists, in
+  full, in the release commit messages and `docs/UPGRADING.md` — but not in the file this project's
+  own preamble says it must be in, four releases running. Recorded rather than backfilled silently.
+
 ## [3.11.0] — 2026-08-18
 
 ## [3.10.0] — 2026-08-17

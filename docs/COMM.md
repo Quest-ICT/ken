@@ -265,6 +265,24 @@ gives it to both sessions; each calls `comm_join` with it, and the channel exist
   tool that creates a room, adds a member, or joins one — those are console-only, deliberately, and
   broadcast reaches exactly the union of rooms a human already put this station in. So the capability
   is still *withheld* rather than requested politely, which is the property C7 exists to preserve.
+- **STATION ADDRESSING refines it a third time, and this is the one that retires the channel.**
+  `comm_send{to_station:"<id>"}` writes to a station an approved **link** joins you to. There is no
+  code, no channel row, no both-sides-join and no expiry — the conversation is the *relationship*,
+  and it exists from the moment the human clicks approve. **The invariant is untouched, and by the
+  same mechanism as rooms**: the only way to become linked is a human approving a request an agent
+  filed, so the capability is still withheld rather than requested politely. What it removes is the
+  last case where a human decision was recorded and then still cost a second human step to spend.
+  - **Why this and not "materialise a channel on approval"** — which is what `comm_open_channel`
+    and, since 3.11.0, link approval already do. A channel needs **both stations staffed** at the
+    moment of creation. `proxmox-servers` held a station and no endpoint for five days, so an
+    approval during that window materialised nothing and the granted permission had nothing to
+    spend it on. A pair scope is derived from the two ids, so it needs neither side to be online.
+  - **The scope is `p:<a>|<b>` with the ids SORTED**, so both directions name one place, one
+    ascending sequence covers the exchange, and a cumulative ack means what it says. Members are
+    the scope's own name; the mirrored link is consulted only for *permission*.
+  - **Trade-off accepted:** comm.db carries a projection of `station_link` (`station_link_mirror`),
+    with the same rule as the room mirror — **stale, never authoritative**. Lose comm.db and every
+    link is still in `ken.db`; the next boot rebuilds it.
 - **What a room is NOT:** there is no scrollback and no late-join replay. Membership is snapshotted
   at send, so a station added today sees nothing sent yesterday, and a station removed keeps the mail
   it was already sent — the audience was decided when each message was written, and rewriting it
@@ -341,7 +359,13 @@ all — the approval moved from the conversation to the relationship, it did not
 owner identity (`space_id` plus the authorizing human actor) from day 1; a channel whose two
 endpoints do not share an owner is rejected.
 
-**Message** — one atomic body plus an envelope: server-assigned per-channel sequence, sender
+**Pair conversation** — the private exchange between two **linked** stations, addressed with
+`comm_send{to_station}`. It has **no row and no id of its own**: the scope `p:<a>|<b>` is derived
+from the two station ids, sorted. Nothing creates it, nothing expires it, and neither side needs to
+be connected for the other to write. It is what a channel is for, minus the channel — and it is the
+shape slice 7 retires the channel *into*.
+
+**Message** — one atomic body plus an envelope: server-assigned per-scope sequence, sender
 endpoint, `requires_response`, optional `reply_to`, delivery count, timestamps, size, content hash.
 
 ---
@@ -611,8 +635,8 @@ ken token add --actor comm-dev --scopes comm
 | `comm_join` | Join a channel using a human-minted pairing code. Both sides call it. |
 | `comm_open_channel` | Open a channel with a station your human has already **linked** to yours — no pairing code. Refused without an approved link. |
 | `comm_bind` | Bind an endpoint you already have to a station, keeping its id, secret and channels. For a session that registered before it began staffing a station. |
-| `comm_channels` | List this endpoint's channels and their state. |
-| `comm_send` | Send one atomic message; optional `requires_response` / `reply_to` / idempotency key. |
+| `comm_channels` | List this endpoint's channels, rooms and **pairs** (the stations a link lets it address), each with what is waiting. |
+| `comm_send` | Send one atomic message, addressed by `to_station` (a linked station — no code, no channel), `channel_id`, or `to_room`; optional `requires_response` / `reply_to` / idempotency key. |
 | `comm_poll` | Long-poll for unacknowledged messages across all of this endpoint's channels. |
 | `comm_ack` | Mark a message processed (or acknowledge cumulatively up to a sequence). |
 | `comm_file_offer` | Offer a file: a same-host rendezvous, or a one-time upload grant (`comm-file`). |

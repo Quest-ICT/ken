@@ -328,6 +328,11 @@ func (a *app) handleStationLinkRevoke(w http.ResponseWriter, r *http.Request, se
 
 	pair := link.NameA + " / " + link.NameB
 	closed := 0
+	// P2: WITHDRAW THE PAIR SCOPE FIRST, before anything that can fail. Every exit path
+	// below returns, and one of them returns on an error — so a refresh placed after the
+	// channel sweep would be skipped exactly when the sweep is having trouble, leaving a
+	// revoked link still authorising sends. This is a no-op when COMM is off.
+	a.syncRoomMirror(r)
 	if a.comm == nil {
 		// COMM is off in THIS server, which says nothing about comm.db: open channels
 		// outlive the flag. Do not claim none were open — that is a fact nobody
@@ -394,6 +399,13 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 			// worth recording; comm_open_channel materialises it later when someone shows
 			// up. Failing the human's decision over a messaging detail would be the wrong
 			// thing to fail on.
+			//
+			// P2: THE MIRROR REFRESH IS THE PART THAT ALWAYS WORKS. Opening a channel
+			// needs both stations staffed; authorising the PAIR SCOPE needs neither,
+			// because a pair conversation is addressed by name and has no row to
+			// create. So the approval lands as a usable permission even when nobody is
+			// connected — which is the case P3 had to log and move past.
+			a.syncRoomMirror(r)
 			flash := "flash.link_approved"
 			if a.comm != nil {
 				epA, errA := a.comm.LiveEndpointForStation(r.Context(), l.StationA)

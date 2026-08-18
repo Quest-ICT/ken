@@ -43,7 +43,62 @@ const (
 	// place anyone can reply INTO: a reply goes to a room or to a station, which is the
 	// honest shape of "I told everyone" — the answer comes back to somewhere specific.
 	scopePrefixBroadcast = "b:"
+	// A PAIR scope is the private conversation between two stations, authorised by the
+	// station_link a human approved (Batch 6, P2). 'p:<a>|<b>', ids SORTED, so both
+	// directions name the same place and one ascending sequence covers the exchange.
+	//
+	// This is the shape that makes comm_open_channel redundant. A channel is a
+	// conversation a PAIRING CODE created and a row records; a pair scope is a
+	// conversation the LINK already authorised, which needs no row and no code — the
+	// permission is the relationship, and the address is derived from it.
+	scopePrefixPair = "p:"
+	// The separator between the two ids. PRINTABLE on purpose: station ids are
+	// randBase62(16) so '|' cannot occur inside one, and a control character here would
+	// be invisible in every log, grep and dashboard that ever has to read a scope.
+	// (The project has paid for that mistake once already.)
+	pairSep = "|"
 )
+
+// orderStations puts two station ids in the canonical order the link tables use.
+//
+// ken.db's station_link carries CHECK (station_a < station_b) and orders every read
+// through its own orderPair; this is the same rule restated where comm can reach it.
+// Both halves must agree or a pair authorises in one direction and refuses in the
+// other, which reads as a permissions bug on whichever side asked second.
+func orderStations(x, y string) (string, string) {
+	if x > y {
+		return y, x
+	}
+	return x, y
+}
+
+// pairScope is the scope id for the conversation between two stations.
+func pairScope(x, y string) string {
+	a, b := orderStations(x, y)
+	return scopePrefixPair + a + pairSep + b
+}
+
+// pairStationsOfScope returns the two station ids inside a 'p:' scope.
+//
+// Refuses a scope with an empty half or no separator rather than returning one id and
+// a blank: a blank station id would match nothing and produce a delivery addressed to
+// "s:", which is a party no endpoint can ever hold — mail that vanishes without error.
+func pairStationsOfScope(scope string) (string, string, bool) {
+	rest, ok := strings.CutPrefix(scope, scopePrefixPair)
+	if !ok {
+		return "", "", false
+	}
+	a, b, found := strings.Cut(rest, pairSep)
+	if !found || a == "" || b == "" {
+		return "", "", false
+	}
+	return a, b, true
+}
+
+// PairScopeFor is the exported form, for callers assembling a listing rather than a
+// send. Same ordering rule, so a scope built here and one built by the send path are
+// the same string.
+func PairScopeFor(x, y string) string { return pairScope(x, y) }
 
 // channelScope is the scope id for a two-party channel.
 func channelScope(channelID string) string { return scopePrefixChannel + channelID }
@@ -108,6 +163,16 @@ type scopeMember struct {
 func membersOfScope(ctx context.Context, t *sql.Tx, scope string) ([]scopeMember, error) {
 	if roomID, ok := roomIDOfScope(scope); ok {
 		return roomMembers(ctx, t, roomID)
+	}
+	// A PAIR's members are its NAME. Both station ids are in the scope string, so this
+	// arm needs no table at all — which is the whole reason a pair conversation costs no
+	// row. What the string cannot say is whether the two are PERMITTED to talk; that is
+	// the link mirror's job and it is checked by the send path, not here. Keeping the
+	// two apart matters: this function answers "who would receive this", and answering
+	// it for an unauthorised pair is what lets the caller refuse with a useful error
+	// instead of a silent empty audience.
+	if a, b, ok := pairStationsOfScope(scope); ok {
+		return []scopeMember{{Party: stationParty(a)}, {Party: stationParty(b)}}, nil
 	}
 	chID, ok := channelIDOfScope(scope)
 	if !ok {

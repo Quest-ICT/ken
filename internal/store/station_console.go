@@ -514,6 +514,17 @@ UPDATE station_request
  WHERE request_id=? AND state='pending'`, actorID, requestID); err != nil {
 		return nil, err
 	}
+	// THE ROSTER EPOCH MOVES. A link changes who a message can reach, which is the same
+	// kind of fact as a room membership change and is carried by the same counter — the
+	// station-link mirror in comm.db is refreshed alongside the room mirror and stamped
+	// with this generation. Without the bump a consumer comparing epochs concludes it is
+	// looking at the roster it already had, and a link approved a second ago reads as
+	// absent. Same argument, verbatim, as the archive path in stations.go.
+	if _, err := tx.ExecContext(ctx, `
+UPDATE comm_roster_epoch SET epoch = epoch + 1,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -556,7 +567,40 @@ UPDATE station_link SET state='revoked', revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	// The epoch moves here too, and this is the direction that matters most: the pair
+	// scope a revoked link authorised must stop accepting sends, and it stops when the
+	// caller refreshes the mirror. A revocation the mirror never learns about is a
+	// permission the human believes they withdrew.
+	return s.bumpRosterEpoch(ctx)
+}
+
+// LinkMirrorRows lists the pairs comm.db should treat as authorised: ACTIVE links whose
+// BOTH stations are active.
+//
+// The state filter is the whole point and it matches AreStationsLinked exactly — a
+// dormant link (either station archived) authorises nothing until it is restored. Two
+// readers of one rule eventually drift; if a third appears, this predicate is the one to
+// share.
+func (s *Store) LinkMirrorRows(ctx context.Context) ([][2]string, error) {
+	rows, err := s.R.QueryContext(ctx, `
+SELECT l.station_a, l.station_b
+  FROM station_link l
+  JOIN station a ON a.station_id = l.station_a
+  JOIN station b ON b.station_id = l.station_b
+ WHERE l.state='active' AND a.state='active' AND b.state='active'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var a, b string
+		if err := rows.Scan(&a, &b); err != nil {
+			return nil, err
+		}
+		out = append(out, [2]string{a, b})
+	}
+	return out, rows.Err()
 }
 
 // StationLinkByID resolves one link with both station names, so the caller can name
