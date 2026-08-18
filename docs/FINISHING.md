@@ -490,7 +490,7 @@ were refuted on details — one would not have compiled — which is the argumen
 
 ---
 
-## Batch 5 — the two decisions that are not code  `[ ]`
+## Batch 5 — the two decisions that are not code  `[x]`  *(both DECIDED 2026-08-18; see [DECISIONS-BATCH5.md](DECISIONS-BATCH5.md))*
 
 These block slice 7 and are **Vlad's**, not a session's. Listed here so they are visible rather
 than implicit.
@@ -501,10 +501,14 @@ than implicit.
 > listing a decision as pending is not the same as making it decidable, and these had been
 > pending while a week of relevant evidence accumulated elsewhere.
 
-- [ ] **The credential model.** ken-prod-ops proposes authenticating a bound endpoint with the
+- [x] **The credential model** — DECIDED 2026-08-18: **B now, D later.** The endpoint pair moves
+      out of tool arguments into a request header immediately; the station-key model follows once
+      the unbound endpoints are resolved. Original framing: ken-prod-ops proposes authenticating a bound endpoint with the
       STATION KEY and deriving the endpoint, which removes the loose credential file entirely.
       Vlad's posture — *every session must hold a station, always* — is what makes it possible.
-- [ ] **How two sessions get a private conversation.** Today `comm_open_channel` is the only
+- [x] **How two sessions get a private conversation** — DECIDED 2026-08-18: **P3, then P2; dm
+      rooms declined.** Approving a link creates the pair conversation; `comm_send{to_station}`
+      is authorised by that link. Original framing: Today `comm_open_channel` is the only
       agent-initiable path; rooms need a human at the console. Whatever replaces it must not
       widen broadcast reach, because room membership feeds `to_room:"all"` and an agent must not
       be able to enlarge its own audience.
@@ -519,6 +523,35 @@ are H1 (no agent-initiable private path), H2 (file exchange is channel-only), H3
 revocation), H4 (`station_block` is dead), H5 (unbound endpoints have no address).
 
 Batches 3 and 4 dissolve H2, H3 and H4. Batch 5 dissolves H1 and H5.
+
+## Batch 6 — what the Batch 5 decisions make into work  `[ ]`
+
+The decisions are made; this is what they cost. **The order is load-bearing.**
+
+- [ ] **Migrate the six unbound endpoints onto stations.** OPERATOR work, not code: three are
+      idle (0 seats, last seen 5–14 days ago) and can be revoked; three are live and need
+      stations plus a rebind, one of them holding **seven channel seats**. Until this is done,
+      "every session holds a station, always" is an aspiration and no station-key option is safe.
+- [ ] **B — move the endpoint pair to a request header.** Closes the transcript exposure
+      ken-prod-ops measured. Needs the per-call `withCaller` wrap that `/comm/mcp` lacks; the
+      other two surfaces already have it. Keep the arguments accepted-and-ignored for one release
+      so running sessions are not broken.
+- [ ] **P3 — approving a link creates the pair conversation.** Nearly free, no new agent verb.
+      **Ship the better approval surface with it**: ken-prod-ops recorded that Vlad approved two
+      link requests on 2026-08-13 *without being told what he was approving*. The consent gate
+      works; the consent was uninformed, and that is the half worth fixing.
+- [ ] **P2 — `comm_send{to_station:"X"}`, authorised by the existing link.** A new scope prefix
+      beside `ch:` / `r:` / `b:`, a `membersOfScope` arm, and reply/sequence numbering per pair.
+      This is the one that makes `comm_open_channel` redundant, which is slice 7's actual goal.
+- [ ] **D — station key authenticates `/comm/mcp`.** AFTER the migration. Two things must land in
+      the same commit or it ships a lie: `retired_at` is checked only by `AuthenticateStationKey`,
+      so "Retire this key" would silently not sever messaging; and `/comm/mcp` never re-derives
+      the caller per call, which is harmless only while the per-call secret pins identity.
+- [-] **dm rooms** — declined 2026-08-18. Not because they are wrong, but because
+      `room_member_mirror` carries no `kind` and a missed audience filter widens broadcast
+      invisibly. Revisit only if the mirror gains a kind for another reason.
+
+---
 
 ---
 

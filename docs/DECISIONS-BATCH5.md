@@ -1,7 +1,16 @@
 # Batch 5 — the two decisions that are not code
 
-> **These are Vlad's, not a session's**, and they block COMM v2 slice 7. This document exists so
-> they can be settled from evidence rather than from whoever describes them last.
+> **DECIDED 2026-08-18.** Both were Vlad's and both are now made; the reasoning below is kept as
+> the record of what they were decided ON. They blocked COMM v2 slice 7, which is now unblocked.
+>
+> | | decision |
+> |---|---|
+> | **Credential model** | **B now, D later.** Move the endpoint pair out of tool arguments into a request header immediately. Adopt the station-key model afterwards, once the unbound endpoints are resolved. |
+> | **The six unbound endpoints** | **Migrate them onto stations first.** "Every session holds a station, always" becomes an enforced fact rather than a posture before anything depends on it. |
+> | **Private conversation** | **P3, then P2. dm rooms DECLINED.** Approving a link creates the pair conversation; then `comm_send{to_station}` authorised by that link. The dm-room container is refused because a missed audience filter widens broadcast invisibly. |
+>
+> **The order is not a preference — each step removes a blocker for the next.** The endpoint
+> migration gates D; D does not gate B; P3 does not gate P2 but makes it cheaper to justify.
 >
 > **Assembled 2026-08-17** against `v3.9.0`, by four independent readers with an adversarial
 > verifier behind each, plus direct verification of the load-bearing facts. **Where a claim is
