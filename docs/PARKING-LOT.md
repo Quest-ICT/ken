@@ -53,6 +53,15 @@ literal. Whatever the answer turns out to be, it goes through that line.
 ---
 ## A. Bears on the destination in §2–§4
 
+> **2026-08-19 — one entry outranks this index and is not in it.** Vlad named the recurring
+> credential friction on "pull comm" as a thing the new-feature work must solve, and it was
+> measured rather than asserted: **six occurrences across five sessions**, one of them costing
+> **10 h 43 m** to a working channel, and **352 copies of a single endpoint secret on disk**,
+> 323 of them tool-call arguments in one session transcript. It is written up as
+> `TARGET-ARCHITECTURE.md` **§4b**. Several entries below are that problem in different clothes —
+> the endpoint pair travelling as arguments, `api_token` having no expiry, the credential a
+> session must store and re-read, and the reissue path that must stay console-only.
+
 **50 entries.** Each of these is either a mechanism the target architecture removes, a control it needs and Ken does not have, or a fact that constrains how it could be reached.
 
 ### Observed defects — behaviour that is wrong, not merely unfinished
