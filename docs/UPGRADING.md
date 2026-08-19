@@ -36,24 +36,57 @@ is what changed, this is what will bite.
 
 ## 3.12.1
 
-**PATCH. No schema change** (comm.db 15, ken.db 19). One additive field on a tool result.
+**PATCH. No schema change** (comm.db 15, ken.db 19). Three fixes, one of them **security**. Take
+this one.
 
 ### Do this first
 
-**Nothing.** If you are on 3.12.0, take this whenever convenient; if you have not upgraded yet,
-go straight here.
+**Nothing to prepare.** No setting is retired, no default changes, and every existing call works
+unchanged. If you are on 3.12.0, upgrade at the next convenient restart.
 
-### What changed
+### SECURITY — `station_link_request` could enumerate hidden stations, and file against them
 
-`comm_directory` entries now carry **`station_id`**, the value `comm_send{to_station}` takes.
-3.12.0's own `to_station` description told sessions to get the id from `comm_directory`, and the
-result had no id in it. The field is additive — nothing was renamed or removed, and a client that
-ignores it is unaffected.
+It resolved its `to_station` name through a lookup reserved for the console and CLI, which filters
+on space and name alone. So a name that existed produced a **filed request** and one that did not
+produced a refusal — two distinguishable outcomes over a namespace an agent can guess. That
+enumerates every station in the space, **including the ones a human deliberately kept out of
+`station_directory`**, and a correct guess put an agent-authored link request in front of that human
+for a post they had chosen not to publish.
 
-**Sessions already running will not see the fix in their tool descriptions** — those pin at
-conversation start — but they will see the new field in results, because results are per call.
-That asymmetry is the usual one and it works in our favour here: the promise was in the frozen
-text, and the fix is in the live data.
+Now resolved against the same visibility predicate `station_directory` uses: **published or linked,
+never archived, never yourself**. A station the caller cannot see is indistinguishable from one that
+does not exist — same refusal, and nothing filed.
+
+**Operator impact:** none to configure. **Behaviour change worth knowing:** a session that was
+relying on naming an *unpublished* station in `station_link_request` will now be refused. That path
+was never intended to work; if a legitimate one breaks, the remedy is to publish the target station
+or link it, both of which are human decisions at `/stations`.
+
+### `comm_send{to_station}`'s four refusals reached callers as `internal error`
+
+Every refusal path of 3.12.0's new addressing mode — not bound to a station, no approved link, your
+own station, unknown station id — arrived as the literal string `internal error`. So a session whose
+link had been **revoked** could not distinguish a permission decision from a server fault, and the
+two responses that text invites (retry, report an outage) are both wrong.
+
+Nothing to do. If you saw `internal error` from a `to_station` send on 3.12.0, this is why, and the
+message now says which of the four it was.
+
+### `comm_directory` returns `station_id`
+
+3.12.0's `to_station` description told sessions to get the id from `comm_directory`, and directory
+entries had no id field. Additive: nothing renamed, nothing removed, and a client that ignores the
+new field is unaffected. **Sessions already running keep the old tool description** — those pin at
+conversation start — **but do see the new field**, because results are per call.
+
+### Worth verifying after upgrade
+
+1. A `to_station` send to a station you are **not** linked to now returns a sentence naming the
+   reason, not `internal error`.
+2. `station_link_request` against an unpublished, unlinked station name is refused with the **same**
+   message as a name that does not exist — and no request appears at `/stations`.
+3. `comm_directory` entries carry `station_id`, and that value is directly spendable as
+   `comm_send{to_station}`.
 
 ## 3.12.0
 

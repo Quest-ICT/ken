@@ -544,11 +544,13 @@ the 2026-08-18 sweep; indexed in `PARKING-LOT.md`.)
 > does not want to go. **That tension is recorded there and resolved after this list, not during
 > it.**
 
-## Batch 6 — what the Batch 5 decisions make into work  `[~]`  *(one item left, and it is Vlad's)*
+## Batch 6 — what the Batch 5 decisions make into work  `[x]`  *(closed 2026-08-19)*
 
 The decisions are made; this is what they cost. **The order is load-bearing.**
 
-- [ ] **Migrate the unbound endpoints onto stations.** OPERATOR work, not code — the voucher is
+- [x] **Migrate the unbound endpoints onto stations** — **DONE TO THE SCOPE VLAD SET, 2026-08-19.**
+      **ep 6 only.** His words: *"The others I can live without them until Ken is redesigned (which
+      should happen soon enough)."* OPERATOR work, not code — the voucher is
       redeemed by the session itself and the console is Vlad's. **Step-by-step procedure:
       [RUNBOOK-ENDPOINT-MIGRATION.md](RUNBOOK-ENDPOINT-MIGRATION.md)** (2026-08-19), verified
       against the tree rather than the docs. Its headline finding is the answer to why this has
@@ -581,6 +583,35 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
 
       Also settled: one per-machine comm token, one endpoint per project, so the posture means
       **one station per PROJECT**, not per machine.
+
+      **WHAT LANDED**, verified by ken-prod-ops against the live database:
+
+          endpoint_id   pCKgl1bYYLtJSdN5VhCfFS
+          station_id    JiJm1FZK9Afs08u0  (quest-infra)
+          bound_by_key  ey1RghLoiRsZ      — the ai-actor key, not a console-minted one
+          bound_at      2026-08-19T22:19:07.310Z
+          control       ep 13 and ep 14 still station_id NULL
+
+      It bound first try because the actor check was verified BEFORE the instruction was written
+      rather than after it failed. At bind time ep 6 held 87 deliveries received, 94 sent and 6
+      open channels — the 2026-08-18 figures in the table above had already moved.
+
+      **THE COST OF THE SCOPE, recorded once so it is not rediscovered as a surprise.** ep 10, 13,
+      14, 18 and 19 stay unbound. They remain in the shape where, if the exposed comm token
+      `jMl4ZNH4q73E` is ever revoked, their channels ORPHAN PERMANENTLY instead of passing to a
+      successor — binding is what converts an orphan into an inheritance. Nothing about it is
+      urgent and it needs no code; it is a consequence of a decision, sitting in the open.
+
+      **And the set grew again while this was being planned**: `ep 19 runway-dev` registered after
+      the table above was written — 1 open seat, 7 sent, 6 received. Third time this month. **"The
+      set is not closed" is not a caveat about this migration, it is a property of the system**,
+      and any future plan shaped like "migrate the N endpoints" inherits it.
+
+      **A trap for anyone following [RUNBOOK-ENDPOINT-MIGRATION.md](RUNBOOK-ENDPOINT-MIGRATION.md)**,
+      which was not Ken's: the session's first attempt was refused by its own client-side
+      permission classifier before `station_binding_voucher` ran, and it correctly declined to work
+      around it. **Allow `station_binding_voucher` AND `comm_bind` together, before starting** — a
+      block between the two calls burns the five-minute voucher.
 - [x] **B — move the endpoint pair to a request header** — **3.11.0** (`85538ec`). Closes the transcript exposure
       ken-prod-ops measured. Needs the per-call `withCaller` wrap that `/comm/mcp` lacks; the
       other two surfaces already have it. Keep the arguments accepted-and-ignored for one release
