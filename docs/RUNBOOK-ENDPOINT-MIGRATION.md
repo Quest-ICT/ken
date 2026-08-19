@@ -12,7 +12,7 @@
 
 # Runbook — Batch 6, migrate the five unbound endpoints onto stations
 
-Production: `https://kb.quest.mx` (3.12.0). Repo: `/home/me/CC/ken-public`.
+Applies to a running deployment on 3.12.0 or later. Paths below are relative to the repository root; `<ken-host>` stands for your deployment's base URL.
 
 ---
 
