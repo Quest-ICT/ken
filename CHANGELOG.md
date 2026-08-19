@@ -17,6 +17,26 @@ same change — never "docs later".
 
 ## [3.12.1] — 2026-08-19
 
+### Security
+
+- **`station_link_request` could enumerate every station in the space by name — including the ones
+  deliberately withheld from the directory — and a correct guess FILED A REQUEST.** It resolved its
+  `to_station` argument through `StationByName`, whose own contract reserves it for the console and
+  CLI: *"a name is not an address, and no agent-facing path may route by it (S3)."* That query
+  filters on space and name alone — no `published`, no `state` — so a name that existed produced a
+  filed request and one that did not produced a refusal. Two distinguishable outcomes over a
+  guessable namespace is an oracle.
+
+  **The filed request is the worse half.** Guessing an unpublished station's name put an
+  agent-authored ask in front of its human — the unsolicited approach publication exists to
+  prevent. Publication is human-only precisely so an agent cannot advertise itself into anyone's
+  view; this let it do the reverse and reach into a view it had been excluded from.
+
+  Now resolved through `StationByNameVisibleTo`, the same predicate `station_directory` lists by:
+  published **or** linked, never archived, never yourself. A station the caller cannot see is
+  indistinguishable from one that does not exist — same refusal, and nothing filed. `StationByName`
+  is unchanged, because the console legitimately resolves any name in its space.
+
 ### Fixed
 
 - **`comm_directory` now returns `station_id`, which 3.12.0's own tool description already
