@@ -544,7 +544,7 @@ the 2026-08-18 sweep; indexed in `PARKING-LOT.md`.)
 > does not want to go. **That tension is recorded there and resolved after this list, not during
 > it.**
 
-## Batch 6 — what the Batch 5 decisions make into work  `[ ]`
+## Batch 6 — what the Batch 5 decisions make into work  `[~]`  *(one item left, and it is Vlad's)*
 
 The decisions are made; this is what they cost. **The order is load-bearing.**
 
@@ -604,10 +604,29 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
       authorising pair, and 3.11.0 opens a channel at approval — but that channel needs both
       stations staffed, and `proxmox-servers` proves that case is real. The link is the decision;
       the channel is one way of spending it.
-- [ ] **D — station key authenticates `/comm/mcp`.** AFTER the migration. Two things must land in
-      the same commit or it ships a lie: `retired_at` is checked only by `AuthenticateStationKey`,
-      so "Retire this key" would silently not sever messaging; and `/comm/mcp` never re-derives
-      the caller per call, which is harmless only while the per-call secret pins identity.
+- [-] **D — station key authenticates `/comm/mcp`** — **DEFERRED into the design analysis,
+      2026-08-19 (Vlad's ruling).** Not dropped and not built. Its stated precondition was *every
+      session holds a station*, which stopped being true when he stopped using Station; and it adds
+      a SECOND static-credential path to `/comm/mcp` in the same week §4b of
+      [TARGET-ARCHITECTURE.md](TARGET-ARCHITECTURE.md) recorded that a session should hold no secret
+      at all. It is the analysis's to settle alongside the rest of the credential story.
+
+      **One of its two prerequisites landed without being noticed**: `/comm/mcp` now re-derives its
+      caller per call — item B's `withEndpointCred` wrap did it in 3.11.0
+      (`internal/commserver/commserver.go:1113`).
+
+      **The other prerequisite was never a live defect, and this checklist's own wording caused a
+      false alarm on 2026-08-19.** The sentence read *"`retired_at` is checked only by
+      `AuthenticateStationKey`, so 'Retire this key' **would** silently not sever messaging"* — a
+      CONDITIONAL about D's world. It was read as present tense, reported to ken-prod-ops as a
+      console control that lies, and retracted the same hour. What is actually true, verified in
+      three places: `RetireStationKey`'s contract states *"Retire severs the STATION surface and
+      spares COMM; Revoke severs both"*; `IsStationKeyRevoked` tests `revoked_at` alone, matching
+      it; and `stations.key_retire_help` says *"COMM endpoints it already bound keep working. Use
+      Revoke instead only when you also want those severed"* — **in English, Spanish AND French**.
+      Doc, code and UI agree. The prerequisite is real only IF D ships, because D makes the station
+      key the messaging credential, at which point sparing COMM stops being a clean split and
+      becomes a lie.
 - [-] **dm rooms** — declined 2026-08-18. Not because they are wrong, but because
       `room_member_mirror` carries no `kind` and a missed audience filter widens broadcast
       invisibly. Revisit only if the mirror gains a kind for another reason.
