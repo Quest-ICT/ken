@@ -584,7 +584,7 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
       **Ship the better approval surface with it**: ken-prod-ops recorded that Vlad approved two
       link requests on 2026-08-13 *without being told what he was approving*. The consent gate
       works; the consent was uninformed, and that is the half worth fixing.
-- [x] **P2 — `comm_send{to_station:"X"}`, authorised by the existing link** — *unreleased*. A new scope
+- [x] **P2 — `comm_send{to_station:"X"}`, authorised by the existing link** — **3.12.0** (`98579f1`). A new scope
       prefix beside `ch:` / `r:` / `b:`, a `membersOfScope` arm, and reply/sequence numbering per pair.
       This is the one that makes `comm_open_channel` redundant, which is slice 7's actual goal.
       Shipped as specified: `p:<a>|<b>` with the ids sorted, members derived from the scope's own

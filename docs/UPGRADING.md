@@ -34,6 +34,66 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.12.0
+
+**MINOR. comm.db moves 14 → 15; ken.db unchanged at 19.** One new addressing mode, one new
+empty table, and no behaviour removed.
+
+### Do this first
+
+**Nothing is required.** No setting is retired, no default changes, and every existing way of
+sending a message works exactly as before. If you are still on 3.10.0, read 3.11.0's section
+below as well — that one carries the endpoint-header change, and it is the one worth not
+skipping.
+
+### Migration 0015 — `station_link_mirror`
+
+Creates one table and writes no rows to any existing one. It is a projection of `ken.db`'s
+`station_link`, populated at boot and refreshed whenever a link is approved or revoked.
+
+- **Rollback is safe.** No prior binary references this table, so a rollback to 3.11.0 or
+  earlier leaves an unused empty table and discards nothing. This is why the migration and its
+  code ship together despite `FINISHING.md`'s Rule 4: that rule exists to stop a rollback
+  discarding behaviour fixes **along with a data rewrite**, and there is no data rewrite here.
+- **Two new log lines at boot**, beside the room-mirror ones:
+  `COMM: station-link mirror rebuilt — N link(s) at roster epoch E`. If instead you see
+  *"station-link mirror read failed, station-addressed sends will refuse until the console is
+  touched"*, that is the honest failure: `ken.db` is fine and the projection is empty, so
+  `to_station` refuses rather than misdirecting. Touching any link in the console rebuilds it.
+- **N will be the number of ACTIVE links between two ACTIVE stations.** A revoked link or one
+  whose station is archived is deliberately absent — a dormant link authorises nothing.
+
+### New: `comm_send{to_station:"<station_id>"}`
+
+A session writes to a station an approved link joins it to. No pairing code, no channel row,
+and **neither side needs to be online**. The scope is `p:<a>|<b>` with the ids sorted, so both
+directions share one conversation, one ascending sequence and one backpressure budget.
+
+- `comm_channels` grows a **`pairs`** array — never omitted, never null, exactly like `rooms`.
+  `[]` means "no links"; an **absent** key means an older build, and a caller must be able to
+  tell those apart.
+- Station-addressed mail carries **`reply_to_station`**, so a recipient never has to parse a
+  scope string to answer.
+- **`channel_id` is empty on this mail**, as it already is for room and broadcast traffic.
+  Anything that assumes every message has a channel id will see a blank here.
+
+### What has NOT changed
+
+- `comm_open_channel` and the pairing-code flow work exactly as before. This release makes them
+  redundant; it does not retire them. That is COMM v2 slice 7, still unscheduled.
+- Approving a link still materialises a channel when both stations are staffed (3.11.0's
+  behaviour). It is now a convenience rather than the only way to spend the approval.
+- The endpoint-credential headers from 3.11.0 are unchanged, and arguments still work.
+
+### Worth verifying after upgrade
+
+1. The two mirror lines at boot, with a link count you can check against the `/stations` page.
+2. A `to_station` send between two linked stations **with the recipient offline** — that is the
+   case this release exists for, and the one a channel could never serve.
+3. That an UNLINKED pair is refused, and that revoking a link stops the next send. Revocation
+   is the operation that must work; the console refreshes the mirror before it does anything
+   that can fail, precisely so a failure cannot leave the permission standing.
+
 ## 3.11.0
 
 ### BEFORE YOU UPGRADE: re-run your MCP teardown census first, if you want a clean 3.10.0 window

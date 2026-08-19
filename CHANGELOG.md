@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.12.0] — 2026-08-19
+
 ### Added
 
 - **`comm_send{to_station:"<id>"}` — a session writes to a linked station by name, with no pairing
