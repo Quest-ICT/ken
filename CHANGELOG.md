@@ -41,6 +41,14 @@ same change — never "docs later".
 - A comment claiming the directory's co-member set was "keyed on station id" — it is keyed on the
   resolved name, and always was.
 
+- **`comm_bind`'s own description told sessions to pass a binding voucher to `comm_register`, which
+  has not accepted one for releases.** `registerIn` carries `label` and `host_hint` and nothing
+  else, and the struct's own comment records that the voucher was deliberately removed from
+  registration — so the instruction pointed at a capability the same file documents as retired. A
+  session following it sends an unknown argument and is rejected by the SDK before any handler
+  runs. Found while writing the endpoint-migration runbook, in the one tool that migration depends
+  on.
+
 ## [3.12.0] — 2026-08-19
 
 ### Added

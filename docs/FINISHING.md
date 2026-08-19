@@ -549,7 +549,12 @@ the 2026-08-18 sweep; indexed in `PARKING-LOT.md`.)
 The decisions are made; this is what they cost. **The order is load-bearing.**
 
 - [ ] **Migrate the unbound endpoints onto stations.** OPERATOR work, not code — the voucher is
-      redeemed by the session itself and the console is Vlad's. **Shape settled 2026-08-18**, and
+      redeemed by the session itself and the console is Vlad's. **Step-by-step procedure:
+      [RUNBOOK-ENDPOINT-MIGRATION.md](RUNBOOK-ENDPOINT-MIGRATION.md)** (2026-08-19), verified
+      against the tree rather than the docs. Its headline finding is the answer to why this has
+      felt laborious: **no console control binds an endpoint to a station** — there is no route,
+      no form and no i18n string for it, so every one of the five is a two-party dance between the
+      console and the session on that machine. **Shape settled 2026-08-18**, and
       it is smaller than the original six suggested: two were revoked on 2026-08-17, and
       `endpoint.label` turned out to name the PROJECT, which neither of us had been reading.
 

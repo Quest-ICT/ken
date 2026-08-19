@@ -268,8 +268,8 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		Description: "Bind the endpoint you ALREADY have to a station, without re-registering. Use this when " +
 			"your human has just set stations up and you are a session that was already running: you keep your " +
 			"endpoint_id, your secret and every channel you are in, and your station gains your inbox — so a " +
-			"later session can take over from you. Get the voucher from station_binding_voucher on /station. " +
-			"If you are registering for the first time, pass the voucher to comm_register instead.",
+			"later session can take over from you. Get the voucher from station_binding_voucher on /station, " +
+			"and redeem it HERE — comm_register does not take a voucher and registration never binds.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bindIn) (*mcp.CallToolResult, bindOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
