@@ -372,13 +372,25 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		// something to a group, and "prod-ops, infra, dev" answers that question where
 		// three opaque ids do not.
 		myParty := "s:" + ep.StationID
+		// name -> station id, gathered while the party keys are still raw, so the
+		// room-co-member entries below can carry an address like every other entry.
+		roomMateID := map[string]string{}
 		if rooms, err := d.Comm.RoomsFor(ctx, myParty); err != nil {
 			return nil, directoryOut{}, commError(err)
 		} else {
 			for _, r := range rooms {
 				dr := directoryRoom{RoomID: r.RoomID, Pending: r.Pending, Members: []string{}}
 				for _, pk := range r.Members {
-					dr.Members = append(dr.Members, partyLabel(ctx, d, pk))
+					label := partyLabel(ctx, d, pk)
+					dr.Members = append(dr.Members, label)
+					// Keep the ADDRESS beside the label. A room co-member is listed below
+					// as reachable, and 3.12.0 shipped a to_station description promising
+					// this tool hands back an id — so listing one without its id would
+					// make the promise false for exactly the entries D4 was added to
+					// include.
+					if id, ok := strings.CutPrefix(pk, "s:"); ok && id != "" {
+						roomMateID[label] = id
+					}
 				}
 				out.Rooms = append(out.Rooms, dr)
 			}
@@ -397,8 +409,11 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		// stayed empty while it sat in a room with two others, until a human approved
 		// two link requests it did not need.
 		//
-		// Collected as a SET keyed on station id, so a station that is both linked and a
-		// room co-member appears once carrying both reasons rather than twice.
+		// Collected as a SET keyed on the resolved NAME — which is what the members list
+		// holds — so a station that is both linked and a room co-member appears once
+		// carrying both reasons rather than twice. (This comment said "keyed on station
+		// id" until 3.12.1 and never was; the id now travels alongside in roomMateID,
+		// gathered where the party keys are still raw.)
 		roomMates := map[string]bool{}
 		for _, r := range out.Rooms {
 			for _, name := range r.Members {
@@ -411,6 +426,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			seen[st.Name] = true
 			e := directoryEntry{
 				Name:               st.Name,
+				StationID:          st.StationID,
 				Purpose:            st.Purpose,
 				SelfDescribedAbout: st.SelfDescribedAbout,
 				SelfDescribedTags:  st.SelfDescribedTags,
@@ -441,7 +457,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 				continue
 			}
 			out.Stations = append(out.Stations, directoryEntry{
-				Name: name, ReachableVia: []string{"room"},
+				Name: name, StationID: roomMateID[name], ReachableVia: []string{"room"},
 			})
 		}
 		return nil, out, nil

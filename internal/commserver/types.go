@@ -164,7 +164,9 @@ type sendIn struct {
 	// human approved a LINK between the two stations, and that approval is the standing
 	// permission. Takes the station id rather than the name because a name is a human
 	// label that can be edited, while the id is what the link and every delivery carry —
-	// comm_channels and comm_directory both hand back the id to use.
+	// comm_channels and comm_directory both hand back the id to use. (comm_directory did
+	// NOT, for the whole of 3.12.0: the sentence was written and the field was not added.
+	// Fixed in 3.12.1 by making the sentence true rather than by narrowing it.)
 	ToStation        string `json:"to_station,omitempty" jsonschema:"a station_id an approved link joins you to — no pairing code, no channel. Get it from comm_channels (pairs) or comm_directory. Exactly one of channel_id, to_room or to_station"`
 	Body             string `json:"body" jsonschema:"required; the message text. Atomic and size-capped — there is no multi-part send"`
 	RequiresResponse bool   `json:"requires_response,omitempty" jsonschema:"optional; marks the message as owing a reply and arms a reply deadline"`
@@ -381,7 +383,23 @@ type directoryIn struct {
 // station says about itself and not something a human vouched for — which is the
 // whole reason those columns are named that way in the schema.
 type directoryEntry struct {
-	Name               string   `json:"name"`
+	Name string `json:"name"`
+	// StationID is the ADDRESS. Added 3.12.1 because 3.12.0's own to_station description
+	// said "Get it from comm_channels (pairs) or comm_directory" — and this struct had no
+	// id in it, so half that sentence was false the day it shipped, frozen into every
+	// session that connected after it.
+	//
+	// Two ways to make it true; this is the better one. comm_channels lists only stations
+	// already linked, so a session that learns of a peer HERE could see it and not address
+	// it — which is the same incompleteness the ReachableVia comment below records paying
+	// for once already. A directory whose job is "who may I talk to" must also answer
+	// "how".
+	//
+	// Not a probing risk: the caller is already permitted to see this entry (published or
+	// linked), and the id is on every delivery such a peer sends them. What stays
+	// unprobeable is the NAME->existence question errStationUnavailable protects, which is
+	// a different surface and untouched.
+	StationID          string   `json:"station_id"`
 	Purpose            string   `json:"purpose,omitempty"`
 	SelfDescribedAbout string   `json:"self_described_about,omitempty"`
 	SelfDescribedTags  []string `json:"self_described_tags,omitempty"`

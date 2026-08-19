@@ -84,6 +84,19 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	tokA, credA := register("pair-a", alpha)
 	tokB, credB := register("pair-b", beta)
 
+	// A THIRD STATION REACHABLE ONLY VIA A ROOM. The directory builds room co-members at a
+	// SEPARATE construction site from linked stations (the D4 catch-up path), and a
+	// mutation run proved that site could drop the address while every other test stayed
+	// green. Two paths, two chances to ship an entry nobody can address.
+	gamma, err := st.CreateStation(ctx, 1, "gamma", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.ReplaceRoomMirror(ctx,
+		map[string][]string{"room-x": {"s:" + alpha.StationID, "s:" + gamma.StationID}}, 1); err != nil {
+		t.Fatal(err)
+	}
+
 	reqID, err := st.CreateStationLinkRequest(ctx, 1, "tok", alpha.StationID, beta.StationID, "because", false)
 	if err != nil {
 		t.Fatal(err)
@@ -251,6 +264,65 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	}
 	if msg := textOf(res); strings.Contains(msg, "to_station") {
 		t.Errorf("the refusal blames to_station on a room-addressed send: %s", msg)
+	}
+
+	// THE DIRECTORY HANDS BACK A SPENDABLE ADDRESS.
+	//
+	// 3.12.0's own to_station description said "Get it from comm_channels (pairs) or
+	// comm_directory" and directoryEntry had no id field, so half that sentence was false
+	// the day it shipped — and frozen into every session that connected after it. The fix
+	// was to make the sentence true, so this asserts the ROUND TRIP rather than the field:
+	// read an id out of comm_directory and spend it on comm_send, with nothing in between.
+	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{Name: "comm_directory", Arguments: map[string]any{}})
+	if err != nil || res.IsError {
+		t.Fatalf("comm_directory failed: %v %s", err, textOf(res))
+	}
+	var dir struct {
+		Stations []struct {
+			Name      string `json:"name"`
+			StationID string `json:"station_id"`
+			Linked    bool   `json:"linked"`
+		} `json:"stations"`
+	}
+	if err := json.Unmarshal([]byte(textOf(res)), &dir); err != nil {
+		t.Fatalf("directory result did not parse: %v", err)
+	}
+	var fromDirectory string
+	var sawRoomMate bool
+	for _, e := range dir.Stations {
+		if e.Name == "gamma" {
+			sawRoomMate = true
+		}
+		if e.StationID == "" {
+			t.Errorf("directory entry %q carries no station_id — a directory whose job is "+
+				"\"who may I talk to\" must also answer \"how\"", e.Name)
+		}
+		if e.Name == "beta" {
+			fromDirectory = e.StationID
+		}
+	}
+	if fromDirectory == "" {
+		t.Fatal("the linked peer is absent from comm_directory, or carries no id")
+	}
+	if !sawRoomMate {
+		t.Fatal("the room co-member is absent from comm_directory — without it the id " +
+			"assertion above never visits the second construction site and proves nothing about it")
+	}
+	if fromDirectory != beta.StationID {
+		t.Fatalf("directory gave station_id %q for beta, want %q", fromDirectory, beta.StationID)
+	}
+	// SPEND IT. Uses the value the directory returned, never the one the test already
+	// held — otherwise this proves the field exists and not that it is the right value.
+	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{
+		Name: "comm_send",
+		Arguments: map[string]any{"to_station": fromDirectory, "body": "addressed from the directory",
+			"idempotency_key": "p2-from-directory"},
+	})
+	if err != nil {
+		t.Fatalf("an id taken from comm_directory was rejected by comm_send: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("an id taken from comm_directory was refused by comm_send: %s", textOf(res))
 	}
 
 	// THE ARITHMETIC. Two addresses together must be REFUSED — this is the case the old

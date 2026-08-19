@@ -34,6 +34,27 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.12.1
+
+**PATCH. No schema change** (comm.db 15, ken.db 19). One additive field on a tool result.
+
+### Do this first
+
+**Nothing.** If you are on 3.12.0, take this whenever convenient; if you have not upgraded yet,
+go straight here.
+
+### What changed
+
+`comm_directory` entries now carry **`station_id`**, the value `comm_send{to_station}` takes.
+3.12.0's own `to_station` description told sessions to get the id from `comm_directory`, and the
+result had no id in it. The field is additive — nothing was renamed or removed, and a client that
+ignores it is unaffected.
+
+**Sessions already running will not see the fix in their tool descriptions** — those pin at
+conversation start — but they will see the new field in results, because results are per call.
+That asymmetry is the usual one and it works in our favour here: the promise was in the frozen
+text, and the fix is in the live data.
+
 ## 3.12.0
 
 **MINOR. comm.db moves 14 → 15; ken.db unchanged at 19.** One new addressing mode, one new

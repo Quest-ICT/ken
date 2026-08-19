@@ -15,6 +15,32 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.12.1] — 2026-08-19
+
+### Fixed
+
+- **`comm_directory` now returns `station_id`, which 3.12.0's own tool description already
+  promised it did.** That release shipped `comm_send{to_station}` with the text *"Get it from
+  comm_channels (pairs) or comm_directory"* — and `directoryEntry` had no id field, so half the
+  sentence was false the day it shipped and **frozen into every session that connected after it**
+  (tool descriptions pin at conversation start). It is the class this project has paid for most
+  often: text asserting a capability that does not exist.
+
+  **Fixed by making the sentence true rather than by narrowing it.** `comm_channels` lists only
+  stations already *linked*, so a session that learned of a peer in the directory could see it and
+  not address it — the same incompleteness the directory's own `reachable_via` comment records
+  paying for once already ("*An incomplete answer from the tool whose job is completeness*"). Not a
+  probing risk: the caller is already permitted to see the entry, and the id rides on every
+  delivery such a peer sends them.
+
+  The id is filled at **both** construction sites — visible stations and the room-co-member
+  catch-up path. A mutation run proved the second could drop it with every other test still green,
+  so the end-to-end test now reads an id out of `comm_directory` and **spends it on `comm_send`**,
+  and covers a room-only peer as well as a linked one.
+
+- A comment claiming the directory's co-member set was "keyed on station id" — it is keyed on the
+  resolved name, and always was.
+
 ## [3.12.0] — 2026-08-19
 
 ### Added
