@@ -17,7 +17,7 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 1. **No new features until this list is finished.** Adding to a half-finished migration is what
    produced the recurring defects. Bug fixes are not features.
-2. **Every item is updated in the SAME COMMIT as the work.** This file can never be stale,
+2. **Every item AND the status header are updated in the SAME COMMIT as the work.** This file can never be stale,
    because letting it go stale is the failure it exists to prevent.
 3. **Release whenever it is convenient**, then ask ken-prod-ops to upgrade and verify, then
    **WAIT for their response before starting the next batch.** Their measurements have caught
@@ -33,12 +33,36 @@ afterwards. **A human should be able to open this file and know exactly where we
 | `[~]` | In progress right now |
 | `[x]` | Done — the release that shipped it is named |
 | `[-]` | Deliberately dropped — the reason is given |
+| `[>]` | **Deferred to a named later conversation** — NOT dropped, and the obligation survives |
+
+> `[>]` exists because `[-]` was being used for both. An item deferred under a mark that reads as
+> *disposed of* is how `station_block` disappeared into Batch 5's `[x]` and had to be rediscovered,
+> and Batch 6 reached `[x]` the same way. A batch may close over a `[-]`; it may **not** close over
+> a `[>]` without saying so in its header.
 
 ---
 
 ## Where we are today
 
-**Released: 3.9.0** (2026-08-17), **verified on production 2026-08-17T18:32Z** — the first
+**Released: 3.12.1** (2026-08-19). **Production is on 3.12.0**, verified by ken-prod-ops against
+the live databases; 3.12.1 was published at 23:21:08Z and its upgrade is in flight.
+
+**Batch 6 is CLOSED. This file is NOT.** Sixteen items remain open across Batches 1–4 — the list is
+in those batches and nothing rounds it up. Batch 6's last item, the endpoint migration, closed at
+**ep 6 only** by Vlad's scope decision on 2026-08-19.
+
+> **THIS SECTION WENT FOUR RELEASES STALE, and that is the finding worth keeping.** It said
+> "Released: 3.9.0 … Batch 4 is closed. Batch 5 is next" while 3.10.0, 3.11.0, 3.12.0 and 3.12.1
+> had all shipped. Every one of those four release commits EDITED this file — and none touched
+> this block. **Rule 2 was obeyed to the letter and the headline still rotted**, because the rule
+> is practised on CHECKBOXES and the narrative around them has no habit attached. That is a fifth
+> distinct failure mode, added to the four already recorded below.
+>
+> **Rule 2 now covers prose.** A release commit updates this section or it is not a release commit.
+
+### Previously
+
+**3.9.0** (2026-08-17), verified on production 2026-08-17T18:32Z — the first
 release in four to RUN migrations (comm.db 11→14, ken.db 18→19), and the check that carried the
 previous three inverted: three releases were verified by proving no migration had run, this one
 by proving exactly four had. Earlier `applied_at` rows byte-identical, `foreign_key_check` empty
@@ -53,7 +77,8 @@ and `integrity_check` ok on both databases.
 > through a migration that removed a table and rewrote two others.** They ran it undeclared on
 > purpose, because declaring first would have let them rationalise whatever appeared.
 
-**Batch 4 is closed.** Batch 5 is next and contains no code.
+**Batch 4 was closed here**, and at the time Batch 5 was next and contained no code. Both have
+since happened; see *Where we are today* above.
 
 Previously **3.8.0**, verified on production 2026-08-17T16:03Z — band clean on
 both databases, migrations 18/11 with original timestamps intact, and the `reply_overdue` fix
@@ -80,7 +105,22 @@ is identical between the tags).
 `CHANGELOG.md`'s `## [Unreleased]` section — it is the machine-conventional home and this line is
 prose that drifted from it within an hour of being written.
 
-> **This file has broken its own Rule 2 three times, and failed in a fourth way once.**
+> **This file has broken its own Rule 2 three times, failed in a fourth way once, and a FIFTH way
+was found on 2026-08-19 by an audit that checked every item and every narrative sentence against
+the tree.**
+
+**The fifth is the one worth changing behaviour over, because it is the only one Rule 2 as written
+cannot catch.** The release commits for 3.10.0, 3.11.0, 3.12.0 and 3.12.1 all edited this file and
+all obeyed Rule 2 — they ticked their items in the same commit as the work. None touched *Where we
+are today*, so for four consecutive releases the first thing a human read here was "Released:
+3.9.0 … Batch 5 is next", while Batch 5 had been decided and Batch 6 had opened, shipped three
+items and closed. **The habit protects checkboxes; every failure in that audit landed in the
+prose.** Rule 2 now says so explicitly.
+
+The audit also found this file wrong by UNDERSTATING completion for the first time (Batch 1's
+header claimed two open items against seventeen ticks), and found `[-]` doing double duty for
+"dropped" and "deferred" — which is how `station_block` vanished into a closed batch once already.
+`[>]` was added so the two cannot be confused again.
 > The second time was worse: two Batch 2
 > headline items sat open after being fixed in the same session that wrote them, and I only
 > caught it by READING the list instead of recalling it. The rule needs a habit attached —
@@ -103,7 +143,12 @@ prose that drifted from it within an hour of being written.
 
 ---
 
-## Batch 1 — ship what is already done  `[~]`  *(3.6.0, verified on production 2026-08-14T22:02Z; **two items still open**)*
+## Batch 1 — ship what is already done  `[x]`  *(3.6.0, verified on production 2026-08-14T22:02Z; the last two closed in 3.10.0)*
+
+> **This header said "two items still open" until 2026-08-19, and all seventeen were ticked.**
+> Noted because it is the first time this file has been wrong by UNDERSTATING completion — every
+> previous failure overstated it. A stale "not done" is cheaper than a stale "done", and it is
+> still a human reading a false sentence.
 
 No schema change. Everything named here shipped in 3.6.0 — but the last two items below were
 never done, so this batch is not closed.
@@ -125,7 +170,7 @@ never done, so this batch is not closed.
       and `docs/STATIONS.md` — which had **no banner anywhere** and asserted the opt-out in its
       status line — is corrected. *(Both found by peers: promo hit the contradiction while fixing
       the public site, prod established that STATIONS.md was the worse half.)*
-- [x] **The retired-switch sweep is finished** — **3.10.0**. `docs/DESIGN.md` carried two live
+- [x] **The retired-switch sweep is finished** — **3.10.0**, *with two escapes found on 2026-08-19 and one of them fixed the same day*. `docs/DESIGN.md` carried two live
       assertions plus a decision record explaining "why the switch survives"; `docs/COMM.md`'s status
       block and C2 heading carried two more. Every remaining mention in the docs now states the
       removal, sits inside a block banner-marked as history, or is a released CHANGELOG entry.
@@ -149,6 +194,20 @@ never done, so this batch is not closed.
 - [x] **Cut and release** — **3.6.0**, verified on production 2026-08-14T22:02Z. Superseded twice since: **3.7.0** (verified 2026-08-15T04:00Z) and **3.8.0** (released 2026-08-17, verification outstanding).
 
 ---
+
+      **THE SWEEP MISSED TWO, AND THE REASON IS THE REUSABLE PART.** It was greppable-by-variable-
+      name, so it found every mention of `KEN_COMM_ENABLED` and `KEN_STATION_ENABLED` and nothing
+      that describes the vanished switch WITHOUT NAMING IT. Both escapes are that shape:
+      `docs/MONITORING.md:72` told an operator, in the present tense, that a missing metric series
+      *"means the surface was turned off"* — on the page they open when something looks wrong, and
+      in a document this very item lists among those already fixed. Fixed 2026-08-19. The second is
+      comm migration 0012's *"unless KEN_STATION_ENABLED is set"*, which stands deliberately:
+      SQLite stores a migration's comment verbatim and editing an applied one makes a fresh install
+      differ from an upgraded deployment. It is recorded in `PARKING-LOT.md` instead.
+
+      **The lesson, since this is the fourth time this class has been declared finished:** a sweep
+      keyed on a SYMBOL cannot find the prose that describes the symbol's behaviour. Those need a
+      reader, or a differently-shaped search.
 
 ## Batch 2 — find out what is actually half-built  `[~]`  *(both surveys done; the findings they produced are still being worked)*
 
@@ -529,6 +588,18 @@ revocation), H4 (`station_block` is dead), H5 (unbound endpoints have no address
 
 Batches 3 and 4 dissolve H2, H3 and H4. Batch 5 dissolves H1 and H5.
 
+**THAT SENTENCE IS A FORECAST AND FOUR OF ITS FIVE CLAIMS HAVE NOT HELD. Read it as intent, never
+as status.** Corrected 2026-08-19, both halves this time — an earlier correction fixed only the
+Batch 3/4 half and left this one standing, which is the same mistake one paragraph apart.
+
+| blocker | forecast | actual, 2026-08-19 |
+|---|---|---|
+| H1 no agent-initiable private path | Batch 5 | **DISSOLVED** — P2 shipped in 3.12.0 (`internal/comm/pair_send.go`). It is still listed as a live blocker above; that list is what is stale, not this row. |
+| H2 file exchange is channel-only | Batch 3 | **open** — `grep -c scope internal/comm/file.go` is still `0` |
+| H3 retroactive revocation | Batch 4 | dissolved |
+| H4 `station_block` is dead | Batch 4 | **open** — deferred into Batch 5, which closed without deciding it |
+| H5 unbound endpoints have no address | Batch 5 | **open, and it will not be dissolved by this list.** Batch 6 closed at ep 6 only; five endpoints stay unbound by Vlad's decision. |
+
 **That sentence is a forecast, and as of 2026-08-18 two of the three have not happened.** **H2** is
 still open — `attachment` is still channel-shaped, and `grep -c scope internal/comm/file.go`
 returns `0`, so the `scope_id` seam migration 0010 cut and backfilled has never been used; the item
@@ -640,7 +711,7 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
       authorising pair, and 3.11.0 opens a channel at approval — but that channel needs both
       stations staffed, and `proxmox-servers` proves that case is real. The link is the decision;
       the channel is one way of spending it.
-- [-] **D — station key authenticates `/comm/mcp`** — **DEFERRED into the design analysis,
+- [>] **D — station key authenticates `/comm/mcp`** — **DEFERRED into the design analysis,
       2026-08-19 (Vlad's ruling).** Not dropped and not built. Its stated precondition was *every
       session holds a station*, which stopped being true when he stopped using Station; and it adds
       a SECOND static-credential path to `/comm/mcp` in the same week §4b of

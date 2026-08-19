@@ -69,7 +69,11 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
 - **MCP** — `ken_mcp_tool_calls_total{tool,outcome}` and `ken_mcp_tool_duration_seconds{tool}`
   (**histogram**, per-tool handler latency) cover **every** MCP surface that is mounted: `kb_*`,
   `comm_*` and `station_*` are all core and on by default, so all three appear on a stock install —
-  a missing `comm_*` or `station_*` series means the surface was turned off, not that it is idle. `comm_poll` is deliberately excluded from the latency histogram — it is a
+  a missing `comm_*` or `station_*` series means **nothing has called that surface since the
+  process started** — NOT that it was turned off, because neither can be. There is no
+  `KEN_COMM_ENABLED` and no `KEN_STATION_ENABLED`; both were removed in 2.0.0. This sentence
+  said the opposite until 2026-08-19 and would have sent an operator hunting for a switch that
+  does not exist, on the one page they open when something looks wrong. `comm_poll` is deliberately excluded from the latency histogram — it is a
   long-poll, and a parked wait is not latency.
 - **No station-specific gauges exist**, and their absence is stated rather than left to be inferred:
   there is no equivalent of the `ken_comm_*` series counting stations, notebook bytes or open tasks.
