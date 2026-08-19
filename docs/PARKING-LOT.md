@@ -51,6 +51,51 @@ the client, listed in the console, and consulted by nothing; the principal it pr
 literal. Whatever the answer turns out to be, it goes through that line.
 
 ---
+## A0. Added 2026-08-19 — the unreachable-refusal class, swept
+
+Two defects of this class were found and fixed the same day (`ab7d68e`, `4ac7e6c`). A sweep of all
+four surfaces for the rest found **thirteen more**, each verified by tracing the raise site through
+its mapper to what a caller actually receives. Recorded, not fixed: `FINISHING.md` is one
+confirmation from closing.
+
+**The class:** an error whose author wrote a paragraph for a caller, where the text cannot reach
+that caller. `commError` flattens by sentinel to keep refusals uniform, and anything its switch does
+not name becomes `internal error`. The opt-in seam is `comm.CallerSafe`.
+
+| where | sentinel | caller gets |
+|---|---|---|
+| `comm/room_send.go:36` | `ErrRoomEmpty` | `internal error` |
+| `comm/room_send.go:45` | `ErrNotInRoom` | `internal error` |
+| `comm/room_send.go:289` | `ErrNoAudience` | `internal error` |
+| `comm/file.go:211,223,230` | three `OfferFile` validations | `internal error` ×3 |
+| `comm/file.go:394` | "attachment has no downloadable bytes" | `internal error` on MCP — **the identical sentence is reachable over HTTP** (`commserver/files.go:197`, 409), which is evidence the text was meant for a caller |
+| `comm/file.go:510` | "attachment is not awaiting an upload" | HTTP 500, so an uploader retries a request that can never succeed |
+| `store/write.go:234` | "based_on_rev not found" (`kb_propose_enhancement`) | `internal error` |
+| `store/write.go:449` | "could not allocate a unique slug" (`kb_save`) | `internal error` |
+
+**`ErrNotInRoom` MUST NOT SIMPLY BE WRAPPED, and this is the finding worth keeping.** `room_send.go`
+chooses it over `ErrRoomEmpty` when `len(members) > 0`, so a caller-visible `ErrNotInRoom` would
+confirm *"this room exists and has at least one member"* to a non-member. The file's own comment
+already records that the two cases are indistinguishable from the mirror; making the **errors**
+distinguishable is what would create the oracle. The uniform answer is to give both non-member
+branches `ErrRoomEmpty`'s wording — which is a small design decision, not a mechanical wrap, and is
+why these were not swept up with the others.
+
+**The three file-validation ones are the opposite case**: pure input validation, where the caller
+supplied the bad value itself and uniformity buys nothing.
+
+**Judged correct as-is, recorded so nobody "fixes" them:** the `/mcp` auth refusals
+(`mcpserver/auth.go:208,226,229`) all collapse to HTTP 401 `invalid token`, and that flattening is
+the deliberate anti-probing behaviour, not an instance of this class.
+
+**And the testing lesson underneath all of it.** Every one of these has a passing test. The store
+tests assert `errors.Is` at the raise site, which structurally cannot see what a caller receives —
+the mapping happens a layer above. Twice in one day a fix was written, tested at the store layer,
+and a mutation reverting the *wiring* survived. **A test that does not cross the mapper cannot
+observe this class at all.**
+
+---
+
 ## A. Bears on the destination in §2–§4
 
 > **2026-08-19 — one entry outranks this index and is not in it.** Vlad named the recurring
