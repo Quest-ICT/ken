@@ -75,8 +75,47 @@ func (s *Store) StationByID(ctx context.Context, stationID string) (*Station, er
 
 // StationByName resolves a display name within a space. For CONSOLE and CLI use only:
 // a name is not an address, and no agent-facing path may route by it (S3).
+//
+// THAT CONTRACT WAS VIOLATED BY A CALLER IN THIS REPO. station_link_request resolved its
+// to_station argument through here (stationserver.go), and this query filters on nothing but
+// space and name — no `published`, no `state`. So an agent could hand it any string and read
+// the answer: a name that exists produced a filed request, a name that did not produced a
+// refusal. Two distinguishable outcomes is an enumeration oracle over every station name in
+// the space, including the ones deliberately withheld from station_directory — and worse than
+// reading, a correct guess FILED A REQUEST, putting an agent-authored ask for an unpublished
+// post in front of its human. Found by sweep and confirmed by execution on 2026-08-19.
+//
+// The remedy is StationByNameVisibleTo below, not a filter here: the console legitimately
+// resolves any name in its space, including archived and unpublished ones, and narrowing this
+// would break the surface the rule reserves it for.
 func (s *Store) StationByName(ctx context.Context, spaceID int64, name string) (*Station, error) {
 	return s.stationWhere(ctx, `space_id=? AND name=?`, spaceID, name)
+}
+
+// StationByNameVisibleTo resolves a name ONLY among the stations the asker may already see —
+// the same predicate station_directory lists by. It is the agent-safe counterpart to
+// StationByName, and the only name-resolution an agent-facing path may use.
+//
+// WHAT IT GUARANTEES, stated as the property rather than the query: a station the caller
+// cannot see is indistinguishable from one that does not exist. Both return sql.ErrNoRows, so
+// the caller's single refusal covers both and a guessed name yields nothing — not a filed
+// request, not a different error, not a timing difference worth having.
+//
+// The predicate is a deliberate copy of ListStationsVisibleTo's (published OR linked, never
+// archived, never yourself). Two readers of one visibility rule can drift, and if a third
+// appears this pair is what should be factored — but a shared helper today would have to
+// serve one query returning a list and one returning a row, and the duplication is currently
+// the honest cost of keeping both readable.
+func (s *Store) StationByNameVisibleTo(ctx context.Context, spaceID int64, fromStation, name string) (*Station, error) {
+	return s.stationWhere(ctx, `space_id=?1 AND name=?2
+   AND state <> 'archived'
+   AND station_id <> ?3
+   AND (published=1 OR EXISTS(
+         SELECT 1 FROM station_link l
+          WHERE l.state='active'
+            AND ((l.station_a=?3 AND l.station_b=station.station_id)
+              OR (l.station_b=?3 AND l.station_a=station.station_id))))`,
+		spaceID, name, fromStation)
 }
 
 func (s *Store) stationWhere(ctx context.Context, where string, args ...any) (*Station, error) {

@@ -317,7 +317,22 @@ func newServer(d Deps) *mcp.Server {
 		if strings.TrimSpace(in.Reason) == "" {
 			return nil, linkRequestOut{}, errors.New("a reason is required — your human decides on it, and an unexplained request is one they cannot judge")
 		}
-		target, err := d.Store.StationByName(ctx, p.SpaceID, strings.TrimSpace(in.ToStation))
+		// RESOLVED AMONG WHAT THIS CALLER CAN ALREADY SEE, never by bare name.
+		//
+		// StationByName's own contract says "For CONSOLE and CLI use only: a name is not an
+		// address, and no agent-facing path may route by it (S3)" — and this line called it
+		// until 2026-08-19. Because that query filters on space and name alone, a name that
+		// existed produced a filed request and one that did not produced a refusal: an
+		// enumeration oracle over every station name in the space, INCLUDING the ones
+		// withheld from station_directory. And the filed request was the worse half — a
+		// correct guess put an agent-authored ask for an unpublished post in front of its
+		// human, which is exactly the unsolicited approach publication exists to prevent.
+		//
+		// Now a station the caller cannot see is indistinguishable from one that does not
+		// exist: both arrive here as an error and both get the single refusal below. The
+		// discovery surface is station_directory, gated per asker, which is where finding
+		// out that a station exists is supposed to happen.
+		target, err := d.Store.StationByNameVisibleTo(ctx, p.SpaceID, p.StationID, strings.TrimSpace(in.ToStation))
 		if err != nil {
 			return nil, linkRequestOut{}, errors.New("no such station is available to link to — ask your human for the exact name")
 		}
