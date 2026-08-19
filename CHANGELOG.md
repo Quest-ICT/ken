@@ -41,6 +41,27 @@ same change — never "docs later".
 - A comment claiming the directory's co-member set was "keyed on station id" — it is keyed on the
   resolved name, and always was.
 
+- **Every refusal in 3.12.0's `to_station` reached the caller as the literal string `internal
+  error`.** `commError` flattens by sentinel, and the four errors `pair_send.go` declares —
+  `ErrNotAStation`, `ErrNotLinked`, `ErrSelfSend`, `ErrUnknownStation` — appear nowhere in its
+  switch, so all four fell through to `default`. ken-prod-ops received it live from the revocation
+  test, hours after the release.
+
+  **Worse than a wording bug.** A session whose link was revoked could not distinguish a permission
+  decision from a server fault. "Internal error" invites a retry or an outage report; the correct
+  response — stop, and tell your human the link is gone — was the one answer the text made
+  unreachable. The revocation path was built to be reliable and is; it was unreadable.
+
+  The seam for this already existed — `comm.CallerSafe`, the author's opt-in that lets useful text
+  survive the flattening — and the four simply never used it. They are now wrapped **at
+  declaration** rather than at each raise site, so a raise site added later inherits it instead of
+  having to remember, which is precisely what was forgotten.
+
+  **And the test that was missing is the point.** The store tests assert `errors.Is` against each
+  sentinel and passed throughout; a store-level assertion cannot see what a caller receives. The
+  end-to-end test now drives all four refusals through `comm_send` over HTTP and asserts the TEXT,
+  failing loudly on `internal error`. All four mutants — one per lost wrap — are killed.
+
 - **`comm_bind`'s own description told sessions to pass a binding voucher to `comm_register`, which
   has not accepted one for releases.** `registerIn` carries `label` and `host_hint` and nothing
   else, and the struct's own comment records that the voucher was deliberately removed from

@@ -104,6 +104,22 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	if _, err := st.ApproveLinkRequest(ctx, reqID, actor); err != nil {
 		t.Fatal(err)
 	}
+	// A FOURTH STATION, LINKED TO BETA BUT NOT TO ALPHA. Without it "not linked" and
+	// "unknown station" cannot be told apart in a test, and telling them apart is the
+	// entire reason there are two errors: a typo the session fixes in one call versus a
+	// human approval it cannot retry into existence.
+	delta, err := st.CreateStation(ctx, 1, "delta", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqBD, err := st.CreateStationLinkRequest(ctx, 1, "tok", beta.StationID, delta.StationID, "because", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApproveLinkRequest(ctx, reqBD, actor); err != nil {
+		t.Fatal(err)
+	}
+
 	// The console's refresh, verbatim: read ken.db's active links, stamp them with the
 	// roster epoch, replace the projection.
 	pairs, err := st.LinkMirrorRows(ctx)
@@ -117,8 +133,8 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	if err := cs.ReplaceLinkMirror(ctx, pairs, epoch); err != nil {
 		t.Fatal(err)
 	}
-	if len(pairs) != 1 {
-		t.Fatalf("LinkMirrorRows returned %d pairs after one approval, want 1 — if this is zero, "+
+	if len(pairs) != 2 {
+		t.Fatalf("LinkMirrorRows returned %d pairs after two approvals, want 2 — if this is zero, "+
 			"the approval chain is broken and every assertion below would fail for the wrong reason",
 			len(pairs))
 	}
@@ -323,6 +339,76 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	}
 	if res.IsError {
 		t.Fatalf("an id taken from comm_directory was refused by comm_send: %s", textOf(res))
+	}
+
+	// EVERY REFUSAL MUST REACH THE CALLER AS ITSELF, NOT AS "internal error".
+	//
+	// THIS IS THE TEST THAT WAS MISSING, and its absence cost a live defect. The store
+	// tests assert errors.Is against each sentinel and pass; commError flattens by
+	// sentinel and anything its switch does not name falls through to
+	// `errors.New("internal error")`. So four carefully written refusals — the whole
+	// vocabulary of this feature — arrived at sessions as four words that mean "the
+	// server is broken". ken-prod-ops received it from a live revocation test hours after
+	// 3.12.0 shipped.
+	//
+	// A store-level assertion cannot see this. Only a caller-level one can, which is why
+	// this arm asserts the TEXT a tool result carries rather than an error identity.
+	for _, c := range []struct {
+		name, toStation, want string
+	}{
+		{"self", alpha.StationID, "that is your own station"},
+		{"unknown", "st-no-such-station-here", "no station with that id appears in any approved link"},
+		{"unlinked", delta.StationID, "no approved link joins you to that station"},
+	} {
+		res, err := sessA.CallTool(ctx, &mcp.CallToolParams{
+			Name:      "comm_send",
+			Arguments: map[string]any{"to_station": c.toStation, "body": "refusal probe " + c.name},
+		})
+		if err != nil {
+			t.Fatalf("%s: transport error rather than a tool error: %v", c.name, err)
+		}
+		if !res.IsError {
+			t.Fatalf("%s: the send was ACCEPTED, so this arm proves nothing about its refusal", c.name)
+		}
+		got := textOf(res)
+		if strings.Contains(got, "internal error") {
+			t.Errorf("%s: the caller received %q.\n"+
+				"A refusal indistinguishable from a server fault invites the two wrong responses "+
+				"(retry, or report an outage) and makes the right one (stop, tell your human) "+
+				"unreachable. Wrap the sentinel in comm.CallerSafe.", c.name, got)
+			continue
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: caller received %q, want text containing %q", c.name, got, c.want)
+		}
+	}
+
+	// AND THE UNBOUND CASE, which needs its own endpoint because it is a fact about the
+	// SENDER rather than about the target.
+	tokU := mintToken(t, st, "pair-unbound", "comm")
+	prinU, err := authenticate(ctx, st, tokU, ScopeComm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epU, secretU, err := cs.RegisterEndpoint(ctx,
+		comm.Owner{TokenID: prinU.TokenID, ActorID: prinU.ActorID, SpaceID: prinU.SpaceID}, "unbound", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessU := connect(tokU, epU.EndpointID+"|"+secretU)
+	res, err = sessU.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "comm_send",
+		Arguments: map[string]any{"to_station": beta.StationID, "body": "from an unbound endpoint"},
+	})
+	if err != nil {
+		t.Fatalf("unbound: transport error rather than a tool error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("unbound: an endpoint with no station was allowed to address one")
+	}
+	if got := textOf(res); strings.Contains(got, "internal error") ||
+		!strings.Contains(got, "not bound to a station") {
+		t.Errorf("unbound: caller received %q, want the bind-first guidance", got)
 	}
 
 	// THE ARITHMETIC. Two addresses together must be REFUSED — this is the case the old

@@ -22,30 +22,53 @@ import (
 // an APPROVED LINK. Everything after addressing — numbering, idempotency, backpressure,
 // the message and its deliveries — is insertMessageWithDeliveries, shared by all three.
 
+// THE FOUR REFUSALS BELOW ARE WRAPPED IN CallerSafe, AND THAT WRAP IS THE WHOLE POINT OF WRITING
+// THEM. Without it every one reaches the caller as the literal string "internal error": commError
+// flattens by sentinel and anything its switch does not name falls through to that default.
+// ken-prod-ops received exactly that from a live revocation test on 2026-08-19, hours after this
+// file shipped.
+//
+// It is worse than a wording bug, and the reason is worth stating once. A session whose link was
+// revoked cannot distinguish a PERMISSION DECISION from a SERVER FAULT. "Internal error" invites a
+// retry, or a report that Ken is down; the correct response — stop, and tell your human the link is
+// gone — is the one answer the text makes unreachable. The revocation path was built to be reliable
+// and is; it was simply unreadable.
+//
+// Wrapped AT DECLARATION rather than at each raise site, deliberately: a raise site added later
+// inherits the wrap instead of having to remember it, which is exactly what was forgotten here.
+// CallerSafe preserves the chain, so errors.Is against these still matches.
+//
+// Each clears the bar at comm.go:94-96 — the text reveals nothing the caller could not already
+// establish. Three are facts about the CALLER's own state. ErrUnknownStation is the one that needed
+// thought: it is raised only for an id absent from the link mirror, which projects links in the
+// caller's own space, and it separates "you typed an id nobody here is linked to" from "you are not
+// linked to it" — a typo the session fixes in one call versus a human approval it cannot retry into
+// existence.
+
 // ErrNotAStation refuses a pair send from an endpoint with no station.
 //
 // Named, and specific about the remedy, because the alternative is the worst error this
 // surface can give: "you are not linked to X" would send a reader looking for a missing
 // human approval when the actual problem is that this session has no station identity to
 // be linked WITH. Two very different next actions.
-var ErrNotAStation = errors.New("to_station addresses one station from another, and this endpoint is not bound to a station. " +
-	"Bind it first (comm_bind with a station binding voucher), or address this message with channel_id instead")
+var ErrNotAStation = CallerSafe(errors.New("to_station addresses one station from another, and this endpoint is not bound to a station. " +
+	"Bind it first (comm_bind with a station binding voucher), or address this message with channel_id instead"))
 
 // ErrNotLinked refuses a pair send with no approved link behind it.
 //
 // SAYS WHAT TO DO, because the remedy is a human action and the session cannot take it:
 // station_link_request files the ask, and a human approves it at the console. A session
 // that reads only "not linked" tends to retry, which produces nothing forever.
-var ErrNotLinked = errors.New("no approved link joins you to that station, so nothing was sent. " +
+var ErrNotLinked = CallerSafe(errors.New("no approved link joins you to that station, so nothing was sent. " +
 	"A link is a human decision: file station_link_request and ask your human to approve it at Ken's /stations console. " +
-	"A link that was REVOKED looks identical here, which is intended — revocation is meant to be one click")
+	"A link that was REVOKED looks identical here, which is intended — revocation is meant to be one click"))
 
 // ErrSelfSend refuses a station addressing itself.
 //
 // A pair scope between one station and itself has one member, so the message would be
 // written, delivered to the sender, and returned by its own next poll — a loop that
 // looks like the peer answering.
-var ErrSelfSend = errors.New("that is your own station — a message to yourself would come back as mail from a peer")
+var ErrSelfSend = CallerSafe(errors.New("that is your own station — a message to yourself would come back as mail from a peer"))
 
 // ErrUnknownStation separates "no such station" from "not linked to it".
 //
@@ -54,8 +77,8 @@ var ErrSelfSend = errors.New("that is your own station — a message to yourself
 // different sentences: a typo in a station id is fixed by the session in one call,
 // while an unlinked peer needs a human. Distinguished by asking whether ANY link
 // mentions the id, which is the only evidence comm.db has.
-var ErrUnknownStation = errors.New("no station with that id appears in any approved link here — check the id with comm_directory, " +
-	"which lists the stations you can address by name")
+var ErrUnknownStation = CallerSafe(errors.New("no station with that id appears in any approved link here — check the id with comm_directory, " +
+	"which lists the stations you can address by name"))
 
 // SendToStation delivers one body to another station over the pair scope their link
 // authorises.
