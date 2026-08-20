@@ -17,6 +17,17 @@ same change — never "docs later".
 
 ### Fixed
 
+- **`comm_channels` could contradict itself in one result, in the file whose own comment says the
+  counters must not drift.** `pendingScopeSQL` carried an expiry predicate and explained why;
+  `PendingForEndpoint` and `RoomsFor` did not. Between a message expiring and the next sweep, one
+  result could report `pending_total: 0` beside a per-channel count of `1` — and the frozen
+  instruction block tells every session to read `pending_total` **first**, so the number a session is
+  told to trust was the one that could be wrong.
+
+  The clause is now a single named constant spliced into every counter, so a fifth cannot be added
+  without it. Pinned by a test that asserts the whole result agrees with itself rather than checking
+  each counter alone — the disagreement only exists *between* them.
+
 - **The vault read log said WHEN a secret was read and never WHO.** `StationVaultReads` selected
   `by_actor_id`, scanned it into the view model, and the template dropped it at render — collected,
   carried the whole way, and thrown away at the last step. The console now names the reader as

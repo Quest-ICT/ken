@@ -209,15 +209,16 @@ func (s *Store) PairsFor(ctx context.Context, ep *Endpoint) ([]PairConversation,
 	for _, peer := range peers {
 		scope := pairScope(station.String, peer)
 		// Counted per scope with the SAME predicate the other pending counters use, so
-		// a pair row cannot disagree with pending_total the way the four channel/room
-		// counters already do (Batch 4, still open).
+		// Counted per scope with the SAME predicate the other pending counters use — now
+		// literally the same string rather than a copy of it, so a pair row cannot
+		// disagree with pending_total the way the four channel/room counters did.
 		var pending int
-		if err := s.R.QueryRowContext(ctx, `
+		if err := s.R.QueryRowContext(ctx, pendingSQL(`
 SELECT COUNT(*)
   FROM delivery d
   JOIN message m ON m.id = d.message_row
  WHERE m.scope_id = ? AND d.party_key = ? AND d.state = 'queued'
-   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+   AND %NOTEXPIRED%`),
 			scope, stationParty(station.String)).Scan(&pending); err != nil {
 			return nil, err
 		}

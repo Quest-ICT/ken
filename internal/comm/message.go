@@ -751,15 +751,15 @@ func partyColumnPredicate(ep *Endpoint, qualified string) (string, []any) {
 func queuedForEndpoint(ctx context.Context, t *sql.Tx, ep *Endpoint) (int, error) {
 	pred, args := partyPredicate(ep, "d")
 	var n int
-	err := t.QueryRowContext(ctx, `
+	err := t.QueryRowContext(ctx, pendingSQL(`
 SELECT COUNT(*)
   FROM delivery d
   JOIN message m ON m.id = d.message_row
   LEFT JOIN channel c ON c.id = m.channel_id
  WHERE `+pred+`
    AND d.state = 'queued'
-   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-   AND (c.id IS NULL OR c.state='open')`, args...).Scan(&n)
+   AND %NOTEXPIRED%
+   AND (c.id IS NULL OR c.state='open')`), args...).Scan(&n)
 	return n, err
 }
 

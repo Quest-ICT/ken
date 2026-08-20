@@ -938,7 +938,7 @@ observe this class at all.**
 
 **Deferred because.** No reason recorded. Raised by the sweep's completeness critic, listed under "Raised by the Batch 3 sweep, not fixed in it", and left.
 
-**Still open.** Two of the four still lack the expiry predicate the shared fragment carries, and the one instruction every session is told to read first (pending_total) can disagree with the per-channel number beside it.
+**FIXED 2026-08-20** (unreleased at the time of writing). The predicate is now `pendingNotExpiredSQL` in `internal/comm/pending.go`, spliced by `pendingSQL(...)` into all six counts over queued deliveries — the four named above plus `queuedForEndpoint` and `PairsFor`, which held byte-identical copies — and a source-reading test fails when a new one does not ask for it. The `RoomsForParty` observation in the evidence above is untouched by this change and stays open.
 
 *Recorded in: audits + briefs, FINISHING.md — 2 separate places*
 

@@ -225,7 +225,91 @@ func TestCommChannelsReportsTheRunningVersion(t *testing.T) {
 	}
 }
 
-// --- helpers ---------------------------------------------------------------------
+// ONE RESULT MUST NOT CONTRADICT ITSELF. This is the failure as a session meets it: the
+// per-channel and per-room numbers and the total are assembled from four different
+// queries into ONE comm_channels result, and the frozen instruction block tells sessions
+// to read pending_total FIRST. A session that reads 0 there and stops is looking at a row
+// that says 1 beside it.
+//
+// AT THE TOOL, not at the store, because the contradiction is a property of the RESULT —
+// each store counter was internally consistent and it was the assembled answer that lied.
+func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
+	sess, _, ctx := dirHarness(t)
+	seedRoom(t, "ops", "s:"+dirStation, "s:sender-station")
+	sender := stationBoundEndpoint(t, "sender-station")
+
+	// A channel message and a room message, so both counters that lacked the clause are
+	// in the same result.
+	me, err := dirComm.AuthenticateEndpoint(ctx, dirEP, dirSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := dirComm.MintPairingCode(ctx, 1, 42, "me<->sender")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dirComm.JoinChannel(ctx, me, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := dirComm.JoinChannel(ctx, sender, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dirComm.Send(ctx, sender, ch.ChannelID, "on the channel", comm.SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dirComm.SendToRoom(ctx, sender, "ops", "in the room", comm.SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	// POSITIVE CONTROL: every number sees its message while it is live, so the zeros
+	// asserted below cannot pass on an empty fixture.
+	out := callChannels(t, sess, ctx)
+	if out.PendingTotal != 2 || len(out.Channels) != 1 || out.Channels[0].Pending != 1 ||
+		len(out.Rooms) != 1 || out.Rooms[0].Pending != 1 {
+		t.Fatalf("POSITIVE CONTROL failed: total=%d channels=%+v rooms=%+v, want 2 with 1 each",
+			out.PendingTotal, out.Channels, out.Rooms)
+	}
+
+	// Both messages expire, and NO SWEEP RUNS — the window this defect lives in. The
+	// clock is moved in the data rather than waited on.
+	res, err := dirComm.W.ExecContext(ctx,
+		`UPDATE message SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n != 2 {
+		t.Fatalf("expiring the fixture matched %d message rows, want 2", n)
+	}
+	var queued int
+	if err := dirComm.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM delivery WHERE party_key=? AND state='queued'`, "s:"+dirStation).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if queued != 2 {
+		t.Fatalf("%d deliveries still queued, want 2 — the sweeper must not have run, or this "+
+			"test is checking the state AFTER the fix instead of the window before it", queued)
+	}
+
+	out = callChannels(t, sess, ctx)
+	for _, c := range out.Channels {
+		if c.Pending > out.PendingTotal {
+			t.Errorf("channel %s reports pending=%d beside pending_total=%d in ONE result — "+
+				"a session told to read the total first is sent away from mail the row beside it claims",
+				c.ChannelID, c.Pending, out.PendingTotal)
+		}
+	}
+	for _, r := range out.Rooms {
+		if r.Pending > out.PendingTotal {
+			t.Errorf("room %s reports pending=%d beside pending_total=%d in ONE result",
+				r.RoomID, r.Pending, out.PendingTotal)
+		}
+	}
+	if out.PendingTotal != 0 || out.Channels[0].Pending != 0 || out.Rooms[0].Pending != 0 {
+		t.Fatalf("after expiry: total=%d channel=%d room=%d, want 0/0/0 — a poll would hand over "+
+			"none of it", out.PendingTotal, out.Channels[0].Pending, out.Rooms[0].Pending)
+	}
+}
 
 // seedRoom writes room membership through the mirror the running server actually reads.
 func seedRoom(t *testing.T, roomID string, parties ...string) {

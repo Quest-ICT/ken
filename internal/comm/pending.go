@@ -7,13 +7,19 @@ import (
 
 // Pending counters — "how much mail is waiting for me, without delivering any of it".
 //
-// THREE COUNTERS, ONE JOB, AND THEY MUST NOT DISAGREE. They live together in this file
+// FOUR COUNTERS, ONE JOB, AND THEY MUST NOT DISAGREE. They live together in this file
 // because the failure they exist to prevent is drift between them:
 //
 //   PendingForEndpoint (channel.go)  per CHANNEL, keyed by channel_id
 //   RoomsFor           (room_mirror) per ROOM, alongside that room's members
 //   PendingTotalFor    (here)        every scope at once — channels, rooms, broadcast
 //   BroadcastPendingFor(here)        the broadcast subset, which has nowhere else to live
+//
+// The comment said THREE and listed four, and two of the four were meanwhile answering a
+// different question — the drift this file exists to prevent, in the file that says so.
+// Two more counts outside this file share the clause below for the same reason:
+// queuedForEndpoint (message.go), which tells a SENDER what was already waiting, and
+// PairsFor (pair_send.go), which counts one pair conversation.
 //
 // WHY A TOTAL EXISTS AT ALL. `comm_channels` is the survey every session is instructed to
 // call before it sends, and until now it could only answer for channels — a room's mail
@@ -35,9 +41,11 @@ import (
 // The predicates mirror Poll (message.go) deliberately: a count that includes mail a poll
 // would refuse is a count that sends a session to look for something it cannot have.
 //
-//	expires_at > now         — an expired message is not deliverable, and the sweeper may
+//	%NOTEXPIRED%             — an expired message is not deliverable, and the sweeper may
 //	                           not have flipped its delivery to 'expired' yet. Without this
-//	                           the number is right only immediately after a sweep.
+//	                           the number is right only immediately after a sweep. Spliced
+//	                           from pendingNotExpiredSQL, which is now shared by every
+//	                           counter rather than by this fragment's two.
 //	channel open, or none    — a revoked channel's mail is unreachable. Room and broadcast
 //	                           messages have channel_id NULL and must pass, which is what
 //	                           the `c.id IS NULL` half is for; an INNER JOIN here is the
@@ -52,8 +60,50 @@ const pendingScopeSQL = `
   LEFT JOIN channel c ON c.id = m.channel_id
  WHERE %PARTY%
    AND d.state = 'queued'
-   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   AND %NOTEXPIRED%
    AND (c.id IS NULL OR c.state='open')`
+
+// pendingNotExpiredSQL is THE deliverability-by-clock clause, and it belongs to every
+// counter in this package rather than to the fragment above.
+//
+// It lived in pendingScopeSQL alone, so the two counters that do not use that fragment
+// answered a different question: PendingForEndpoint and RoomsFor counted mail that had
+// expired and had not yet been swept. The sweep runs on an interval, so that window is
+// ordinary rather than rare, and inside it ONE comm_channels result said pending_total=0
+// beside a per-channel row saying 1 — while the instruction block frozen into every
+// running session says to read pending_total FIRST. Two further counts each held their own
+// byte-identical copy of the clause, which is the same defect one edit away.
+//
+// A CLAUSE AND NOT A QUERY, because these counters share no shape: two count over
+// pendingScopeSQL, PendingForEndpoint is a LEFT JOIN aggregate that must keep emitting a
+// zero row for every open channel, RoomsFor is a correlated subquery per room, and
+// PairsFor counts one scope at a time. They can share this; they cannot share the query.
+//
+// WHERE IT GOES MATTERS in the aggregate: PendingForEndpoint carries it in the delivery
+// JOIN's ON clause and never in the WHERE. In the WHERE it eliminates the channel row
+// itself — m.expires_at is NULL for a channel with no mail — turning "nothing waiting
+// here" into a missing row, which that function's own comment calls the difference
+// between a silence and an assertion.
+//
+// The message table must be aliased `m` at every call site.
+const pendingNotExpiredSQL = `m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+
+// pendingSQL splices that clause into a counter's query, and PANICS on a query that does
+// not ask for it.
+//
+// A MARKER RATHER THAN A FORMAT VERB, for the reason replacePartyPlaceholder records
+// below: the clause carries strftime's own `%Y-%m-%d`, which fmt.Sprintf would mangle at
+// runtime instead of failing at compile time. The panic is the cheap half of the guard —
+// every one of these queries is a constant, so it fires on the first call rather than
+// hiding behind a rare input. The other half is a source-reading test that fails when a
+// new COUNT over queued deliveries does not ask for the clause
+// (TestEveryQueuedDeliveryCountCarriesTheSharedExpiryClause).
+func pendingSQL(q string) string {
+	if !strings.Contains(q, "%NOTEXPIRED%") {
+		panic("comm: a pending-count query must carry %NOTEXPIRED% (pending.go)")
+	}
+	return strings.ReplaceAll(q, "%NOTEXPIRED%", pendingNotExpiredSQL)
+}
 
 // PendingTotalFor counts every message queued for this endpoint's party, in every scope.
 //
@@ -84,7 +134,7 @@ func (s *Store) countPending(ctx context.Context, ep *Endpoint, extra string) (i
 	// shared function and not a party string: RoomsFor takes a single party and that is
 	// precisely its blind spot.
 	pred, args := partyPredicate(ep, "d")
-	q := `SELECT COUNT(*)` + replacePartyPlaceholder(pendingScopeSQL, pred) + extra
+	q := `SELECT COUNT(*)` + pendingSQL(replacePartyPlaceholder(pendingScopeSQL, pred)) + extra
 	var n int
 	if err := s.R.QueryRowContext(ctx, q, args...).Scan(&n); err != nil {
 		return 0, err

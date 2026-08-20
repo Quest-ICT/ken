@@ -623,7 +623,13 @@ SELECT id FROM endpoint
 //
 // Counts 'queued' only, not 'delivered'. A delivered-but-unacked message has already
 // been shown to this session; telling it to "go and read what is waiting" would be
-// telling it to re-read something it has. That is the same distinction that made
+// telling it to re-read something it has.
+//
+// 'queued' ALONE IS NOT ENOUGH, and since this query was written it was all this
+// query asked. A message can be expired with its delivery still 'queued' — the sweeper
+// flips it on an interval — so the count also carries the shared expiry clause
+// (pendingNotExpiredSQL, pending.go), in the delivery JOIN and not the WHERE, so a
+// channel with nothing waiting still reports 0 instead of vanishing from the map. That is the same distinction that made
 // waiting_for_you fire on mail its recipient had already replied to.
 //
 // CHANNEL SCOPES ONLY, and the limit is stated here because it cannot be seen from the
@@ -676,7 +682,7 @@ func (s *Store) PendingForEndpoint(ctx context.Context, ep *Endpoint) (map[strin
 	// with auto-assigned placeholders in one statement. `channel.station_a`/`station_b`
 	// are deliberately NOT used here either: those are the authorisation snapshot taken
 	// when the channel was opened, not the current binding.
-	rows, err := s.R.QueryContext(ctx, `
+	rows, err := s.R.QueryContext(ctx, pendingSQL(`
 SELECT c.channel_id, COUNT(d.id)
   FROM channel c
   LEFT JOIN message m ON m.channel_id = c.id
@@ -684,8 +690,9 @@ SELECT c.channel_id, COUNT(d.id)
     ON d.message_row = m.id
    AND (d.party_key = ? OR d.party_key = ?)
    AND d.state = 'queued'
+   AND %NOTEXPIRED%
  WHERE c.state='open' AND `+seat+`
- GROUP BY c.channel_id`, args...)
+ GROUP BY c.channel_id`), args...)
 	if err != nil {
 		return nil, err
 	}

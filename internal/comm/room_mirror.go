@@ -87,21 +87,26 @@ type RoomView struct {
 // RoomsFor lists the rooms a party is in, with every member and the count of messages
 // waiting for that party in each.
 //
+// The pending count carries the shared expiry clause (pendingNotExpiredSQL, pending.go),
+// like every other pending counter: without it this number disagreed with pending_total
+// for as long as it took the sweeper to come round.
+//
 // The pending count is a COUNT, exactly like comm_channels': reading it delivers
 // nothing, stamps nothing and starts no clock. That is what lets the directory be the
 // thing a session consults before it decides to speak — a survey that cost a delivery
 // would be skipped, and a skipped instruction is worse than none because it still looks
 // like a control.
 func (s *Store) RoomsFor(ctx context.Context, party string) ([]RoomView, error) {
-	rows, err := s.R.QueryContext(ctx, `
+	rows, err := s.R.QueryContext(ctx, pendingSQL(`
 SELECT mine.room_id,
        (SELECT COUNT(*) FROM delivery d
           JOIN message m ON m.id = d.message_row
          WHERE m.scope_id = 'r:' || mine.room_id
-           AND d.party_key = ? AND d.state = 'queued')
+           AND d.party_key = ? AND d.state = 'queued'
+           AND %NOTEXPIRED%)
   FROM room_member_mirror mine
  WHERE mine.party_key = ?
- ORDER BY mine.room_id`, party, party)
+ ORDER BY mine.room_id`), party, party)
 	if err != nil {
 		return nil, err
 	}

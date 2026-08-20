@@ -3,6 +3,10 @@ package comm
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"strings"
 	"testing"
 )
@@ -1224,5 +1228,174 @@ func TestWakeTargetsForAFileOfferResolveTheStationsLiveReader(t *testing.T) {
 	if res.RecipientRow == successor.ID {
 		t.Skip("the frozen seat and the live reader coincide in this fixture; the assertion above " +
 			"cannot distinguish the two, so it proves nothing here")
+	}
+}
+
+// EVERY PENDING COUNTER MUST AGREE ABOUT AN EXPIRED-BUT-UNSWEPT MESSAGE.
+func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	beta := stationEndpoint(t, st, "tok-b", "st-beta")
+	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
+
+	code, err := st.MintPairingCode(ctx, 1, 42, "a<->b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.JoinChannel(ctx, alpha, code); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := st.JoinChannel(ctx, beta, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Send(ctx, beta, ch.ChannelID, "channel", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SendToRoom(ctx, beta, "ops", "room", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Broadcast(ctx, beta, "broadcast", SendOpts{}); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func(t *testing.T, when string) (channel, room, broadcast, total int) {
+		t.Helper()
+		per, err := st.PendingForEndpoint(ctx, alpha)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rooms, err := st.RoomsFor(ctx, PartyOf(alpha))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rooms) != 1 {
+			t.Fatalf("%s: alpha is in %d rooms, want 1", when, len(rooms))
+		}
+		b, err := st.BroadcastPendingFor(ctx, alpha)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tot, err := st.PendingTotalFor(ctx, alpha)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return per[ch.ChannelID], rooms[0].Pending, b, tot
+	}
+
+	if c, r, b, tot := read(t, "live"); c != 1 || r != 1 || b != 1 || tot != 3 {
+		t.Fatalf("POSITIVE CONTROL failed: channel=%d room=%d broadcast=%d total=%d, want 1/1/1/3", c, r, b, tot)
+	}
+
+	res, err := st.W.ExecContext(ctx,
+		`UPDATE message SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n != 3 {
+		t.Fatalf("expiring the fixture matched %d message rows, want 3", n)
+	}
+	var queued int
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM delivery WHERE party_key='s:st-alpha' AND state='queued'`).Scan(&queued); err != nil {
+		t.Fatal(err)
+	}
+	if queued != 3 {
+		t.Fatalf("%d deliveries still queued, want 3 — no sweep has run", queued)
+	}
+
+	c, r, b, tot := read(t, "expired")
+	if c != 0 || r != 0 || b != 0 || tot != 0 {
+		t.Fatalf("channel=%d room=%d broadcast=%d total=%d after expiry, want 0/0/0/0.\n"+
+			"Between expiry and the next sweep the deliveries are still 'queued', so a counter "+
+			"without the expiry clause reports mail a poll would refuse to hand over.", c, r, b, tot)
+	}
+
+	// AND THE CHANNEL IS STILL LISTED, saying zero. The clause belongs in the delivery
+	// JOIN, not the WHERE: in the WHERE it drops the whole channel row, and a missing row
+	// is a different answer from 0 — the distinction PendingForEndpoint's own comment
+	// calls "a silence a caller can notice" versus "an ASSERTION".
+	per, err := st.PendingForEndpoint(ctx, alpha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, listed := per[ch.ChannelID]; !listed {
+		t.Errorf("the channel vanished from the per-channel counts when its mail expired: %+v", per)
+	}
+}
+
+// A FIFTH COUNTER MUST NOT BE ABLE TO DRIFT.
+//
+// The four counters this test was written for now share one clause, but nothing in Go
+// stops the next COUNT-over-delivery from hand-rolling its own — which is exactly how
+// PendingForEndpoint and RoomsFor came to disagree with pendingScopeSQL in the first
+// place, and how pair_send.go and queuedForEndpoint came to hold copies of the right
+// answer. So the rule is checked against the SOURCE: any query in this package that
+// counts 'queued' deliveries must ask for the shared clause by its marker.
+//
+// The scanner is given a POSITIVE CONTROL: it must find the counters it knows about, so
+// a glob that matches nothing, a parse that fails open, or a renamed marker cannot pass
+// as "no violations".
+func TestEveryQueuedDeliveryCountCarriesTheSharedExpiryClause(t *testing.T) {
+	if !strings.Contains(pendingScopeSQL, "%NOTEXPIRED%") {
+		t.Fatal("pendingScopeSQL no longer carries the marker — the fragment behind pending_total " +
+			"has been given its own copy of the clause, which is the drift this test exists to stop")
+	}
+	if !strings.Contains(pendingSQL(`x %NOTEXPIRED%`), "m.expires_at >") {
+		t.Fatal("pendingSQL does not splice the expiry clause")
+	}
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]int{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			// PER CALL, not per string literal: a query is assembled from several
+			// literals around a spliced predicate (`... `+seat+` ...`), so a
+			// literal-by-literal rule reads the COUNT and the state test as
+			// unrelated fragments and checks neither.
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			var sb strings.Builder
+			ast.Inspect(call, func(m ast.Node) bool {
+				if lit, ok := m.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					sb.WriteString(lit.Value)
+				}
+				return true
+			})
+			q := sb.String()
+			counts := strings.Contains(q, "COUNT(")
+			queued := strings.Contains(q, "d.state = 'queued'") || strings.Contains(q, "d.state='queued'")
+			if !counts || !queued {
+				return true
+			}
+			found[name]++
+			if !strings.Contains(q, "%NOTEXPIRED%") {
+				t.Errorf("%s counts queued deliveries with its own expiry rule (or none):\n%s\n"+
+					"Splice pendingNotExpiredSQL in with pendingSQL(...) — a counter that answers "+
+					"differently from pending_total contradicts the one number every session is "+
+					"instructed to read first.", name, q)
+			}
+			return false // one report per query, not one per nested call
+		})
+	}
+	for _, want := range []string{"channel.go", "room_mirror.go", "pair_send.go", "message.go"} {
+		if found[want] == 0 {
+			t.Errorf("the scanner found no queued-delivery count in %s — it is checking nothing, "+
+				"so a violation elsewhere would read as a pass", want)
+		}
 	}
 }

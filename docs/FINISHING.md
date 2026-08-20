@@ -464,12 +464,17 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       `bcd60dd` consults the snapshot IN ADDITION to the live binding because the column is NULL
       on every pairing-code channel opened before migration 0008 — six of seven on a real
       deployment — so making it authoritative today would strand them. *Migration; ships alone.*
-- [ ] **The four pending counters do not agree, in the file that says they must not.**
-      `pendingScopeSQL` carries an expiry predicate and states why; `RoomsFor` and
-      `PendingForEndpoint` do not. Between a message expiring and the next sweep, one
-      `comm_channels` result can report `pending_total=0` beside a per-channel count of 1 — and
-      the frozen instruction block tells sessions to read `pending_total` FIRST. Bounded by the
-      sweep interval; over-reports, never under.
+- [x] **The four pending counters do not agree, in the file that says they must not.** —
+      **fixed; the release that ships it is named here at release time.** The predicate is now
+      `pendingNotExpiredSQL` in `internal/comm/pending.go`, spliced by `pendingSQL(...)` into all
+      SIX counts over queued deliveries: the four here plus `queuedForEndpoint` (message.go) and
+      `PairsFor` (pair_send.go), which each held a byte-identical copy. In `PendingForEndpoint`
+      the clause sits in the delivery JOIN, never the WHERE — in the WHERE it drops the channel
+      row entirely, turning "0 waiting" into a missing row, and a mutant that moves it there
+      fails. Three tests: the four counters must agree about an expired-but-unswept message
+      (positive control asserts all four see it while it is live); a source-reading test fails
+      when a new COUNT over queued deliveries does not ask for the clause; and the contradiction
+      is asserted at `comm_channels` itself, because it is a property of the assembled result.
 - [x] **The hearsay rule tells every session to record the disposable identity** — **Unreleased**.
       The frozen instruction block said to attribute knowledge from a peer to "the sending
       endpoint". Endpoint rows are deleted by the idle sweep (`7 d` by default); the knowledge base
