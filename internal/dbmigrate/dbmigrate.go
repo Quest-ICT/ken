@@ -1,0 +1,157 @@
+// Package dbmigrate applies embedded SQL migrations to one SQLite database.
+//
+// Ken has two databases — ken.db (knowledge) and comm.db (messages) — and had two
+// runners. Only comm's disabled foreign keys for the duration of the run, so
+// ken.db's would have silently severed or cascade-deleted child rows the first time
+// a ken.db migration rebuilt a table. This is the one runner both now use. The
+// databases still version INDEPENDENTLY: each caller passes its own pools and its
+// own migration set, and neither reads the other's schema_migration.
+package dbmigrate
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"io/fs"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// Run applies every migration in fsys matching glob, in lexical order, skipping
+// versions already recorded in schema_migration. It is idempotent and
+// forward-only, and a run with nothing pending reads schema_migration and returns
+// — it never touches the pragma and never pays for the check below.
+//
+// w must be the caller's WRITER pool and r a pool over the same file. The whole run
+// happens on ONE connection pinned from w, because the pragma is per-connection.
+//
+// FOREIGN KEYS ARE DISABLED FOR THE DURATION, ON THAT PINNED CONNECTION, AND THE
+// RESULT IS CHECKED. This is not caution for its own sake — it is what makes a
+// table REBUILD possible at all, and the reason is worth writing down because the
+// failure it prevents is silent.
+//
+// SQLite's DROP TABLE performs an implicit DELETE FROM when foreign keys are
+// enforced, so dropping a table fires every ON DELETE action pointing at it: an
+// ON DELETE SET NULL child is severed from its parent, an ON DELETE CASCADE child
+// is deleted outright. Neither raises. The migration reports success and the data
+// is gone. In comm.db that meant every attachment severed from its message; in
+// ken.db a rebuild of station would take eight cascading child tables with it.
+//
+// The usual defence, `PRAGMA foreign_keys=OFF` written into the migration file,
+// DOES NOT WORK: that pragma is a documented no-op inside a transaction, and every
+// migration in this project is wrapped in BEGIN/COMMIT. Measured against this
+// driver before the comm version of this code was written: parent rebuilt, 2 child
+// rows inserted, 0 child rows afterwards.
+//
+// So the pragma is set OUTSIDE the transaction, on a connection pinned for the
+// whole run (both writer pools are capped at one connection, but pinning makes it
+// explicit rather than incidental), and `foreign_key_check` runs at the end.
+// Disabling enforcement while rewriting is only safe if something afterwards proves
+// the result is consistent; without that this trades a loud failure for a quiet one.
+func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
+	files, err := fs.Glob(fsys, glob)
+	if err != nil {
+		return err
+	}
+	sort.Strings(files)
+
+	applied, err := Applied(ctx, r)
+	if err != nil {
+		return err
+	}
+
+	pending := make([]string, 0, len(files))
+	for _, f := range files {
+		if v := Version(f); v != 0 && !applied[v] {
+			pending = append(pending, f)
+		}
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	conn, err := w.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("disable foreign keys for migration: %w", err)
+	}
+
+	for _, f := range pending {
+		body, err := fs.ReadFile(fsys, f)
+		if err != nil {
+			return err
+		}
+		if _, err := conn.ExecContext(ctx, string(body)); err != nil {
+			return fmt.Errorf("apply %s: %w", f, err)
+		}
+	}
+
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=ON`); err != nil {
+		return fmt.Errorf("re-enable foreign keys after migration: %w", err)
+	}
+	rows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("foreign key check after migration: %w", err)
+	}
+	defer rows.Close()
+	var broken []string
+	for rows.Next() {
+		var table, parent sql.NullString
+		var rowid, fkid sql.NullInt64
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			return err
+		}
+		broken = append(broken, fmt.Sprintf("%s row %d -> %s", table.String, rowid.Int64, parent.String))
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(broken) > 0 {
+		return fmt.Errorf("migration left %d dangling foreign key reference(s), first: %s — "+
+			"foreign keys were off during the rewrite and the result does not hold together",
+			len(broken), broken[0])
+	}
+	return nil
+}
+
+// Applied returns the versions already recorded in schema_migration. A missing
+// table (a fresh database) yields an empty set rather than an error, but a real
+// error is never swallowed as "nothing applied".
+func Applied(ctx context.Context, r *sql.DB) (map[int]bool, error) {
+	out := map[int]bool{}
+	rows, err := r.QueryContext(ctx, `SELECT version FROM schema_migration`)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return out, nil
+		}
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v int
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out[v] = true
+	}
+	return out, rows.Err()
+}
+
+// Version parses the leading integer of a migration path, with or without a
+// directory ("migrations/0001_init.sql" -> 1, "0001_init.sql" -> 1). A name that
+// does not start with digits yields 0, which Run skips.
+func Version(path string) int {
+	base := path
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	if i := strings.IndexByte(base, '_'); i > 0 {
+		base = base[:i]
+	}
+	n, _ := strconv.Atoi(base)
+	return n
+}

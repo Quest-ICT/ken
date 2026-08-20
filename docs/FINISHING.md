@@ -68,7 +68,7 @@ WAL and a 3.0 MB comm.db WAL that a file copy would have silently discarded.
 > attach to a paragraph that sits somewhere else. If this recurs a third time, the answer is to
 > derive the line rather than write it.
 
-**Batch 6 is CLOSED. This file is NOT.** Sixteen items remain open across Batches 1–4 — the list is
+**Batch 6 is CLOSED. This file is NOT.** Fifteen items remain open across Batches 1–4 — the list is
 in those batches and nothing rounds it up. Batch 6's last item, the endpoint migration, closed at
 **ep 6 only** by Vlad's scope decision on 2026-08-19.
 
@@ -569,10 +569,14 @@ were refuted on details — one would not have compiled — which is the argumen
       "a mutable marker could simply be UPDATEd away — which would defeat the point". Migration 0018
       then added `via_comm_kind`, which is written and read like its sibling and is **not in the
       frozen set**. *Migration; ships alone.*
-- [ ] **One function, two copies, only one hardened.** `internal/comm`'s `Migrate` pins a
-      connection, sets `foreign_keys=OFF` outside the transaction for the whole run and runs
+- [x] **One function, two copies, only one hardened** — *unreleased*. `internal/comm`'s `Migrate`
+      pinned a connection, set `foreign_keys=OFF` outside the transaction for the whole run and ran
       `foreign_key_check` afterwards — with the measurement that bought it in the comment. The
-      `internal/store` runner does not.
+      `internal/store` runner did not, through nineteen migrations. Both now call
+      `internal/dbmigrate.Run`; ken.db needed it MORE, not less (`station` has eight cascading
+      children, `entry` three). Verified that applying all nineteen with enforcement off yields an
+      identical schema and a clean `foreign_key_check`. No migration; nothing under `migrations/`
+      was touched.
 - [ ] **The nightly backup does not cover `comm.db` at all.** `cli_backup.go` and
       `scripts/ken-snapshot.sh` both target `ken.db` only. Not a duplicated generation and not in
       this batch's scope — but comm.db holds the delivery ledger, and finding it while proving that

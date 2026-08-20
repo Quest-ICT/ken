@@ -17,6 +17,22 @@ same change — never "docs later".
 
 ### Fixed
 
+- **ken.db's migration runner had none of the foreign-key handling comm.db's has had all along, and
+  ken.db is the database with the dangerous cascade graph.** `internal/comm` pinned a connection,
+  set `PRAGMA foreign_keys=OFF` for the whole run *outside* the transaction, restored it, and ran
+  `PRAGMA foreign_key_check`. `internal/store` looped `s.W.Exec(body)` and did none of it — through
+  nineteen migrations — while `station` alone has **nine** `ON DELETE CASCADE` children across four
+  migration files.
+
+  What that costs is specific: the standard SQLite table rebuild is CREATE / copy / DROP / RENAME,
+  and with foreign keys **on**, the `DROP` cascades. A ken.db migration that rebuilt a table would
+  have silently deleted every dependent row — the kind of loss a migration is least able to survive
+  and least likely to announce.
+
+  Both stores now run through one shared `internal/dbmigrate`. **One implementation, so the two
+  cannot drift again** — which is the same failure this release already fixed once in the rate-limit
+  config, where two copies drifted and the DEAD one turned out to be correct.
+
 - **`ken <typo>` started a web server.** `main()` switched over nine verb spellings and fell
   through to serving, so `ken snapshot` — a plausible guess, and not a verb — opened the live
   SQLite file and bound a port. On the production host that is a **second instance against the same

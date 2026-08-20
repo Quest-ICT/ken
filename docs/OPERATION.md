@@ -840,6 +840,16 @@ SELECT COUNT(*), MAX(version), MAX(applied_at) FROM schema_migration;
 **An unchanged count with unchanged timestamps proves no migration ran** — a much stronger
 statement than the absence of a log line, and available in one query on each database.
 
+**Both databases migrate through the same runner, and it turns foreign keys OFF for the run.**
+`internal/dbmigrate` pins one writer connection, sets `PRAGMA foreign_keys=OFF` outside the
+transaction, applies each pending file, restores enforcement, then runs `PRAGMA foreign_key_check`
+— a migration that leaves a dangling reference FAILS rather than committing a half-rewritten
+schema, with `migration left N dangling foreign key reference(s)`. Two consequences for you: an
+upgrade that crosses NO migration never touches the pragma and never pays for the check (the
+runner returns as soon as it finds nothing pending), and one that DOES cross a migration pays a
+single full foreign-key scan of that database — seconds at knowledge-base sizes. Enforcement is
+off only for the duration of the run, on that one connection, never for serving.
+
 **A FAILURE is the exception, and the two databases fail differently.** A `ken.db` migration
 failure is fatal — the service does not start. A `comm.db` failure is not: Ken logs
 `COMM: DEGRADED — …` and serves on without messaging, so a moved version and a green

@@ -38,15 +38,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"math/big"
-	"sort"
-	"strconv"
-	"strings"
 	"sync/atomic"
 
 	"github.com/ncruces/go-sqlite3/driver"
 	"github.com/ncruces/go-sqlite3/ext/fts5"
+
+	"github.com/Quest-ICT/ken/internal/dbmigrate"
 )
 
 //go:embed migrations/*.sql
@@ -321,131 +319,13 @@ func (s *Store) lim() Limits { return *s.limits.Load() }
 // already recorded. Idempotent, forward-only, and independent of the knowledge
 // base's migration state — the two databases version separately on purpose, so a
 // COMM schema change never touches ken.db.
+//
+// The runner itself is internal/dbmigrate, shared with ken.db. It used to live
+// here and ONLY here, which is why ken.db spent nineteen migrations without the
+// foreign-key handling a table rebuild depends on. The comment carrying the
+// measurement that bought it moved with the code.
 func (s *Store) Migrate() error {
-	files, err := fs.Glob(migrationFS, "migrations/*.sql")
-	if err != nil {
-		return err
-	}
-	sort.Strings(files)
-
-	applied, err := s.appliedVersions()
-	if err != nil {
-		return err
-	}
-
-	pending := make([]string, 0, len(files))
-	for _, f := range files {
-		if v := versionOf(f); v != 0 && !applied[v] {
-			pending = append(pending, f)
-		}
-	}
-	if len(pending) == 0 {
-		return nil
-	}
-
-	// FOREIGN KEYS ARE DISABLED FOR THE DURATION, ON ONE PINNED CONNECTION, AND THE
-	// RESULT IS CHECKED. This is not caution for its own sake — it is what makes a
-	// table REBUILD possible at all, and the reason is worth writing down because the
-	// failure it prevents is silent.
-	//
-	// SQLite's DROP TABLE performs an implicit DELETE FROM when foreign keys are
-	// enforced, so dropping a table fires every ON DELETE action pointing at it. For
-	// `message` that means `attachment.message_id` is SET NULL — every file severed
-	// from its message — and any child table populated before the drop is CASCADE
-	// deleted outright. The migration reports success and the data is gone.
-	//
-	// The usual defence, `PRAGMA foreign_keys=OFF` written into the migration file, DOES
-	// NOT WORK: that pragma is a documented no-op inside a transaction, and every
-	// migration here is wrapped in BEGIN/COMMIT. Measured against this driver before
-	// writing this: parent rebuilt, 2 child rows inserted, 0 child rows afterwards.
-	//
-	// So the pragma is set OUTSIDE the transaction, on a connection pinned for the whole
-	// run (the writer pool is capped at one connection, but pinning makes it explicit
-	// rather than incidental), and `foreign_key_check` runs at the end. Disabling
-	// enforcement while rewriting is only safe if something afterwards proves the result
-	// is consistent; without that this trades a loud failure for a quiet one.
-	conn, err := s.W.Conn(context.Background())
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys=OFF`); err != nil {
-		return fmt.Errorf("disable foreign keys for migration: %w", err)
-	}
-
-	for _, f := range pending {
-		body, err := migrationFS.ReadFile(f)
-		if err != nil {
-			return err
-		}
-		if _, err := conn.ExecContext(context.Background(), string(body)); err != nil {
-			return fmt.Errorf("apply %s: %w", f, err)
-		}
-	}
-
-	if _, err := conn.ExecContext(context.Background(), `PRAGMA foreign_keys=ON`); err != nil {
-		return fmt.Errorf("re-enable foreign keys after migration: %w", err)
-	}
-	rows, err := conn.QueryContext(context.Background(), `PRAGMA foreign_key_check`)
-	if err != nil {
-		return fmt.Errorf("foreign key check after migration: %w", err)
-	}
-	defer rows.Close()
-	var broken []string
-	for rows.Next() {
-		var table, parent sql.NullString
-		var rowid, fkid sql.NullInt64
-		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
-			return err
-		}
-		broken = append(broken, fmt.Sprintf("%s row %d -> %s", table.String, rowid.Int64, parent.String))
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if len(broken) > 0 {
-		return fmt.Errorf("migration left %d dangling foreign key reference(s), first: %s — "+
-			"foreign keys were off during the rewrite and the result does not hold together",
-			len(broken), broken[0])
-	}
-	return nil
-}
-
-// appliedVersions reads schema_migration; a missing table (fresh db) yields an
-// empty set rather than an error, but a real error is never swallowed as
-// "nothing applied".
-func (s *Store) appliedVersions() (map[int]bool, error) {
-	out := map[int]bool{}
-	rows, err := s.R.Query(`SELECT version FROM schema_migration`)
-	if err != nil {
-		if strings.Contains(err.Error(), "no such table") {
-			return out, nil
-		}
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var v int
-		if err := rows.Scan(&v); err != nil {
-			return nil, err
-		}
-		out[v] = true
-	}
-	return out, rows.Err()
-}
-
-// versionOf parses the leading integer of a migration path
-// ("migrations/0001_init.sql" -> 1).
-func versionOf(path string) int {
-	base := path
-	if i := strings.LastIndexByte(base, '/'); i >= 0 {
-		base = base[i+1:]
-	}
-	if i := strings.IndexByte(base, '_'); i > 0 {
-		base = base[:i]
-	}
-	n, _ := strconv.Atoi(base)
-	return n
+	return dbmigrate.Run(context.Background(), s.W, s.R, migrationFS, "migrations/*.sql")
 }
 
 // Owner identifies who a COMM object belongs to. All three fields name rows in

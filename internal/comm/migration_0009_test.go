@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/Quest-ICT/ken/internal/dbmigrate"
 )
 
 // The delivery split is a REBUILD of the busiest table in comm.db, on a live
@@ -29,7 +31,7 @@ func migrateThrough(t *testing.T, db *sql.DB, upTo int, mfs embed.FS) {
 	}
 	sort.Strings(files)
 	for _, f := range files {
-		v := versionOf(f)
+		v := dbmigrate.Version(f)
 		if v == 0 || v > upTo {
 			continue
 		}

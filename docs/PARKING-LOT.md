@@ -964,7 +964,7 @@ observe this class at all.**
 
 **Evidence.** Verified: internal/comm's Migrate pins a connection, sets `PRAGMA foreign_keys=OFF` outside the transaction for the whole run, restores it, and runs `PRAGMA foreign_key_check` afterwards — "with the measurement that bought it in the comment". internal/store/migrate.go does none of these; the only foreign_key_check in internal/store is in snapshot.go:209.
 
-**Still open.** Unticked at FINISHING.md:479, gap confirmed by reading both runners. The hardened one carries the measurement that bought it; the other has none of it, and either it needs the same treatment or the reason it does not must be written down.
+**RESOLVED (unreleased).** Both runners now call one implementation, `internal/dbmigrate.Run`, which carries the comment and the measurement. The difference was not correct: ken.db's FK graph is the more dangerous of the two (`station` has eight `ON DELETE CASCADE` children, `entry` three), and its runner had none of the handling. Verified before the change that applying all nineteen ken.db migrations with enforcement off yields an identical schema and an empty `foreign_key_check`, so no existing migration behaves differently.
 
 *Recorded in: FINISHING.md*
 
