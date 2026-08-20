@@ -594,22 +594,29 @@ unrecorded, which is what the tooltip claimed for four releases.
 
 ### 3.1 Read this before you run anything
 
-**An unrecognised subcommand starts a server.**
+**An unrecognised subcommand is refused. Up to and including 3.12.1 it started a server.**
 
 Dispatch matches a fixed list — `token`, `user`, `backup`, `import`, `embed`, `station`,
-`serve`, `version` (also `--version`, `-v`), `help` (also `-h`, `--help`) — and anything else
-falls through to "treat the arguments as
-serve flags". There is no error for an unknown verb.
-
-So a typo, or a command half-remembered from a newer release, does not fail. It launches a
-**second Ken instance against the same database** and binds a port.
+`serve`, `version` (also `--version`, `-v`), `help` (also `-h`, `--help`). Anything else exits
+**2** with that list on stderr, having opened no database and bound no port. A verb typed
+*after* a flag is refused too: flag parsing stops at the first non-flag, so
+`ken --db … snapshot` used to discard the verb silently and serve.
 
 ```bash
-ken lang backfill      # not a command → starts a server
-ken snapshot           # not a command (it is `backup snapshot`) → starts a server
+ken lang backfill               # ken: unknown subcommand "lang"                  → exit 2
+ken snapshot                    # ken: unknown subcommand "snapshot"              → exit 2
+ken --db /srv/ken.db snapshot   # ken: serve takes no arguments, got "snapshot"   → exit 2
 ```
 
-**Check the verb before you run it.** `ken help` costs nothing and always works.
+**Starting the server is unchanged.** `ken serve [flags]`, or bare `ken` with serve flags and
+no verb (`ken --addr :8080`, `ken --demo-seed`, or `ken` with nothing at all), or
+`scripts/ken.sh -f`, which passes `serve` explicitly. Only a NON-FLAG first argument is read
+as a verb.
+
+**On 3.12.1 and earlier every line above launched a second Ken instance against the same
+database and bound a port** — a typo, or a verb half-remembered from another release, did not
+fail. On a host still running those versions, check the verb before you run it; `ken help`
+costs nothing and always works.
 
 ### 3.2 Commands
 
@@ -1016,7 +1023,7 @@ Every one of these was paid for on a running deployment.
    not health. §4.1
 2. **A health check aimed at the wrong listener fails exactly like an outage** — seconds
    after a restart, when you are most inclined to believe it. §4.1
-3. **An unknown CLI verb starts a server** instead of erroring. §3.1
+3. **An unknown CLI verb started a server** instead of erroring, up to and including 3.12.1. It now exits 2, having opened no database and bound no port. §3.1
 4. **`ken backup snapshot` needs `--out` and `KEN_DB`**; the bare verb exits without making a
    backup. §3.2
 5. **`comm_message_ttl_sec` no longer means what its old name said.** It is the

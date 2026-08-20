@@ -17,6 +17,17 @@ same change — never "docs later".
 
 ### Fixed
 
+- **`ken <typo>` started a web server.** `main()` switched over nine verb spellings and fell
+  through to serving, so `ken snapshot` — a plausible guess, and not a verb — opened the live
+  SQLite file and bound a port. On the production host that is a **second instance against the same
+  database**, from a shell typo. It now refuses any non-flag first argument with exit 2 and the verb
+  list on stderr.
+
+  **Classified as a defect, not a compatibility break** (Vlad, 2026-08-20): an invocation that
+  silently started a server instead of saying "no such command" was never intended behaviour, and
+  calling it a break would dignify it. Bare `ken`, `ken --addr :8080` and every documented flag form
+  keep serving, because a leading `-` is not a verb.
+
 - **The task tools offered to "merge" and there is no merge verb.** `docs/STATIONS.md` §11.9
   documented a `merge_into?` parameter on `station_task_add` that appears zero times in `internal/` —
   and the half a doc edit cannot reach: the LIVE surface said it too, in the tool's own description

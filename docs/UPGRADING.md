@@ -34,6 +34,23 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### `ken <unknown-subcommand>` now refuses instead of starting a server
+
+Read this before upgrading if anything on your host invokes `ken` from a script or a unit file.
+
+Previously any first argument that was not one of the nine known verbs fell through to serving. So
+`ken snapshot`, `ken backups`, `ken stations` — all plausible, none real — opened the live database
+and bound a port, giving you a **second instance against the same files**. It now prints
+`ken: unknown subcommand "…"`, lists the verbs, and exits **2**.
+
+**What still serves, unchanged:** bare `ken`, and `ken` with any leading-dash flag
+(`ken --addr :8080`, `ken --demo-seed`). A flag is not a verb, so nothing that starts with `-` is
+affected. `ken serve` is the explicit form and is recommended in unit files.
+
+**What to check:** any wrapper that relied on a misspelling reaching the server will now exit 2
+instead of silently working. That is the point, but it is a behaviour change on the box.
+
+
 ### The COMM hearsay rule now names the station — and only new conversations get it
 
 The connect-time instruction block told sessions to attribute knowledge received from a peer to

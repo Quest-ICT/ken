@@ -1326,7 +1326,7 @@ observe this class at all.**
 
 **Evidence.** docs/OPERATION.md:602 — "There is no error for an unknown verb." Confirmed at cmd/ken/main.go:77: the switch over args[0] covers eight verbs and falls out to `runServe(args) // no subcommand: treat args as serve flags`.
 
-**Still open.** Confirmed in code exactly as documented. Documented with a workaround ("check the verb before you run it") rather than fixed — the dispatch switch still has no default.
+**FIXED (after 3.12.1).** `cmd/ken/main.go`'s dispatch now has a `default:` case that refuses any non-flag first argument with exit 2 and the verb list on stderr, and `runServe` refuses positional arguments so a verb typed after a flag (`ken --db … snapshot`) cannot be swallowed either. Bare `ken` with serve flags still serves. Covered by `cmd/ken/dispatch_test.go`, which runs the built binary and asserts no database file is created and nothing binds the listen address, with bare `ken` as the positive control.
 
 *Recorded in: docs tree*
 

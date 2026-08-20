@@ -73,6 +73,21 @@ func main() {
 		case "help", "-h", "--help":
 			usage()
 			return
+		default:
+			// An unknown VERB must never fall through to serving. On a production host
+			// `ken snapshot` or `ken lang backfill` — a typo, or a verb half-remembered
+			// from another release — would otherwise launch a SECOND instance against the
+			// same database and bind a port, which is how this was found. A leading FLAG
+			// is not a verb: `ken --demo-seed` is the documented bare form of
+			// `ken serve --demo-seed` (README.md, docs/OPERATION.md §3.2) and must keep
+			// serving, as must `ken` with no arguments at all — so only a non-flag first
+			// argument is refused here.
+			if !strings.HasPrefix(args[0], "-") {
+				fmt.Fprintf(os.Stderr, "ken: unknown subcommand %q\n", args[0])
+				fmt.Fprintln(os.Stderr, "Known subcommands: token, user, backup, import, embed, station, serve, version, help.")
+				fmt.Fprintln(os.Stderr, "To start the server run `ken serve` (bare `ken` with serve flags also serves). `ken help` lists everything.")
+				os.Exit(2)
+			}
 		}
 	}
 	runServe(args) // no subcommand: treat args as serve flags
@@ -177,6 +192,13 @@ func runServe(args []string) {
 	demoSeed := fs.Bool("demo-seed", false, "insert a demo curated entry on startup (dev)")
 	secureCookies := fs.Bool("secure-cookies", false, "force Secure + __Host- session cookies (implied when TLS is on)")
 	_ = fs.Parse(args)
+	// serve takes no positional arguments. Without this a verb typed AFTER a flag —
+	// `ken --db /opt/ken/data/ken.db snapshot` — is silently discarded by flag parsing
+	// and a SECOND server starts against that database: the same accident main()'s
+	// unknown-subcommand refusal catches when the verb comes first.
+	if fs.NArg() > 0 {
+		die(fmt.Sprintf("ken: serve takes no arguments, got %q — if you meant a subcommand, it must come first. Try `ken help`.", fs.Arg(0)))
+	}
 
 	st := mustOpenStore(*dbPath)
 	defer st.Close()
