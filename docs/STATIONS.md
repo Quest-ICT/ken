@@ -875,10 +875,10 @@ retired.
 
 | Tool | Notes |
 |---|---|
-| `station_task_add(text, blocked_on, remind_after?, detail?, context?, merge_into?)` | `blocked_on` required. Returns the id and any near-matches from the open set. |
+| `station_task_add(text, blocked_on, remind_after?, detail?, context?)` | `blocked_on` required. Returns the id and any near-matches from the open set. There is no merge verb: a duplicate is closed with a resolution naming the id kept — normally the row just added, since the older one carries the age §11.5 orders by (§11.10). |
 | `station_task_list(blocked_on?, due?, aging?, state?, limit?)` | §11.5 order, compact; 50 default and hard ceiling. A pure query: stamps nothing. |
 | `station_task_close(ids[], resolution, resolution_link?)` | Batch. |
-| `station_task_defer(ids[], until, reason)` | Deliberately the wordiest call here. |
+| `station_task_defer(task_id, until, reason)` | Deliberately the wordiest call here, and the only single-id verb: one date and one reason cannot be true of a batch, and a batch defer is how a whole list gets pushed out with "later". |
 | `station_task_drop(ids[], reason)` | Refuses `blocked_on: human` without the human's decision. |
 | `station_task_reopen(ids[], reason)` | Because dropping is sometimes wrong. |
 
@@ -897,6 +897,16 @@ rather than merely exist:
 
 - **No priority field** (§11.3), **no subtasks** (a task needing decomposition is a notebook page with
   a plan, whose parts are tasks), **no assignee beyond `blocked_on`** (there is one human).
+- **No merge verb, and no edit verb at all.** Near-matches (§11.9) are returned so a duplicate is
+  *noticed*, not so it can be folded: nothing is forgotten by closing the duplicate with a resolution
+  naming the row that survived, and `station_task_close` already requires that line. A merge would be
+  the first verb to rewrite a commitment's own wording, and it would have to choose which `created_at`
+  survives — keeping the newer one silently undoes the anti-recency ordering §11.5 exists to
+  guarantee. **The residue is named rather than hidden:** a duplicate `blocked_on: human` can only
+  leave `open` as **done**, because `station_task_drop` refuses it without the human's decision
+  (§11.6) — so the record says *done* where *never was a separate thing* would be truer. If that
+  proves to cost something the answer is a fourth terminal outcome on the existing close path, which
+  is a `state` CHECK change and therefore ships on its own — not an edit verb.
 - **No checklists.** They are a different shape: a *finite procedure*, instantiated per run, valued for
   **completeness**, and reset — a release gate is one. A task list is open-ended, actor-owned and
   valued for **not forgetting**. One thing that tries to be both is bad at each: steps that outlive

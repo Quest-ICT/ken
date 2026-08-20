@@ -540,8 +540,9 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_task_add",
 		Description: "Record something outstanding. Add the MOMENT you say \"we should\" — adding late means not " +
 			"adding. blocked_on is required: self = you can act now; human = it cannot move until your human does or " +
-			"decides; peer = another station owes something. The result lists near-matches already on your list, so " +
-			"you can close or merge instead of duplicating.",
+			"decides; peer = another station owes something. The result lists near-matches already on your list: if " +
+			"one is the same commitment, close the duplicate — normally the row you just added, since the older one " +
+			"carries the age the ordering depends on — with a resolution naming the id you kept.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskAddIn) (*mcp.CallToolResult, taskAddOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {

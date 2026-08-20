@@ -17,6 +17,30 @@ same change — never "docs later".
 
 ### Fixed
 
+- **The task tools offered to "merge" and there is no merge verb.** `docs/STATIONS.md` §11.9
+  documented a `merge_into?` parameter on `station_task_add` that appears zero times in `internal/` —
+  and the half a doc edit cannot reach: the LIVE surface said it too, in the tool's own description
+  (*"so you can close or merge instead of duplicating"*) and in the `near_matches` output schema.
+  Both are sent at connect and frozen for the life of a session, so the promise was pinned into every
+  running session while the doc claimed a parameter the wire rejects.
+
+  **The decision is to correct the text, not to build the verb.** Near-matches exist so a duplicate is
+  *noticed*; closing it with a resolution naming the row that survived loses nothing, and that
+  resolution line is already mandatory. A merge would be the first verb to rewrite a commitment's own
+  wording, and it would have to choose which `created_at` survives — keeping the newer one undoes the
+  anti-recency ordering (§11.5) the list exists for. §11.10 now records the absence and its one honest
+  residue: a duplicate blocked on the human can only be closed as *done*, because dropping it is
+  refused.
+
+  Corrected in the same table: `station_task_defer(ids[], …)` was documented as a batch and is single
+  (`task_id`) in code — deliberately, because one date and one reason cannot be true of a batch, and a
+  batch defer is how a whole list gets pushed out with "later".
+
+  **Reach:** the corrected strings are advertised at connect, so sessions already running keep the old
+  wording until they reconnect. Guarded by a test over `tools/list`, not over the Go strings.
+
+### Fixed
+
 - **The frozen hearsay rule told every session to write down the identity the sweep deletes.** The
   connect-time COMM instruction block said to attribute peer knowledge to *"the sending endpoint"*.
   An endpoint is one **connection**: its row is deleted by the idle sweep — `7 d` by default — while

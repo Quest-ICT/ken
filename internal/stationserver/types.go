@@ -194,7 +194,7 @@ type taskAddIn struct {
 }
 type taskAddOut struct {
 	Task        taskView   `json:"task"`
-	NearMatches []taskView `json:"near_matches,omitempty" jsonschema:"open tasks that look similar — close or merge instead of duplicating"`
+	NearMatches []taskView `json:"near_matches,omitempty" jsonschema:"open tasks that look similar — if one is the same commitment, close the duplicate and name the id you kept in its resolution"`
 }
 type taskListIn struct {
 	State     string `json:"state,omitempty" jsonschema:"open (default) | done | dropped"`

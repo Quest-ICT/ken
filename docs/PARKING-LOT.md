@@ -286,7 +286,7 @@ observe this class at all.**
 
 `docs/FINISHING.md:282 (Batch 2, unticked); docs/audits/batch2-stations-kb.md`
 
-**Outstanding.** Work the rest of the prose section of the Batch 2 appendix. Still true today: (a) docs/STATIONS.md:878 documents a `merge_into?` parameter on station_task_add that appears zero times in internal/, and the FROZEN live surface says it too — internal/stationserver/stationserver.go:528 ("so you can close or merge instead of duplicating") and internal/stationserver/types.go:197 — so a doc-only strike leaves "merge" pinned into every session at connect; (b) the same table gives `station_task_defer(ids[], until, reason)` while internal/stationserver/types.go:214 takes a single task_id.
+**Outstanding.** Work the rest of the prose section of the Batch 2 appendix. **(a) and (b) below are FIXED in Unreleased** — `merge_into?` struck from §11.9 together with the two strings that pinned it into every session, and the defer row corrected to `task_id` — and are kept here as the record of what was found: (a) docs/STATIONS.md:878 documents a `merge_into?` parameter on station_task_add that appears zero times in internal/, and the FROZEN live surface says it too — internal/stationserver/stationserver.go:528 ("so you can close or merge instead of duplicating") and internal/stationserver/types.go:197 — so a doc-only strike leaves "merge" pinned into every session at connect; (b) the same table gives `station_task_defer(ids[], until, reason)` while internal/stationserver/types.go:214 takes a single task_id.
 
 **Evidence.** Both re-verified today by grep. The item's THIRD example is now false and the checklist has not been updated: it says "stations.vault* has 19 keys in English and ZERO in Spanish and French", but all three bundles now carry 19 stations.vault* keys with real Spanish/French text, translated in 0c0f687 (3.10.0). The item's own rule is the part worth keeping: "text asserting a control that does not exist is the class that propagates" — the same class TARGET-ARCHITECTURE.md §7 points back at this file for.
 
@@ -1964,13 +1964,13 @@ observe this class at all.**
 
 `internal/stationserver/stationserver.go:529 and internal/stationserver/types.go:197 ("close or merge instead of duplicating"); docs/STATIONS.md:878 (`merge_into?` on station_task_add)`
 
-**Outstanding.** Strike merge_into? from the doc and decide what the two frozen strings should say. Nothing has changed since the finding.
+**FIXED (Unreleased).** `merge_into?` is struck from §11.9; both frozen strings — `station_task_add`'s description and the `near_matches` output-schema description — now point at closing the duplicate with a resolution naming the id kept; §11.10 records the absence, its reasoning and its one residue. Sessions already connected keep the old text.
 
 **Evidence.** `grep -rn merge_into internal/` → zero hits; the parameter exists only in STATIONS.md:878. The live surface says it too, in the NearMatches jsonschema and in station_task_add's own description — both pin at conversation start, so a doc-only fix leaves "merge" in every running session.
 
 **Deferred because.** No reason recorded. FINISHING re-verified it by hand on 2026-08-17 and it is still open.
 
-**Still open.** Two of the three strings pin at connect, so a doc-only fix leaves 'merge' in every running session — which makes this a decision about wording, not a one-line edit.
+**Closed.** The decision was wording, not a verb: near-matches exist so a duplicate is noticed, and closing it with the already-required resolution loses nothing, while a merge would be the first verb to rewrite a commitment and would have to choose which `created_at` survives (§11.5). Guarded by a test over the ADVERTISED `tools/list` surface — both strings, including the output schema — not over the Go constants.
 
 *Recorded in: audits + briefs*
 
@@ -1978,9 +1978,9 @@ observe this class at all.**
 
 `docs/STATIONS.md:879 and :881 vs internal/stationserver/types.go taskListIn and taskDeferIn`
 
-**Outstanding.** Doc edit; unchanged since the finding.
+**Outstanding.** Doc edit. One of the three is done: the `station_task_defer` row was corrected to `task_id` in Unreleased (F04). The `station_task_list` row (`due`, `aging`) and the `ids` vs `task_ids` naming on the batch verbs remain.
 
-**Evidence.** STATIONS.md:879 documents `station_task_list(blocked_on?, due?, aging?, state?, limit?)`; taskListIn has State, BlockedOn, Limit — no due, no aging. STATIONS.md:881 documents `station_task_defer(ids[], until, reason)`; taskDeferIn takes a single `task_id`. And the wire name is `task_ids`, not `ids`, for all four batch verbs (types.go:210, :220, :225). A session working from the table gets a hard error.
+**Evidence.** STATIONS.md:879 documents `station_task_list(blocked_on?, due?, aging?, state?, limit?)`; taskListIn has State, BlockedOn, Limit — no due, no aging. STATIONS.md:881 documented `station_task_defer(ids[], until, reason)` while taskDeferIn takes a single `task_id`; corrected in Unreleased, and the two rows F04 owns (`station_task_add`, `station_task_defer`) are now compared against the schema `tools/list` actually advertises. And the wire name is `task_ids`, not `ids`, for all four batch verbs (types.go:210, :220, :225). A session working from the table gets a hard error.
 
 **Deferred because.** No reason recorded.
 

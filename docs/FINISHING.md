@@ -362,7 +362,7 @@ with a curious operator and still finds no use is a stronger signal than one nob
 - [ ] **Work through the remaining confirmed findings** in the appendix. **The prose class is NOT
       done** — that sentence stood here until 2026-08-17 and was wrong. Five findings are corrected
       (the Retire strings, and the four in `ea4443c`); the rest of the appendix's prose section is
-      still live. Three verified by hand today, all operator- or session-facing:
+      still live. Three were verified by hand on 2026-08-17; the first two are FIXED in Unreleased (F04 — `merge_into?` struck from §11.9 along with the two frozen strings, and the defer row corrected to `task_id`), and are kept below as the record of what was found:
       `docs/STATIONS.md:878` documents a `merge_into?` parameter on `station_task_add` that appears
       **zero** times in `internal/` — and the FROZEN live surface says it too
       (`internal/stationserver/stationserver.go:529`, `types.go:197` both offer to "merge"), so a
