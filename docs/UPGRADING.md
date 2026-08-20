@@ -34,6 +34,25 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### The COMM hearsay rule now names the station — and only new conversations get it
+
+The connect-time instruction block told sessions to attribute knowledge received from a peer to
+*"the sending endpoint"*. Endpoint rows are deleted by the idle sweep (`comm.endpoint_idle_ttl`,
+`7 d` by default) and the knowledge base has no expiry, so those citations point at rows that are
+gone. It now says to record the **station** (`from_station_name` + `from_station_id`, both already
+returned by `comm_poll`), and to qualify an endpoint id as disposable when the sender has no
+station.
+
+**What you will observe:** nothing to configure, and no call changes. But **MCP instructions are
+delivered once, at `initialize`** — a session that was already connected when you restarted keeps
+the old rule for the rest of its conversation and will keep writing endpoint-attributed entries.
+Only conversations started after the restart get the corrected text.
+
+**What to do first:** nothing, unless you curate. If you do, expect entries proposed by
+long-running sessions to keep citing endpoint ids for a while, and ask for a station name before
+promoting one. Existing entries already carrying an endpoint id are **not** rewritten; there is no
+migration and nothing to back-fill.
+
 ## 3.12.1
 
 **PATCH. No schema change** (comm.db 15, ken.db 19). Three fixes, one of them **security**. Take

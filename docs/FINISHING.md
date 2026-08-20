@@ -467,13 +467,21 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       `comm_channels` result can report `pending_total=0` beside a per-channel count of 1 — and
       the frozen instruction block tells sessions to read `pending_total` FIRST. Bounded by the
       sweep interval; over-reports, never under.
-- [ ] **The hearsay rule tells every session to record the disposable identity.** The frozen
-      instruction block says to attribute knowledge from a peer to "the sending endpoint". Endpoint
-      rows are deleted by the idle sweep; the knowledge base has no TTL, so the attribution names a
-      row that no longer exists — and three sessions of one correspondent become three unrelated
-      opaque ids. `messageView` already carries `from_station_id` and `from_station_name`. Adjacent:
-      the loop in that same block never mentions `comm_bind` or stations at all, so a successor
-      reading only the instructions is told to re-pair — the precise cost stations abolish.
+- [x] **The hearsay rule tells every session to record the disposable identity** — **Unreleased**.
+      The frozen instruction block said to attribute knowledge from a peer to "the sending
+      endpoint". Endpoint rows are deleted by the idle sweep (`7 d` by default); the knowledge base
+      has no TTL, so the attribution named a row that no longer exists — and three sessions of one
+      correspondent became three unrelated opaque ids. The block now names the STATION
+      (`from_station_name` + `from_station_id`, both already on `messageView`), and says what to
+      record — and how to qualify it — when the sender holds no station. *Reaches NEW conversations
+      only: instructions pin at connect, so every session already running keeps the old rule until
+      it ends.*
+- [ ] **The loop in that same block never mentions `comm_bind`.** It now speaks of stations
+      throughout — `to_station`, `comm_directory`, `station_link_request` — but never says how an
+      endpoint acquires one, so a session reading only the instructions has no path from
+      `comm_register` to a station and is left on the pairing-code route. Split out of the hearsay
+      item above when that shipped; the original wording ("never mentions `comm_bind` **or stations
+      at all**") is now half-false and is corrected here.
 - [ ] **89 keys are missing from both `messages_es` and `messages_fr`.** Pre-existing and unchanged
       by this batch; noticed while checking that new keys landed in all three. A missing key renders
       raw, so this is visible to any non-English operator.

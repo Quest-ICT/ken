@@ -15,6 +15,27 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **The frozen hearsay rule told every session to write down the identity the sweep deletes.** The
+  connect-time COMM instruction block said to attribute peer knowledge to *"the sending endpoint"*.
+  An endpoint is one **connection**: its row is deleted by the idle sweep — `7 d` by default — while
+  the knowledge base has no TTL. So the citation named a row that would not exist, and **three
+  conversations with one correspondent read as three unrelated strangers** in the very entries
+  written to remember them.
+
+  The durable identity is the **station**, which is what the party model exists to provide, and
+  `comm_poll` was already handing the reader both halves of it (`from_station_name`,
+  `from_station_id`). The block now names those, and adds the case the old sentence had no answer
+  for: when the sender holds no station, `from_endpoint_id` is all there is — record it *as* a
+  disposable connection id, with the date, and treat the claim as uncorroborated rather than as a
+  source you can return to.
+
+  **This reaches NEW conversations only.** MCP instructions are delivered at `initialize` and pin
+  for the life of a conversation; a session connected before the upgrade keeps the old rule until it
+  ends. `docs/COMM.md` §7 and `docs/AI-INTEGRATION.md`, which both restated the endpoint form, are
+  corrected with it.
+
 ## [3.12.1] — 2026-08-19
 
 ### Security

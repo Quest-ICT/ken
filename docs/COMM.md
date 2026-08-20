@@ -689,9 +689,15 @@ Three mitigations, all cheap and all additive:
    stay decoupled — the MCP layer holds both handles and passes a boolean.
 2. **A badge in the curator UI** on such proposals, so a human can demand a first-hand citation
    before promoting.
-3. **One line in the COMM instruction section:** knowledge received from another session is
-   *hearsay* — attribute the sending endpoint in the rationale, lower the confidence, and never
-   record an outcome or assert verification on another session's behalf.
+3. **Two lines in the COMM instruction section:** knowledge received from another session is
+   *hearsay* — attribute the sending **station** in the rationale (`from_station_name` and
+   `from_station_id`, both already on the polled message), lower the confidence, and never record an
+   outcome or assert verification on another session's behalf. **The endpoint is the wrong name to
+   write down.** An endpoint is one connection: its row is deleted by the idle sweep (`7 d` by
+   default, `EndpointIdleTTLSeconds`) while the knowledge base has no TTL, so an endpoint-attributed
+   entry cites a row that no longer exists and three sessions of one correspondent read as three
+   unrelated strangers. When the sender holds no station, `from_endpoint_id` plus the date is all
+   there is — record it as that, and mark the claim uncorroborated.
 
 **Operator requirement — mint both tokens under the same actor.** A COMM token must be dedicated
 (§6), so the token that receives messages is never the token that authors an entry. The marker

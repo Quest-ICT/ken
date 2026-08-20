@@ -208,7 +208,7 @@ observe this class at all.**
 
 **Deferred because.** No reason recorded. Weight noted at source: MCP instructions pin at conversation start, so a wrong sentence here is unfixable for every session already running.
 
-**Still open.** Unticked at FINISHING.md:385. Text unchanged, and it is in the one block that pins at connect and reaches every session — the class this project has paid for most often. Carries a second, adjacent gap in the same block.
+**Half shipped (Unreleased), half still open.** The hearsay attribution is fixed: the connect-time block now names the station (from_station_name + from_station_id) and says what to record, and how to qualify it, when the sender has no station — pinned by TestTheHearsayRuleNamesTheDurableIdentity, which reads the delivered initialize result rather than the const. Still open, and now tracked as its own FINISHING item: the loop never mentions comm_bind, so a session has no stated path from comm_register to a station. Note also that the Evidence above is now partly stale — the loop does discuss stations (to_station, comm_directory, station_link_request); comm_bind is the omission.
 
 *Recorded in: audits + briefs, FINISHING.md — 2 separate places*
 
