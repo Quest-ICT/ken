@@ -59,8 +59,12 @@ type briefingView struct {
 	// no way to tell a fresh request from one that has sat for a month.
 	OldestBlockedDays int `json:"oldest_blocked_on_human_days" jsonschema:"age in days of the longest-standing item blocked on your human"`
 	// StaleRisk is the population most likely to be ALREADY DONE and still counted.
-	StaleRisk int        `json:"blocked_on_human_and_stale" jsonschema:"items blocked on your human that have not been briefed in over a week. blocked_on is set once at creation and nothing revisits it, so these are the ones most likely to be finished already — CHECK THE UNDERLYING STATE before you say your human still owes them"`
-	Head      []taskView `json:"head"`
+	StaleRisk int `json:"blocked_on_human_and_stale" jsonschema:"items blocked on your human that have not been briefed in over a week. blocked_on is set once at creation and nothing revisits it, so these are the ones most likely to be finished already — CHECK THE UNDERLYING STATE before you say your human still owes them"`
+	// OldestOpenDays ages EVERY open task, not only the human-blocked ones. NOT omitempty:
+	// zero is an answer ("nothing here is old"), and dropping it would make that
+	// indistinguishable from a deployment too old to have the field.
+	OldestOpenDays int        `json:"oldest_open_task_days" jsonschema:"age in days of the longest-standing OPEN task, whatever it is blocked on — including your own. A task can be entirely accurate and no longer the point, and nothing else in this briefing can see that: oldest_blocked_on_human_days is gated on blocked_on='human', and briefed_count only rises, so an item briefed every session looks attended to. If this is large, read the full list with station_task_list and look at created_at. Nothing is deferred or closed for you: this figure surfaces, you and your human decide"`
+	Head           []taskView `json:"head"`
 }
 
 type meOut struct {

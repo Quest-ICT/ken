@@ -17,6 +17,22 @@ same change — never "docs later".
 
 ### Fixed
 
+- **The vault read log said WHEN a secret was read and never WHO.** `StationVaultReads` selected
+  `by_actor_id`, scanned it into the view model, and the template dropped it at render — collected,
+  carried the whole way, and thrown away at the last step. The console now names the reader as
+  `kind:name`, resolved through a join rather than shown as a bare integer, because *"a bare integer
+  is not an identity a human can read"*. A read whose actor was never recorded says so explicitly
+  instead of rendering blank; the string exists in **all three locales**.
+
+- **Only human-blocked tasks were aged, so an "overtaken rather than stale" task was invisible.** The
+  briefing's staleness aggregate was gated on `blocked_on='human'`, so a task that was nobody's
+  fault — still accurate, quietly pointless, blocked on nothing — could sit open indefinitely with
+  no counter able to surface it. Every open task is now aged since creation.
+
+  **Aging surfaces; it never acts.** Nothing auto-defers and nothing auto-closes: the briefing
+  reports and the human decides, which is the whole basis on which a station is allowed to keep a
+  list at all.
+
 - **ken.db's migration runner had none of the foreign-key handling comm.db's has had all along, and
   ken.db is the database with the dangerous cascade graph.** `internal/comm` pinned a connection,
   set `PRAGMA foreign_keys=OFF` for the whole run *outside* the transaction, restored it, and ran

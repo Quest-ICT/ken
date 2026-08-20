@@ -216,6 +216,12 @@ TASKS — the list exists because pending things decay out of a conversation:
   the things most likely to be stale are the ones you have never seen. 'not_shown' reads as
   a queue awaiting its turn; 'never_briefed' is how many have never had one. When it is
   non-zero, go and read the full list with station_task_list rather than trusting the head.
+- AGE IS A THIRD KIND OF STALENESS, and 'oldest_open_task_days' is the only figure that sees
+  it. An item can be entirely accurate and no longer the point — overtaken, not wrong. The
+  human-blocked age misses those (they are usually blocked on YOU), and briefed_count only
+  rises, so one briefed every session looks attended to. When that number is large, read the
+  list, look at created_at, and ASK: still worth doing, or done being worth doing? Ken will
+  never defer or close anything for you — the number surfaces, you and your human decide.
 
 NOTEBOOK — working state, not knowledge:
 - Keep the 'handoff' page current as you go — with mode='replace' and if_rev, NOT append.
@@ -361,7 +367,10 @@ func newServer(d Deps) *mcp.Server {
 			"THE HEAD IS A SAMPLE, NOT A SUMMARY: it holds at most seven items. Read `never_briefed` (open tasks " +
 			"never shown to anyone), `oldest_blocked_on_human_days`, and `blocked_on_human_and_stale` — that last " +
 			"one is the population most likely to be ALREADY DONE, because blocked_on is set at creation and " +
-			"nothing revisits it. Check the underlying state before telling your human they still owe something.",
+			"nothing revisits it. Check the underlying state before telling your human they still owe something. " +
+			"`oldest_open_task_days` ages EVERY open item, including the ones blocked on YOU: a task can be accurate " +
+			"and no longer the point, and no other figure here can see that. Ken never defers or closes anything on age — " +
+			"it shows you the number and you decide.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in meIn) (*mcp.CallToolResult, meOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -843,8 +852,9 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 			NotBriefedRecently: b.AgingCount, BriefedUnchanged: b.StuckCount,
 			DeferredRepeatedly: b.RepeatedlyDefer, Remainder: b.Remainder,
 			NeverBriefed: b.NeverBriefed, OldestBlockedDays: b.OldestBlockedDays,
-			StaleRisk: b.StaleRisk,
-			Head:      taskViews(b.Head),
+			StaleRisk:      b.StaleRisk,
+			OldestOpenDays: b.OldestOpenDays,
+			Head:           taskViews(b.Head),
 		},
 	}
 	// WHICH COMM ENDPOINT IS MINE. Absent when COMM is off — the field is omitted, not

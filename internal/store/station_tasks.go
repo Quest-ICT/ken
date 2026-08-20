@@ -409,6 +409,25 @@ type TaskBriefing struct {
 	// of date, and production reported the same thing about itself the same day — twice
 	// telling its human he owed something he had already finished.
 	StaleRisk int
+
+	// OldestOpenDays is the age in days of the longest-standing OPEN task, whatever it is
+	// blocked on — the figure OldestBlockedDays cannot be, because its MAX is gated on
+	// blocked_on='human'.
+	//
+	// The category it exposes is OVERTAKEN, not stale: accurate, and no longer the point.
+	// ken-promo's own was "read the 1.5.1 and 1.5.2 promo briefs", created 2026-07-30 and
+	// found on 2026-08-14 with Ken already at 3.6.0. It was blocked_on='self', so the
+	// human-gated age could never see it, and briefed_count only RISES — being briefed every
+	// session made it look attended to. Age since creation is the only signal that would have
+	// surfaced it.
+	//
+	// It SURFACES and does nothing else. Nothing here defers, closes or reorders on age, and
+	// the head's fixed slots (§11.5) are untouched: an aging clock that acted would be
+	// abandoning the human's commitments on a timer, which is exactly what §11.6 refuses.
+	//
+	// Deferred items are INCLUDED. Deferral is a surfacing rule, never a membership rule
+	// (§11.5) — an item that has gone quiet is precisely the one this figure exists for.
+	OldestOpenDays int
 }
 
 // BriefStationTasks builds the briefing AND performs the only stamping in the system.
@@ -436,16 +455,18 @@ SELECT COUNT(*),
   SUM(CASE WHEN blocked_on='human'
         AND (last_briefed_at IS NULL
              OR last_briefed_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days'))
-      THEN 1 ELSE 0 END)
+      THEN 1 ELSE 0 END),
+  COALESCE(MAX(CAST(julianday('now') - julianday(created_at) AS INTEGER)), 0)
 FROM station_task WHERE station_id=? AND state='open'`, stationID)
-	var human, overdue, stuck, deferred, never, oldest, staleRisk sql.NullInt64
+	var human, overdue, stuck, deferred, never, oldest, staleRisk, oldestOpen sql.NullInt64
 	if err := row.Scan(&b.OpenTotal, &human, &overdue, &stuck, &deferred,
-		&never, &oldest, &staleRisk); err != nil {
+		&never, &oldest, &staleRisk, &oldestOpen); err != nil {
 		return nil, err
 	}
 	b.BlockedOnHuman, b.Overdue = int(human.Int64), int(overdue.Int64)
 	b.StuckCount, b.RepeatedlyDefer = int(stuck.Int64), int(deferred.Int64)
 	b.NeverBriefed, b.OldestBlockedDays, b.StaleRisk = int(never.Int64), int(oldest.Int64), int(staleRisk.Int64)
+	b.OldestOpenDays = int(oldestOpen.Int64)
 
 	pick := func(clause string, n int, seen map[string]bool) []StationTask {
 		rows, err := s.R.QueryContext(ctx, `SELECT `+taskCols+` FROM station_task

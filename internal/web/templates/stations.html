@@ -404,7 +404,7 @@
             </p>
             <ul class="plain">
               {{range .VaultReads}}
-              <li class="help"><span class="mono">{{.Name}}</span> &middot; {{.Via}} &middot; {{localtime .ReadAt}}</li>
+              <li class="help"><span class="mono">{{.Name}}</span> &middot; {{.Via}} &middot; {{if .ActorName}}<span class="mono">{{.ActorKind}}:{{.ActorName}}</span>{{else}}<span class="muted">{{$.T "stations.vault_trail_actor_unknown"}}</span>{{end}} &middot; {{localtime .ReadAt}}</li>
               {{end}}
             </ul>
             {{end}}

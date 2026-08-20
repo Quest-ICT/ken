@@ -141,6 +141,87 @@ UPDATE station_task SET last_briefed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-30
 	}
 }
 
+// AND EVERY OPEN TASK IS AGED, not only the ones blocked on the human.
+//
+// The third staleness category is OVERTAKEN rather than stale: not wrong, just no longer the
+// point. ken-promo's own — "read the 1.5.1 and 1.5.2 promo briefs", created 2026-07-30, still
+// accurate on 2026-08-14 with Ken at 3.6.0 — was blocked_on='self', so the human-gated age
+// could never see it, and briefed_count only rises. Age since creation would have.
+func TestBriefingAgesEveryOpenTaskNotOnlyTheHumanBlockedOnes(t *testing.T) {
+	st, ctx, station := staleHarness(t)
+	lim := StationTaskLimits{BriefStampThrottleSec: 0}
+
+	// The overtaken one: mine to act on, three weeks old, AND briefed just now — so a figure
+	// computed from last_briefed_at instead of created_at reads ~0 and this test fails.
+	overtaken, _, err := st.AddStationTask(ctx, taskLim,
+		StationTask{StationID: station, Text: "read the 1.5.1 and 1.5.2 promo briefs", BlockedOn: "self"}, "tok", 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.ExecContext(ctx, `
+UPDATE station_task SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-21 days'),
+                        last_briefed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), briefed_count=9
+ WHERE task_id=?`, overtaken.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	// POSITIVE CONTROL: a RECENT human-blocked item. The old figure must still answer about the
+	// human pile alone and must be NON-ZERO — so "both numbers are 0" cannot pass, and neither
+	// can a new figure that copied the human gate over.
+	human, _, err := st.AddStationTask(ctx, taskLim,
+		StationTask{StationID: station, Text: "decide the release date", BlockedOn: "human"}, "tok", 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.ExecContext(ctx,
+		`UPDATE station_task SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-3 days') WHERE task_id=?`,
+		human.TaskID); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := st.BriefStationTasks(ctx, lim, station)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.OpenTotal != 2 {
+		t.Fatalf("fixture: %d open tasks, want 2 — the aggregate saw nothing, so nothing below proves anything", b.OpenTotal)
+	}
+	// CAST truncates toward zero, so 21 days ago reads 20 once any wall time has passed.
+	if b.OldestOpenDays < 20 || b.OldestOpenDays > 21 {
+		t.Fatalf("oldest_open_task_days = %d, want 20 or 21.\n"+
+			"A three-week-old task blocked on ME is invisible to every other figure here: "+
+			"oldest_blocked_on_human_days is gated on blocked_on='human', and briefed_count only rises.",
+			b.OldestOpenDays)
+	}
+	if b.OldestBlockedDays < 2 || b.OldestBlockedDays > 3 {
+		t.Fatalf("oldest_blocked_on_human_days = %d, want 2 or 3 — the human-gated figure must still measure "+
+			"the human pile ONLY. If it reads ~21, the gate was widened instead of a second figure added.",
+			b.OldestBlockedDays)
+	}
+
+	// DEFERRAL IS A SURFACING RULE, NEVER A MEMBERSHIP RULE (§11.5): an item that has gone quiet
+	// is exactly the one this figure exists for, so it must still be aged.
+	quiet, _, err := st.AddStationTask(ctx, taskLim,
+		StationTask{StationID: station, Text: "the one nobody has looked at", BlockedOn: "self"}, "tok", 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.W.ExecContext(ctx, `
+UPDATE station_task SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-60 days'),
+                        deferred_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+30 days')
+ WHERE task_id=?`, quiet.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	b2, err := st.BriefStationTasks(ctx, lim, station)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b2.OldestOpenDays < 59 || b2.OldestOpenDays > 60 {
+		t.Fatalf("with a 60-day-old DEFERRED task open, oldest_open_task_days = %d, want 59 or 60 — "+
+			"deferral suppresses an item from the briefing HEAD only; it stays in the open set and in the counts.",
+			b2.OldestOpenDays)
+	}
+}
+
 // taskLim is permissive: these tests are about the briefing figures, not about caps.
 var taskLim = StationTaskLimits{MaxOpen: 500, MaxTextBytes: 4096, MaxDetailBytes: 65536, BriefStampThrottleSec: 0}
 

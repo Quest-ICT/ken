@@ -72,11 +72,24 @@ type StationVaultHistoryEntry struct {
 }
 
 // StationVaultRead is one logged read.
+//
+// The reader is carried as a NAME, not as by_actor_id. The console is the only consumer
+// and a bare integer is not an identity a human can read — this struct shipped with the
+// id populated and the template printing name, via and time, so the trail answered every
+// question about a read except the one it is kept for. ActorKind/ActorName mirror
+// StationKey (stations.go:305) because the same page already renders an actor that way.
+//
+// Both are empty when the row carries no actor or its actor row is gone. That case is
+// rendered in words rather than as an em-dash: a half-finished audit line that looks
+// exactly like a finished one is the mistake the link-revoke count already paid for
+// (web/stations.go, "rendering that as an em-dash made the half-finished case look
+// exactly like the finished one").
 type StationVaultRead struct {
-	Name    string
-	Via     string // 'station' or 'console'
-	ReadAt  string
-	ActorID int64
+	Name      string
+	Via       string // 'station' or 'console'
+	ReadAt    string
+	ActorKind string
+	ActorName string
 }
 
 // ErrVaultCapReached is returned when a limit refuses a write.
@@ -390,9 +403,13 @@ func (s *Store) StationVaultReads(ctx context.Context, stationID string, limit i
 		`SELECT COALESCE(SUM(read_count),0) FROM station_vault WHERE station_id=?`, stationID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
+	// LEFT JOIN, never an inner one: a read whose actor row cannot be resolved still
+	// belongs in the trail. An audit log that silently drops the rows it cannot fully
+	// explain understates exposure, which is the failure this whole table exists against.
 	rows, err := s.R.QueryContext(ctx, `
-SELECT name, via, read_at, COALESCE(by_actor_id,0)
-FROM station_vault_read WHERE station_id=? ORDER BY id DESC LIMIT ?`, stationID, limit)
+SELECT r.name, r.via, r.read_at, COALESCE(a.kind,''), COALESCE(a.display_name,'')
+FROM station_vault_read r LEFT JOIN actor a ON a.id = r.by_actor_id
+WHERE r.station_id=? ORDER BY r.id DESC LIMIT ?`, stationID, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -400,7 +417,7 @@ FROM station_vault_read WHERE station_id=? ORDER BY id DESC LIMIT ?`, stationID,
 	var out []StationVaultRead
 	for rows.Next() {
 		var r StationVaultRead
-		if err := rows.Scan(&r.Name, &r.Via, &r.ReadAt, &r.ActorID); err != nil {
+		if err := rows.Scan(&r.Name, &r.Via, &r.ReadAt, &r.ActorKind, &r.ActorName); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, r)

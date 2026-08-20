@@ -924,7 +924,7 @@ observe this class at all.**
 
 **Evidence.** Verified: the briefing aggregate is `COALESCE(MAX(CASE WHEN blocked_on='human' THEN CAST(julianday('now') - julianday(created_at) AS INTEGER) END), 0)` — gated on human. 3.6.0 shipped oldest_blocked_on_human_days (internal/stationserver/types.go:60) and nothing else. ken-promo's example: "read the 1.5.1 and 1.5.2 promo briefs", created 2026-07-30, still accurate and pointless at 3.6.0 on 2026-08-14, blocked_on='self', so briefed_count could never have caught it and age since creation would have.
 
-**Still open.** Unticked at FINISHING.md:294, aggregate unchanged. Real gap with a concrete production instance, and it is constrained by a separate decline (age must surface, never act).
+**Fixed.** The aggregate now carries a second, ungated `MAX(CAST(julianday('now') - julianday(created_at) AS INTEGER))` over every open row, exposed on `station_me` as `oldest_open_task_days` (`internal/store/station_tasks.go`, `internal/stationserver/types.go`). The separate decline is respected: it surfaces and nothing acts on age.
 
 *Recorded in: FINISHING.md*
 

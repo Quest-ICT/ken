@@ -679,7 +679,10 @@ on, and it was never gated on COMM's state either, because stations work with CO
   button per secret, which is a POST and shows the value once in the response rather than redirecting
   with it in a URL; the reveal lands in the same read trail a session's `station_vault_get` does,
   marked `console`. Deleted secrets stay listed as recoverable tombstones with a restore control, and
-  the trail states how much of itself it is showing when it has been pruned;
+  the trail states how much of itself it is showing when it has been pruned, and each line NAMES WHO
+  read the value — the actor resolved to `kind:name`, the same way the key list names an actor, because
+  an audit line an operator cannot read identifies nobody. A row whose actor cannot be resolved says
+  *actor not recorded* rather than showing an id that looks like an identity;
 - the **cross-station task view** §11.8 requires — every open task in the space, ordered by the §11.5
   contract, `blocked_on` filtering to `human` by default, station name as a column, archived stations
   marked, and the `hearsay_at_write` badge shown exactly as S9 badges a peer-prompted request. This is

@@ -376,13 +376,16 @@ with a curious operator and still finds no use is a stronger signal than one nob
       this batch confirms: **text asserting a control that does not exist is the class that
       propagates** — it is what put "off by default" on the public site, and it is a third of
       what was found here.
-- [ ] **Age EVERY open task, not just the human-blocked ones.** 3.6.0 added
+- [x] **Age EVERY open task, not just the human-blocked ones.** 3.6.0 added
       `oldest_blocked_on_human_days`, which covers only `blocked_on='human'`. ken-promo audited
       their own station and found a third staleness category neither of us had: a task that is
       **overtaken rather than stale** — not wrong, just no longer the point. Their example was
       "read the 1.5.1 and 1.5.2 promo briefs", created 2026-07-30, still accurate and pointless
       because Ken was already at 3.6.0 when promo found it on 2026-08-14. It was `blocked_on='self'`, so the field I shipped misses it, and
-      `briefed_count` could never have caught it. Age since creation would have.
+      `briefed_count` could never have caught it. Age since creation would have. **Shipped** as
+      `oldest_open_task_days` on `station_me`: one ungated `MAX` over `created_at` across every
+      open task, deferred ones included. It SURFACES only — nothing defers, closes or reorders on
+      age, per the separate decline, and the §11.5 head slots are untouched.
 - [ ] Fold the findings into Batch 3/4 below, then re-read this file with Vlad.
 
 ---
