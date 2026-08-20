@@ -15,8 +15,18 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## The rules we agreed
 
-1. **No new features until this list is finished.** Adding to a half-finished migration is what
-   produced the recurring defects. Bug fixes are not features.
+1. ~~**No new features until this list is finished.**~~ **LIFTED by Vlad, 2026-08-20**, after a
+   cleanup pass and two adversarial audits established what was actually outstanding. The instruction
+   was *"lift rule 1, let's finish the pending items"* — so the list is now work to be DONE rather
+   than a gate holding other work back.
+
+   **What it was for, kept because the reasoning did not expire:** adding to a half-finished
+   migration is what produced the recurring defects, and bug fixes were never features. That hazard
+   is unchanged; what changed is that the half-finished migrations named in Batches 1–6 are now
+   finished or explicitly deferred, so the gate was protecting against a state the project has left.
+
+   **What replaces it:** nothing automatic. An item here still ships with its documentation and its
+   test, and a schema change still ships alone (Rule 4).
 2. **Every item AND the status header are updated in the SAME COMMIT as the work.** This file can never be stale,
    because letting it go stale is the failure it exists to prevent.
 3. **Release whenever it is convenient**, then ask ken-prod-ops to upgrade and verify, then
