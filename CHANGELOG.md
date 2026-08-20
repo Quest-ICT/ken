@@ -15,6 +15,21 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **A station task created seconds ago was reported as "probably already done."**
+  `blocked_on_human_and_stale` counts human-blocked tasks not briefed in over a week — the
+  population whose `blocked_on` may have been satisfied while nothing revisited it, and whose own
+  tool description tells a session to **check before repeating them**. Its predicate was
+  `last_briefed_at IS NULL OR last_briefed_at <= now-7d`, and a task nobody has briefed yet has
+  `NULL` there. So the newest, most certainly-real request carried the marker meaning *"this is
+  probably finished."* Never-briefed already has its own field; the predicate now requires a
+  briefing to have actually happened.
+
+  Found by filing two new human-blocked tasks and watching the count reach 2 in the same briefing
+  where `oldest_blocked_on_human_days` read 0 — **two numbers in one result contradicting each
+  other**, the same shape as the four pending counters fixed earlier in this release.
+
 ### Added
 
 - **`comm_poll` takes an optional `scope`, so a hub can drain ONE conversation instead of its whole
