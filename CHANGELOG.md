@@ -15,6 +15,24 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **Ken now says at startup when the reply deadline outlives the message it is about.** If
+  `comm_reply_deadline_sec` exceeds `comm_message_ttl_sec`, the body is destroyed before its own
+  deadline arrives — so every unanswered `requires_response` message produces a `reply_overdue`
+  notice pointing at text nobody can read. The notice asks a sender to chase an answer to a
+  question that no longer exists.
+
+  Found on the live deployment by ken-prod-ops on 2026-08-20, tracing a notice I could not explain:
+  **7-day deadline inside a 3-day TTL**, so the body expired four days before the notice fired. The
+  shipped defaults have the ordering right — 3600 s inside 86400 s — which is exactly why nothing
+  had caught it.
+
+  **Logged, not clamped and not refused.** `UndeliveredTTLSeconds` clamps a nonsensical value to the
+  default; doing that here would silently convert an operator's considered 7-day reply window into
+  3 days and tell nobody. The intent is legitimate and only the operator can choose which value
+  moves. Refusing would take down a deployment that is running fine.
+
 ### Fixed
 
 - **Every `comm_poll` full-scanned the `message` table.** `NoticesFor` filters

@@ -494,6 +494,12 @@ func runServe(args []string) {
 		})
 		registerCommCollectors(reg, commStore, commHandler)
 		log.Printf("COMM: inter-session communication ENABLED at /comm/mcp + console at /comm (db=%s) — requires a dedicated token with the 'comm' scope", commStore.Path())
+		// The one settings ordering nothing else guards. Logged rather than clamped or
+		// refused: the operator's intent is legitimate and only they can choose which of
+		// the two values should move. Silent on a sound configuration.
+		if warn := comm.CheckDeadlineOrdering(commLimits(live.Current())); warn != "" {
+			log.Print(warn)
+		}
 	}
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

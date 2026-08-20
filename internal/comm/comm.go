@@ -162,6 +162,23 @@ type Limits struct {
 	// this is the sole bound on that population. An operator raising it for a longer
 	// audit trail is also raising retained bytes.
 	MetadataTTLSeconds int
+	// ORDERING INVARIANT, AND THE ONE PAIR NOTHING GUARDS: this must be SHORTER than
+	// MessageTTLSeconds. Longer, and the body is destroyed before its own reply deadline
+	// arrives, so the reply_overdue notice points at text nobody can read any more — it
+	// asks a sender to chase an answer to a question that no longer exists.
+	//
+	// Found on the live deployment 2026-08-20 by ken-prod-ops, tracing a notice I could not
+	// explain: comm_reply_deadline_sec 604800 (7 d) against comm_message_ttl_sec 259200
+	// (3 d), so EVERY unanswered requires_response message there generates a notice about a
+	// body that expired four days earlier. The shipped defaults have it right — 3600 inside
+	// 86400 — which is exactly why nothing caught it.
+	//
+	// NOT CLAMPED, deliberately, unlike UndeliveredTTLSeconds above. Clamping would silently
+	// convert an operator's considered 7-day reply window into 3 days and tell nobody; the
+	// operator's intent is legitimate and the honest remedy — raise the TTL, or lower the
+	// deadline — is theirs to choose. It is LOGGED at startup instead, loudly, naming both
+	// values. See CheckDeadlineOrdering.
+	//
 	// ReplyDeadlineSeconds is the default deadline applied to a message that
 	// requires a response.
 	ReplyDeadlineSeconds int
@@ -210,6 +227,28 @@ type Limits struct {
 // DefaultLimits are deliberately conservative: COMM shares a disk with the
 // knowledge base, and the failure this guards against is ephemeral traffic
 // filling the volume and failing durable KB writes.
+// CheckDeadlineOrdering reports the one settings pair whose bad ordering is invisible:
+// a reply deadline that outlives the message it is about.
+//
+// Returns "" when the ordering is sound. The caller logs the string; nothing refuses,
+// because a deployment configured this way is running and working, and the only thing
+// wrong is that a class of notice points at destroyed text. Taking the process down over
+// that would be a worse outcome than the defect.
+func CheckDeadlineOrdering(l Limits) string {
+	if l.ReplyDeadlineSeconds <= 0 || l.MessageTTLSeconds <= 0 {
+		return ""
+	}
+	if l.ReplyDeadlineSeconds <= l.MessageTTLSeconds {
+		return ""
+	}
+	return fmt.Sprintf(
+		"COMM: reply deadline (%ds) OUTLIVES the message TTL (%ds) — a body is destroyed %ds "+
+			"before its own reply deadline arrives, so every unanswered requires_response message "+
+			"produces a reply_overdue notice about text nobody can read. Raise comm_message_ttl_sec "+
+			"above comm_reply_deadline_sec, or lower the deadline.",
+		l.ReplyDeadlineSeconds, l.MessageTTLSeconds, l.ReplyDeadlineSeconds-l.MessageTTLSeconds)
+}
+
 func DefaultLimits() Limits {
 	return Limits{
 		MaxBodyBytes:          64 * 1024,
