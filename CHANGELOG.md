@@ -149,11 +149,82 @@ same change — never "docs later".
 
 ## [3.11.0] — 2026-08-18
 
+### Added
+
+- **The endpoint credential can leave the argument position.** `comm_*` tools accept
+  `X-Ken-Endpoint-Id` and `X-Ken-Endpoint-Secret`. Tool arguments are recorded by the CLIENT in its
+  transcript, on disk, in the clear — Ken cannot mitigate that by changing what Ken logs, because
+  the recording happens in software neither end ships. Moving the credential out of the argument
+  position is the only thing that removes it. Arguments still work: every session already running
+  captured the old schema at connect and keeps sending them.
+- **`/comm/mcp` re-derives its caller per call**, which it never did. The other two surfaces already
+  did; this one wrapped only metrics, harmless solely because the per-call secret pinned identity.
+
+### Changed
+
+- **Approving a station link names both stations, and spends the link.** `PendingStationRequests`
+  did not select `from_station` or `to_station` — columns on the table since migration 0012 — so the
+  console could not say who was asking or who they wanted to reach. Vlad approved two link requests
+  on 2026-08-13 and said afterwards he had not been told what he was approving; he was right, and
+  the screen could not have told him. It now says "X wants to talk to Y", what approval grants, and
+  what it does not. Approval also materialises the conversation, best-effort and never fatal.
+
+### Fixed
+
+- The credential fields are no longer marked `required`: `jsonschema-go` infers required from the
+  **absence** of `omitempty`, so the explicit tags were redundant and the missing `omitempty` was
+  doing the work. Only an end-to-end test found it — the first version passed a unit test of the
+  extractor and still failed over HTTP, rejected at schema validation before any handler ran.
+
 ## [3.10.0] — 2026-08-17
+
+### Fixed
+
+- **Two defects ken-prod-ops found on the live deployment**, and the operator documentation finally
+  reaching operators. See `docs/UPGRADING.md` §3.10.0 for the upgrade-facing detail.
+- Flash-message substitution is `{0}`-style, not Printf `%s`. Two Spanish keys shipped with `%s` and
+  rendered the placeholder literally.
 
 ## [3.9.0] — 2026-08-17
 
+### Changed
+
+- **The first release in four that actually runs migrations**: comm.db 11 → 14, ken.db 18 → 19.
+  **Four migrations ARE the release** — nothing observable changes. No tool, console page, metric,
+  CLI output or stored value behaves differently; three inert column/table drops and one trigger
+  rebuild, retiring a duplicated generation.
+- Verified on production by ken-prod-ops with row accounting rather than assertion: `message`
+  417→417, `delivery` 466→466, `channel` 14→14, and comm.db 979→960 closing exactly as
+  `channel_seq`'s 22 removed rows plus 3 new `schema_migration` rows. **Not one surviving table
+  changed row count.**
+
 ## [3.8.0] — 2026-08-17
+
+### Fixed
+
+- **The seventh instance of the party-model defect was five lines below the sixth fix.**
+  `GrantDownload` authorises by PARTY — with a paragraph above it explaining why a replacement
+  session owns its predecessor's attachment — and eight lines later the revocation re-check joined
+  `endpoint` on the attachment's frozen recipient rowid. Reachable only for a predecessor, and
+  permanent for the CHANNEL rather than one attachment. Found by sweeping the class rather than
+  waiting for the next incident: 109 sites, five independent lenses, each adversarially verified;
+  four of the five landed on that one line. Evidence in `docs/audits/batch3-party-model-sweep.md`.
+- **The root cause is worth more than any single fix.** `LiveEndpointForStation` is an explicitly
+  approximate heuristic — correct for ADDRESSING, which is what it was written for, and silent
+  about every other use its value was then put to. Three separately confirmed defects were one
+  approximation read as an identity.
+- **A derived query ran backwards across its own input's introduction.** `delivery.replied_by` has
+  existed since migration 1 and was written by nothing until migration 9, so every earlier
+  `requires_response` message has it NULL forever — and the `reply_overdue` notice read that as
+  "nobody replied". It told ken-prod-ops it was owed four answers it had given within minutes; 136
+  rows were permanently eligible. The boundary now comes from `schema_migration.applied_at`, a fact
+  each deployment records about itself, because a compiled-in date would have been right for
+  exactly one machine.
+- **Eight station keys rendered as three rows.** `api_token.station_id` is populated on every one
+  and joins cleanly to the name; only the rendering omitted it. Revoking a station key severs the
+  endpoints bound to it, so choosing among four identical rows was a one-in-four chance of cutting
+  off a different station's COMM. Third instance of "the correct value is stored and the surface
+  does not use it".
 
 ## [3.7.0] — 2026-08-14
 
@@ -2765,6 +2836,17 @@ append-only and the curated head moves only on human promotion.
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
 [Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.3.0...HEAD
+[3.12.1]: https://github.com/Quest-ICT/ken/releases/tag/v3.12.1
+[3.12.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.12.0
+[3.11.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.11.0
+[3.10.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.10.0
+[3.9.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.9.0
+[3.8.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.8.0
+[3.7.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.7.0
+[3.6.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.6.0
+[3.5.1]: https://github.com/Quest-ICT/ken/releases/tag/v3.5.1
+[3.5.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.5.0
+[3.4.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.4.0
 [3.3.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.3.0
 [3.2.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.2.0
 [3.1.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.1.0

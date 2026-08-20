@@ -43,11 +43,11 @@ offenders="$(printf '%s\n' "$SCAN" | grep -oE '[A-Za-z0-9_-]+\.quest\.mx' | sort
 # --- 2. The permitted link is a PROJECT link, never an endpoint. --------------
 # Pasting it as an MCP/API endpoint produces a config that fails for every reader
 # and sends probe traffic at the promo host.
-printf '%s\n' "$SCAN" | grep -qE 'ken\.quest\.mx/(mcp|api|healthz)' \
+printf '%s\n' "$SCAN" | grep -E 'ken\.quest\.mx/(mcp|api|healthz)' >/dev/null \
     && note "ken.quest.mx used as a service endpoint (it is a marketing site)"
 
 # --- 3. No developer machine paths. ------------------------------------------
-printf '%s\n' "$SCAN" | grep -qE '/(home|Users)/[a-z][a-z0-9_-]*/' \
+printf '%s\n' "$SCAN" | grep -E '/(home|Users)/[a-z][a-z0-9_-]*/' >/dev/null \
     && note "developer home path present"
 
 # --- 4. Module path is the public one, and the ldflags symbol is DERIVED. -----
