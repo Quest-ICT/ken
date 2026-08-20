@@ -51,6 +51,79 @@ the client, listed in the console, and consulted by nothing; the principal it pr
 literal. Whatever the answer turns out to be, it goes through that line.
 
 ---
+## A00. Added 2026-08-20 — ken-prod-ops' six provisioning and credential findings (E1–E6)
+
+**These were promised into this file on 2026-08-19 and were not written.** I told ken-prod-ops in
+seq 143 *"WHERE THEY GO: docs/PARKING-LOT.md"* and again in seq 147 *"Your E1, E2 and E3 are in
+PARKING-LOT.md"* — and none of the six was here, under any wording, until now. Found by an audit on
+2026-08-20 that swept the message log for promises made and not kept. **A claim made to a peer about
+where their work was recorded, which was false when made.**
+
+All six were found by ken-prod-ops reading production, and their evidence is in the message log at
+`2026-08-19-seq142-prod.md` §5. Three are operator-safety.
+
+**E1 — Revoking a COMM token silently kills every endpoint under it, and both consoles keep showing
+them healthy.** `auth()`'s last check refuses when `ep.Owner.TokenID != p.TokenID`, and 11 of 13
+comm tools call it — so revoking the token is sufficient on its own. Nothing tells the operator,
+before or after: the eager sweep that exists to tidy up after a revoke matches on
+`bound_by_station_key_id`, a **station-key** column, so a comm token id matches zero rows and it
+does nothing, silently. `ListEndpoints` filters only on the endpoint's own `revoked_at` and the
+template renders no token column. **On that deployment this would show 10 endpoints and 13 channels
+reading normal while none of them can make a call.** Fix shape, smallest first: state the blast
+radius in the revoke confirmation — exactly what 3.8.0 already did for station-key revoke.
+
+**E2 — There is no comm-token rotation. Not a missing button: the operation does not exist.**
+`endpoint.token_id` is written once at registration and no `UPDATE` anywhere re-points it. No console
+route, no CLI verb, no migration; `ken token` is `add|list|revoke`. **So "rotate a compromised comm
+token" decomposes into: revoke, re-register every session, and hand a human-minted pairing code to
+every unbound seat.** For a credential that is per-MACHINE by convention, one leak takes out every
+session on the host — there, one token, 10 endpoints, 8 projects. The inversion is the point:
+`POST /comm/endpoints/{id}/rotate` does exactly the right thing for an endpoint secret, keeping the
+id, the binding and every channel. **The endpoint has a rotation story and the token does not**,
+which is backwards — the token is the credential more likely to leak, because it is shared and
+long-lived. *This is the one I would want first if Rule 1 ever lifts.*
+
+**E3 — Mail addressed to an unbound endpoint is unreadable forever by any successor, and binding
+does not fix it. Live instance included.** `delivery.party_key` is stamped at SEND time and never
+updated; `BindEndpointToStation` updates only the endpoint row. So an endpoint that receives mail
+while unbound can still read it after binding — its poll predicate ORs both party forms — **but its
+successor never can.** Live in `comm.db`: delivery 536, message `214lqWSIQUrOmoyTrsL82U`, party_key
+`e:18`, `requires_response=1`, never polled, expires 2026-09-17. If endpoint 18 is replaced — which
+is exactly what E2 forces after a token compromise — the message is lost to everyone including the
+sender waiting on it. ken-prod-ops explicitly asked that it **not** be fixed for their sake.
+Re-filing `e:<rowid>` deliveries to `s:<station>` at bind time would close it, and the transaction is
+already open.
+
+**E4 — `/tokens` reports a RETIRED key as Active.** `ListTokens` does not select `retired_at` and the
+template renders `{{if .RevokedAt}}revoked{{else}}active{{end}}`. `/stations` shows retirement
+correctly; `/tokens` cannot. Live instance: key `Hdtpy1PVb07G`, retired 2026-08-18T21:13:23Z, showing
+green **Active** while being refused at every station call. **Fourth instance of the same shape** —
+the correct value is stored and the surface does not use it.
+
+**E5 — `retired_at` is honoured by exactly one authenticator, and the `kens_` prefix is cosmetic.**
+Checked in `AuthenticateStationKey` and nowhere else; `mcpserver/auth.go` and `commserver/auth.go`
+filter only `revoked_at`. Both prefixes resolve to the same `api_token` row and the prefix is a
+property of the printed string, not the row — so a retired station key can be re-formed as
+`ken_<id>_<secret>` and presented to the KB surface. **Reachable capability is negligible** (the row
+carries neither `read` nor `comm`, so everything refuses on scope), which makes this a latent trap
+rather than a hole. But "Retire" reads as "off", and it is off on one surface of three.
+
+**E6 — An OAuth connector is invisible in the way an operator would search, and leaves no usage
+trace.** Three independent reasons a search fails: wrong table (OAuth lives in
+`oauth_grant`/`oauth_token`, nothing is written to `api_token`); wrong vocabulary
+(`oauth_grant.scope` holds the wire scope `read write offline_access` while the real capability set
+is hardcoded in Go as `read, write-draft, propose` — **those strings appear nowhere in the OAuth data
+path**); and the console hides the actor (`ListOAuthGrants` selects `human_actor_id` and never
+`actor_id`, so the page says "approved by admin" and never reveals which actor the connector
+*writes* as). **And there is no usage trace at all** — `oauth_token` has no `last_used_at`, and the
+middleware bumps `TouchToken` only when `p.APIToken` is true, which is false for OAuth. **A connector
+can read the entire knowledge base and leave nothing behind.** 3.10.0 fixed precisely this for
+station keys, with the reasoning that "no timestamp" reads as "unused" rather than "unmeasured".
+This is the same sentence, and it pairs with the independently-found fact that the grant's scope is
+discarded — see §A of this file and TARGET-ARCHITECTURE.md §7.
+
+---
+
 ## A0. Added 2026-08-19 — the unreachable-refusal class, swept
 
 Two defects of this class were found and fixed the same day (`ab7d68e`, `4ac7e6c`). A sweep of all

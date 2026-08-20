@@ -44,8 +44,19 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.12.1** (2026-08-19). **Production is on 3.12.0**, verified by ken-prod-ops against
-the live databases; 3.12.1 was published at 23:21:08Z and its upgrade is in flight.
+**Released: 3.12.1** (2026-08-19). **Production is on 3.12.1**, live since
+2026-08-20T15:32:53Z and verified by ken-prod-ops against the live databases: `ken version` reports
+3.12.1, healthz 200, `NRestarts=0`, and both `applied_at` timestamps PREDATE the upgrade — so no
+migration ran at all, which is a stronger statement than "schema unchanged". Their schema band was
+clean on both databases, taken through the backup API rather than `cp`, defeating a 4.1 MB ken.db
+WAL and a 3.0 MB comm.db WAL that a file copy would have silently discarded.
+
+> **This header went stale again within 24 hours of being fixed**, and the fix was to add "and the
+> status header" to Rule 2. It said production was on 3.12.0 with the upgrade "in flight" while prod
+> had confirmed 3.12.1 live. **A rule is not a mechanism.** The header is only correct when someone
+> updates it, and the discipline that keeps checkboxes honest — they sit next to the work — does not
+> attach to a paragraph that sits somewhere else. If this recurs a third time, the answer is to
+> derive the line rather than write it.
 
 **Batch 6 is CLOSED. This file is NOT.** Sixteen items remain open across Batches 1–4 — the list is
 in those batches and nothing rounds it up. Batch 6's last item, the endpoint migration, closed at
