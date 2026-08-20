@@ -352,7 +352,13 @@ with a curious operator and still finds no use is a stronger signal than one nob
       pending forever, producing the split state `ApproveStationRequest`'s transaction exists to
       prevent. `station_vault_get` promised the caller's identity reaches the console. All in
       three locales where they were translated.
-- [ ] **Render WHO read a vault secret, or stop carrying the actor id.** Sharper than the audit
+- [x] **Render WHO read a vault secret, or stop carrying the actor id** — **Unreleased**. The
+      console now names the reader as `kind:name`, resolved through a join rather than shown as a
+      bare integer, with an explicit string in all three locales for a read whose actor was never
+      recorded. *Its checkbox did not move with its own commit (`666bf56`) — the specification that
+      produced the fix touched no checklist file, so the work shipped and the mark did not. Caught
+      by counting open items afterwards, which is the check Rule 2 is supposed to make unnecessary.*
+      Sharper than the audit
       had it: `by_actor_id` IS recorded, and `StationVaultReads` DOES select it into
       `StationVaultRead.ActorID` — and `stations.html:405` renders `{{.Name}} · {{.Via}} ·
       {{.ReadAt}}` and drops it. So the data is collected, carried to the view model, and thrown
