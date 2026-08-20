@@ -162,7 +162,7 @@ header claimed two open items against seventeen ticks), and found `[-]` doing do
 > still a human reading a false sentence.
 
 No schema change. Everything named here shipped in 3.6.0 — but the last two items below were
-never done, so this batch is not closed.
+never done. **Both closed in 3.10.0**, and this sentence outlived them — it said the batch was not closed while the header above said `[x]`, which is the same self-contradiction one screen apart.
 
 - [x] `comm_ack` reports what it settled; cumulative ack takes a room id — **3.5.0**
 - [x] Room sends wake parked polls; notice recipients are station names — **3.5.0**
@@ -202,7 +202,7 @@ never done, so this batch is not closed.
       every artifact a human installs. Either add it to the bundle or say plainly that its audience
       is people with a git checkout. Found by prod, who verified it against the build script rather
       than assuming.
-- [x] **Cut and release** — **3.6.0**, verified on production 2026-08-14T22:02Z. Superseded twice since: **3.7.0** (verified 2026-08-15T04:00Z) and **3.8.0** (released 2026-08-17, verification outstanding).
+- [x] **Cut and release** — **3.6.0**, verified on production 2026-08-14T22:02Z. Superseded twice since: **3.7.0** (verified 2026-08-15T04:00Z) and **3.8.0** (released 2026-08-17, **verified on production 2026-08-17T16:03Z** — this line said "verification outstanding" until 2026-08-20 while the narrative above recorded the verification the same day; the file disagreed with itself 111 lines apart).
 
 ---
 

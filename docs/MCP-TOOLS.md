@@ -51,7 +51,7 @@ token up by `tokenId`, constant-time-compares `SHA-256(secret)`, and resolves it
 
 **Two token shapes reach the same scoped principal.** Besides a static
 `ken_<tokenId>_<secret>` API token (minted in the CLI / web UI), Ken can run an optional
-**OAuth 2.1 authorization server** (`KEN_OAUTH_ENABLED`, off by default) so **claude.ai** can add
+**OAuth 2.1 authorization server** (on by default since 2.0.0; no switch) so **claude.ai** can add
 Ken as a custom connector. A connector authenticates with an opaque OAuth access token (no `_`, so
 it never collides with the `ken_` shape) and always resolves to the **same agent capability set —
 `read`, `write-draft`, `propose`, never `curate`** — and is revocable from the web UI's Tokens page

@@ -255,18 +255,18 @@ paste). It is **off by default** — static bearer tokens above are unaffected
 whether it is on or not.
 
 It requires a public **HTTPS** origin (so `KEN_TLS=acme|file`, or a
-TLS-terminating proxy). Enable it with one environment variable, best set as a
-systemd drop-in so upgrades — which regenerate `ken.service` — leave it intact:
+TLS-terminating proxy). **There is nothing to enable** — the OAuth authorization
+server is on by default and cannot be turned off. `KEN_OAUTH_ENABLED` was removed
+in **2.0.0**; setting it does nothing, and this page told you to set it until
+2026-08-20.
 
-```sh
-sudo systemctl edit ken            # add:  [Service]\nEnvironment=KEN_OAUTH_ENABLED=1
-sudo systemctl restart ken
-```
+The reason it is unconditional is in `cmd/ken/main.go`: defaulting it off meant a
+fresh install could not be connected the documented way until the operator found a
+variable nothing pointed them at.
 
 A connector gets the same capability as an agent token — `read`, `write-draft`,
 `propose`, **never `curate`** — and is revocable from the Tokens page
-(*Connected apps (OAuth)*). When `KEN_OAUTH_ENABLED` is unset, none of the OAuth
-endpoints are mounted and behaviour is identical to before. Full flow (discovery,
+(*Connected apps (OAuth)*). Full flow (discovery,
 consent, connecting from claude.ai) is in [`docs/OAUTH.md`](OAUTH.md).
 
 ---

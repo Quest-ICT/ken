@@ -1932,7 +1932,7 @@ observe this class at all.**
 
 ### Text that describes a control Ken does not have
 
-##### 127. The file's own status lines are stale: 'Released: 3.9.0' at HEAD v3.11.0, and Batch 1 still marked in-progress after both its items closed
+##### 127. ~~The file's own status lines are stale: 'Released: 3.9.0' at HEAD v3.11.0, and Batch 1 still marked in-progress after both its items closed~~ — **FIXED 2026-08-19/20**
 
 `docs/FINISHING.md:41, :79-81, :106, :149`
 
@@ -2252,7 +2252,7 @@ observe this class at all.**
 
 **Evidence.** docs/MONITORING.md:72 — "a missing `comm_*` or `station_*` series means the surface was turned off, not that it is idle." cmd/ken/main.go:509 is `stationsEnabled := true`, preceded by the comment "no flag exists that could couple them"; cmd/ken/surfaces_core_test.go asserts nothing reads KEN_COMM_ENABLED or KEN_STATION_ENABLED. An operator following this line would hunt for a switch that does not exist while the real cause (a degraded comm.db, logged as `COMM: DEGRADED`) goes unexamined.
 
-**Still open.** Confirmed false, and actively misdirecting: it sends the operator hunting for a switch that cannot exist while the real cause goes unexamined. The same document states the correct cause ten lines later, so it contradicts itself.
+**FIXED 2026-08-19.** It was confirmed false and actively misdirecting — sending an operator hunting for a switch that cannot exist while the real cause went unexamined, in a document that stated the correct cause ten lines later. `docs/MONITORING.md` now says a missing series means nothing has called that surface since the process started, and names the removal explicitly. *This entry stayed marked open for a day after the fix, which is the index having the same disease as the checklist.*
 
 *Recorded in: docs tree*
 

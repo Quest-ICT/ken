@@ -27,26 +27,17 @@ connector path.
   grant, and every access/refresh token under it dies on the next call regardless
   of token lifetime.
 
-## Enable it
+## What it needs
 
-OAuth requires a public **HTTPS** origin (claude.ai only talks to https, and the
-issuer must match the URL you type). Set one environment variable and restart:
+**Nothing to enable.** The authorization server is on by default and there is no
+switch. `KEN_OAUTH_ENABLED` was removed in **2.0.0** and setting it does nothing —
+this page instructed you to set it until 2026-08-20, which is why the removal is
+stated here rather than quietly dropped.
 
-```
-KEN_OAUTH_ENABLED=1
-```
-
-On the production box (systemd), add it as a drop-in so it survives upgrades
-(the installer regenerates `ken.service` but never touches `.d/` overrides):
-
-```ini
-# /etc/systemd/system/ken.service.d/oauth.conf
-[Service]
-Environment=KEN_OAUTH_ENABLED=1
-```
+What OAuth *does* require is a public **HTTPS** origin: claude.ai only talks to
+https, and the issuer must match the URL you type.
 
 ```sh
-sudo systemctl daemon-reload && sudo systemctl restart ken
 journalctl -u ken -n5 | grep -i oauth   # -> "OAuth: authorization server ENABLED …"
 ```
 
@@ -112,4 +103,4 @@ curl -s -o /dev/null -D - -X POST $BASE/mcp -d '{}' | grep -i www-authenticate
 | `/oauth/authorize` | consent (human login required) |
 | `/oauth/token` | authorization_code + refresh_token grants (form-encoded) |
 
-All are inert unless `KEN_OAUTH_ENABLED` is set.
+All are mounted unconditionally. They were inert without `KEN_OAUTH_ENABLED` until **2.0.0** removed it.
