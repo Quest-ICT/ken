@@ -338,3 +338,43 @@ func TestRetiringAKeyStopsItAuthenticating(t *testing.T) {
 			"been rewritten to say the opposite.")
 	}
 }
+
+// A TASK NOBODY HAS BRIEFED YET IS NOT "PROBABLY ALREADY DONE".
+//
+// StaleRisk's whole purpose is to flag human-blocked tasks whose condition may have been
+// satisfied while nothing revisited blocked_on — the field's own description tells a session
+// to CHECK before repeating them. The predicate was `last_briefed_at IS NULL OR
+// last_briefed_at <= now-7d`, so a task created seconds ago carried that flag: never
+// briefed means NULL, and NULL matched.
+//
+// The inversion is the point. The freshest, most certainly-real request got the marker
+// meaning "this is probably finished", while never-briefed already has its own field. Found
+// on 2026-08-20 when two new human-blocked tasks made StaleRisk jump to 2 in the same
+// result where OldestBlockedDays was still 0 — one briefing contradicting itself.
+func TestANeverBriefedTaskIsNotCountedAsStale(t *testing.T) {
+	st, ctx, station := staleHarness(t)
+
+	if _, _, err := st.AddStationTask(ctx, taskLim,
+		StationTask{StationID: station, Text: "fresh and waiting on the human", BlockedOn: "human"},
+		"tok", 1, false); err != nil {
+		t.Fatal(err)
+	}
+	// BriefStationTasks STAMPS what it shows, so the throttle is disabled and the briefing
+	// is read once — a second call would mark the task briefed and change the thing under test.
+	b, err := st.BriefStationTasks(ctx, StationTaskLimits{BriefStampThrottleSec: 0}, station)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// POSITIVE CONTROL FIRST: the task must actually be counted as human-blocked, or
+	// "StaleRisk is 0" would pass on a station with no tasks at all.
+	if b.BlockedOnHuman != 1 {
+		t.Fatalf("BlockedOnHuman = %d, want 1 — the fixture did not land, so the assertion below proves nothing", b.BlockedOnHuman)
+	}
+	if b.StaleRisk != 0 {
+		t.Errorf("StaleRisk = %d for a task created moments ago and never briefed; that flag means "+
+			"\"probably already done, check before repeating it\", which is the opposite of true here", b.StaleRisk)
+	}
+	if b.NeverBriefed != 1 {
+		t.Errorf("NeverBriefed = %d, want 1 — never-briefed is its own category and is where this belongs", b.NeverBriefed)
+	}
+}

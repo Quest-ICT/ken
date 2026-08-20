@@ -402,6 +402,16 @@ type TaskBriefing struct {
 	// StaleRisk is how many open tasks are blocked on the human AND have not been briefed
 	// in a long time — the population most likely to be ALREADY DONE and still counted.
 	//
+	// NEVER-BRIEFED IS NOT STALE, and counting it as such inverted the field's meaning.
+	// The predicate was `last_briefed_at IS NULL OR last_briefed_at <= now-7d`, so a task
+	// created seconds ago — never briefed, therefore NULL — was reported as "blocked on
+	// your human and not briefed in over a week", i.e. as the population this very field
+	// tells a session is MOST LIKELY ALREADY DONE. The freshest and most certainly-real
+	// request got the flag that says "check whether this is finished". Found on
+	// 2026-08-20 by filing two new human-blocked tasks and watching the count go to 2
+	// while oldest_blocked_on_human_days was still 0 — the two numbers contradicted each
+	// other in one result. Never-briefed already has its own field, NeverBriefed.
+	//
 	// blocked_on is set once at creation and nothing ever revisits it, so a task whose
 	// condition has been satisfied is indistinguishable from one still waiting. Both are
 	// briefed with equal weight and both are counted in "waiting on you". Two of this
@@ -453,8 +463,8 @@ SELECT COUNT(*),
   COALESCE(MAX(CASE WHEN blocked_on='human'
         THEN CAST(julianday('now') - julianday(created_at) AS INTEGER) END), 0),
   SUM(CASE WHEN blocked_on='human'
-        AND (last_briefed_at IS NULL
-             OR last_briefed_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days'))
+        AND last_briefed_at IS NOT NULL
+        AND last_briefed_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')
       THEN 1 ELSE 0 END),
   COALESCE(MAX(CAST(julianday('now') - julianday(created_at) AS INTEGER)), 0)
 FROM station_task WHERE station_id=? AND state='open'`, stationID)
