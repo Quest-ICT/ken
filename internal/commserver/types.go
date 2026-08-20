@@ -204,7 +204,8 @@ type pollIn struct {
 	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
 	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	WaitSeconds    int    `json:"wait_seconds,omitempty" jsonschema:"optional; how long to block waiting for a message. CLAMPED server-side, and the result tells you what you actually got: wait_seconds_granted is the real wait, and wait_clamped_from appears when yours was shortened. Prefer one long wait over frequent short polls — a parked call costs one request however long it waits. Pass -1 to return immediately"`
-	Limit          int    `json:"limit,omitempty" jsonschema:"optional; max messages to return (default 50)"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"optional; max messages to return. Default 50, MAXIMUM 100 — a larger value returns 100, not fewer"`
+	Scope          string `json:"scope,omitempty" jsonschema:"optional; return only messages in ONE scope, so a hub can drain a single conversation instead of its whole inbox. Copy it verbatim from the scope field of a polled message, or build it: 'ch:'+channel_id, 'r:'+room_id. Other scopes are HIDDEN from this call, not empty — an empty scoped result does not mean your inbox is empty; comm_channels says what is waiting where and delivers nothing. The result echoes scope_filter: if that field is missing, the server predates this argument and ignored what you passed"`
 }
 
 // fileView is the attachment descriptor on a delivered message.
@@ -287,6 +288,16 @@ type pollOut struct {
 	// value accepted and then never spoken of. Reported by ken-prod-ops, who noticed
 	// it in the release that claimed to close it.
 	WaitSecondsGranted int `json:"wait_seconds_granted" jsonschema:"how long this call was prepared to block, in seconds, after the server's cap was applied. 0 means it did not block"`
+	// ScopeFilter echoes the scope this call actually filtered by; empty means none.
+	//
+	// NOT omitempty, for the same reason WaitSecondsGranted is not, and the reason is
+	// sharper here. Tool descriptions freeze at conversation start, so a session already
+	// running learns about `scope` from its human or a peer rather than from the schema —
+	// and if it passes the argument to a server that predates it, it receives a full,
+	// unfiltered inbox and no signal whatsoever. The PRESENCE of this key is that signal:
+	// absent means the server ignored the argument, empty-string means it applied no
+	// filter, and the two must not look alike.
+	ScopeFilter string `json:"scope_filter" jsonschema:"the scope filter this call applied; empty means none. If this key is ABSENT from the result, the server predates the scope argument and ignored it — you received every scope"`
 	// Notices is what became of messages YOU sent — not mail addressed to you.
 	//
 	// It rides the poll because that is the one call every session already makes. Until

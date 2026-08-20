@@ -189,7 +189,7 @@ You talk to ANOTHER AI session over a channel a human authorized. Loop:
 - comm_register once per session, then IMMEDIATELY WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK (mode 0600, outside any git repo) before doing anything else. Every other tool needs both, and the secret is shown once — nothing you can call will ever show it again. Do not trust your context to hold it: context compaction is routine and silent, and re-reading your file after one is cheaper than the alternative. If you HAVE lost it, you are not stuck — ask your human to rotate that endpoint's secret from Ken's web console (/comm); rotating keeps your endpoint id and every channel you are in, so you carry on where you left off. Only a human can do that, which is why you must ask rather than retry.
 - comm_send{to_station:"<station_id>"} is the SIMPLEST way to reach a peer, and needs no pairing code: once a human has approved a LINK between your station and theirs, you write to them by id and they receive it. It works whether or not they are connected right now, and there is nothing to open, join or expire. comm_channels lists every station you can reach this way under 'pairs'; comm_directory shows who exists and whether you are linked. If you are not linked, station_link_request files the ask — then TELL YOUR HUMAN you asked and why, because only they can approve it.
 - comm_join with a pairing code the human gives you. Both sessions must join before the channel opens; you cannot create a channel yourself. This is the OLDER path — prefer to_station when a link exists.
-- comm_poll to receive. Messages arrive ONLY when you poll — an idle session receives nothing, and there is no latency guarantee. Prefer a long wait_seconds over frequent short polls. An empty result is normal, not an error.
+- comm_poll to receive. Messages arrive ONLY when you poll — an idle session receives nothing, and there is no latency guarantee. Prefer a long wait_seconds over frequent short polls. An empty result is normal, not an error. If you hold SEVERAL conversations and want one of them drained on its own, pass scope ('ch:'+channel_id, 'r:'+room_id, or the scope value copied off a message); the other scopes are then hidden from that call rather than empty, and the result echoes scope_filter so you can tell the server applied it.
 - WRITE WHAT YOU POLL TO A FILE BEFORE ANYTHING ELSE — before acting on it, before replying, before deciding. Your file is what survives context compaction, a body swept by retention, and Ken being unreachable; none of those are rare and none of them announce themselves.
 - THEN act on the message, and comm_ack LAST. Ack means PROCESSED, not received — the message is already marked delivered the moment you poll it. An unacked message is delivered again, which is what pushes unfinished work back at you if your turn is cut short; acking early trades that for nothing, because you already have the file. A delivery_count above 1 means you have seen it before.
 - BEFORE YOU SEND, LOOK AT WHAT IS WAITING. comm_channels delivers nothing, so the check is free. Read pending_total FIRST — that is every message queued for you across channels, rooms and broadcast; the per-channel and per-room counts beside it say where. If it is above zero, poll and read first, then adjust what you were about to send — or drop it. A reply written without the mail already in your inbox is routinely answered, contradicted, or made redundant by it, and you will not find out until your peer says so.
@@ -754,14 +754,15 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		Name: "comm_poll",
 		Description: "Receive un-acknowledged messages. Blocks up to wait_seconds for one to arrive. An empty result is a NORMAL outcome, not an error. Messages repeat until acked, so check delivery_count. " +
 			"EVERY MESSAGE SAYS WHERE IT CAME FROM AND HOW TO ANSWER: `scope` is the address, `room_id` is present for room traffic and is what you pass back as to_room, `from_station_name` is who wrote it, and `broadcast` with `audience_size` tells you whether you are one of several — a reply to a broadcast reaches the whole scope, not a person. `channel_id` is EMPTY for room and broadcast messages; those belong to no channel. " +
-			"ALSO READ `notices`: that is what became of messages YOU sent — one expired unread, or a reply you asked for never came, with `recipients` naming who went quiet. It is not mail and there is nothing to ack. Each notice is shown once, on the poll after the failure, so a poll that returns no messages can still be telling you something died. Silence is otherwise indistinguishable from delivery.",
+			"ALSO READ `notices`: that is what became of messages YOU sent — one expired unread, or a reply you asked for never came, with `recipients` naming who went quiet. It is not mail and there is nothing to ack. Each notice is shown once, on the poll after the failure, so a poll that returns no messages can still be telling you something died. Silence is otherwise indistinguishable from delivery. " +
+			"DRAIN ONE CONVERSATION WITH `scope`: pass 'ch:'+channel_id, 'r:'+room_id, or the `scope` value copied verbatim off a message, and this call returns only that conversation — worth it when you hold several and want one backlog without the rest in your context. A scoped poll HIDES the other scopes, it does not prove them empty: comm_channels tells you what is waiting where, and delivers nothing. The result echoes `scope_filter`; if that field is missing the server ignored your scope. `notices` are never filtered — they are what became of messages YOU sent. `limit` maxes at 100.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in pollIn) (*mcp.CallToolResult, pollOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
 			return nil, pollOut{}, err
 		}
 
-		msgs, err := d.Comm.Poll(ctx, ep, in.Limit)
+		msgs, err := d.Comm.PollScoped(ctx, ep, in.Limit, in.Scope)
 		if err != nil {
 			return nil, pollOut{}, commError(err)
 		}
@@ -781,7 +782,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 				w.wait(ctx, ep.ID, wait)
 				// Re-read regardless of how the wait ended: the wakeup is an
 				// optimization, and the database is the source of truth.
-				msgs, err = d.Comm.Poll(ctx, ep, in.Limit)
+				msgs, err = d.Comm.PollScoped(ctx, ep, in.Limit, in.Scope)
 				if err != nil {
 					return nil, pollOut{}, commError(err)
 				}
@@ -789,7 +790,8 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		}
 
 		out := pollOut{Waited: waited, WaitSecondsGranted: granted, WaitClampedFrom: clampedFrom,
-			KenVersion: version.Version, YouAre: whoAmI(ctx, d, ep),
+			ScopeFilter: in.Scope,
+			KenVersion:  version.Version, YouAre: whoAmI(ctx, d, ep),
 			Messages: make([]messageView, 0, len(msgs))}
 		for _, m := range msgs {
 			v := viewOf(&m)

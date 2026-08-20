@@ -15,6 +15,34 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **`comm_poll` takes an optional `scope`, so a hub can drain ONE conversation instead of its whole
+  inbox.** Pass `ch:<channel_id>`, `r:<room_id>`, `p:<a>|<b>` or `b:<party>` — the value a message
+  already carries in its `scope` field — and the call returns only that conversation. A session
+  holding several channels previously had to poll all of them, pull every unrelated conversation into
+  its context, and spend the 100-message ceiling on mail it had not asked for.
+
+  **It is a window, not a count, and the tool says so.** Other scopes are hidden from a scoped call,
+  not empty; `comm_channels` remains the surface that says what is waiting where, and it delivers
+  nothing. A scope that names no namespace is **refused** with the accepted forms spelled out, rather
+  than matched against nothing — an unparseable filter returning an empty list is byte-identical to an
+  empty inbox, which is the one answer the caller it exists for cannot act on. A well-formed scope
+  matching no row *is* an ordinary empty result: refusing there would make the filter an existence
+  oracle for ids the caller may not hold.
+
+  **Every result now carries `scope_filter`, present even when empty.** Tool descriptions freeze at
+  conversation start, so a session already running can only learn about `scope` from its human or a
+  peer — and passing it to a server that predates it would return a full, unfiltered inbox with no
+  signal at all. The presence of the key is that signal. `notices` are deliberately not filtered.
+
+### Fixed
+
+- **`comm_poll`'s `limit` description never named its ceiling.** The clamp itself was corrected
+  earlier (asking for more than 100 returns 100, not the old collapse to 50), but the schema still
+  said only "default 50", so a caller passing 500 was silently given 100 and told nothing — the same
+  accepted-then-quietly-adjusted shape `wait_clamped_from` exists to close. It now states the maximum.
+
 ### Fixed
 
 - **`comm_channels` could contradict itself in one result, in the file whose own comment says the

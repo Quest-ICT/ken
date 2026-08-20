@@ -457,6 +457,43 @@ SELECT id, ?, ? FROM message WHERE message_id = ?`,
 // sees the whole order. That is the price of letting a second session help without
 // severing the first.
 func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, error) {
+	return s.PollScoped(ctx, ep, limit, "")
+}
+
+// ErrBadScope refuses a poll filter that names no scope namespace.
+//
+// CallerSafe on purpose: the text is the GRAMMAR of the argument, not a statement about
+// whether any particular scope exists, so it reveals nothing a caller could not already
+// establish. And it must refuse rather than filter to nothing — an unparseable filter
+// returning an empty list is indistinguishable from an empty inbox, which is the one
+// answer the caller it exists for cannot act on.
+var ErrBadScope = CallerSafe(errors.New(
+	"scope must name one namespace: 'ch:<channel_id>', 'r:<room_id>', 'p:<station>|<station>' or 'b:<party>'. " +
+		"Copy it verbatim from the `scope` field of a polled message, or build it as 'ch:'+channel_id or 'r:'+room_id. " +
+		"Omit scope to poll every scope at once"))
+
+// PollScoped is Poll narrowed to ONE scope; Poll is PollScoped with no filter, and the
+// two-regime contract documented above applies unchanged to both.
+//
+// WHY A FILTER EXISTS. Poll returns every scope at once, which is right for a session
+// holding one conversation and wrong for a hub holding several: draining one channel
+// meant pulling every other conversation into the caller's context, and the 100-message
+// ceiling gets spent on mail nobody asked for.
+//
+// THE FILTER IS A WINDOW, NOT A COUNT. Messages in other scopes are hidden from this
+// call, not absent, so an empty scoped result says nothing about the inbox. The surface
+// that answers "what is waiting where" is comm_channels, which delivers nothing. The
+// tool description says exactly this, because a caller who reads an empty scoped result
+// as an empty inbox has been handed a check that fails the same way as the thing it
+// checks for.
+//
+// An empty scope means NO filter, deliberately: the wrapper above and all 77 existing
+// call sites keep the shipped behaviour without an edit. A non-empty scope that names no
+// namespace is refused, never matched against nothing.
+func (s *Store) PollScoped(ctx context.Context, ep *Endpoint, limit int, scope string) ([]Message, error) {
+	if scope != "" && !validScope(scope) {
+		return nil, ErrBadScope
+	}
 	// Asking for MORE than the ceiling must give you the CEILING, not less than it.
 	// This used to collapse both cases to 50: measured with 64 queued, limit=100
 	// returned 64 but limit=101 returned 50, so a hub asking for everything got
@@ -497,6 +534,15 @@ func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, e
 			party = `(d.party_key = ? OR d.party_key = ?)`
 			args = []any{stationParty(ep.StationID), endpointPartyKey(ep.ID)}
 		}
+		scopeClause := ""
+		if scope != "" {
+			// Spliced rather than always present as `AND (? = '' OR m.scope_id = ?)`: that
+			// shape makes every unfiltered poll — the overwhelming majority — carry a
+			// predicate that can never be false. ARGUMENT ORDER IS LOAD-BEARING: party
+			// args, then scope, then ep.ID and limit, matching the placeholder order below.
+			scopeClause = "\n  AND m.scope_id = ?"
+			args = append(args, scope)
+		}
 		rows, err := t.QueryContext(ctx, `
 SELECT m.message_id, d.party_key
 FROM delivery d
@@ -505,7 +551,7 @@ LEFT JOIN channel c ON c.id = m.channel_id
 WHERE `+party+`
   AND d.state IN ('queued','delivered')
   AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  AND (c.id IS NULL OR c.state='open')
+  AND (c.id IS NULL OR c.state='open')`+scopeClause+`
   AND (d.claimed_by_endpoint IS NULL
        OR d.claimed_by_endpoint = ?
        OR d.claim_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))

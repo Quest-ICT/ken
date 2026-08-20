@@ -273,6 +273,33 @@ func roomMembers(ctx context.Context, t *sql.Tx, roomID string) ([]scopeMember, 
 // broadcastScope is the scope a sender's broadcasts live in.
 func broadcastScope(senderParty string) string { return scopePrefixBroadcast + senderParty }
 
+// validScope reports whether s names one of the four scope namespaces.
+//
+// It exists for the POLL FILTER, and the reason it refuses rather than shrugging is the
+// same reason membersOfScope refuses an unknown kind: a filter that matches nothing
+// returns an empty list, and an empty list is byte-identical to "no mail is waiting".
+// A hub draining a backlog cannot act on that answer, and nothing in the result would
+// tell it the filter was the problem.
+//
+// Deliberately built from the four existing parsers rather than a prefix table, so a
+// namespace can never be accepted here in a shape those parsers would reject — 'p:' with
+// no separator being the case that actually differs.
+func validScope(s string) bool {
+	if _, ok := channelIDOfScope(s); ok {
+		return true
+	}
+	if _, ok := roomIDOfScope(s); ok {
+		return true
+	}
+	if _, _, ok := pairStationsOfScope(s); ok {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(s, scopePrefixBroadcast); ok && rest != "" {
+		return true
+	}
+	return false
+}
+
 // WakeTargetsFor returns the endpoint rowids that should have a parked poll woken because
 // this message was just written for them.
 //

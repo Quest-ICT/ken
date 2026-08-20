@@ -451,6 +451,18 @@ Required on every operation, because §C6 makes redelivery normal:
   every scope it can receive in — channels, rooms and broadcast alike — with a delivery count, plus
   the `notices` array describing what became of messages it SENT (§4.6). Being polled is an informational timestamp, never a state
   that hides a message from the next poll.
+
+  An optional **`scope`** narrows one call to a single conversation (`ch:<channel_id>`, `r:<room_id>`,
+  `p:<a>|<b>` or `b:<party>`), so a hub holding several conversations can drain one without pulling
+  the others into its context and without spending the 100-message ceiling on mail it did not ask for.
+  It is a **window, not a count**: the other scopes are hidden from that call, not empty, and the
+  result echoes **`scope_filter`** so a caller can tell a server that applied the filter from one that
+  predates the argument and ignored it. A scope naming no namespace is **refused**, never matched
+  against nothing — an unparseable filter returning an empty list would be indistinguishable from an
+  empty inbox. A well-formed scope that matches no row is an ordinary empty result, not an error, so
+  the filter cannot be used as an existence oracle for ids. `notices` are **not** filtered: they are
+  what became of messages the caller SENT, they are shown once, and dropping them from a scoped poll
+  would lose them.
 - **`comm_ack`** succeeds on an already-acknowledged or unknown id.
 
 Ordering is promised **per channel and direction** and nowhere else: polls return strictly ascending
@@ -637,7 +649,7 @@ ken token add --actor comm-dev --scopes comm
 | `comm_bind` | Bind an endpoint you already have to a station, keeping its id, secret and channels. For a session that registered before it began staffing a station. |
 | `comm_channels` | List this endpoint's channels, rooms and **pairs** (the stations a link lets it address), each with what is waiting. |
 | `comm_send` | Send one atomic message, addressed by `to_station` (a linked station — no code, no channel), `channel_id`, or `to_room`; optional `requires_response` / `reply_to` / idempotency key. |
-| `comm_poll` | Long-poll for unacknowledged messages across all of this endpoint's channels. |
+| `comm_poll` | Long-poll for unacknowledged messages across every scope this endpoint receives in — channels, rooms, pairs and broadcast. Optional `scope` drains one conversation; optional `limit` (default 50, max 100). |
 | `comm_ack` | Mark a message processed (or acknowledge cumulatively up to a sequence). |
 | `comm_file_offer` | Offer a file: a same-host rendezvous, or a one-time upload grant (`comm-file`). |
 | `comm_file_grant` | Mint a fresh single-use download URL for a file offered to you (`comm-file`). |
