@@ -34,6 +34,23 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.13.0
+
+**MINOR. NO SCHEMA CHANGE** — comm.db stays at 15, ken.db at 19, and
+`git diff v3.12.1..v3.13.0 -- '*migrations*'` is empty. A 3.12.x deployment takes this without
+crossing a migration.
+
+Sixteen commits, and the two below are the only ones that change what you or a running session
+will observe. Everything else is defect fixes behind unchanged surfaces, dead code removed, and
+documentation that had been describing controls Ken does not have.
+
+**One thing worth knowing even though it needs no action:** `internal/store`'s migration runner had
+none of the foreign-key handling `internal/comm`'s has had all along, and ken.db is the database
+with the cascade graph — `station` alone has nine `ON DELETE CASCADE` children. A future ken.db
+migration that rebuilt a table would have cascaded the `DROP`. Both stores now share one runner.
+Nothing about your data changes; the next ken.db migration is simply survivable in a way it was
+not.
+
 ### `ken <unknown-subcommand>` now refuses instead of starting a server
 
 Read this before upgrading if anything on your host invokes `ken` from a script or a unit file.
