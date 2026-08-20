@@ -662,6 +662,13 @@ the 2026-08-18 sweep; indexed in `PARKING-LOT.md`.)
 > does not want to go. **That tension is recorded there and resolved after this list, not during
 > it.**
 
+> **Migration 0016 shipped separately, 2026-08-20** — `idx_message_sender` on
+> `message(sender_party, kind)`. `NoticesFor` runs on every `comm_poll` and filtered an unindexed
+> column, so each poll scanned the whole `message` table: measured 0.511 → 37.710 ms/call between
+> 1k and 100k deployment messages with the caller's own inbox constant and no notices returned.
+> It is the coupling the 2026-08-03 poll-cost task recorded, recreated in a new query when 3.4.0
+> made notices derived. **Ships alone under Rule 4.**
+
 ## Batch 6 — what the Batch 5 decisions make into work  `[x]`  *(closed 2026-08-19)*
 
 The decisions are made; this is what they cost. **The order is load-bearing.**

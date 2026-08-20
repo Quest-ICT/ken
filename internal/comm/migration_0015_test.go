@@ -12,8 +12,13 @@ func TestSchemaReaches15WithTheLinkMirror(t *testing.T) {
 	if err := st.R.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migration`).Scan(&v); err != nil {
 		t.Fatal(err)
 	}
-	if v != 15 {
-		t.Fatalf("comm schema version = %d, want 15", v)
+	// AT LEAST 15, not exactly 15. This test's subject is the link mirror and its CHECK,
+	// not which migration happens to be last — and an equality assertion here fails on
+	// every future migration, which trains the next person to edit the number rather than
+	// read the test. Migration 0016 broke it that way on 2026-08-20. A skipped migration
+	// is still caught: the table and CHECK assertions below would fail.
+	if v < 15 {
+		t.Fatalf("comm schema version = %d, want at least 15 — migration 0015 did not apply", v)
 	}
 	var name string
 	if err := st.R.QueryRowContext(ctx,

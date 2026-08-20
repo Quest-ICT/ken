@@ -15,6 +15,25 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every `comm_poll` full-scanned the `message` table.** `NoticesFor` filters
+  `WHERE m.sender_party = ?` and no index has ever existed on that column, so SQLite answered it
+  with `SCAN m` — verified with `EXPLAIN QUERY PLAN`, not inferred from the SQL.
+
+  **The shape is worse than the speed.** The scan covers the whole table, so one caller's poll gets
+  slower as OTHER sessions accumulate history: a quiet session pays for a noisy deployment. Measured
+  at **0.511 → 7.668 → 37.710 ms per call** across 1k → 20k → 100k total messages, with the caller's
+  own inbox held constant at five and **no notices returned** — the full cost paid to discover there
+  was nothing to report.
+
+  This is the same coupling a 2026-08-03 task recorded against `Poll`, which was fixed by giving
+  `Poll` a recipient-scoped index. Deriving notices at poll time in 3.4.0 recreated it in a new
+  query. Worth naming: *"we fixed that"* was true, and the symptom came back somewhere else.
+
+  Migration **0016** adds `idx_message_sender ON message(sender_party, kind)`. Additive — no row is
+  rewritten, and an older binary rolled back over it simply never uses the index.
+
 ## [3.13.0] — 2026-08-20
 
 ### Fixed
