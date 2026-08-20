@@ -373,16 +373,6 @@ func (v view) Langs() []i18n.Lang {
 	return v.tr.Languages()
 }
 
-// LangName is the endonym of the current language (for the selector's summary).
-func (v view) LangName() string {
-	for _, l := range v.Langs() {
-		if l.Code == v.Lang {
-			return l.Name
-		}
-	}
-	return v.Lang
-}
-
 func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session, page string, data any) {
 	a.i18n.MaybeReload() // pick up dropped-in files before resolving/rendering
 	lang := a.resolveLang(r)

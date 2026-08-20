@@ -6,13 +6,10 @@
 package ratelimit
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -109,63 +106,6 @@ type Config struct {
 	// this package stays decoupled from the metrics package.
 	OnReject func()
 	OnBlock  func()
-}
-
-// FromEnv resolves the config from KEN_RATELIMIT* (on by default, generous limits).
-// Non-positive limits/bursts are clamped to the defaults so an "enabled" limiter
-// always limits; the lockout is bounded to guard against an overflowing integer.
-func FromEnv() Config {
-	lockSec := envInt("KEN_RATELIMIT_LOCKOUT_SEC", 900)
-	if lockSec <= 0 || lockSec > 7*24*3600 {
-		lockSec = 900
-	}
-	c := Config{
-		Enabled:     envBool("KEN_RATELIMIT", true),
-		IPPerMin:    envInt("KEN_RATELIMIT_IP_RPM", 120),
-		IPBurst:     envInt("KEN_RATELIMIT_IP_BURST", 120),
-		TokenPerMin: envInt("KEN_RATELIMIT_TOKEN_RPM", 120),
-		TokenBurst:  envInt("KEN_RATELIMIT_TOKEN_BURST", 60),
-		BlockAfter:  envInt("KEN_RATELIMIT_BLOCK_AFTER", 100),
-		Lockout:     time.Duration(lockSec) * time.Second,
-		Allow:       clientip.ParseCIDRs(os.Getenv("KEN_RATELIMIT_ALLOW_CIDRS")),
-	}
-	if c.IPPerMin <= 0 {
-		c.IPPerMin = 120
-	}
-	if c.IPBurst <= 0 {
-		c.IPBurst = 120
-	}
-	if c.TokenPerMin <= 0 {
-		c.TokenPerMin = 120
-	}
-	if c.TokenBurst <= 0 {
-		c.TokenBurst = 60
-	}
-	if c.BlockAfter < 0 {
-		c.BlockAfter = 0
-	}
-	return c
-}
-
-// TokenBucket builds the per-token limiter from c (nil when disabled).
-func (c Config) TokenBucket() *Bucket {
-	if !c.Enabled {
-		return nil
-	}
-	return NewBucket(c.TokenPerMin, c.TokenBurst)
-}
-
-// Describe returns a one-line summary for the startup log.
-func (c Config) Describe() string {
-	if !c.Enabled {
-		return "rate limit: OFF"
-	}
-	block := "auto-block after " + strconv.Itoa(c.BlockAfter) + " over-limit rejections, lockout " + c.Lockout.String()
-	if c.BlockAfter <= 0 {
-		block = "auto-block off"
-	}
-	return fmt.Sprintf("rate limit: per-IP %d/min (burst %d), per-token %d/min (burst %d); %s (loopback + configured CIDRs + /healthz exempt)",
-		c.IPPerMin, c.IPBurst, c.TokenPerMin, c.TokenBurst, block)
 }
 
 // IPGuard is the outermost middleware: it resolves the client IP, bypasses the
@@ -369,24 +309,4 @@ func reject(w http.ResponseWriter, status int, retry time.Duration) {
 	}
 	w.Header().Set("Connection", "close")
 	http.Error(w, http.StatusText(status), status)
-}
-
-func envBool(k string, def bool) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(k))) {
-	case "":
-		return def
-	case "0", "off", "false", "no":
-		return false
-	default:
-		return true
-	}
-}
-
-func envInt(k string, def int) int {
-	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
 }

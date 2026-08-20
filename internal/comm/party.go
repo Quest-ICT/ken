@@ -95,11 +95,6 @@ func pairStationsOfScope(scope string) (string, string, bool) {
 	return a, b, true
 }
 
-// PairScopeFor is the exported form, for callers assembling a listing rather than a
-// send. Same ordering rule, so a scope built here and one built by the send path are
-// the same string.
-func PairScopeFor(x, y string) string { return pairScope(x, y) }
-
 // channelScope is the scope id for a two-party channel.
 func channelScope(channelID string) string { return scopePrefixChannel + channelID }
 

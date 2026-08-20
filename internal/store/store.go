@@ -26,10 +26,6 @@ type Store struct {
 	detect lang.Detector
 }
 
-// SetDetector overrides the content-language detector (used by tests to force a
-// deterministic language without exercising whatlanggo).
-func (s *Store) SetDetector(d lang.Detector) { s.detect = d }
-
 // detectLang returns the detected primary-subtag of the concatenated prose, or
 // lang.Und when the detector is unset or undecided. Detection runs over PROSE
 // only (never code/triggers/tags — those are language-neutral retrieval keys).

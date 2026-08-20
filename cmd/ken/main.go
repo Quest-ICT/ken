@@ -663,8 +663,17 @@ func runServe(args []string) {
 		log.Print("TLS: benign handshake-error log noise is quieted (KEN_TLS_QUIET_HANDSHAKE)")
 	}
 	if s := live.Current(); s.RLEnabled {
-		log.Printf("rate limit: per-IP %d/min (burst %d), per-token %d/min (burst %d); auto-block after %d, lockout %ds (loopback + allow-CIDRs + /healthz exempt)",
-			s.IPPerMin, s.IPBurst, s.TokenPerMin, s.TokenBurst, s.BlockAfter, s.LockoutSec)
+		// BlockAfter=0 means auto-block is OFF, and settings allows it. The retired
+		// ratelimit.Describe said so; this copy printed "auto-block after 0, lockout 900s",
+		// which reads as a limit of zero rejections rather than as no limit at all. Ported
+		// here as the dead original was deleted, because the two copies had drifted and the
+		// DEAD one was the correct one.
+		block := fmt.Sprintf("auto-block after %d, lockout %ds", s.BlockAfter, s.LockoutSec)
+		if s.BlockAfter <= 0 {
+			block = "auto-block off"
+		}
+		log.Printf("rate limit: per-IP %d/min (burst %d), per-token %d/min (burst %d); %s (loopback + allow-CIDRs + /healthz exempt)",
+			s.IPPerMin, s.IPBurst, s.TokenPerMin, s.TokenBurst, block)
 	} else {
 		log.Print("rate limit: OFF")
 	}

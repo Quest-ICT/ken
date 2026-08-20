@@ -1155,3 +1155,74 @@ func TestBlankedBodiesAreNotCountedAsRetainedBytes(t *testing.T) {
 		t.Fatal("the blanked row lost its body_bytes, so this test is not exercising the exclusion")
 	}
 }
+
+// A FILE OFFER MUST WAKE THE STATION'S LIVE READER, NOT THE SEAT THAT WAS CHOSEN ONCE.
+//
+// THIS TEST EXISTS BECAUSE THE FIX SURVIVED A MUTATION. Every other path — send, upload
+// completion — resolves live endpoints from the PARTY, and the file-offer path notified
+// `res.RecipientRow` instead: the rowid LiveEndpointForStation picked when the channel was
+// opened, from a function whose own doc calls itself explicitly approximate and correct for
+// ADDRESSING only. Reverting the fix on 2026-08-20 broke nothing in the suite, which is how
+// this one site outlived three separate fixes of the same defect.
+//
+// It is not a correctness bug and that is precisely why it hid: the delivery is filed
+// correctly and the post-wait re-read finds it. A station successor simply waits out its
+// entire poll window for a file offer while every other kind of message arrives at once —
+// a latency difference on one surface, which users read as a capability difference.
+func TestWakeTargetsForAFileOfferResolveTheStationsLiveReader(t *testing.T) {
+	lim := DefaultLimits()
+	lim.FilesEnabled = true
+	st := newStore(t, lim)
+	ctx := context.Background()
+	sender := stationEndpoint(t, st, "tok-s", "st-sender")
+	predecessor := stationEndpoint(t, st, "tok-r", "st-receiver")
+
+	chn, err := st.OpenLinkedChannel(ctx, sender, predecessor, 1, "sender <-> receiver")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := chn.ChannelID
+
+	// A SECOND SESSION STAFFS THE SAME STATION. Not a revoke — revoking the seat holder
+	// severs the channel, and the case that matters is the ordinary one: the station has a
+	// live reader that is NOT the endpoint frozen into the channel seat.
+	successor := stationEndpoint(t, st, "tok-r2", "st-receiver")
+
+	res, err := st.OfferFile(ctx, sender, ch, FileOffer{
+		Name: "report.pdf", SizeBytes: 12,
+		SHA256:      "0000000000000000000000000000000000000000000000000000000000000000",
+		NonceSHA256: "1111111111111111111111111111111111111111111111111111111111111111",
+		// "path", not "upload": only a path offer enqueues a message immediately
+		// (OfferResult.Message is documented non-nil for exactly that case), and the
+		// message is what there is to wake anyone for.
+		Transfer: "path",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Message == nil {
+		t.Fatal("the offer produced no message, so there is nothing to wake anyone for")
+	}
+
+	targets, err := st.WakeTargetsFor(ctx, res.Message.MessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, id := range targets {
+		if id == successor.ID {
+			found = true
+		}
+		_ = predecessor
+	}
+	if !found {
+		t.Fatalf("the station's live successor %d is not among the wake targets %v — a file offer "+
+			"would leave it asleep until its poll window elapsed", successor.ID, targets)
+	}
+	// CONTROL: res.RecipientRow is the frozen seat, and it is NOT the successor. Without
+	// this the test could pass on a build where the two happened to coincide.
+	if res.RecipientRow == successor.ID {
+		t.Skip("the frozen seat and the live reader coincide in this fixture; the assertion above " +
+			"cannot distinguish the two, so it proves nothing here")
+	}
+}

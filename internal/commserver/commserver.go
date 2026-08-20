@@ -891,7 +891,24 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		out := fileOfferOut{AttachmentID: res.Attachment.AttachmentID, ExpiresAt: res.Attachment.ExpiresAt}
 		if res.Message != nil {
 			out.MessageID = res.Message.MessageID
-			w.notify(res.RecipientRow)
+			// THE LAST SITE STILL WAKING A FROZEN SEAT. Every other path resolves live
+			// endpoints from the PARTY (send, upload completion); this one notified
+			// res.RecipientRow — the rowid chosen once by LiveEndpointForStation, whose own
+			// doc calls itself explicitly approximate and correct for ADDRESSING only. Once
+			// the session holding that seat is gone, the notify lands where nobody is parked,
+			// and a station successor waits out its full poll window for a file offer while
+			// every other kind of message arrives at once.
+			//
+			// Not a correctness bug — the delivery is filed correctly and the post-wait
+			// re-read finds it — which is exactly why it survived three fixes of the same
+			// defect: nothing fails, something is just silently slower on one surface.
+			if targets, wErr := d.Comm.WakeTargetsFor(ctx, res.Message.MessageID); wErr != nil {
+				log.Printf("comm: wake targets for file offer %s: %v", res.Message.MessageID, wErr)
+			} else {
+				for _, id := range targets {
+					w.notify(id)
+				}
+			}
 		}
 		if res.UploadGrant != "" {
 			out.UploadURL = "/comm/files/" + res.UploadGrant
