@@ -17,6 +17,26 @@ same change — never "docs later".
 
 ### Fixed
 
+- **Binding a session to a station now adopts the channel seats it already occupies**, closing a
+  gap that made a live conversation invisible to the operator. `channel.station_a/b` snapshots the
+  authorising pair when a *seat is filled*, so a session that joined a pairing-code channel while
+  unbound and bound afterwards left `NULL` there forever — nothing revisited it.
+
+  That NULL is not cosmetic. The pair predicate is snapshot-only, so such a channel was invisible
+  to the blast-radius count shown before revoking a link, invisible to the revocation sweep, and
+  **invisible to `comm_open_channel`'s reuse lookup — which then opened a SECOND channel between
+  two stations already talking**, fragmenting the conversation its own contract promises not to
+  fragment.
+
+  Only ever fills `NULL`; a pair recorded at seat-fill time is never rewritten. Migration 0008
+  warns that the current binding "is exactly the value that may already have drifted" — here it
+  cannot have, because the binding is established in the same transaction.
+
+  **This widens link revocation, deliberately:** a channel whose two seats are now both
+  station-owned becomes visible to revocation between those stations. A channel that revocation
+  cannot see is the evasion 0008 exists to close, and adopt-after-join had reopened it by another
+  route.
+
 - **`kb_save`'s `triggers` said "symptoms that should surface this entry" and silently required an
   array.** Prose with no type hint reads as an invitation to write symptoms, and a delimited string
   is the natural way to write several — which the wire then rejects. Reported by a claude.ai session
