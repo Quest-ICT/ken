@@ -271,6 +271,45 @@ Until then it changes nothing.
 
 ## 9. Recorded feature requests — not analysed, not scheduled
 
+### 9.2 Free disk space must be a metric
+
+Recorded **2026-08-21** at Vlad's instruction: *"I want free space on the Ken server reported with
+metrics."*
+
+**This is not a new capability — it is a value Ken already computes and throws away.**
+`diskFree(dir)` exists at `internal/comm/diskfree_unix.go:11` (with a `(0, false)` fallback for
+non-Unix at `diskfree_other.go:9`), and it has **exactly one caller**: `internal/comm/file.go:191`,
+which uses it to refuse a file offer that would push the filesystem below `FileMinFreeBytes`. It is
+unexported, and no metric carries it.
+
+So the operator-facing gap is precise: **`ken_comm_file_bytes` reports the bytes Ken is HOLDING,
+and nothing reports the bytes REMAINING.** An operator watching Ken can see it grow and cannot see
+what it is growing into. The one place Ken knows the answer, it uses it to refuse a single upload
+and then discards it.
+
+**What makes it more than a gauge, and why it belongs in this conversation rather than as a ticket:**
+
+- **There may be more than one filesystem.** `ken.db`, `comm.db` and the relay files directory are
+  separately configurable paths. One number is the wrong shape if they can diverge; the metric
+  needs a label per path, and the code that computes it currently lives in the package that owns
+  only one of them.
+- **`diskFree` is in `internal/comm`.** Exporting it for `ken.db`'s filesystem means moving it to a
+  shared package or copying it — and this week has been a sustained argument against the second
+  option: the rate-limit config had two copies that drifted, with the DEAD one correct, and the
+  migration runner had the hardening in the store that needed it least. The right home is probably
+  beside `internal/dbmigrate`, which exists for exactly this reason now.
+- **Disk-full is the failure mode Ken is least able to report from inside.** A full disk stops the
+  snapshot, stops the WAL checkpoint and stops the write path, so the surface that would tell you is
+  the surface that is failing. That argues for the metric being *cheap and always present* rather
+  than computed on demand — and for the alert living upstream, where Prometheus already is.
+- `docs/MONITORING.md` currently opens by saying Ken **"writes nothing to disk"** for observability.
+  True of metrics themselves, and it sits oddly next to a deployment whose most likely operational
+  emergency is disk. Whatever ships, that page should stop leading with it.
+
+**Not scheduled and not designed here.** It is small, it is obviously right, and the only reason it
+is recorded rather than built is that the shared-package question is the same one the analysis has
+to answer anyway.
+
 ### 9.0 The 30-minute MCP session timeout, deferred here by Vlad on 2026-08-21
 
 **Keep 30 minutes for now; revisit when this conversation happens.** Recorded rather than quietly
