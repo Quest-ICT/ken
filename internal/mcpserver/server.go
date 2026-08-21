@@ -255,7 +255,7 @@ type saveIn struct {
 	Caveats         string              `json:"caveats,omitempty"`
 	Code            []model.CodeSnippet `json:"code,omitempty"`
 	Tags            []string            `json:"tags,omitempty"`
-	Triggers        []string            `json:"triggers,omitempty" jsonschema:"symptoms that should surface this entry"`
+	Triggers        []string            `json:"triggers,omitempty" jsonschema:"ARRAY of short symptom strings, one per entry — e.g. [\"connection refused\", \"502 after deploy\"]. Not one delimited string"`
 	AppliesTo       []string            `json:"applies_to,omitempty"`
 	VerifiedAgainst []model.VerifiedRef `json:"verified_against,omitempty"`
 	Confidence      float64             `json:"confidence,omitempty" jsonschema:"0..1 self-rating"`
@@ -386,7 +386,7 @@ The loop:
 - Warm up (fresh session, no specific problem yet): kb_recent_context for a briefing of recently-curated entries.
 - Search FIRST — your default first move before debugging an error or solving anything non-trivial: kb_search with natural language PLUS the exact symptoms/error text you see. It returns token-light summaries and a dedup_check_token — KEEP that token (kb_save requires it). Prefer 'mature' entries; distrust a 'staleness' badge; has_provisional means a proposal is already pending.
 - Fetch the few that matter: kb_get by slug (concise by default; 'detailed' adds provenance).
-- Act, then close the loop EVERY time: kb_record_outcome (helped | didnt-apply | was-wrong). 'was-wrong' also flags the entry stale. This is how Ken self-curates — do not skip it.
+- Act, then close the loop EVERY time: kb_record_outcome (helped | didnt-apply | was-wrong). 'was-wrong' also flags the entry stale. This is how Ken self-curates — do not skip it. IF kb_record_outcome IS NOT IN YOUR TOOL LIST, some clients filter what they show you: say so to your human in words, naming the entry and what happened, so the loop closes through them instead of silently not closing.
 - Save vs enhance what you learned: same problem with a better answer → kb_propose_enhancement (a new rev on the same slug). A different problem that merely shares vocabulary → kb_save (needs a fresh dedup_check_token) plus a 'relates' link. Write triggers (symptoms a future agent would type) and applies_to well; give an honest confidence.
 - Flag stale (kb_flag_stale) when a dependency moved or a fact changed. You can flag; you can never assert freshness.
 

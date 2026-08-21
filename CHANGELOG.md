@@ -15,6 +15,25 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **`kb_save`'s `triggers` said "symptoms that should surface this entry" and silently required an
+  array.** Prose with no type hint reads as an invitation to write symptoms, and a delimited string
+  is the natural way to write several — which the wire then rejects. Reported by a claude.ai session
+  on 2026-08-21. The description now says ARRAY and shows one. **Not coerced**: accepting a
+  delimited string invites the question of which delimiter, and the answer would have to be
+  documented anyway, so the cheaper honest fix is to say what is required.
+
+- **The instructions demanded `kb_record_outcome` and had nothing to say when a client is not
+  showing it.** Some clients filter which tools they surface, and Ken cannot know: a session that
+  never sees the tool silently skips a step its own instructions require, and reports nothing wrong
+  because from the inside the workflow simply ended. Same shape as an instruction that cannot verify
+  its own precondition. It now tells a session to say so to its human in words, naming the entry and
+  what happened, so the loop closes through them.
+
+  Both are asserted over `tools/list` and the delivered `initialize` instructions rather than over
+  the Go strings — a struct tag that never reached the schema would pass a source-level check.
+
 ### Added
 
 - **Ken now says at startup when the reply deadline outlives the message it is about.** If
