@@ -578,6 +578,61 @@ LIMIT ?`, append(args, limit)...)
 	return out, rows.Err()
 }
 
+// CountCrossStationTasks counts what CrossStationHumanTasks WOULD return, unlimited.
+//
+// IT EXISTS SO THE VIEW CAN SAY HOW MUCH OF THE PILE IT IS SHOWING. The list is capped at
+// `stationsPageSize`, and a capped list rendered with no total is a silent sample — the same
+// defect the vault trail was built to avoid, which states "the last 20 of 2,318" rather than
+// showing 20 and letting the reader assume that is all of them. A pile the human is meant to
+// work through is the worst place to guess wrong about completeness.
+//
+// It is also the nav badge's source. The badge is the whole point of the second caller: §11.8
+// designs this view for the human's question, and a view nobody is prompted to open answers it
+// only for a human who already remembered to ask.
+//
+// SAME PREDICATE AS THE LIST, deliberately — if the two drift, the page says "showing 200 of N"
+// with an N that counts something else, which is worse than no count at all.
+func (s *Store) CountCrossStationTasks(ctx context.Context, spaceID int64, blockedOn string) (int, error) {
+	where := `s.space_id=? AND t.state='open'`
+	args := []any{spaceID}
+	if blockedOn != "" {
+		where += ` AND t.blocked_on=?`
+		args = append(args, blockedOn)
+	}
+	var n int
+	err := s.R.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM station_task t JOIN station s ON s.station_id=t.station_id
+WHERE `+where, args...).Scan(&n)
+	return n, err
+}
+
+// HumanBlockedElsewhere counts open human-blocked tasks on stations OTHER than the caller's,
+// and how many stations carry them.
+//
+// WHY A COUNT AND NOT THE TASKS. A session staffs one station and its briefing stops at that
+// boundary, so a human staffing several is told about each pile only by the session that owns
+// it — and never told a pile exists on a station whose session is not running. This closes that
+// without handing one station's contents to another: STATIONS.md §S6 states that a station key
+// does not let its holder read another station's assets, and two integers are not assets. No
+// task text, no station names, no ids.
+//
+// IT IS A PURE READ AND MUST STAY ONE. Nothing here may stamp `last_briefed_at`: the caller does
+// not staff these stations and cannot relay their contents, so marking them briefed would record
+// a briefing that did not happen and suppress them for the session that could actually give it.
+//
+// WHAT THE CALLER MAY SAY, and the wording matters. This counts what is RECORDED as waiting, not
+// what is owed. `blocked_on` is written once at creation and nothing revisits it, so a task whose
+// condition was satisfied last week still counts here. A session relaying this must point at the
+// console rather than assert the debt — the human can check; the caller cannot.
+func (s *Store) HumanBlockedElsewhere(ctx context.Context, spaceID int64, exceptStation string) (tasks int, stations int, err error) {
+	err = s.R.QueryRowContext(ctx, `
+SELECT COUNT(*), COUNT(DISTINCT t.station_id)
+FROM station_task t JOIN station s ON s.station_id=t.station_id
+WHERE s.space_id=?1 AND t.state='open' AND t.blocked_on='human' AND t.station_id<>?2`,
+		spaceID, exceptStation).Scan(&tasks, &stations)
+	return tasks, stations, err
+}
+
 func boolOrNil(b bool) any {
 	if b {
 		return 1

@@ -17,6 +17,38 @@ same change — never "docs later".
 
 ### Added
 
+- **The cross-station task pile now announces itself, in the console and in the briefing.**
+  §11.8 built the whole-pile view for the human's question — *"what is everyone waiting on
+  me for?"* — and then left it on a page nothing pointed at, so it answered that question
+  only for a human who already remembered to ask it.
+
+  In the console: a **nav badge** and a **dashboard stat** counting open `blocked_on=human`
+  tasks across every station, both linking to `/stations`, both rendered only when something
+  is actually waiting — a permanent zero teaches the eye to skip the row it will one day need
+  to notice. And a **"showing the first 200 of N"** line, stated when and only when the cap
+  bit: a capped list rendered with no total is a silent sample, on the one page built so the
+  human can see the *whole* pile. The vault trail on that same page already says "the last 20
+  of 2,318" for exactly this reason; the two now behave alike.
+
+  In the briefing: `station_me` gains **`waiting_on_your_human_elsewhere`** — two integers and
+  a note, never contents. A session staffs one post and its briefing stops there, but the
+  human does not have that boundary. A human staffing several stations was told about one only
+  while a session for it happened to be running, and a session whose own list was empty
+  reported *"nothing is waiting on you"* while another pile grew unmentioned. That answer is
+  worse than silence, because it is confidently wrong.
+
+  Three properties, each tested: **no contents** (no task text, no station names, no ids —
+  §S6 says a station key does not read another station's assets, and two integers are not
+  assets); **a pure read** (nothing stamps `last_briefed_at`, because the caller cannot relay
+  what it cannot see, and marking those tasks briefed would suppress them for the session that
+  could); and **it counts what is RECORDED, not what is owed** — `blocked_on` is written once
+  at creation and nothing revisits it, so the note tells the session to send its human to
+  `/stations` rather than assert a debt it has no way to check.
+
+  Deliberately **not** a visibility-gated cross-station task list. Filtered to published or
+  linked stations, that returns a partial pile indistinguishable from a complete one — this
+  project'"'"'s named defect, manufactured on purpose. A count is either right or absent.
+
 - **Renaming a station, from the console and the CLI.** A human being able to rename a
   station is a stated requirement and `RenameStation` was written for it — but **nothing
   in the tree called that function**, not the console and not the CLI, despite the

@@ -67,6 +67,17 @@ type briefingView struct {
 	Head           []taskView `json:"head"`
 }
 
+// elsewhereView is deliberately two integers and a sentence. It says how much is RECORDED
+// as waiting, not how much is owed: `blocked_on` is written once when a task is created and
+// nothing ever revisits it, so a request the human satisfied last week still counts here.
+// The caller cannot check — the underlying state belongs to stations it does not staff — so
+// the note tells it to point at the console rather than assert the debt.
+type elsewhereView struct {
+	Tasks    int    `json:"tasks" jsonschema:"open tasks marked blocked_on=human on stations OTHER than yours"`
+	Stations int    `json:"stations" jsonschema:"how many other stations carry them"`
+	Note     string `json:"note"`
+}
+
 type meOut struct {
 	StationID          string       `json:"station_id"`
 	Name               string       `json:"name"`
@@ -76,7 +87,20 @@ type meOut struct {
 	SelfDescribedTags  []string     `json:"self_described_tags,omitempty"`
 	Tasks              briefingView `json:"tasks"`
 	Handoff            string       `json:"handoff"`
-	Relay              string       `json:"relay_to_human,omitempty"`
+	// Elsewhere counts what is RECORDED as waiting on this human on OTHER stations. A
+	// count and a station count, never contents: a session staffs one post, and STATIONS.md
+	// S6 is that a station key does not let its holder read another station's assets — two
+	// integers are not assets.
+	//
+	// IT EXISTS BECAUSE THE BRIEFING STOPS AT A BOUNDARY THE HUMAN DOES NOT HAVE. Each
+	// session reports its own station's pile and nothing reports the rest, so a human
+	// staffing several is told about a station only while a session for it happens to be
+	// running. The console has held the whole-pile view since §11.8 and nothing pointed at it.
+	//
+	// Omitted at zero, deliberately: "nothing is waiting elsewhere" and "this deployment is
+	// too old to answer" both read as absent, and neither is worth acting on.
+	Elsewhere *elsewhereView `json:"waiting_on_your_human_elsewhere,omitempty"`
+	Relay     string         `json:"relay_to_human,omitempty"`
 	// KenVersion is what is running RIGHT NOW, reported in the briefing every session is
 	// told to call FIRST.
 	//

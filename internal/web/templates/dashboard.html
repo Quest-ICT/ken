@@ -23,6 +23,20 @@
     <a class="stat__num" href="/proposals">{{.PropCount}}</a>
     <span class="stat__sub">{{.T "dashboard.stat_pending_sub"}}</span>
   </div>
+  <!-- The station pile, beside the proposal pile. Both are queues the human owns and
+       neither announces itself; this one had no surface outside /stations at all.
+       Rendered only when stations are on AND something is waiting — a permanent zero
+       teaches the eye to skip the row it will one day need to notice. -->
+  {{if and .StationsEnabled .StationCount}}
+  <div class="stat stat--attention">
+    <span class="stat__label">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="14" height="14"><path d="M12 3.5 21 19H3L12 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 10v4M12 16.5v.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      {{.T "dashboard.stat_station_tasks"}}
+    </span>
+    <a class="stat__num" href="/stations">{{.StationCount}}</a>
+    <span class="stat__sub">{{.T "dashboard.stat_station_tasks_sub"}}</span>
+  </div>
+  {{end}}
   <div class="stat">
     <span class="stat__label">{{.T "dashboard.stat_revisions"}}</span>
     <span class="stat__num">{{.Data.Versions}}</span>

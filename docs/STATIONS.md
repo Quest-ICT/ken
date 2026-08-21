@@ -884,6 +884,42 @@ one surface built to stop exactly that.
 Archived stations' tasks appear, marked, because a commitment does not stop existing when a post is
 retired.
 
+**The view needs a PULL, not just a page — added 2026-08-21.** Built for the human's question and
+then left somewhere nothing pointed at, it answered that question only for a human who already
+remembered to ask it. Two additions, both counts and neither a new capability:
+
+- **A nav badge and a dashboard stat**, sourced from `CountCrossStationTasks` with the same
+  predicate as the list. Rendered only when something is waiting: a permanent zero teaches the eye
+  to skip the row it will one day need to notice.
+- **"Showing the first 200 of N"**, when and only when the cap bit. A capped list rendered with no
+  total is a silent sample — on the one page built so the human can see the *whole* pile. The vault
+  trail on this same page already says "the last 20 of 2,318" for exactly this reason, and the two
+  now behave alike.
+
+**And the briefing crosses the station boundary, as a COUNT.** `station_me` gains
+`waiting_on_your_human_elsewhere` — two integers and a note, never contents. A session staffs one
+post and its briefing stops there, but the human does not have that boundary: a human staffing
+several was told about a station only while a session for it happened to be running, and a session
+whose own list was empty said *"nothing is waiting on you"* while another pile grew unmentioned.
+That answer is worse than silence, because it is confidently wrong.
+
+Three properties make it safe, and each is tested:
+
+- **No contents.** No task text, no station names, no ids — §S6 says a station key does not let its
+  holder read another station's assets, and two integers are not assets.
+- **A pure read.** Nothing stamps `last_briefed_at`. The caller does not staff those stations and
+  cannot relay their contents, so marking them briefed would record a briefing that never happened
+  and suppress the item for the session that could actually give one.
+- **It counts what is RECORDED, not what is owed.** `blocked_on` is written once at creation and
+  nothing revisits it, so some of these are already done. The caller cannot check — the state
+  belongs to stations it does not staff — so the note tells it to send the human to `/stations`
+  rather than assert the debt. This is §11.5's warning applied to a figure the session cannot verify
+  at all.
+
+**Why a count and not the tasks.** A visibility-gated cross-station read — filtered to published or
+linked stations — would return a partial pile indistinguishable from a complete one, which is this
+project's named defect manufactured deliberately. A count is either right or absent.
+
 ### 11.9 Tool surface
 
 | Tool | Notes |

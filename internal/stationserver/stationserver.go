@@ -880,9 +880,37 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 	default:
 		out.Handoff = fmt.Sprintf("handoff written %s, %d activities ago", writtenAt, activities)
 	}
-	if b.BlockedOnHuman > 0 || b.Overdue > 0 {
+	// WHAT IS WAITING ON THIS HUMAN SOMEWHERE ELSE. A PURE READ — nothing here stamps
+	// last_briefed_at, and it must stay that way: this caller does not staff those stations
+	// and cannot relay their contents, so marking them briefed would record a briefing that
+	// never happened and suppress the item for the session that could actually give one.
+	//
+	// Non-fatal, like the endpoint lookup above and for the same reason: losing a whole
+	// briefing because a secondary count failed is a bad trade, and an omitted field reads
+	// as "nothing elsewhere", which asserts nothing false.
+	if n, stations, err := d.Store.HumanBlockedElsewhere(ctx, p.SpaceID, p.StationID); err != nil {
+		log.Printf("stations: cross-station count for %s: %v", p.StationID, err)
+	} else if n > 0 {
+		out.Elsewhere = &elsewhereView{Tasks: n, Stations: stations,
+			Note: "You staff one station; these are on others. You cannot read them and you cannot " +
+				"check them — blocked_on is set once at creation and nothing revisits it, so some of " +
+				"these are already done. Tell your human the NUMBER and send them to /stations, which " +
+				"is the only place the whole pile is visible. Do not tell them they still owe these."}
+	}
+	switch {
+	case b.BlockedOnHuman > 0 || b.Overdue > 0:
 		out.Relay = "Tell your human, in words, in your first message: " +
 			fmt.Sprintf("%d task(s) are waiting on them and %d are past their date.", b.BlockedOnHuman, b.Overdue)
+		if out.Elsewhere != nil {
+			out.Relay += fmt.Sprintf(" Also mention that %d more are recorded as waiting on them across %d other station(s) — send them to /stations rather than listing what you cannot see.",
+				out.Elsewhere.Tasks, out.Elsewhere.Stations)
+		}
+	case out.Elsewhere != nil:
+		// NOTHING HERE AND SOMETHING THERE is the case this whole field exists for: without
+		// it the session says "nothing is waiting on you" while another station's pile grows
+		// unmentioned, and that answer is worse than silence.
+		out.Relay = fmt.Sprintf("Tell your human, in words, in your first message: nothing is waiting on them HERE, but %d task(s) are recorded as waiting on them across %d other station(s) — the whole pile is at /stations.",
+			out.Elsewhere.Tasks, out.Elsewhere.Stations)
 	}
 	return out, nil
 }

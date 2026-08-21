@@ -91,6 +91,16 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// HOW MUCH OF THE PILE THIS IS. The list is capped at stationsPageSize and rendered
+	// with no total, which makes a truncated pile look exactly like a complete one — on
+	// the one page built so the human can see the whole pile. The vault trail on this same
+	// page already states "the last 20 of 2,318" for precisely this reason.
+	taskTotal, err := a.store.CountCrossStationTasks(ctx, spaceForSession, blockedOn)
+	if err != nil {
+		log.Printf("web: cross-station task count: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	// Per-station detail is assembled here rather than in the template, so the
 	// template stays a renderer and the N+1 is explicit and bounded by station count.
@@ -272,7 +282,8 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	a.render(w, r, sess, "stations", map[string]any{
 		"Stations": views, "Requests": requests, "Links": linkViews, "Promotions": promotions,
 		"Rooms": roomViews,
-		"Tasks": tasks, "Archived": archived,
+		"Tasks": tasks, "TaskTotal": taskTotal, "TaskShown": len(tasks),
+		"TaskCapped": taskTotal > len(tasks), "Archived": archived,
 		"BlockedOn": r.URL.Query().Get("blocked_on"),
 		"NewKey":    newKey,
 		"Revealed":  revealed,

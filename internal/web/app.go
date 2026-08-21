@@ -317,13 +317,16 @@ type view struct {
 	Session   *store.Session
 	Flash     string
 	PropCount int
-	Version   string
-	SourceURL string // AGPL-3.0 §13: link to the Corresponding Source, shown in the footer
-	Data      any
-	Lang      string // resolved UI language for this request
-	Path      string // current request URI, for the language selector's return link
-	Chrome    string // "app" (full nav) or "auth" (centered public pages: login/setup/consent)
-	Theme     string // "light"|"dark" from the ken_theme cookie, else "" (media query decides)
+	// StationCount is open tasks marked blocked_on=human across every station. Zero when
+	// stations are off, so the badge simply never renders.
+	StationCount int
+	Version      string
+	SourceURL    string // AGPL-3.0 §13: link to the Corresponding Source, shown in the footer
+	Data         any
+	Lang         string // resolved UI language for this request
+	Path         string // current request URI, for the language selector's return link
+	Chrome       string // "app" (full nav) or "auth" (centered public pages: login/setup/consent)
+	Theme        string // "light"|"dark" from the ken_theme cookie, else "" (media query decides)
 	// CommEnabled gates the inter-session communication nav entry. The page 404s
 	// when the feature is off, so the link must not be shown then.
 	CommEnabled bool
@@ -383,6 +386,26 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 			pc = len(rows)
 		}
 	}
+	// THE STATION PILE NEEDS A PULL, not just a page. §11.8 built the cross-station view for
+	// the human's question — "what is everyone waiting on me for?" — and then left it somewhere
+	// nothing points at, so it answers that question only for a human who already thought to
+	// ask it. A session briefs its human on ONE station's obligations; nothing brings up the
+	// others, including stations whose session is not running. The badge is what makes the
+	// view reachable without remembering it exists.
+	//
+	// Counted on every render, like PropCount, and for the same reason: a badge computed once
+	// and cached is a badge that goes stale silently. Both are one indexed COUNT.
+	//
+	// A COUNT OF WHAT IS RECORDED, not of what is owed. `blocked_on` is set when a task is
+	// created and nothing revisits it, so this includes asks the human already satisfied. That
+	// is exactly why the badge links to the list rather than asserting a debt — the human can
+	// resolve it in one click, which no counter can.
+	sc := 0
+	if sess != nil && a.stationsEnabled {
+		if n, err := a.store.CountCrossStationTasks(r.Context(), spaceForSession, "human"); err == nil {
+			sc = n
+		}
+	}
 	// A flash carries a message KEY (handlers redirect via flashRedirect with
 	// ?flash=<key>[&fa=<arg>]); T translates it, substituting the optional arg into
 	// {0}. An unknown value passes through unchanged (T returns it).
@@ -403,7 +426,7 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 	if c, err := r.Cookie(themeCookie); err == nil && (c.Value == "light" || c.Value == "dark") {
 		theme = c.Value
 	}
-	v := view{Session: sess, Flash: flash, PropCount: pc, Version: version.Version, SourceURL: version.SourceURL(), Data: data,
+	v := view{Session: sess, Flash: flash, PropCount: pc, StationCount: sc, Version: version.Version, SourceURL: version.SourceURL(), Data: data,
 		Lang: lang, Path: r.URL.RequestURI(), Chrome: chrome, Theme: theme, CommEnabled: a.commEnabled(), StationsEnabled: a.stationsEnabled, tr: a.i18n}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.pages[page].ExecuteTemplate(w, "base.html", v); err != nil {

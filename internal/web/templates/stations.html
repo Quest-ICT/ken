@@ -161,6 +161,12 @@
     </nav>
   </div>
   <div class="card__body">
+    <!-- HOW MUCH OF THE PILE THIS IS. Without it a capped list is a silent sample, and
+         this is the one page built so the human can see the WHOLE pile. Stated only when
+         the cap actually bit — a count on every render is noise that stops being read. -->
+    {{if .Data.TaskCapped}}
+    <p class="help">{{.T "stations.tasks_showing" .Data.TaskShown .Data.TaskTotal}}</p>
+    {{end}}
     {{if .Data.Tasks}}
     <div class="table-wrap">
     <table class="table" data-listing-table="ken.stations.tasks">
