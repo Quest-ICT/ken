@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.14.0] — 2026-08-21
+
 ### Fixed
 
 - **Binding a session to a station now adopts the channel seats it already occupies**, closing a
@@ -3066,6 +3068,7 @@ append-only and the curated head moves only on human promotion.
   where `makensis` is available); the Linux self-extracting `.bin` installers are.
 
 [Unreleased]: https://github.com/Quest-ICT/ken/compare/v3.3.0...HEAD
+[3.14.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.14.0
 [3.13.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.13.0
 [3.12.1]: https://github.com/Quest-ICT/ken/releases/tag/v3.12.1
 [3.12.0]: https://github.com/Quest-ICT/ken/releases/tag/v3.12.0

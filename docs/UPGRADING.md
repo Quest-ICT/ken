@@ -34,6 +34,67 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.14.0
+
+**MINOR. SCHEMA CHANGE: comm.db 15 → 16.** ken.db unchanged at 19. One migration —
+`0016_index_sender_party.sql` — which adds an index and rewrites no row.
+
+### Do this first
+
+**Nothing is required**, but read the attribution note below before running your schema band, because
+this release changes data in two places for two different reasons and you should know which is which
+in advance.
+
+### The migration: `idx_message_sender ON message(sender_party, kind)`
+
+`NoticesFor` runs on every `comm_poll` and filters `m.sender_party`, which has never been indexed.
+
+**What your database was actually doing about that is not a table scan**, and is more interesting:
+the reply_overdue branch made SQLite build an **AUTOMATIC PARTIAL COVERING INDEX at runtime**, on
+exactly the columns this migration adds, behind a bloom filter — constructed on every execution and
+discarded. The expired branch walked `idx_message_expires` instead, because it also filters
+`expires_at`. After the migration both branches converge on `SEARCH m USING INDEX idx_message_sender`
+and the per-query rebuild disappears.
+
+**Rollback is safe.** An index rewrites no row; an older binary rolled back over this migration
+simply never uses it.
+
+### ATTRIBUTION: two things change data in this release, and only one is the migration
+
+This matters if you compare row counts across the upgrade:
+
+1. **The migration** adds an index. **No row changes.** Table and row counts are identical either
+   side.
+2. **`comm_bind` now adopts channel seats** (below). That UPDATEs `channel.station_a`/`station_b` —
+   **but only when a bind happens**, and only on rows where the column is `NULL`. It runs no
+   backfill and touches nothing at upgrade time. If no session binds, no row moves.
+
+So: a band taken immediately after the upgrade should show a schema change and **zero** row
+movement. Any `channel` rows that move later are the bind path, not the migration.
+
+### Binding adopts the channel seats it already occupies
+
+`channel.station_a/b` snapshots the authorising pair when a *seat is filled*, so a session that
+joined a pairing-code channel while unbound and bound afterwards left `NULL` there forever. That made
+the channel invisible to the blast-radius count shown before revoking a link, invisible to the
+revocation sweep, and invisible to `comm_open_channel`'s reuse lookup — **which then opened a second
+channel between two stations already talking**.
+
+**This widens link revocation, deliberately.** A channel whose two seats are now both station-owned
+becomes visible to revocation between those stations. A channel revocation cannot see is the evasion
+migration 0008 exists to close. Only `NULL` is ever filled; a pair recorded at seat-fill time is
+never rewritten.
+
+### Also in it
+
+A startup line when `comm_reply_deadline_sec` exceeds `comm_message_ttl_sec` — the body would be
+destroyed before its own reply deadline, so every unanswered `requires_response` message would
+produce a notice about text nobody can read. **Logged, never clamped**: only you can choose which
+value moves. Silent on a sound configuration.
+
+`kb_save`'s `triggers` now says it takes an ARRAY, and the instructions say what to do when
+`kb_record_outcome` is not in a client's tool list.
+
 ## 3.13.0
 
 **MINOR. NO SCHEMA CHANGE** — comm.db stays at 15, ken.db at 19, and
