@@ -271,6 +271,40 @@ Until then it changes nothing.
 
 ## 9. Recorded feature requests — not analysed, not scheduled
 
+### 9.0 The 30-minute MCP session timeout, deferred here by Vlad on 2026-08-21
+
+**Keep 30 minutes for now; revisit when this conversation happens.** Recorded rather than quietly
+tweaked, because it is a decision and not a bug.
+
+A claude.ai mobile session reported `Tool 'Ken:kb_search' not found` mid-conversation. Traced end to
+end by ken-prod-ops against running 3.13.0: Ken expires the MCP session
+(`mcpserver/server.go:702`, `sessionTimeout = 30 * time.Minute`), the SDK returns the
+**spec-mandated 404** that MCP §2.5.3 requires, and the claude.ai gateway renders that as "Tool not
+found". Tools are never deregistered — `RemoveTool` appears nowhere in the tree — so nothing is
+actually lost, and the wording is provably not Ken's.
+
+**What IS Ken's is the timeout's justification, and its own comment gives it away:**
+
+> *"30 minutes is chosen against how these sessions are actually used. A working conversation makes
+> a call every few minutes at worst, so it never trips; a session left open by a closed laptop or a
+> crashed client is gone within the half hour."*
+
+That is true of an agentic session and **false of a human on a phone** — reading an answer,
+thinking, switching apps, coming back. They are not a closed laptop; they are mid-conversation. The
+comment reasons carefully from a workload that is no longer the only one.
+
+**And the keepalive cannot rescue it.** `mcpKeepAlive` refreshes the STREAM, not the SESSION timer —
+the same asymmetry ken-prod-ops measured during the 3.10.0 keepalive verification, where
+`session expired` was the one category that did not collapse. So a chat session with a perfectly
+healthy stream and no tool call for thirty minutes still dies.
+
+**Why it belongs here rather than in `FINISHING.md`.** Raising the number trades a real backstop for
+a worse one, and the existing comment already wrote that trade down honestly. The question is not
+"what number" — it is **which workload Ken is for**, which is the same question §2–§4 are about. If
+the destination is "all Ken services, in all sessions, with as little friction as possible", then a
+human-cadence client is a first-class caller and the timeout is tuned against a workload that
+assumption no longer describes.
+
 ### 9.1 Public Comm ends — a peer per responsibility
 
 Recorded **2026-08-19**. Vlad, verbatim:
