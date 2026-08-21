@@ -251,6 +251,33 @@ in the same commit as the index.
 
 ---
 
+## 7b. The conversation happened — 2026-08-21
+
+**It did not end in "re-implement" or "keep patching".** It ended in *replace one layer*: identity
+and access, and only that. The delivery model, the knowledge base, the console and the migration
+discipline all stay — production's findings this week barely touch them, and they are where the
+hard-won knowledge actually lives.
+
+**Three things settled it**, and two were new facts rather than opinions:
+
+1. **The pain is concentrated.** Roughly 60% of everything production found this week is credential
+   and provisioning. And structurally: *no console control binds an endpoint to a station* — it does
+   not exist as a route — while `auth.go:200` discards the OAuth grant's scope, so OAuth cannot
+   express `comm` or `station` even in principle.
+2. **Single user is permanent, and it changes the arithmetic.** 118 Go references and 24 schema
+   columns serve `space_id` across 6 migration files — and **nothing can create a second space.**
+   That machinery never served a requirement and now never will. It is also *upstream* of the
+   credential problem: it is why a session must carry an owner identity at all.
+3. **A workspace is what a station already is.** Ken's own code says it — *"an endpoint is a
+   CONNECTION and a station is a POST"* — and Claude Code already keys MCP config by folder, so the
+   estate had converged on one station per folder with nobody designing it. The model is right; the
+   provisioning around it is what fails.
+
+**The decisions are recorded in [IDENTITY.md](IDENTITY.md)**, written before any code, because the
+reasoning behind the current controls lives in scattered comments and in one session's context.
+
+---
+
 ## 8. What this document is for
 
 When the current work is finished, this is the input to the conversation Vlad asked for: **do we
