@@ -466,7 +466,38 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       and no delivery row moves. What actually moves is channel MEMBERSHIP, because the seat is
       re-derived from the live binding. Enforce the invariant or delete the claim; leaving both is
       how the next reader concludes the live join is safe. Belongs with the credential model.
-- [ ] **Backfill `channel.station_a` / `station_b`, then make the snapshot authoritative.**
+- [~] **Backfill `channel.station_a` / `station_b`, then make the snapshot authoritative** —
+      **THE ITEM AS WRITTEN IS WRONG, and an analysis on 2026-08-21 established why.** Split into
+      three; the first has shipped.
+
+      **The second half would break a class silently.** Making the snapshot authoritative today
+      strands the *adopt-after-join* station: its successor keeps RECEIVING mail, because `Poll` is
+      party-keyed, and loses the ability to reply, offer a file or ack — the exact
+      poll-but-cannot-answer half-feature the live arm was added to prevent. `ChannelFor`'s own
+      comment already says the snapshot cannot be made authoritative yet, and **no test pinned it**:
+      the adoption test asserts only `Poll`, and the unbind test binds both endpoints *before*
+      joining, so its snapshot is non-NULL and it would pass under a snapshot-only rule.
+
+      **And 0008 is right that a later backfill cannot be correct.** NULL is ambiguous between "a
+      link authorised this and revocation can no longer see it" and "no link was ever involved",
+      and the only available source — the current binding — is the value 0008 warns may already
+      have drifted. That information was never written down and cannot be recovered.
+
+      - [x] **(A) Adopt the seats at BIND time** — *Unreleased*. Closes the class at its source,
+        permanently and for future occurrences, with no migration: `comm_bind` fills a NULL seat
+        snapshot for channels the endpoint already sits on. Safe where a later backfill is not,
+        because the binding is being established in that transaction and cannot have drifted, and
+        because it only ever fills NULL.
+      - [ ] **(B) A migration for the residue, if any remains** — and it must be measured first.
+        Only rows provably attributable, never the ambiguous ones. **Ships alone.**
+      - [ ] **(C) Authoritative, only after (A) and (B)** — gated on a production count of what is
+        still NULL with a station-bound seat. That is the blast radius, and the console shows one
+        before every other destructive act.
+
+      **A live defect found while proving this**, now fixed by (A): `OpenLinkedChannel`'s reuse
+      lookup uses the same snapshot-only predicate, so approving a link between two stations that
+      already had a NULL-pair channel open **opened a second one** — fragmenting the conversation
+      its own doc comment promises not to fragment.
       `bcd60dd` consults the snapshot IN ADDITION to the live binding because the column is NULL
       on every pairing-code channel opened before migration 0008 — six of seven on a real
       deployment — so making it authoritative today would strand them. *Migration; ships alone.*

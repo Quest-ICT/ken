@@ -239,6 +239,46 @@ UPDATE endpoint
 			return err
 		}
 		n, _ = res.RowsAffected()
+		if n == 0 {
+			return nil
+		}
+
+		// ADOPT THE SEATS THIS ENDPOINT ALREADY OCCUPIES.
+		//
+		// channel.station_a/b snapshots the authorising pair, written when a SEAT IS FILLED
+		// (channel.go:115 at creation, :179 at open) from ep.StationID at that instant. A
+		// session that joined a pairing-code channel while UNBOUND and bound afterwards left
+		// NULL there forever, because binding touched only this table and nothing revisited it.
+		//
+		// THAT NULL IS NOT COSMETIC. The pair predicate is snapshot-only
+		// (openChannelsBetweenStations), so such a channel is invisible to the blast-radius
+		// count a human is shown before revoking a link, invisible to the revocation sweep
+		// itself, and invisible to OpenLinkedChannel's reuse lookup — which then opens a SECOND
+		// channel between two stations already talking, fragmenting the conversation its own
+		// doc comment promises not to fragment.
+		//
+		// WHY THIS IS SAFE WHERE A LATER BACKFILL IS NOT, and migration 0008 is explicit that a
+		// later one is not: 0008 warns the current binding "is exactly the value that may
+		// already have drifted". Here it cannot have drifted — the binding is being established
+		// in this transaction, for this endpoint, now. And it only ever fills NULL, so a pair
+		// recorded at seat-fill time always wins over anything derived later.
+		//
+		// WHAT IT MEANS, stated because it widens revocation: a channel whose two seats are now
+		// both station-owned becomes visible to link revocation between those stations. That is
+		// the intent — a channel between two stations that revocation cannot see is the EVASION
+		// defect 0008 exists to close, and adopt-after-join reopened it by another route.
+		if _, err := t.ExecContext(ctx, `
+UPDATE channel SET station_a=?1
+ WHERE endpoint_a=(SELECT id FROM endpoint WHERE endpoint_id=?2)
+   AND station_a IS NULL`, stationID, endpointID); err != nil {
+			return err
+		}
+		if _, err := t.ExecContext(ctx, `
+UPDATE channel SET station_b=?1
+ WHERE endpoint_b=(SELECT id FROM endpoint WHERE endpoint_id=?2)
+   AND station_b IS NULL`, stationID, endpointID); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
