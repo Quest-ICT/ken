@@ -21,7 +21,7 @@ import (
 // named.
 func runStation(args []string) {
 	if len(args) == 0 {
-		die("usage: ken station add|list|key|requests")
+		die("usage: ken station add|list|rename|key|requests")
 	}
 	ctx := context.Background()
 
@@ -46,6 +46,34 @@ func runStation(args []string) {
 		fmt.Printf("station %s created (id %s)\n", s.Name, s.StationID)
 		fmt.Println("mint a key for a machine with:")
 		fmt.Printf("  ken station key --station %s --label laptop\n", s.Name)
+
+	// `rename` is the FALLBACK, not the surface. The console owns this (a name is the one
+	// thing about a station that is purely the human's, and it belongs where they can see
+	// what they are renaming) — this exists for a headless box, and because RenameStation's
+	// own comment has always promised both paths while providing neither.
+	case "rename":
+		fs := flag.NewFlagSet("station rename", flag.ExitOnError)
+		from := fs.String("station", "", "current station name (required)")
+		to := fs.String("to", "", "new name (required)")
+		_ = fs.Parse(args[1:])
+		if *from == "" || *to == "" {
+			die("--station and --to are both required")
+		}
+		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
+		defer st.Close()
+		s, err := st.StationByName(ctx, 1, *from)
+		if errors.Is(err, store.ErrNotFound) {
+			die(fmt.Sprintf("no station named %q", *from))
+		}
+		must(err)
+		err = st.RenameStation(ctx, s.StationID, *to)
+		if errors.Is(err, store.ErrStationNameTaken) {
+			die(fmt.Sprintf("a station named %q already exists in this space", *to))
+		}
+		must(err)
+		// The id is printed because it, not the name, is what every config and link holds —
+		// so this line also shows that renaming moved nothing anything else depends on.
+		fmt.Printf("station %s renamed to %s (id %s, unchanged)\n", *from, *to, s.StationID)
 
 	case "list":
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
@@ -127,7 +155,7 @@ func runStation(args []string) {
 		fmt.Println("(`ken station add` creates an UNRELATED station and leaves the request pending.)")
 
 	default:
-		die("usage: ken station add|list|key|requests")
+		die("usage: ken station add|list|rename|key|requests")
 	}
 }
 

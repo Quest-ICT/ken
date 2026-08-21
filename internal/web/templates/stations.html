@@ -411,6 +411,21 @@
             {{end}}
           </details>
 
+          <!-- rename: the one thing about a station that is purely the human's, and
+               free of consequences — ids do the routing, so nothing else moves. -->
+          <details>
+            <summary title="{{$.T "stations.rename_help"}}">{{$.T "stations.rename"}}</summary>
+            <form method="post" action="/stations/{{.StationID}}/rename" class="inline">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <div class="field">
+                <label for="rn-{{.StationID}}">{{$.T "stations.rename"}}</label>
+                <input class="input" id="rn-{{.StationID}}" name="name" value="{{.Name}}"
+                       maxlength="120" required title="{{$.T "stations.rename_help"}}">
+              </div>
+              <button class="btn btn--sm" type="submit">{{$.T "stations.rename_do"}}</button>
+            </form>
+          </details>
+
           <!-- publish / archive -->
           <div class="inline">
             <form method="post" action="/stations/{{.StationID}}/publish">

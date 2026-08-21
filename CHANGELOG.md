@@ -15,6 +15,47 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **Renaming a station, from the console and the CLI.** A human being able to rename a
+  station is a stated requirement and `RenameStation` was written for it — but **nothing
+  in the tree called that function**, not the console and not the CLI, despite the
+  function's own comment claiming both. An implemented requirement with no route is an
+  unimplemented one, and this is the third time this shape has turned up here: a correct
+  store function with no way to reach it.
+
+  The console gets a rename control on each station card; `ken station rename --station
+  <name> --to <new>` is the headless fallback, in that order deliberately — a name is the
+  one thing about a station that is purely the human's, and it belongs where they can see
+  what they are renaming.
+
+  **Renaming is consequence-free, and the reason is a design decision paying out rather
+  than luck.** Nothing addresses a station by name: routing is by `station_id`, comm.db's
+  `station_link_mirror` holds ids only, a polled message's `from_station_name` is resolved
+  at read time, and a task's station name is a join rather than a stored copy. So the new
+  name is live everywhere at once and no link, channel, key or queued message is touched.
+  That is COMM.md §3 — *"a human-chosen name is never an address"*. It is asserted by a
+  test that sends real COMM traffic to the station **after** the rename, rather than by
+  reading the console page: a page showing the new name proves nothing about routing, and
+  routing is the only thing a rename could plausibly have broken.
+
+### Fixed
+
+- **`RenameStation` reported success in two cases where it renamed nothing.** A blank name
+  was accepted — `CreateStation` rejects one, so the two disagreed, and a station with no
+  name cannot be clicked in the console to fix it. And an unknown `station_id` updated zero
+  rows and returned `nil`, telling the caller the rename had happened. Both are the defect
+  class this project keeps finding: **an outcome indistinguishable from the operation.**
+  They now return `ErrInvalid` and `ErrNotFound`.
+
+  Worth recording how the fix was nearly wrong: the first draft guarded a "renamed to the
+  name it already has" case on the assumption that SQLite would report zero rows changed
+  for a no-op update, and documented that assumption in a comment. Measured against this
+  driver, SQLite counts a **matched** row whether or not the value changed — same value 1,
+  new value 1, missing id 0 — so the case cannot occur and the comment stated the opposite
+  of the truth. Zero rows means no such station, and nothing else.
+
+
 ## [3.14.0] — 2026-08-21
 
 ### Fixed

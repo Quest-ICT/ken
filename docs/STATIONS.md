@@ -688,6 +688,16 @@ on, and it was never gated on COMM's state either, because stations work with CO
   marked, and the `hearsay_at_write` badge shown exactly as S9 badges a peer-prompted request. This is
   the human's whole-pile view and the only surface where the pile is visible at once;
 - the **key list** with retire / revoke and revoke's "this will disconnect N live sessions" count;
+- **rename** — the one control here with no consequences anywhere else, and it is worth saying why
+  rather than leaving the operator to wonder what a rename might break. **Nothing addresses a station
+  by name.** Routing is by `station_id`, the `station_link_mirror` in comm.db carries ids only, a
+  polled message's `from_station_name` is resolved at read time from `station`, and a task's station
+  name is a JOIN rather than a stored copy — so the new name is in effect everywhere at once, no
+  link, channel, key or queued message is touched, and no session has to reconnect. This is COMM.md
+  §3 — *"a human-chosen name is never an address"* — paying out. The one refusal is a **collision**:
+  names are unique per space, and the console reports the name that is already taken so the operator
+  has something to act on. Also reachable as `ken station rename --station <name> --to <new>` for a
+  headless box, where the console is the surface and the CLI is the fallback;
 - **archive / unarchive** — reversible, and it means **no new mail is addressed to this post and no
   session may act as it on COMM**. Concretely: the station drops out of the room roster, so room and
   broadcast sends stop counting it as a recipient; a COMM call from an endpoint bound to it is

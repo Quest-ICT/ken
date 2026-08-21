@@ -523,6 +523,44 @@ func (a *app) handleStationKeyRetire(w http.ResponseWriter, r *http.Request, ses
 	flashRedirect(w, r, "/stations", "flash.station_key_retired", "")
 }
 
+// handleStationRename gives the human the one thing they always own about a station: what
+// it is called. Vlad stated it as a requirement, `RenameStation` was written for it, and
+// until now NOTHING CALLED THAT FUNCTION — not the console, not the CLI, despite its own
+// comment claiming both. An implemented requirement with no route is an unimplemented one.
+//
+// It is safe to do at any moment because a name is not an address (COMM.md §3): ids do the
+// routing, comm.db's mirrors carry ids only, and every displayed name is resolved or joined
+// at read time. So there is no mirror to push here and no channel to reopen — deliberately
+// unlike archive, which changes who receives and therefore moves the roster epoch.
+func (a *app) handleStationRename(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		flashRedirect(w, r, "/stations", "flash.station_name_required", "")
+		return
+	}
+	err := a.store.RenameStation(r.Context(), r.PathValue("id"), name)
+	switch {
+	case errors.Is(err, store.ErrStationNameTaken):
+		// Reported WITH the colliding name, for the same reason the transfer handler does
+		// it: a bare refusal leaves the operator guessing which station already holds it.
+		flashRedirect(w, r, "/stations", "flash.station_name_taken", name)
+	case err != nil:
+		flashRedirect(w, r, "/stations", "flash.station_rename_failed", err.Error())
+	default:
+		flashRedirect(w, r, "/stations", "flash.station_renamed", name)
+	}
+}
+
 // handleStationPublish flips the directory listing. Publishing is a claim a station
 // makes about itself being discoverable; it is not authorization, and nothing about
 // reachability follows from it.

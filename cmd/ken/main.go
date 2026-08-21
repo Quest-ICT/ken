@@ -113,7 +113,7 @@ Usage:
   ken backup snapshot|verify make/verify a consistent DB snapshot
   ken import --dir DIR       import flat memory .md files as curated entries
   ken embed backfill|status  compute embeddings for semantic search
-  ken station add|list|key   create and name stations, mint their keys (docs/STATIONS.md)
+  ken station add|list|rename|key   create, name and RENAME stations, mint their keys (docs/STATIONS.md)
   ken version                print the build version and source location
 
 Serve flags:

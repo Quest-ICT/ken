@@ -221,12 +221,41 @@ WHERE station_id=?`, about, string(tj), stationID)
 
 // RenameStation / SetStationPublished / ArchiveStation are HUMAN-only operations,
 // reachable from the console and the CLI and from no tool.
+//
+// RENAMING IS SAFE AT ANY TIME, and that is a property of the design rather than luck.
+// Nothing addresses a station by name: `station_link_mirror` in comm.db holds ids only,
+// `from_station_name` on a polled message is resolved at read time from this table, and a
+// task's `StationName` is a join rather than a stored copy. So a rename lands everywhere at
+// once and leaves no stale second copy to reconcile. That is COMM.md §3 — "a human-chosen
+// name is never an address" — paying out.
+//
+// TWO WAYS THIS USED TO REPORT SUCCESS WITHOUT RENAMING ANYTHING, both fixed here:
+// a blank name was accepted (CreateStation rejects one, so the two disagreed and the
+// console has no way to click a station with no name), and an unknown station_id updated
+// zero rows and returned nil — the caller was told the rename happened. That is this
+// project's recurring defect: a no-op indistinguishable from the operation.
 func (s *Store) RenameStation(ctx context.Context, stationID, name string) error {
-	_, err := s.W.ExecContext(ctx, `UPDATE station SET name=? WHERE station_id=?`, strings.TrimSpace(name), stationID)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("%w: a station needs a name", ErrInvalid)
+	}
+	res, err := s.W.ExecContext(ctx, `UPDATE station SET name=? WHERE station_id=?`, name, stationID)
 	if isUniqueViolation(err) {
 		return ErrStationNameTaken
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	// ZERO ROWS MEANS NO SUCH STATION, and nothing else. Measured rather than assumed:
+	// SQLite's changes() counts a MATCHED row even when the new value equals the old, so
+	// renaming a station to the name it already has reports 1, not 0. (Checked against this
+	// driver on 2026-08-21: same value -> 1, new value -> 1, missing id -> 0.) The first
+	// draft of this function guarded a "renamed to its own name" case that cannot occur and
+	// documented the opposite of the truth.
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: no station %q", ErrNotFound, stationID)
+	}
+	return nil
 }
 
 func (s *Store) SetStationPublished(ctx context.Context, stationID string, published bool) error {
