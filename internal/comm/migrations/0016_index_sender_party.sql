@@ -2,16 +2,51 @@
 -- Ken COMM — migration 0016: index `message.sender_party`, which every poll scans
 -- ============================================================================
 -- `NoticesFor` runs on EVERY comm_poll and filters `WHERE m.sender_party = ?1`
--- (internal/comm/notice.go). There has never been an index on that column, so SQLite
--- answers it with a full table scan. Measured with EXPLAIN QUERY PLAN before this
--- migration: `SCAN m`.
+-- (internal/comm/notice.go). There has never been an index on that column.
 --
--- WHAT THAT COSTS, AND WHY IT IS THE WRONG SHAPE RATHER THAN MERELY SLOW. The scan is
--- over the whole `message` table, so a caller's poll gets slower as OTHER sessions
--- accumulate history. A quiet session pays for a noisy deployment. Timed at 0.511 ->
+-- WHAT SQLITE ACTUALLY DOES ABOUT THAT, measured by ken-prod-ops on a WAL-safe copy of the
+-- live database with `sqlite_stat1` present — which is NOT what a bare scan looks like:
+--
+--   EXPIRED branch        SCAN m USING INDEX idx_message_expires
+--   REPLY_OVERDUE branch  BLOOM FILTER ON m (sender_party=? AND kind=? AND requires_response=?)
+--                         SEARCH m USING AUTOMATIC PARTIAL COVERING INDEX
+--                                (sender_party=? AND kind=? AND requires_response=?)
+--
+-- The expired branch walks an existing index because it also filters on `expires_at`. The
+-- reply_overdue branch makes SQLite **build a transient index at runtime on exactly the
+-- columns this migration adds** — it had already diagnosed the missing index and was working
+-- around it, per query, forever.
+--
+-- THAT MAKES THIS MIGRATION MORE JUSTIFIED, NOT LESS, and it explains the timings better than
+-- a scan would: an automatic partial covering index is constructed on EVERY execution and
+-- thrown away, so the cost measured below is very plausibly the cost of REBUILDING that index
+-- over a growing table on every poll.
+--
+-- THIS COMMENT SAID `SCAN m` UNTIL 2026-08-21, and that was measured on an EMPTY fixture —
+-- a table with nothing in it gives the planner no reason to build an automatic index, so the
+-- probe reported the one plan production never uses. The lesson is the project's own: a
+-- measurement taken against a fixture that does not resemble the thing is not a measurement
+-- of the thing. Corrected before this migration shipped, which is the last moment it could be:
+-- SQLite stores a migration's text verbatim in sqlite_master, so editing an APPLIED one makes
+-- a fresh install differ from an upgraded deployment (see 0012).
+--
+-- WHAT THAT COSTS, AND WHY IT IS THE WRONG SHAPE RATHER THAN MERELY SLOW. Whichever
+-- mechanism SQLite picks — a heap scan on a small table, a transient index rebuilt per
+-- query on a real one — the work is proportional to the WHOLE `message` table, so a
+-- caller's poll gets slower as OTHER sessions accumulate history. A quiet session pays for
+-- a noisy deployment. Timed at 0.511 ->
 -- 7.668 -> 37.710 ms per call at 1k -> 20k -> 100k total messages with the caller's own
 -- inbox held constant at 5 AND NO NOTICES RETURNED — i.e. the cost is paid in full to
 -- discover there is nothing to report.
+--
+-- ON REAL DATA THE LEFT END OF THAT CURVE IS SMALL, and the honest figure belongs here.
+-- ken-prod-ops measured 400 runs per party against the live copy at 611 messages / 660
+-- deliveries — BELOW the smallest synthetic point above, so it corroborates the shape and not
+-- the slope: two of three parties improved 17% and 20%, the third was inside the noise and is
+-- reported as noise. **The structural change is the result, not the 0.04 ms.** At 611 rows the
+-- timing barely matters; what matters is that both branches converge on
+-- `SEARCH m USING INDEX idx_message_sender` and the per-query automatic index disappears, so
+-- the cost stops growing with other people's history.
 --
 -- This is the same coupling a 2026-08-03 task recorded against `Poll`, which was fixed
 -- by giving Poll a recipient-scoped index. The fix moved the cost rather than removing

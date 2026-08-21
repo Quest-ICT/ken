@@ -91,6 +91,16 @@ same change — never "docs later".
   Migration **0016** adds `idx_message_sender ON message(sender_party, kind)`. Additive — no row is
   rewritten, and an older binary rolled back over it simply never uses the index.
 
+  **What production actually does without it is worse than a scan, and more interesting.**
+  ken-prod-ops measured the plan on a copy of the live database: the reply_overdue branch makes
+  SQLite build an **AUTOMATIC PARTIAL COVERING INDEX at runtime, on exactly the columns this
+  migration adds**, behind a bloom filter — constructed on every execution and thrown away. So the
+  cost is very plausibly rebuilding that index over a growing table on every poll, not a heap scan.
+  My own `SCAN m` reading came from an **empty fixture**, where the planner has no reason to build
+  one. On real data at 611 messages, two of three parties improve 17–20% and the third is inside
+  the noise; the structural result is that both branches converge on the index and the per-query
+  rebuild disappears.
+
 ## [3.13.0] — 2026-08-20
 
 ### Fixed
