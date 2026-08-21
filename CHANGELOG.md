@@ -41,6 +41,25 @@ same change — never "docs later".
 
 ### Fixed
 
+- **Migration 0016's comment claimed something false about SQLite, and shipped saying it.**
+  It asserted that "SQLite stores a migration's text verbatim in `sqlite_master`, so editing
+  an APPLIED one makes a fresh install differ from an upgraded deployment" — and on that
+  basis I told ken-prod-ops the comment had to be corrected before 3.14.0 or not at all.
+  Measured: `sqlite_master` holds **62 bytes** for that migration, the `CREATE INDEX`
+  statement alone with no prose, and `schema_migration` records only `version` and
+  `applied_at` with no checksum of the file. Both halves of the claim fail. The real rule is
+  narrower — never change a migration's **statements** once applied; its comments are
+  documentation and get repaired when they turn out to be wrong, which is the only way a
+  comment that lies is ever fixed. Pinned by a test so nobody re-derives it.
+
+  The same comment carried production timings ken-prod-ops has since retracted: "two of
+  three parties improved 17% and 20%, the third inside the noise". That was a measurement
+  artifact — before and after taken in **separate processes** at different times, where
+  cross-run variance exceeded the effect. Re-run as one process on one file, alternating
+  drop/re-create across three cycles of 600 runs, **all three parties improve 36–40%** and
+  there is no noise party. The corrected numbers and the corrected method are both in the
+  file now, because a before/after that spans a restart is measuring the restart too.
+
 - **`RenameStation` reported success in two cases where it renamed nothing.** A blank name
   was accepted — `CreateStation` rejects one, so the two disagreed, and a station with no
   name cannot be clicked in the console to fix it. And an unknown `station_id` updated zero

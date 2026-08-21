@@ -26,9 +26,18 @@
 -- a table with nothing in it gives the planner no reason to build an automatic index, so the
 -- probe reported the one plan production never uses. The lesson is the project's own: a
 -- measurement taken against a fixture that does not resemble the thing is not a measurement
--- of the thing. Corrected before this migration shipped, which is the last moment it could be:
--- SQLite stores a migration's text verbatim in sqlite_master, so editing an APPLIED one makes
--- a fresh install differ from an upgraded deployment (see 0012).
+-- of the thing.
+--
+-- IT ALSO SAID THIS WAS THE LAST MOMENT THE COMMENT COULD BE FIXED, on the grounds that
+-- SQLite stores a migration's text verbatim in sqlite_master. THAT IS FALSE, and it shipped
+-- in 3.14.0 saying so. Measured: sqlite_master holds 62 bytes for this migration — the
+-- CREATE INDEX statement alone, no prose — and `schema_migration` records only `version` and
+-- `applied_at`, with no checksum of the file. Both halves of the divergence claim fail.
+-- Pinned by TestOnlyTheStatementReachesSqliteMaster so the next person does not re-derive it.
+--
+-- The real rule is narrower: never change a migration's STATEMENTS once applied. Its comments
+-- are documentation, and a comment that turns out to be wrong is repaired — which is what the
+-- paragraph below is.
 --
 -- WHAT THAT COSTS, AND WHY IT IS THE WRONG SHAPE RATHER THAN MERELY SLOW. Whichever
 -- mechanism SQLite picks — a heap scan on a small table, a transient index rebuilt per
@@ -40,13 +49,28 @@
 -- discover there is nothing to report.
 --
 -- ON REAL DATA THE LEFT END OF THAT CURVE IS SMALL, and the honest figure belongs here.
--- ken-prod-ops measured 400 runs per party against the live copy at 611 messages / 660
--- deliveries — BELOW the smallest synthetic point above, so it corroborates the shape and not
--- the slope: two of three parties improved 17% and 20%, the third was inside the noise and is
--- reported as noise. **The structural change is the result, not the 0.04 ms.** At 611 rows the
--- timing barely matters; what matters is that both branches converge on
--- `SEARCH m USING INDEX idx_message_sender` and the per-query automatic index disappears, so
--- the cost stops growing with other people's history.
+-- ken-prod-ops measured production at 615 messages / 664 deliveries — an order of magnitude
+-- BELOW the smallest synthetic point above — so it establishes the left end and cannot
+-- corroborate the slope. ALL THREE parties improve, 36-40%:
+--
+--   party                  WITHOUT index   WITH index   change
+--   s:WlpVmkEg3RSV9d2C       0.2920 ms      0.1750 ms   -40.1%
+--   s:lhqBQKBpTSyJoZyu       0.2297 ms      0.1403 ms   -38.9%
+--   s:DiKCTBvYZZGeZbP4       0.2821 ms      0.1804 ms   -36.0%
+--
+-- AN EARLIER VERSION OF THIS PARAGRAPH SAID "17% and 20%, the third inside the noise", and
+-- that was a measurement artifact rather than a result: before and after had been taken in
+-- SEPARATE PROCESSES at different times, and cross-run variance was larger than the effect.
+-- Re-run as one process on one file — drop the index, re-create it, alternating, three cycles
+-- of 600 runs, median across cycles — there is no noise party. Kept here because the corrected
+-- method is the transferable part: a before/after spanning a restart measures the restart too.
+--
+-- THE STRUCTURAL CHANGE IS STILL THE RESULT, not the 0.1 ms. At 615 rows the timing barely
+-- matters; what matters is that both branches converge on `SEARCH m USING INDEX
+-- idx_message_sender`, the per-query automatic index disappears, and the cost stops growing
+-- with other people's history. The un-indexed mean of ~0.28 ms at 615 rows is also consistent
+-- with the 0.511 ms synthetic point at 1k under row-count scaling — which is the one thing a
+-- synthetic bench cannot establish about itself.
 --
 -- This is the same coupling a 2026-08-03 task recorded against `Poll`, which was fixed
 -- by giving Poll a recipient-scoped index. The fix moved the cost rather than removing

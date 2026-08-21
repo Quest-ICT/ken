@@ -61,3 +61,35 @@ func TestNoticeQueryUsesAnIndexRatherThanScanningEveryMessage(t *testing.T) {
 			"reporting what this test assumes, so the assertion above proves nothing", ctl)
 	}
 }
+
+// WHAT REACHES sqlite_master FROM A MIGRATION FILE, AND THEREFORE WHAT MAY STILL BE
+// CORRECTED AFTER ONE HAS BEEN APPLIED.
+//
+// This migration's own comment asserted the opposite — that "SQLite stores a migration's
+// text verbatim in sqlite_master, so editing an APPLIED one makes a fresh install differ
+// from an upgraded deployment" — and on that basis I told ken-prod-ops the comment had to
+// be corrected before 3.14.0 shipped or not at all. That was wrong, and the assertion
+// shipped anyway. Only the STATEMENT is stored: 62 bytes, no leading prose. And
+// `schema_migration` records `version` and `applied_at` and nothing else — there is no
+// checksum of the file — so the two halves of the divergence claim both fail.
+//
+// The real rule is narrower and still worth keeping: never change a migration's
+// STATEMENTS once applied. Its comments are documentation and may be fixed when they turn
+// out to be wrong, which is the only way a comment that lies ever gets repaired.
+func TestOnlyTheStatementReachesSqliteMaster(t *testing.T) {
+	s := newStore(t, DefaultLimits())
+	var sql string
+	if err := s.R.QueryRowContext(context.Background(),
+		`SELECT sql FROM sqlite_master WHERE name='idx_message_sender'`).Scan(&sql); err != nil {
+		t.Fatalf("idx_message_sender not in sqlite_master — 0016 did not apply: %v", err)
+	}
+	if want := "CREATE INDEX idx_message_sender ON message(sender_party, kind)"; sql != want {
+		t.Fatalf("sqlite_master holds:\n%q\nwant:\n%q", sql, want)
+	}
+	// The file is thousands of bytes of reasoning; the stored statement is 62. If this
+	// ever grows to the file's size, the comment this test was written to disprove was
+	// right after all and applied migrations become frozen prose.
+	if len(sql) > 200 {
+		t.Fatalf("sqlite_master holds %d bytes — file prose IS being stored", len(sql))
+	}
+}
