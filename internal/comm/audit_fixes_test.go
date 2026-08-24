@@ -143,7 +143,7 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 	// DERIVED, not delivered (slice 4). The property is unchanged — a requester whose
 	// peer went silent must not wait forever — but the sweep no longer writes them a
 	// message to say so, because a pass that deletes must not also insert.
-	n, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	n, err := st.NoticesForPoll(ctx, endpointPartyKey(a.ID), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,10 +162,9 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.MarkNoticesSeen(ctx, endpointPartyKey(a.ID), n[0].At); err != nil {
-		t.Fatal(err)
-	}
-	again, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	// A SECOND POLL is what confirms the first one's display — that is where the
+	// exactly-once property lives, and it is the path a session actually takes.
+	again, err := st.NoticesForPoll(ctx, endpointPartyKey(a.ID), 10)
 	if err != nil {
 		t.Fatal(err)
 	}

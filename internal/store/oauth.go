@@ -402,13 +402,6 @@ func (s *Store) RevokeOAuthGrant(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
-// CountActiveOAuthGrants counts live connector grants (for the dashboard stat).
-func (s *Store) CountActiveOAuthGrants(ctx context.Context) (int, error) {
-	var n int
-	err := s.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM oauth_grant WHERE revoked_at IS NULL`).Scan(&n)
-	return n, err
-}
-
 // PurgeExpiredOAuth deletes spent authorization codes and long-expired tokens.
 // Best-effort housekeeping; safe to call periodically.
 func (s *Store) PurgeExpiredOAuth(ctx context.Context) error {

@@ -604,11 +604,14 @@ were refuted on details — one would not have compiled — which is the argumen
       notified exactly once; 0009 carried it onto `delivery`; 0011 replaced written notices with a
       derived query and moved exactly-once into `notice_watermark`. The column survived all three.
       *Migration; ships alone.*
-- [ ] **`Store.MarkNoticesSeen` has zero production callers** — only two tests. It is the explicit
-      "I have read my notices" call that migration 0011's own comment argues at length is unusable
-      here, because MCP tool lists pin at conversation start; `NoticesForPoll` supersedes it by
-      promoting the previous poll's mark automatically. Deleting it needs NO migration, but the two
-      tests must be rewritten through `NoticesForPoll` rather than having the call deleted.
+- [x] **`Store.MarkNoticesSeen` has zero production callers** — **done 2026-08-24**. It was the
+      explicit "I have read my notices" call that migration 0011's own comment argues at length is
+      unusable here, because MCP tool lists pin at conversation start; `NoticesForPoll` supersedes it
+      by promoting the previous poll's mark automatically. Deleted with no migration, and the two
+      tests were REWRITTEN through `NoticesForPoll` rather than having the call removed — which
+      raised coverage rather than lowering it, because they had been asserting "notices do not repeat
+      forever" against a mechanism production never invoked. Suppression now takes two polls, which
+      is what a session actually does.
 - [x] **The second generation did not inherit the first's invariant** — **3.9.0**. Migration 0010 rebuilt the
       `entry_version_immutable` trigger for the sole purpose of freezing `via_comm`, stating that
       "a mutable marker could simply be UPDATEd away — which would defeat the point". Migration 0018

@@ -119,16 +119,15 @@ func TestTheWatermarkClearsWhatWasSeenAndNothingElse(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	n, err := st.NoticesFor(ctx, senderParty, 10)
+	// THROUGH THE POLL PATH, which is the one production takes. This used to call
+	// NoticesFor and then MarkNoticesSeen — a mechanism nothing outside these tests ever
+	// invoked, so the property was asserted against a path that did not run. NoticesForPoll
+	// promotes the PREVIOUS poll's mark before querying, so suppression takes two calls.
+	n, err := st.NoticesForPoll(ctx, senderParty, 10)
 	if err != nil || len(n) != 1 {
 		t.Fatalf("setup: %d notices, err %v", len(n), err)
 	}
-
-	// Seen through the first one.
-	if err := st.MarkNoticesSeen(ctx, senderParty, n[0].At); err != nil {
-		t.Fatal(err)
-	}
-	after, err := st.NoticesFor(ctx, senderParty, 10)
+	after, err := st.NoticesForPoll(ctx, senderParty, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

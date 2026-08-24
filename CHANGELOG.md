@@ -15,6 +15,28 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Removed
+
+- **Four exported store methods nothing ever called, and four doc comments that said
+  otherwise.** `StationKeyOwner`, `CountActiveOAuthGrants`, `RoomsForParty` and
+  `MarkNoticesSeen`. Each carried a confident sentence naming a consumer — *"used when
+  severing"*, *"for the dashboard stat"*, *"the read behind the authorization check on a
+  room-addressed send"* — and each was false at the moment it was written. `git log -S` shows
+  `StationKeyOwner` was born dead in a single commit.
+
+  Every deletion was proven by **removing the method and running the build**, not by grep,
+  each with an inverse control showing the toolchain does fail when a *used* method goes.
+
+  `RoomsForParty` is the one worth naming: it is a superseded duplicate of `RoomsFor`, and its
+  comment claimed to be the authorization check on a room-addressed send. It was not —
+  `SendToRoom` authorizes through `membersOfScope`. A comment naming itself an authorization
+  control while pointing at nothing is worse than the dead code under it.
+
+  `MarkNoticesSeen`'s two tests were **rewritten through `NoticesForPoll`** rather than
+  deleted, and that raised coverage rather than lowering it: they had been asserting "the
+  notice stream does not repeat forever" against a mechanism production never invoked.
+  Suppression now takes two polls, which is what a session actually does.
+
 ### Fixed
 
 - **The vault could restore exactly one value of sixteen, and using it destroyed the rest.**

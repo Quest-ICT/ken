@@ -237,20 +237,3 @@ ON CONFLICT(party_key) DO UPDATE SET shown_at = MAX(notice_watermark.shown_at, e
 	}
 	return out, nil
 }
-
-// MarkNoticesSeen advances a party's watermark.
-//
-// Takes the timestamp the CALLER was shown rather than "now", so a notice that becomes
-// true between the query and this call is not skipped. Using `now` here would silently
-// drop anything that happened in that window, which is the class of bug that is invisible
-// until someone loses a message they were told about.
-func (s *Store) MarkNoticesSeen(ctx context.Context, party, through string) error {
-	if through == "" {
-		return nil
-	}
-	_, err := s.W.ExecContext(ctx, `
-INSERT INTO notice_watermark(party_key, seen_at) VALUES(?,?)
-ON CONFLICT(party_key) DO UPDATE SET seen_at = MAX(notice_watermark.seen_at, excluded.seen_at)`,
-		party, through)
-	return err
-}

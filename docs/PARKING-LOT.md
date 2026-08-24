@@ -1422,7 +1422,7 @@ observe this class at all.**
 
 `docs/FINISHING.md:469 (found by the Batch 4 sweep, unticked); internal/comm/notice.go:247`
 
-**Outstanding.** Delete it — no migration needed — but the two tests must be REWRITTEN through NoticesForPoll rather than having the call deleted.
+**DONE 2026-08-24.** Deleted, no migration. The two tests were rewritten through `NoticesForPoll` as this entry required — and that raised coverage rather than lowering it: they had been asserting "the stream does not repeat forever" against a mechanism nothing in production invoked. Suppression now takes two polls, which is what a session actually does.
 
 **Evidence.** Verified today: the only references are the definition and two tests (internal/comm/audit_fixes_test.go:165, internal/comm/notice_test.go:128). It is the explicit "I have read my notices" call that migration 0011's own comment argues at length is unusable here, because MCP tool lists pin at conversation start; NoticesForPoll supersedes it by promoting the previous poll's mark automatically.
 

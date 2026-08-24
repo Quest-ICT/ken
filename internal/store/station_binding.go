@@ -265,22 +265,6 @@ DELETE FROM station_binding_voucher
 	return int(n), nil
 }
 
-// StationKeyOwner reports the station a key is bound to, or "" for a station-less
-// key. Used when severing: the console needs to know what a revocation will hit
-// before it happens, and S6 requires stating the count before the click.
-func (s *Store) StationKeyOwner(ctx context.Context, tokenID string) (string, error) {
-	var station sql.NullString
-	err := s.R.QueryRowContext(ctx,
-		`SELECT station_id FROM api_token WHERE token_id=?`, tokenID).Scan(&station)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	if err != nil {
-		return "", err
-	}
-	return station.String, nil
-}
-
 // ErrStationKeyRevoked is returned to a caller whose station key has been revoked.
 // It is DISTINGUISHABLE from an ordinary auth failure on purpose (S6): a model that
 // is told its key was revoked reports that to its human, while one that merely sees

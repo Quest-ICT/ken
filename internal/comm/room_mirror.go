@@ -57,26 +57,6 @@ func (s *Store) MirrorEpoch(ctx context.Context) (int64, error) {
 	return e, err
 }
 
-// RoomsForParty lists the rooms a party belongs to. This is the read behind "which
-// rooms am I in", and behind the authorization check on a room-addressed send.
-func (s *Store) RoomsForParty(ctx context.Context, party string) ([]string, error) {
-	rows, err := s.R.QueryContext(ctx,
-		`SELECT room_id FROM room_member_mirror WHERE party_key=? ORDER BY room_id`, party)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
 // RoomView is one room from a party's point of view, as the directory reports it.
 type RoomView struct {
 	RoomID  string
