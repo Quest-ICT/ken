@@ -46,13 +46,23 @@ the migration makes `scope_id` NOT NULL and the code is what writes it.
 the design, stated in `BACKUP.md` — so if the message history on that box matters to you, stop
 the service and copy `data/comm/` cold before upgrading.
 
-### ⚠ A DRIVER FLOOR, new with this release
+### A driver floor — and it is NOT something you can be below
 
 This migration uses `ALTER TABLE ... ALTER COLUMN DROP/SET NOT NULL`, which works at **SQLite
-3.53.3** and is a **syntax error at 3.50.4**. comm.db is therefore pinned to a driver carrying
-≥ 3.53 from here on. Nothing asserted that before; a test does now. If you build Ken yourself
-and downgrade `ncruces/go-sqlite3`, a **fresh install** will fail at 0017 while an existing
-deployment carries on — the failure lands on the one case nobody upgrades their way out of.
+3.53.3** and is a **syntax error at 3.50.4**. So comm.db carries a ≥ 3.53 floor from here on.
+
+**If you run a released binary there is nothing for you to check.** Ken does not link a system
+`libsqlite3` at all: `ncruces/go-sqlite3` is pure Go and carries SQLite as a **WASM module
+vendored as a Go dependency**, so the SQLite that runs migration 0017 is the one *inside the
+3.18.0 binary*. Nothing on your host can be stale, and no version you have installed matters.
+ken-prod-ops established this while trying to answer the question — the useful answer turned out
+to be that the question does not apply to an operator.
+
+**The risk is real and it is build-side.** A `go.mod` bump — including a transitive one — that
+moves the driver below 3.53 would be silent: every test still passes, because the tests run
+against whatever is vendored at that moment, and only *fresh installs* would start failing at
+0017. That is asserted by a test that runs the `ALTER` rather than parsing a version string,
+which is the only place the check can catch anything.
 
 ### What changes
 
@@ -95,19 +105,30 @@ from a room and its outstanding grants stop working, with nothing to revoke by h
 Ken feature is optional or off by default. The per-operation toggle stays: it is a **kill switch**
 for an incident, not an opt-in.
 
-**IF YOU DELIBERATELY TURNED FILE EXCHANGE OFF, THIS UPGRADE TURNS IT BACK ON, SILENTLY.** That is
-not a bug in the upgrade; it is a property of how settings are stored, and it is worth
-understanding because it applies to *every* default Ken has ever changed:
+**IF YOU DELIBERATELY TURNED FILE EXCHANGE OFF, IT COMES BACK ON — AND NOT AT THE UPGRADE.**
+This warning said "this upgrade turns it back on" until ken-prod-ops falsified it against a live
+deployment: they pre-registered the prediction that `app_setting` would drop a row at upgrade,
+and it did not. Row count unchanged, value unchanged, **`updated_at` byte-identical — the row
+was never rewritten.** `settings.Apply` runs when settings are SAVED, not at startup.
+
+**Which makes it worse, not better.** An operator who turned files off had their explicit row
+*deleted at that moment* — the value equalled the compiled default, and absent means default.
+So nothing changes at the upgrade, the toggle reads correctly right after it, and the flip
+lands **whenever you next save any unrelated setting**: no version boundary to blame, nothing
+dated, attributable to nothing. Checking straight after upgrading is exactly when it looks fine.
+
+It is a property of how settings are stored, and it applies to *every* default Ken has ever
+changed:
 
 > `settings.Apply` **deletes** a key whose value equals the compiled default rather than storing
 > it (`internal/settings/settings.go`, "Removal is decided ONLY by equality to the default").
 > So "off because the operator chose off" and "off because nobody touched it" are stored
 > identically — as nothing at all. When the compiled default moves, both become the new default.
 
-**What to do.** If you want the relay to stay off, set it explicitly *after* upgrading — on
-Settings → Inter-session comms, or the equivalent key. Verify by checking the setting reads `off`
-**and** that a file offer is refused; the setting alone cannot tell you which of the two states
-above you were in before.
+**What to do.** If you want the relay to stay off, set it explicitly *after* upgrading, and then
+**save it again after any later settings change** — because a save is what re-evaluates it. The
+only reliable check is that a file offer is actually refused; the toggle reading `off` cannot
+tell you whether that is a stored decision or an absent row about to become `on`.
 
 **If you have never touched it,** this changes one thing: `comm_file_offer` now works on
 pairing-code channels instead of refusing every call. It still cannot offer a file to a room or to

@@ -86,6 +86,14 @@ same change — never "docs later".
   new test seeds a pair message first, because the poison *is* the fixture, and carries a control
   proving the purge works without it.
 
+  **What it has actually cost, measured rather than implied: nothing.** ken-prod-ops evaluated
+  both predicates on the live database — the unguarded form returns 0 channels, the guarded form
+  returns 3, and 52 messages carry the NULL that poisons it — and then read the TTL that decides
+  whether any of the three were due: `comm_metadata_ttl_sec = 5184000`, sixty days. **None is
+  past it; the first would have been due 2026-10-06.** The mechanism is as bad as described and
+  the realized leak on the only deployment there is is zero rows. Said plainly because "a
+  retention leak that only grows" is true of the mechanism and would misdescribe the damage.
+
 - **Offering a file to a room named a parameter that does not exist.** The refusal came from
   `ChannelFor`, written for `comm_send` where `to_room` is real; `comm_file_offer` has no such
   argument, so following the advice returned `unexpected additional properties ["to_room"]`. Each
