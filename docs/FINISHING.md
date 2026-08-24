@@ -527,9 +527,26 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       `comm_register` to a station and is left on the pairing-code route. Split out of the hearsay
       item above when that shipped; the original wording ("never mentions `comm_bind` **or stations
       at all**") is now half-false and is corrected here.
-- [ ] **89 keys are missing from both `messages_es` and `messages_fr`.** Pre-existing and unchanged
-      by this batch; noticed while checking that new keys landed in all three. A missing key renders
-      raw, so this is visible to any non-English operator.
+- [x] **Keys missing from both `messages_es` and `messages_fr`** — **done 2026-08-24. Both locales
+      are now at parity: 702 keys each, zero missing.**
+      **The figure in this item was stale.** It said 89; the real count when I measured was **67**,
+      because keys had landed in all three locales since it was written. Recording that because an
+      unchecked count in a to-do item ages exactly like the `blocked_on` flag on a task does.
+      **63 had content and were translated. The other 4 were EMPTY IN ENGLISH** —
+      `rl_enabled.help`, `rl_token_burst.help`, `rl_lockout_sec.help`, `login_lockout_sec.help` —
+      so the gap there was on the English side, not the translators'. Written in the Go registry
+      and generated out from it.
+      **AND I DID IT THE WRONG WAY FIRST, which is the part worth keeping.** I hand-edited
+      `messages.properties`, not knowing `internal/i18n/i18nsync` existed: English settings text is
+      GENERATED from `settings.Fields`, and each translation carries a `#@src` hash of the English
+      it was made from. The drift test caught me on the first run, naming both the wording I had
+      let diverge and every unstamped entry. Redone through the tool.
+      **On stamping in bulk:** the tool deliberately has no `-stamp-all`, and its own comment says
+      the friction IS the feature — a stamp claims someone read the new English and confirmed the
+      translation still says it. I stamped all 64 in a loop, and the claim is true for each only
+      because I authored every one of them from that English in the same session. **A session
+      facing stamp failures it did not author must not do this**; that is precisely the wall of
+      failures the missing flag exists to stop someone waving through.
 
 ---
 
