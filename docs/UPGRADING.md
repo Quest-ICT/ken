@@ -34,6 +34,83 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.20.1
+
+**PATCH. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17. Nothing in the application
+behaves differently. What changed is text that was wrong and tests that were not holding what
+they claimed — corrections found by an adversarial review of 3.20.0's own diff.
+
+### The one thing to re-read if you already read 3.20.0
+
+**Retiring a station key does NOT end the COMM sessions it bound. Revoking does.** 3.20.0's
+console help said the opposite, in all three languages, and so did this file's sibling documents.
+`IsStationKeyRevoked` reads `revoked_at` alone, so:
+
+- **Retire** — the key stops working for `/station` tools at the holder's next call (notebook,
+  tasks, locker, vault). Its bound COMM endpoints keep polling, sending and acking.
+- **Revoke** — both. The endpoints it bound are marked revoked, and **nothing un-revokes an
+  endpoint anywhere in Ken.**
+
+If you read 3.20.0's help text and concluded the two verbs were interchangeable for taking a key
+out of service, they are not, and the destructive one is the one that is irreversible.
+
+`TestNoCommStringClaimsRetireSeversComm` now fails the build if a COMM string says otherwise.
+
+### Nothing to do
+
+No action on upgrade. If you have not upgraded to 3.20.0 yet, go straight to 3.20.1.
+
+## 3.20.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17 — verified by diffing every
+migration file against `v3.19.0`: none moved.
+
+### What you get
+
+**The second credential welded to a bound endpoint can now be moved.** A bound endpoint answers
+to two credentials, not one:
+
+- `token_id` — which token may **drive** it. Movable since 3.19.0 (**Re-point**).
+- `bound_by_station_key_id` — which station key **authorised its binding**. Checked on every
+  single call, with a *missing* row treated as revoked. Movable now (**Re-bind**).
+
+Revoking either one ends the session. Before this release only the first could be moved, so
+"rotate a station key" still meant re-onboarding the sessions it bound.
+
+`/comm` gains a **Bound by** column, a **Re-bind** control per endpoint, and a **Credentials these
+endpoints depend on** block that groups live endpoints under the credential whose revocation would
+end them — with the live count and a bulk move beside each. Both bulk verbs are reachable from the
+page; in 3.19.0 the bulk re-point had a route and no form, so it could be used only with `curl`.
+
+### What a re-bind does and does not change
+
+**Unchanged:** everything the session holds — its endpoint id, its **secret**, its channels and
+seats, its **station**, its queued mail and its in-flight claims. **Changed:** which station key
+could sever it.
+
+**What you must do afterwards: nothing.** Unlike a re-point, there is no config edit and no
+restart — the session does not hold the station key that authorised its binding.
+
+### The rule that will refuse you
+
+**A binding only ever moves to another key of the SAME station**, enforced inside the `UPDATE`
+rather than by a check before it. A key belonging to another station is refused with a message
+naming the rule. This is deliberate: `bound_by_station_key_id` is a sever lever, and pointing it
+at another station's key would hand that station's operator the power to disconnect your session
+while taking it away from you.
+
+### The order that matters
+
+**Re-bind before you revoke, not after.** Revoking a key from `/tokens` sweeps its endpoints to
+revoked in the same act, and a revoked endpoint is refused by this control exactly as it is by
+Rotate and Re-point. There is no un-revoke path.
+
+**The exception is `ken token revoke`.** The CLI runs in a separate process with no `comm.db`
+handle, so it cannot sever: its endpoints stay live in the table and are refused one call at a
+time by the at-use check, with nothing on any page saying why. Those rows still appear on `/comm`
+under their now-revoked key, and re-binding them onto a working key **repairs a session that has
+already stopped answering**, with no re-registration.
+
 ## 3.19.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17 — verified by diffing every
@@ -46,8 +123,12 @@ retiring a comm token meant re-registering every session it carried. If one toke
 deployment owns several endpoints — and it probably does, because the token is per-machine by
 convention — that was a fleet-wide re-onboarding for a routine credential rotation.
 
-`/comm` now shows an **Owned by** column, and each endpoint has a **Re-point** control. There is
-also a bulk form that moves every live endpoint of one token at once.
+`/comm` now shows an **Owned by** column, and each endpoint has a **Re-point** control.
+
+> **CORRECTED IN 3.20.1.** This paragraph also promised *"a bulk form that moves every live
+> endpoint of one token at once"*. The bulk **route** shipped in 3.19.0; the **form did not**, so
+> the verb was reachable only with `curl`. The form arrived in 3.20.0, and a test now fails when a
+> POST route has no control on any page.
 
 ### What a re-point does and does not change
 
