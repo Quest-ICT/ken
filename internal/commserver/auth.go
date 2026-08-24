@@ -19,10 +19,23 @@ import (
 
 // ScopeComm is the capability required by every tool on this endpoint.
 //
-// ScopeCommFile is RESERVED and required by nothing yet: file exchange is
-// deferred to a later MINOR (docs/COMM.md §11). It is declared now because
-// splitting a shipped `comm` scope into two later would be a MAJOR under
+// ScopeCommFile gates file exchange, and it is ENFORCED — at commserver.go's file tool
+// handlers and again at files.go's byte-relay HTTP surface. Both were checked when this
+// comment was corrected.
+//
+// IT SAID "RESERVED and required by nothing yet" UNTIL 2026-08-24, long after it started
+// being required by two things. A reader auditing the scope model from this block would
+// have concluded those checks were dead and deleted them, with this sentence as the
+// justification — which is why a stale comment on a security control is worse than none.
+//
+// The reserve-early rule it records is still sound and still the reason the scope exists
+// separately: splitting a shipped `comm` scope into two later would be a MAJOR under
 // COMPATIBILITY.md, while merging two into one is free.
+//
+// NOTE, and it is a live question rather than a settled one: this is a SECOND optionality
+// gate. Even with FilesEnabled on, a token minted `--scopes comm` cannot move a byte.
+// Whether "no Ken feature is optional" reaches a per-token scope is a security decision
+// and has not been made.
 const (
 	ScopeComm     = "comm"
 	ScopeCommFile = "comm-file"

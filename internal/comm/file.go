@@ -232,6 +232,22 @@ func (s *Store) OfferFile(ctx context.Context, ep *Endpoint, channelID string, i
 	if len(in.Note) > l.MaxBodyBytes {
 		return nil, ErrTooLarge
 	}
+	// *** A ROOM ID HERE MUST NOT BE TOLD TO USE `to_room`. ***
+	//
+	// ChannelFor's refusal is written for comm_send, where `to_room` exists and the advice is
+	// correct. comm_file_offer has NO to_room parameter, so following that advice returns
+	// `unexpected additional properties ["to_room"]` — and the session is left unable to tell
+	// "I called it wrong" from "the feature does not exist". Each error blames the other.
+	//
+	// The honest answer is the state of the world: files are channel-only today. This whole
+	// branch is deleted by the scope-shaping change, which is what makes it correct rather
+	// than a workaround — it describes a limitation that is about to stop existing.
+	if s.callerIsInRoom(ctx, ep, channelID) {
+		return nil, CallerSafe(fmt.Errorf("%w: %q is a ROOM, and file exchange is channel-only today — "+
+			"comm_file_offer takes channel_id and has no to_room. A file cannot be offered to a room or to a "+
+			"linked station yet; send it over a pairing-code channel, or tell your human the file could not be "+
+			"offered and why", ErrNotFound, channelID))
+	}
 	ch, peer, err := s.ChannelFor(ctx, ep, channelID)
 	if err != nil {
 		return nil, err

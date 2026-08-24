@@ -50,7 +50,14 @@ func TestOfferValidation(t *testing.T) {
 	good := FileOffer{Name: "f.txt", SizeBytes: 5, SHA256: shaOf([]byte("hello")), Transfer: "upload"}
 
 	// Disabled ⇒ refused, regardless of anything else.
-	st.SetLimits(DefaultLimits())
+	//
+	// Constructed explicitly rather than borrowed from DefaultLimits(), which is what this
+	// used to do — and which only worked because FilesEnabled DEFAULTED off. When the default
+	// flipped on 2026-08-24 this line stopped disabling anything and the test asserted nothing.
+	// A test that says "disabled" must make it disabled, not assume a default says so.
+	off := fileLimits()
+	off.FilesEnabled = false
+	st.SetLimits(off)
 	if _, err := st.OfferFile(ctx, a, channelID, good); !errors.Is(err, ErrFilesDisabled) {
 		t.Fatalf("disabled: want ErrFilesDisabled, got %v", err)
 	}

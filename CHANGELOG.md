@@ -15,6 +15,46 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **File exchange is ON by default.** `FilesEnabled` shipped defaulting off so an operator could
+  opt into the relay's risk separately; under the ruling that no Ken feature is optional or off by
+  default, that default was itself the defect. The per-operation toggle stays and is now a **kill
+  switch**, not an opt-in — the same distinction `main.go:337` already drew for COMM: *"a feature
+  an operator can be missing is a feature every doc, every instruction and every session has to
+  hedge about."*
+
+  **This silently re-enables the relay for anyone who deliberately turned it off**, and
+  `UPGRADING.md` says so prominently. `settings.Apply` *deletes* a key equal to the compiled
+  default, so "off by choice" and "off by default" are stored identically — as nothing. That is
+  true of every default Ken has ever changed, and it is written down now.
+
+### Fixed
+
+- **One station-addressed message permanently disabled the revoked-channel purge.** The sweep
+  filtered `id NOT IN (SELECT channel_id FROM message)`, and `message.channel_id` became nullable
+  in migration 0009 — a pair or room message belongs to no channel and writes NULL. `NOT IN` over
+  a set containing NULL is never true, so the first `to_station` send a deployment ever made turned
+  that purge into a permanent no-op, with **no error and no log line**. The rule is stated verbatim
+  twelve lines above, in the endpoint purge, which got the guard when 0009 landed.
+
+  **The existing sweep tests could not see it**: their fixtures leave `message` empty, and `NOT IN`
+  over an empty set is true — so the purge worked perfectly in tests and never in production. The
+  new test seeds a pair message first, because the poison *is* the fixture, and carries a control
+  proving the purge works without it.
+
+- **Offering a file to a room named a parameter that does not exist.** The refusal came from
+  `ChannelFor`, written for `comm_send` where `to_room` is real; `comm_file_offer` has no such
+  argument, so following the advice returned `unexpected additional properties ["to_room"]`. Each
+  error blamed the other and a session could not tell *"I called it wrong"* from *"the feature does
+  not exist."* It now says files are channel-only today — a limitation that is about to stop being
+  true, which is what makes it the right thing to say rather than a workaround.
+
+- **`ScopeCommFile`'s comment said it was "required by nothing yet"** while it was enforced in two
+  places. A reader auditing the scope model from that block would have deleted live checks with the
+  comment as justification.
+
+
 ## [3.16.0] — 2026-08-24
 
 ### Removed

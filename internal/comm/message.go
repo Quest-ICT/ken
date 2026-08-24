@@ -1184,11 +1184,25 @@ WHERE last_seen_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
 			}
 		}
 		// Revoked channels with nothing left referencing them.
+		//
+		// *** BOTH SUBQUERIES FILTER NULLS, AND THE OMISSION WAS A PERMANENT NO-OP. ***
+		// `NOT IN` over a set containing NULL is never true, so ONE pair or room message —
+		// which belongs to no channel and writes channel_id NULL since migration 0009 —
+		// disabled this purge for the life of the deployment, with no error and no log line.
+		// The rule is stated verbatim twelve lines above in the endpoint purge, which got the
+		// guard when 0009 landed; this arm did not.
+		//
+		// `attachment.channel_id` is NOT NULL today so its arm cannot be poisoned yet — the
+		// guard is added anyway because the scope-shaping migration makes it nullable, and a
+		// guard added with the column is a guard nobody has to remember later.
+		//
+		// The existing sweep tests could not see this: their fixtures leave `message` empty,
+		// and `NOT IN` over an EMPTY set is true. The test for it seeds a pair message first.
 		if _, err := t.ExecContext(ctx, `
 DELETE FROM channel
 WHERE state='revoked' AND revoked_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
-  AND id NOT IN (SELECT channel_id FROM message)
-  AND id NOT IN (SELECT channel_id FROM attachment)`,
+  AND id NOT IN (SELECT channel_id FROM message WHERE channel_id IS NOT NULL)
+  AND id NOT IN (SELECT channel_id FROM attachment WHERE channel_id IS NOT NULL)`,
 			nowExpr(-s.lim().MetadataTTLSeconds)); err != nil {
 			return err
 		}

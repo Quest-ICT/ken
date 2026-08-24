@@ -533,7 +533,7 @@ func DefaultsFromEnv() Values {
 		CommPollWaitMaxSec:      15,
 		CommProvenanceWindowSec: 3600,
 
-		CommFilesEnabled:  false,
+		CommFilesEnabled:  true,
 		CommFileMaxMB:     16,
 		CommFileBudgetMB:  256,
 		CommFileMinFreeMB: 512,

@@ -197,10 +197,18 @@ type Limits struct {
 	// its own mail, so there is nothing to claim it against.
 	ClaimLeaseSeconds int
 
-	// FilesEnabled gates file exchange INDEPENDENTLY of COMM itself, and defaults
-	// off: the relay is the bulk of the subsystem's risk (disk, quotas, orphan
-	// sweeping), so an operator opts into it separately. Live-togglable — checked
-	// per operation, so it doubles as a kill switch.
+	// FilesEnabled gates file exchange. It defaults ON as of 2026-08-24 and remains
+	// live-togglable, which is now a KILL SWITCH rather than an opt-in — the distinction
+	// Vlad drew when he ruled that no Ken feature is optional or off by default.
+	//
+	// It shipped defaulting OFF because the relay is the bulk of the subsystem's risk
+	// (disk, quotas, orphan sweeping) and an operator was expected to opt in. That is the
+	// same reasoning main.go:337 already rejected for COMM itself: "a feature an operator
+	// can be missing is a feature every doc, every instruction and every session has to
+	// hedge about". Withholding the switch was never the point; withholding the DEFAULT was.
+	//
+	// What stays is the ability to turn the relay off in an incident, checked per operation.
+	// What goes is a shipped answer of "no" to every file offer on every deployment.
 	FilesEnabled bool
 	// FileMaxBytes caps one attachment.
 	FileMaxBytes int64
@@ -267,7 +275,7 @@ func DefaultLimits() Limits {
 		// production has never used.
 		ClaimLeaseSeconds: 900,
 
-		FilesEnabled:     false,
+		FilesEnabled:     true,
 		FileMaxBytes:     16 << 20,
 		FileTTLSeconds:   24 * 3600,
 		FileBudgetBytes:  256 << 20,

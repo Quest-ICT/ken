@@ -34,6 +34,32 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### ⚠ File exchange is now ON by default — read this if you ever turned it off
+
+`FilesEnabled` shipped defaulting **off** and now defaults **on**, following the ruling that no
+Ken feature is optional or off by default. The per-operation toggle stays: it is a **kill switch**
+for an incident, not an opt-in.
+
+**IF YOU DELIBERATELY TURNED FILE EXCHANGE OFF, THIS UPGRADE TURNS IT BACK ON, SILENTLY.** That is
+not a bug in the upgrade; it is a property of how settings are stored, and it is worth
+understanding because it applies to *every* default Ken has ever changed:
+
+> `settings.Apply` **deletes** a key whose value equals the compiled default rather than storing
+> it (`internal/settings/settings.go`, "Removal is decided ONLY by equality to the default").
+> So "off because the operator chose off" and "off because nobody touched it" are stored
+> identically — as nothing at all. When the compiled default moves, both become the new default.
+
+**What to do.** If you want the relay to stay off, set it explicitly *after* upgrading — on
+Settings → Inter-session comms, or the equivalent key. Verify by checking the setting reads `off`
+**and** that a file offer is refused; the setting alone cannot tell you which of the two states
+above you were in before.
+
+**If you have never touched it,** this changes one thing: `comm_file_offer` now works on
+pairing-code channels instead of refusing every call. It still cannot offer a file to a room or to
+a linked station — that needs a schema change and ships separately. Until then the refusal says so
+plainly, instead of pointing at a `to_room` parameter that does not exist.
+
+
 ## 3.16.0
 
 **MINOR. SCHEMA CHANGE: ken.db 19 → 20.** comm.db unchanged at 16. One migration —
