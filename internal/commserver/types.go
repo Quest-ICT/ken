@@ -446,10 +446,20 @@ type directoryOut struct {
 	// means a broadcast would be refused, and saying so here costs nothing and saves a
 	// session from discovering it by being turned down.
 	BroadcastReaches int `json:"broadcast_reaches"`
-	// RosterEpoch is the generation of the membership this answer describes. It appears
-	// on delivered messages too, so a session holding a standing instruction about a
-	// room can tell that the room it was told about is no longer the room that exists.
-	RosterEpoch int64 `json:"roster_epoch,omitempty"`
+	// RosterEpoch is the generation of the membership THIS ANSWER describes, and nothing
+	// else. Compare two directory results to see the roster moved between them.
+	//
+	// IT DOES NOT APPEAR ON DELIVERED MESSAGES. This comment said it did until 2026-08-24,
+	// which made the one staleness check a session was told to perform impossible: neither
+	// messageView nor pollOut carries an epoch field, so there was nothing to compare a
+	// standing instruction against. An instruction whose precondition cannot be met is the
+	// same defect as a check that cannot fail — it reads as covered and covers nothing.
+	//
+	// NOT omitempty, deliberately. The counter seeds at 1 and only increments, so a value of
+	// zero cannot occur — which means an ABSENT key uniquely signalled a swallowed error, and
+	// a session could not tell that from an older server that never sent the field. pollOut's
+	// ScopeFilter, one struct over, documents exactly this reasoning.
+	RosterEpoch int64 `json:"roster_epoch"`
 }
 
 // directoryRoom is one room, from the asking station's point of view.
