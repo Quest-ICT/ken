@@ -874,7 +874,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name:        "comm_file_offer",
-		Description: "Offer a FILE to the peer (requires the comm-file scope, and the operator must have enabled file exchange). transfer='path' for a same-host handoff through your exchange directory (preferred; zero bytes moved through Ken), 'upload' to relay via a one-time HTTP PUT. NEVER paste file bytes into a message — that spends model tokens on payload.",
+		Description: "Offer a FILE (requires the comm-file scope). Address it with EXACTLY ONE of channel_id, to_room or to_station — a room offer reaches every member as ONE attachment rather than one per member, and to_station needs no channel at all. transfer='path' for a same-host handoff through your exchange directory (preferred; zero bytes moved through Ken), 'upload' to relay via a one-time HTTP PUT. NEVER paste file bytes into a message — that spends model tokens on payload.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in fileOfferIn) (*mcp.CallToolResult, fileOfferOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
@@ -883,7 +883,13 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if err := requireFileScope(ctx); err != nil {
 			return nil, fileOfferOut{}, err
 		}
-		res, err := d.Comm.OfferFile(ctx, ep, in.ChannelID, comm.FileOffer{
+		// EXACTLY ONE ADDRESS, enforced in the store rather than here — the store owns the
+		// link mirror and the room roster, so it is the only layer that can say whether the
+		// address is one the caller may use, and splitting "is it well-formed" from "is it
+		// allowed" across two layers is how the two answers drift.
+		res, err := d.Comm.OfferFile(ctx, ep, comm.FileAddr{
+			ChannelID: in.ChannelID, RoomID: in.ToRoom, StationID: in.ToStation,
+		}, comm.FileOffer{
 			Name: in.Name, SizeBytes: in.SizeBytes, SHA256: in.SHA256,
 			Transfer: in.Transfer, NonceSHA256: in.NonceSHA256, Note: in.Note,
 			IdempotencyKey: in.IdempotencyKey, TTLSeconds: in.TTLSeconds,

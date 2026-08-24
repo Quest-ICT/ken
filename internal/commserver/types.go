@@ -352,7 +352,19 @@ type ackOut struct {
 type fileOfferIn struct {
 	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
 	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
-	ChannelID      string `json:"channel_id" jsonschema:"required"`
+	// EXACTLY ONE OF THE THREE ADDRESSES. `channel_id` is no longer required, because a file
+	// is no longer channel-only: `to_room` reaches every member of a room with one offer and
+	// one charge against the file budget, and `to_station` reaches a linked peer with no
+	// channel at all — the path Ken's own instructions call the simplest way to reach someone,
+	// which until 2026-08-24 could not carry a file.
+	//
+	// NONE of them is marked `required` in the schema, because the requirement is "exactly one"
+	// and jsonschema cannot say that here. The handler enforces it and names the three by
+	// listing them, so a caller that passes none or two learns which to pick rather than being
+	// told a field is missing.
+	ChannelID      string `json:"channel_id,omitempty" jsonschema:"the pairing-code channel to offer on. Exactly one of channel_id, to_room or to_station"`
+	ToRoom         string `json:"to_room,omitempty" jsonschema:"a room id — every member receives the offer, and it is ONE attachment against the file budget rather than one per member"`
+	ToStation      string `json:"to_station,omitempty" jsonschema:"a station id an approved link joins you to — no channel, nothing to open or expire"`
 	Name           string `json:"name" jsonschema:"required; a bare filename (no directories). The receiver will know the file by this name"`
 	SizeBytes      int64  `json:"size_bytes" jsonschema:"required; exact size of the file"`
 	SHA256         string `json:"sha256" jsonschema:"required; 64-hex sha256 of the file content (run: sha256sum FILE)"`

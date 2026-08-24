@@ -1192,7 +1192,7 @@ func TestWakeTargetsForAFileOfferResolveTheStationsLiveReader(t *testing.T) {
 	// live reader that is NOT the endpoint frozen into the channel seat.
 	successor := stationEndpoint(t, st, "tok-r2", "st-receiver")
 
-	res, err := st.OfferFile(ctx, sender, ch, FileOffer{
+	res, err := st.OfferFile(ctx, sender, FileAddr{ChannelID: ch}, FileOffer{
 		Name: "report.pdf", SizeBytes: 12,
 		SHA256:      "0000000000000000000000000000000000000000000000000000000000000000",
 		NonceSHA256: "1111111111111111111111111111111111111111111111111111111111111111",

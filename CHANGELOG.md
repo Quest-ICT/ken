@@ -15,6 +15,45 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **A file can be offered to a ROOM or to a LINKED STATION.** `comm_file_offer` takes exactly
+  one of `channel_id`, `to_room` or `to_station`. A room offer is **one** attachment against the
+  file budget however many members receive it.
+
+  The item this closes understated itself. "A file cannot be offered to a room" was true and not
+  the worst of it: `comm_send{to_station}` — the path Ken's own instructions call the simplest
+  way to reach a peer — has no channel row *by design*, so **two linked stations could not
+  exchange a file at all**. Files worked on 1 of the 4 ways COMM addresses.
+
+  Authorisation delegates to the rule that already governs a send of that kind: a room offer is
+  legal exactly when a room send is, a pair offer exactly when a pair send is. Two rules for one
+  relationship is how they drift.
+
+### Changed
+
+- **`attachment` is scope-shaped** (migration `0017`, ken-comm 16 → 17). `channel_id` and
+  `recipient_endpoint` become optional; `scope_id` — the seam migration 0010 cut and nothing
+  ever used — becomes the address and is `NOT NULL`.
+
+  **Not a table rebuild.** `ALTER COLUMN DROP/SET NOT NULL` works in place at the pinned driver
+  (SQLite 3.53.3) and is a syntax error at 3.50.4, so comm.db is now hard-pinned to a ≥3.53
+  driver. Nothing in the repo asserted that floor; a test does now, and it exercises the
+  capability rather than parsing a version string.
+
+- **`enqueueLocked` is gone** — 84 lines, and COMM drops from three message-insert paths to two.
+
+### Fixed
+
+- **Three defects that could not surface until a scope-shaped row existed.** `attachmentByID`
+  INNER JOINed `channel`, so a room attachment would have reported *not found* for a row sitting
+  in the table. The two `/comm` file counters did the same, so an operator would have read
+  `Files=0` while the relay held bytes. And download grants keyed on a recipient rowid frozen at
+  offer time — which cannot express a room and does not exist for a pair. Authorisation is now
+  scope membership **as of now**, so removing a station from a room stops its outstanding grants
+  without revoking them one at a time.
+
+
 ## [3.17.0] — 2026-08-24
 
 ### Changed

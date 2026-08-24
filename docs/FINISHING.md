@@ -425,11 +425,37 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       `channel.endpoint_b` and never updated. That is true for ADDRESSING, which is what it was
       written for, and false for every other use the value was then put to. Three separately
       confirmed defects were one frozen approximation read as an identity.
-- [ ] **`attachment` is channel-shaped and must become scope-shaped.** `channel_id` is
-      `NOT NULL`; `recipient_endpoint` is `NOT NULL` and holds ONE endpoint where a room needs a
-      party set. Migration 0010 already added and backfilled `attachment.scope_id` — and
-      `internal/comm/file.go` contains the string "scope" **zero times**. The seam was cut and
-      never used, so a file cannot be offered to a room. *Needs a migration; ships alone.*
+- [x] **`attachment` is channel-shaped and must become scope-shaped** — **done 2026-08-24**,
+      migration `0017_attachment_scope.sql` with its code, shipping together because they cannot
+      be separated: the migration makes `scope_id` NOT NULL and the code is what writes it.
+      **THIS ITEM UNDERSTATED ITS OWN FINDING.** "A file cannot be offered to a room" was true and
+      not the worst of it: `comm_send{to_station}` — the path Ken's instructions call the simplest
+      way to reach a peer — has NO CHANNEL ROW by design, so two linked stations could not exchange
+      a file **at all**. Files worked on 1 of the 4 ways COMM addresses. The workaround (mint a
+      pairing code) re-created the very channel the pair model exists to eliminate and split the
+      conversation: the file in `ch:…`, the talking in `p:…`.
+      **NOT A TABLE REBUILD.** Measured at the pinned driver: `ALTER COLUMN DROP/SET NOT NULL`
+      works in place at SQLite 3.53.3 and is a syntax error at 3.50.4. Four ALTERs, a re-backfill
+      and an index swap; indexes, comments and foreign keys all survive. That hard-pins comm.db to
+      a ≥3.53 driver, which nothing else in the repo asserted — so it is a test now, and the test
+      exercises the capability rather than parsing a version string.
+      **The re-backfill was not optional:** every attachment written since 0010 carries `scope_id`
+      NULL, because the seam was cut and nothing ever wrote it. Tightening without re-backfilling
+      aborts the upgrade.
+      **`enqueueLocked` is deleted** — 84 lines, and COMM goes from three message-insert paths to
+      two. Its own comment recorded why that matters: the paths "drifted before — the shipped
+      AckUpTo and Ack carried different recipient predicates for months."
+      **Three defects fixed on the way, each invisible until a scope-shaped row existed:**
+      `attachmentByID` INNER JOINed `channel`, so a room attachment would have reported *not found*
+      for a row sitting in the table; the two `/comm` file counters INNER JOINed it too, so an
+      operator would have read `Files=0` while the relay held bytes; and the grant check keyed on a
+      recipient rowid frozen at offer time, which cannot express a room and does not exist for a
+      pair. Authorisation is now scope membership **as of now**, so removing a station from a room
+      stops its outstanding grants without revoking them one by one.
+      **One rule survived only because a test named it:** the sender must not mint a DOWNLOAD grant
+      for its own file. On a channel the sender was never the recipient row, so the old comparison
+      excluded it for free; in a room the sender IS a member, so membership alone let it through.
+      `TestGrantDownloadIsRecipientOnly` caught it within a minute of the rewrite.
 - [x] **`comm_room.kind='dm'`** — resolved as DOCUMENTED, not built and not dropped, **3.8.0**. The CHECK constraint at `migrations/0017_comm_rooms.sql:36`
       permits a value `CreateRoom` cannot produce (`internal/store/rooms.go:57-59` hardcodes
       `'topic'`). *Moved here from Batch 4 on prod's correction: it is an unfinished migration, not

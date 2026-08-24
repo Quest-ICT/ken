@@ -174,6 +174,12 @@ type Stats struct {
 // bug the moment file exchange learns about scopes, and not before.
 func (s *Store) StatsFor(ctx context.Context, spaceID int64) (Stats, error) {
 	var st Stats
+	// THE TWO FILE COUNTERS ARE SCOPED THROUGH THE SENDER, NOT THROUGH THE CHANNEL.
+	// They INNER JOINed the channel table, so an attachment belonging to a room or a pair —
+	// which carries no channel_id since 0017 — was INVISIBLE to both. An operator would have
+	// read Files=0 while the relay held bytes, which is worse than an obviously broken number.
+	// Every attachment has a sender endpoint and every endpoint has a space, so this covers
+	// all four scope kinds and matches how the message counters above resolve the same thing.
 	err := s.R.QueryRowContext(ctx, `
 SELECT
   (SELECT COUNT(*) FROM endpoint WHERE space_id=? AND revoked_at IS NULL),
@@ -187,10 +193,10 @@ SELECT
      WHERE e.space_id=? AND d.state IN ('queued','delivered')),
   (SELECT COALESCE(SUM(m.body_bytes),0) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
      WHERE e.space_id=? AND m.body IS NOT NULL),
-  (SELECT COUNT(*) FROM attachment a JOIN channel c ON c.id=a.channel_id
-     WHERE c.space_id=? AND a.state IN ('offered','ready')),
-  (SELECT COALESCE(SUM(a.stored_bytes),0) FROM attachment a JOIN channel c ON c.id=a.channel_id
-     WHERE c.space_id=? AND a.state IN ('offered','ready'))`,
+  (SELECT COUNT(*) FROM attachment a JOIN endpoint e ON e.id=a.sender_endpoint
+     WHERE e.space_id=? AND a.state IN ('offered','ready')),
+  (SELECT COALESCE(SUM(a.stored_bytes),0) FROM attachment a JOIN endpoint e ON e.id=a.sender_endpoint
+     WHERE e.space_id=? AND a.state IN ('offered','ready'))`,
 		spaceID, spaceID, spaceID, spaceID, spaceID, spaceID, spaceID).
 		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.DeliveriesUnacked,
 			&st.BodyBytes, &st.Files, &st.FileBytes)

@@ -315,13 +315,13 @@ func TestBudgetReservesInFlightUploads(t *testing.T) {
 	st := newStore(t, l)
 	a, _, channelID := pair(t, st)
 
-	if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "a", SizeBytes: 80, SHA256: shaOf([]byte("a")), Transfer: "upload",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// 80 declared but not yet uploaded: a second 80-byte offer must be refused.
-	if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "b", SizeBytes: 80, SHA256: shaOf([]byte("b")), Transfer: "upload",
 	}); !errors.Is(err, ErrQuota) {
 		t.Fatalf("in-flight bytes were invisible to the budget: %v", err)
@@ -335,7 +335,7 @@ func TestRevokedChannelStopsDownloadGrants(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	content := []byte("payload")
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "p", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -363,7 +363,7 @@ func TestReOfferAfterFailureMintsAFreshGrant(t *testing.T) {
 	a, _, channelID := pair(t, st)
 
 	o := FileOffer{Name: "f", SizeBytes: 4, SHA256: shaOf([]byte("abcd")), Transfer: "upload", IdempotencyKey: "k9"}
-	first, err := st.OfferFile(ctx, a, channelID, o)
+	first, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +372,7 @@ func TestReOfferAfterFailureMintsAFreshGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	again, err := st.OfferFile(ctx, a, channelID, o)
+	again, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, o)
 	if err != nil {
 		t.Fatalf("re-offer after failure: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestSweepKeepsAccountingWhenBytesRemain(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	content := []byte("bytes")
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "d", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
 	})
 	if err != nil {

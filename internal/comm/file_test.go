@@ -58,7 +58,7 @@ func TestOfferValidation(t *testing.T) {
 	off := fileLimits()
 	off.FilesEnabled = false
 	st.SetLimits(off)
-	if _, err := st.OfferFile(ctx, a, channelID, good); !errors.Is(err, ErrFilesDisabled) {
+	if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, good); !errors.Is(err, ErrFilesDisabled) {
 		t.Fatalf("disabled: want ErrFilesDisabled, got %v", err)
 	}
 	st.SetLimits(fileLimits())
@@ -77,7 +77,7 @@ func TestOfferValidation(t *testing.T) {
 	for _, c := range cases {
 		o := good
 		c.mut(&o)
-		if _, err := st.OfferFile(ctx, a, channelID, o); err == nil {
+		if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, o); err == nil {
 			t.Errorf("%s: offer was accepted", c.name)
 		}
 	}
@@ -91,7 +91,7 @@ func TestPathOfferDeliversFileDescriptor(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	nonce := shaOf([]byte("the-nonce"))
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "HANDOUT.md", SizeBytes: 9, SHA256: shaOf([]byte("the-bytes")),
 		Transfer: "path", NonceSHA256: nonce, Note: "read this and follow up",
 	})
@@ -129,7 +129,7 @@ func TestUploadOfferDeliversOnlyAfterCompletion(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	content := []byte("file-content")
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "data.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content),
 		Transfer: "upload", Note: "here you go",
 	})
@@ -188,7 +188,7 @@ func TestGrantIsSingleUseAndKindBound(t *testing.T) {
 	st := newStore(t, fileLimits())
 	a, _, channelID := pair(t, st)
 
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "x", SizeBytes: 1, SHA256: shaOf([]byte("x")), Transfer: "upload",
 	})
 	if err != nil {
@@ -216,7 +216,7 @@ func TestGrantDownloadIsRecipientOnly(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	content := []byte("payload")
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "p.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -257,11 +257,11 @@ func TestOfferIsIdempotentPerKey(t *testing.T) {
 	a, _, channelID := pair(t, st)
 
 	o := FileOffer{Name: "f", SizeBytes: 1, SHA256: shaOf([]byte("f")), Transfer: "upload", IdempotencyKey: "k1"}
-	r1, err := st.OfferFile(ctx, a, channelID, o)
+	r1, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2, err := st.OfferFile(ctx, a, channelID, o)
+	r2, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestFileBudgetFailsClosed(t *testing.T) {
 	a, _, channelID := pair(t, st)
 
 	content := []byte("12345678") // 8 bytes
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "a", SizeBytes: 8, SHA256: shaOf(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -294,7 +294,7 @@ func TestFileBudgetFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 8 of 10 bytes held: a 3-byte offer must be refused.
-	if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "b", SizeBytes: 3, SHA256: shaOf([]byte("abc")), Transfer: "upload",
 	}); !errors.Is(err, ErrQuota) {
 		t.Fatalf("over-budget offer: want ErrQuota, got %v", err)
@@ -309,13 +309,13 @@ func TestConcurrentUploadCap(t *testing.T) {
 	a, _, channelID := pair(t, st)
 
 	for i := 0; i < maxConcurrentUploads; i++ {
-		if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+		if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 			Name: "f", SizeBytes: 1, SHA256: shaOf([]byte("f")), Transfer: "upload",
 		}); err != nil {
 			t.Fatalf("offer %d: %v", i, err)
 		}
 	}
-	if _, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "f", SizeBytes: 1, SHA256: shaOf([]byte("f")), Transfer: "upload",
 	}); !errors.Is(err, ErrBackpressure) {
 		t.Fatalf("over-cap offer: want ErrBackpressure, got %v", err)
@@ -329,7 +329,7 @@ func TestSweepDeletesDeliveredFileBytes(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	content := []byte("bytes-to-delete")
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "d.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -369,7 +369,7 @@ func TestSweepExpiresStaleAttachments(t *testing.T) {
 	st := newStore(t, l)
 	a, _, channelID := pair(t, st)
 
-	res, err := st.OfferFile(ctx, a, channelID, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
 		Name: "stale", SizeBytes: 1, SHA256: shaOf([]byte("x")), Transfer: "upload",
 	})
 	if err != nil {
@@ -416,7 +416,7 @@ func TestAReplacementSessionCanDownloadItsStationsAttachment(t *testing.T) {
 	}
 
 	content := []byte("bytes for whoever is staffing st-recv")
-	res, err := st.OfferFile(ctx, sender, ch.ChannelID, FileOffer{
+	res, err := st.OfferFile(ctx, sender, FileAddr{ChannelID: ch.ChannelID}, FileOffer{
 		Name: "data.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content),
 		Transfer: "upload", Note: "for the station",
 	})
@@ -472,7 +472,7 @@ func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := []byte("not for you")
-	res, err := st.OfferFile(ctx, sender, ch.ChannelID, FileOffer{
+	res, err := st.OfferFile(ctx, sender, FileAddr{ChannelID: ch.ChannelID}, FileOffer{
 		Name: "x.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -529,7 +529,7 @@ func TestARevokedPredecessorDoesNotStrandItsStationsFiles(t *testing.T) {
 	offer := func(name string) string {
 		t.Helper()
 		content := []byte("bytes for whoever is staffing st-recv: " + name)
-		res, err := st.OfferFile(ctx, sender, ch.ChannelID, FileOffer{
+		res, err := st.OfferFile(ctx, sender, FileAddr{ChannelID: ch.ChannelID}, FileOffer{
 			Name: name, SizeBytes: int64(len(content)), SHA256: shaOf(content),
 			Transfer: "upload", Note: "for the station",
 		})
