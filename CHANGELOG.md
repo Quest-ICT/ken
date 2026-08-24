@@ -15,6 +15,30 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **A test that fails when an exported store method has no production caller.** Thirteen had
+  accumulated, and nothing would ever have caught them: an unused *exported* method is never a
+  compile error, `go vet` does not look, and staticcheck's `unused` deliberately skips exported
+  identifiers in a library package. **So the doc comment was the only evidence any reader had,
+  and it was false in all twelve real cases** — *"is the console's badge source"*, *"used when
+  severing"*, *"the read behind the authorization check on a room-addressed send"*.
+
+  ~150 lines, stdlib `go/ast` only, inside the existing `go test ./...`. No new dependency and
+  no CI change.
+
+  **The allowlist is the point, not the escape hatch.** Every entry carries a written reason,
+  and the test **fails in both directions** — an allowlisted method that gains a caller must
+  leave the list, and an entry naming a method that no longer exists is flagged too. Without
+  that the list rots into an exemption dump and the test green-lights what it was written to
+  stop. In practice it becomes a work tracker: a `pending:` entry still present at the next
+  release is the review signal.
+
+  It carries a **positive control on its own instrument** — a walk that silently finds nothing
+  would exit green and read as "all clean", which is the same shape as a `-run` filter matching
+  zero tests, a trap this project has hit twice. Measured false-positive rate against the 205
+  methods swept: exactly one, `Poll`, a one-line wrapper whose tests exercise the real path.
+
 ### Removed
 
 - **`station_block` — decided and deleted.** `BlockStationPair`, `UnblockStationPair` and
