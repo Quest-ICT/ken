@@ -929,21 +929,42 @@ func (s *Store) cumulativeAckScope(ctx context.Context, ep *Endpoint, id string)
 // request. A predecessor asks a peer for something and dies; the successor inherits the
 // inbox, polls the peer's eventual answer, and is meanwhile told it is waiting for nothing.
 // Every other obligation-shaped read in this package already keys on the party.
-func (s *Store) PendingReplies(ctx context.Context, ep *Endpoint) ([]Message, error) {
+// TWO DEFECTS FIXED 2026-08-24, BOTH BEFORE THIS EVER HAD A CALLER — which is exactly when
+// they are cheap, and the only reason to touch a function nothing reaches yet.
+//
+// IT DISAGREED WITH THE NOTICE PATH ABOUT WHAT "STILL OWES A RESPONSE" MEANS. This keyed on
+// `m.answered_at IS NULL` — a MESSAGE-level, any-recipient rollup — while the reply_overdue
+// notice keys on `d.replied_by IS NULL`, PER DELIVERY. In a room of three, one of two
+// recipients replying set answered_at and this returned ZERO while NoticesFor still named the
+// silent one. That is the "one ack made two silences invisible" failure notice.go:66 records
+// mutation testing already catching in the expired arm, reintroduced on the sender's other
+// surface. It now asks the same question of the same table the notice does.
+//
+// AND IT WAS UNBOUNDED, then did one MessageByID per row. The obvious defence —
+// MaxUnackedPerChannel, 64 — does not apply: backpressure counts UN-ACKED, and an ack is not
+// a reply. A peer that polls and acks everything while answering nothing accumulates
+// obligations under no ceiling at all, so 500 outstanding requests meant 501 queries.
+// NoticesFor is capped at 25 for precisely this reason and this now takes the same limit.
+func (s *Store) PendingReplies(ctx context.Context, ep *Endpoint, limit int) ([]Message, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
 	pred, args := senderPartyPredicate(ep, "m")
 	rows, err := s.R.QueryContext(ctx, `
-SELECT m.message_id FROM message m
-WHERE `+pred+` AND m.requires_response=1 AND m.answered_at IS NULL
-  AND EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = m.id AND d.state <> 'expired')
-ORDER BY m.created_at`, args...)
+SELECT DISTINCT m.message_id, m.created_at FROM message m
+JOIN delivery d ON d.message_row = m.id
+WHERE `+pred+` AND m.requires_response=1
+  AND d.replied_by IS NULL AND d.state <> 'expired'
+ORDER BY m.created_at
+LIMIT ?`, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var ids []string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var id, createdAt string
+		if err := rows.Scan(&id, &createdAt); err != nil {
 			return nil, err
 		}
 		ids = append(ids, id)

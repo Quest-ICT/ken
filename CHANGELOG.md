@@ -116,6 +116,25 @@ same change — never "docs later".
 
 ### Fixed
 
+- **`PendingReplies` disagreed with the notice path about what "still owes a response"
+  means.** It keyed on `m.answered_at IS NULL` — a message-level, any-recipient rollup — while
+  the `reply_overdue` notice keys on `d.replied_by IS NULL`, **per delivery**. In a room of
+  three, the moment one of two recipients answered, this returned **zero** while `NoticesFor`
+  still named the silent one. That is the "one ack made two silences invisible" failure
+  `notice.go` records mutation testing already catching in the *expired* arm, reintroduced on
+  the sender's other surface.
+
+  It was also **unbounded**, then did one `MessageByID` per row. The obvious defence —
+  `MaxUnackedPerChannel`, 64 — does not apply: backpressure counts *un-acked*, and an ack is
+  not a reply, so a peer that polls and acks everything while answering nothing accumulates
+  obligations under no ceiling at all. It now takes a limit and defaults to 25, matching
+  `NoticesFor`.
+
+  Fixed **before it has a caller**, which is when it is cheap. Where it surfaces is still open:
+  a new tool reaches no already-open session, so the session-facing half has to be an additive
+  field on an existing result.
+
+
 - **The vault could restore exactly one value of sixteen, and using it destroyed the rest.**
   Measured before the fix — five puts A–E, then six restores:
 

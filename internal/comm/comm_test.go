@@ -425,7 +425,7 @@ func TestRequestResponseCorrelation(t *testing.T) {
 		t.Fatalf("delivery must arm the reply deadline: %+v", delivered)
 	}
 
-	pending, err := st.PendingReplies(ctx, a)
+	pending, err := st.PendingReplies(ctx, a, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ func TestRequestResponseCorrelation(t *testing.T) {
 		t.Fatalf("reply correlation lost: %+v", reply)
 	}
 
-	pending, err = st.PendingReplies(ctx, a)
+	pending, err = st.PendingReplies(ctx, a, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

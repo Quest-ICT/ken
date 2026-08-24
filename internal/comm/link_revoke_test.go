@@ -371,7 +371,7 @@ func TestASuccessorSeesTheRequestsItsPredecessorIsStillOwed(t *testing.T) {
 
 	// CONTROL: the asking session itself sees it, so an empty list below is about the
 	// successor and not about a request that was never outstanding.
-	mine, err := st.PendingReplies(ctx, asker)
+	mine, err := st.PendingReplies(ctx, asker, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestASuccessorSeesTheRequestsItsPredecessorIsStillOwed(t *testing.T) {
 	}
 
 	successor := stationEndpoint(t, st, "tok-ask-2", "st-asker")
-	got, err := st.PendingReplies(ctx, successor)
+	got, err := st.PendingReplies(ctx, successor, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

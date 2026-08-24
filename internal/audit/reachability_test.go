@@ -42,9 +42,11 @@ func TestEveryExportedStoreMethodIsReachable(t *testing.T) {
 	allowed := map[string]string{
 		"comm.Store.Poll": "one-line wrapper over PollScoped; its 77 test callers exercise the real path, " +
 			"and production takes PollScoped directly with an empty scope",
-		"comm.Store.PendingReplies": "pending: the capability gap is real (nothing on any surface answers " +
-			"'what am I waiting for a reply on'), but placement is a design call — console-first and the " +
-			"MCP freeze pull opposite ways. Two defects in the body are fixed; the routing is not decided",
+		"comm.Store.PendingReplies": "pending: PLACEMENT ONLY. The two defects in the body are fixed " +
+			"(2026-08-24) — it agreed with the notice path about what 'still owes a reply' means, and it " +
+			"was unbounded. What is undecided is where it surfaces: console-first and the MCP freeze pull " +
+			"opposite ways, since a NEW TOOL reaches no already-open session, so the session-facing half " +
+			"has to be an additive field on comm_channels or comm_poll. No schema change either way",
 		"store.Store.StationVaultHistoryFor": "pending: the console history list. The restore repair landed " +
 			"first on purpose — painting 16 rows that all look recoverable when one was would have been the " +
 			"same defect amplified by the fix",
