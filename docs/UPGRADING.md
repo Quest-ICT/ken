@@ -34,6 +34,54 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.16.0
+
+**MINOR. SCHEMA CHANGE: ken.db 19 → 20.** comm.db unchanged at 16. One migration —
+`0020_drop_station_block.sql` — and it **destroys a table**, which is why this release carries
+nothing else.
+
+### Do this first
+
+**Take a snapshot.** This is the first migration in a while that removes data rather than adding
+to it, and while the table is provably unused, "provably unused" is a claim about the code and a
+snapshot is a fact about your data.
+
+Then, if you want to see what you are dropping before it goes:
+
+```sql
+SELECT COUNT(*) FROM station_block;
+```
+
+On every deployment that has ever run Ken this returns **0** — nothing could write it except a
+store function no code called. If yours returns anything else, stop and say so, because it would
+mean a write path exists that nobody found.
+
+### What changes
+
+`station_block`, and its index `idx_station_block_pair`. Nothing else. No row in any other table
+moves, and `station` and `actor` are referenced *by* the dropped table rather than the reverse,
+so no cascade reaches them — verified on an upgrade from a populated 3.15.0 database.
+
+### Why it is going
+
+It was a **security control that did nothing**: present in the schema since 3.0.0, writable
+through an exported method, advancing the roster generation so the write looked consequential —
+and consulted by no send path. It could not be consulted: the sends happen in comm.db, which has
+no handle to ken.db and no block mirror.
+
+### What you lose, stated plainly
+
+The capability is **not superseded**. Revoking a link stops only station-addressed mail; rooms
+and `to_room:"all"` carry no link predicate. To stop one pair reaching each other you must remove
+a station from a room, which costs it that room's other relationships. If you need a targeted
+deny, say so — the shape it would take is written down in `PARKING-LOT.md` #25.
+
+### Rolling back
+
+An older binary over this migration finds no table, and no released version reads or writes it,
+so nothing observes the absence. The migration is **not reversible** — restore the snapshot if
+you need the table back.
+
 ## 3.15.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 19 and comm.db at 16 — verified by diffing every

@@ -15,6 +15,29 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.16.0] — 2026-08-24
+
+### Removed
+
+- **`DROP TABLE station_block`.** ken.db 19 → 20. The three store functions went in 3.15.0;
+  this drops the table they wrote to, and it **ships alone** because it is a schema change that
+  destroys data rather than an additive index.
+
+  It shipped in every deployment's schema since 3.0.0, could be written through an exported
+  method, and **bumped the roster epoch so the write looked consequential** — while no send path
+  ever consulted it, and none could: `comm.Store` holds handles to comm.db alone and comm.db has
+  no block mirror.
+
+  **Verified on the upgrade path, not just a fresh install** — a 3.15.0 database at schema 19
+  with the table populated, migrated with the new binary: schema 20, both objects gone,
+  `foreign_key_check` and `integrity_check` clean, exactly one table dropped, only
+  `schema_migration` moved, and every station row survived. `station` and `actor` are referenced
+  *by* it and not the reverse, so dropping it removes two inbound references and breaks nothing.
+
+  **What it costs is recorded rather than glossed:** the capability is not superseded. To stop
+  one pair talking, an operator must still remove a station from a room and cost it that room's
+  other relationships. `PARKING-LOT.md` #25 keeps the gap and the shape a future fix would take.
+
 ## [3.15.0] — 2026-08-24
 
 ### Added
