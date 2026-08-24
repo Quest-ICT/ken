@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.18.0] — 2026-08-24
+
 ### Added
 
 - **A file can be offered to a ROOM or to a LINKED STATION.** `comm_file_offer` takes exactly

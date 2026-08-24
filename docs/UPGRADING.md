@@ -34,6 +34,57 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.18.0
+
+**MINOR. SCHEMA CHANGE: comm.db 16 → 17.** ken.db unchanged at 20. One migration —
+`0017_attachment_scope.sql` — and it ships with its code, because the two cannot be separated:
+the migration makes `scope_id` NOT NULL and the code is what writes it.
+
+### Do this first
+
+**Take a snapshot of `ken.db`** as usual. `comm.db` is not covered by any backup tier — that is
+the design, stated in `BACKUP.md` — so if the message history on that box matters to you, stop
+the service and copy `data/comm/` cold before upgrading.
+
+### ⚠ A DRIVER FLOOR, new with this release
+
+This migration uses `ALTER TABLE ... ALTER COLUMN DROP/SET NOT NULL`, which works at **SQLite
+3.53.3** and is a **syntax error at 3.50.4**. comm.db is therefore pinned to a driver carrying
+≥ 3.53 from here on. Nothing asserted that before; a test does now. If you build Ken yourself
+and downgrade `ncruces/go-sqlite3`, a **fresh install** will fail at 0017 while an existing
+deployment carries on — the failure lands on the one case nobody upgrades their way out of.
+
+### What changes
+
+`attachment` becomes scope-shaped. `channel_id` and `recipient_endpoint` become optional;
+`scope_id` becomes the address and is `NOT NULL`. **Not a table rebuild** — four in-place
+`ALTER`s, a re-backfill and an index swap. No row's data is rewritten, and the table's indexes,
+column comments and foreign keys all survive.
+
+**The re-backfill matters more than it looks.** Every attachment written since migration 0010
+carries `scope_id` NULL, because that migration added the column and nothing ever wrote it. The
+migration fills them from their channel before tightening; without that ordering the upgrade
+*aborts* rather than corrupting anything, but it aborts.
+
+### What you get
+
+**A file can now be offered to a room, or to a linked station.** `comm_file_offer` takes exactly
+one of `channel_id`, `to_room` or `to_station`. A room offer is ONE attachment against the file
+budget however many members receive it.
+
+Until now files worked on **1 of the 4 ways COMM addresses**. Most sharply: `comm_send
+{to_station}` — the path the instructions call the simplest way to reach a peer — has no channel
+row by design, so two linked stations could not exchange a file at all.
+
+### Three fixes that could not surface before
+
+An attachment loader that INNER JOINed `channel` would have reported *not found* for a room
+attachment sitting in the table; the two `/comm` file counters would have shown `Files=0` while
+the relay held bytes; and download grants keyed on a recipient rowid frozen at offer time, which
+cannot express a room. Authorisation is now scope membership **as of now** — remove a station
+from a room and its outstanding grants stop working, with nothing to revoke by hand.
+
+
 ## 3.17.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 16 — verified by diffing every migration file against `v3.16.0`: none moved.
