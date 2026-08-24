@@ -17,6 +17,25 @@ same change — never "docs later".
 
 ### Removed
 
+- **`station_block` — decided and deleted.** `BlockStationPair`, `UnblockStationPair` and
+  `BlockedPairs` are gone. The `DROP TABLE` ships as its own release under Rule 4.
+
+  It was **not dead code — it was a security control that did nothing.** It shipped in every
+  deployment's schema, could be written through an exported method, and **bumped the roster
+  epoch so the write looked consequential** — while no send path consulted it. Measured: zero
+  references to `station_block` anywhere in `internal/comm/`, against 6 and 11 for
+  `station_link_mirror` and `room_member_mirror` on the identical search.
+
+  And it was **unenforceable from where sends happen**: `comm.Store` holds handles to comm.db
+  alone, and comm.db has no block mirror while links and rooms each have one. So wiring it was
+  never the console-plus-check it had been costed as — it is a cross-database projection change.
+
+  **What the deletion costs, stated plainly: the capability is not superseded.** Revoking a
+  link kills only `to_station`; rooms and `to_room:"all"` carry no link predicate, and
+  `AddRoomMember` requires no link to exist. To stop one pair, an operator must still remove a
+  station from a room and cost it that room's other relationships. That gap is recorded in
+  `PARKING-LOT.md` rather than lost with the code.
+
 - **Four exported store methods nothing ever called, and four doc comments that said
   otherwise.** `StationKeyOwner`, `CountActiveOAuthGrants`, `RoomsForParty` and
   `MarkNoticesSeen`. Each carried a confident sentence naming a consumer — *"used when

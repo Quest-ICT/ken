@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 )
 
@@ -227,57 +226,4 @@ func (s *Store) bumpRosterEpoch(ctx context.Context) error {
 UPDATE comm_roster_epoch SET epoch = epoch + 1,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`)
 	return err
-}
-
-// BlockStationPair denies traffic between two stations, beating rooms and links both.
-// Stored as an ordered pair so the block cannot be half-removed.
-func (s *Store) BlockStationPair(ctx context.Context, a, b, reason string, actorID int64) error {
-	if a == b {
-		return errors.New("a station cannot be blocked from itself")
-	}
-	if a > b {
-		a, b = b, a
-	}
-	if _, err := s.W.ExecContext(ctx, `
-INSERT INTO station_block(station_a, station_b, reason, blocked_by_actor_id) VALUES(?,?,?,?)
-ON CONFLICT(station_a, station_b) DO UPDATE SET reason=excluded.reason`, a, b, reason, actorID); err != nil {
-		return err
-	}
-	return s.bumpRosterEpoch(ctx)
-}
-
-// UnblockStationPair removes a block.
-func (s *Store) UnblockStationPair(ctx context.Context, a, b string) error {
-	if a > b {
-		a, b = b, a
-	}
-	if _, err := s.W.ExecContext(ctx,
-		`DELETE FROM station_block WHERE station_a=? AND station_b=?`, a, b); err != nil {
-		return err
-	}
-	return s.bumpRosterEpoch(ctx)
-}
-
-// BlockedPairs returns every blocked pair, both directions, as "a|b" keys for a caller
-// that wants to test membership cheaply.
-//
-// The separator is '|' rather than a control byte, and that is not arbitrary: a NUL or a
-// tab reads as working, greps as nothing, and is invisible in every log that would
-// otherwise show you the key. Station ids are randBase62 and cannot contain it.
-func (s *Store) BlockedPairs(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.R.QueryContext(ctx, `SELECT station_a, station_b FROM station_block`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]bool{}
-	for rows.Next() {
-		var a, b string
-		if err := rows.Scan(&a, &b); err != nil {
-			return nil, err
-		}
-		out[fmt.Sprintf("%s|%s", a, b)] = true
-		out[fmt.Sprintf("%s|%s", b, a)] = true
-	}
-	return out, rows.Err()
 }

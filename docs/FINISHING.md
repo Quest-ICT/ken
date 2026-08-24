@@ -555,7 +555,24 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
             it is inert until then. Note the one enumeration error an adversarial verifier caught:
             `DELETE FROM channel` cascades into it via FK, so it is not true that "no write path
             exists" — the cascade simply has one fewer target after the drop.
-- [ ] **`station_block` — VLAD'S DECISION, and the evidence is now in.** Verified empirically
+- [x] **`station_block` — DECIDED 2026-08-24: DELETE.** Vlad's call, taken on the evidence below
+      plus one fact these passes did not have. The three functions are gone; the `DROP TABLE`
+      ships as its own release under Rule 4.
+      **The fact that decided it:** the deny is not merely unwired, it is **unenforceable from
+      where the sends happen**. `comm.Store` holds handles to comm.db alone — no ken.db handle —
+      and comm.db has no block mirror, while links and rooms each have one. So "wire it" is a
+      cross-database projection change: a new comm.db table, wholesale-replace, boot rebuild, and
+      recipient filtering in two send paths, plus a console surface. A slice, not an afternoon.
+      **And Vlad's own rule already answered it**, written in `DECISIONS-BATCH5.md:176` and
+      unnoticed since: *"If P2 is chosen with the link requirement intact, the default is not
+      permissive and `station_block` stays optional."* P2 shipped with the link requirement
+      intact — `pair_send.go` calls `areLinked` and refuses with `ErrNotLinked`.
+      **What the deletion costs, stated rather than glossed:** the capability is NOT superseded.
+      Revoking a link kills only `to_station`; rooms and `to_room:"all"` carry no link predicate,
+      and `AddRoomMember` requires no link to exist. To stop one pair an operator must still
+      remove a station from a room, costing it that room's other relationships. That gap stays
+      open and is recorded in `PARKING-LOT.md` rather than lost with the code.
+      **Original finding, kept for the record:** Verified empirically
       rather than by grep: the table holds **0 rows** in the live `ken.db`, and the only objects in
       `sqlite_master` naming it are the table and its own index — no FK, trigger or view in either
       direction. The three functions and the table arrived together in `2458b02` (v3.0.0) and
@@ -566,7 +583,7 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
       means a send-path check on all three paths (channel, room, broadcast) plus a console surface,
       and a decision about which database owns it, since COMM keeps only a derived mirror of room
       membership. **What it costs to delete:** that capability, and a migration.
-      Original finding: `BlockStationPair`, `UnblockStationPair` and `BlockedPairs` have
+      `BlockStationPair`, `UnblockStationPair` and `BlockedPairs` had
       **zero callers anywhere, including tests**. Its own migration describes it as the targeted
       deny that "beats the roster and beats a link". Either wire it to a console surface and a
       send-path check, or delete it. Leaving designed-and-unwired code is how a future session
@@ -585,10 +602,13 @@ Two generations of the same idea coexist. Each item is *delete one of them*, not
   destroy the property that makes bundling safe — that every change in the release is provably
   inert. It ships on its own, and it is the one case where Rule 4 and the code it needs are in
   genuine tension.
-- **`station_block` is DEFERRED TO BATCH 5**, neither wired nor deleted. It is the safety
-  mechanism that makes a permissive addressing default defensible, so the real question is
-  about that default, not about this table. Left in place, unwired, and recorded as pending —
-  which is the one state this plan normally forbids, taken deliberately and with a date on it.
+- **`station_block` was DEFERRED TO BATCH 5** — *and Batch 5 closed without deciding it, which
+  is exactly the failure the deferral was worded to prevent.* Recorded here unchanged because
+  the note said "with a date on it" and the date passed unremarked; the item then had to be
+  rediscovered by a sweep looking for something else entirely. **Decided 2026-08-24: delete.**
+  The deferral reasoning was right that the real question was about the addressing default —
+  and Vlad had already answered that question in the same document (`DECISIONS-BATCH5.md:176`),
+  which nobody connected back to this item for a week.
 
 ### Found by the Batch 4 sweep, not listed in it
 
@@ -678,15 +698,15 @@ Batch 3/4 half and left this one standing, which is the same mistake one paragra
 | H1 no agent-initiable private path | Batch 5 | **DISSOLVED** — P2 shipped in 3.12.0 (`internal/comm/pair_send.go`). It is still listed as a live blocker above; that list is what is stale, not this row. |
 | H2 file exchange is channel-only | Batch 3 | **open** — `grep -c scope internal/comm/file.go` is still `0` |
 | H3 retroactive revocation | Batch 4 | dissolved |
-| H4 `station_block` is dead | Batch 4 | **open** — deferred into Batch 5, which closed without deciding it |
+| H4 `station_block` is dead | Batch 4 | **DISSOLVED 2026-08-24** — deleted. Deferred into Batch 5, which closed without deciding it; decided on the finding that the deny is unenforceable from comm.db, which has no ken.db handle and no block mirror |
 | H5 unbound endpoints have no address | Batch 5 | **open, and it will not be dissolved by this list.** Batch 6 closed at ep 6 only; five endpoints stay unbound by Vlad's decision. |
 
 **That sentence is a forecast, and as of 2026-08-18 two of the three have not happened.** **H2** is
 still open — `attachment` is still channel-shaped, and `grep -c scope internal/comm/file.go`
 returns `0`, so the `scope_id` seam migration 0010 cut and backfilled has never been used; the item
-sits unticked in Batch 3 because Vlad ruled on 2026-08-17 that it ships alone. **H4** is still open —
-`station_block` is neither wired nor deleted; it was deferred into Batch 5, and Batch 5 closed
-without deciding it. Read the sentence as *what these batches are for*, not as a status. (Found by
+sits unticked in Batch 3 because Vlad ruled on 2026-08-17 that it ships alone. **H4** is closed as of 2026-08-24 —
+`station_block` is deleted; it had been deferred into Batch 5, and Batch 5 closed without
+deciding it, so it survived two batches by being neither wired nor dropped. Read the sentence as *what these batches are for*, not as a status. (Found by
 the 2026-08-18 sweep; indexed in `PARKING-LOT.md`.)
 
 > **Vlad recorded a target architecture on 2026-08-18 — see
