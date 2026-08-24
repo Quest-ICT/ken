@@ -1129,6 +1129,16 @@ func commError(err error) error {
 		return errors.New("file storage quota exceeded — retry later, offer a smaller file, or use a same-host path transfer")
 	case errors.Is(err, comm.ErrBadName):
 		return errors.New("invalid file name — use a bare filename: no directories, no '..', no control characters")
+	// TWO STORE SENTINELS, NAMED HERE RATHER THAN MARKED CallerSafe, because CallerSafe
+	// lives in `comm` and these are raised by `store` — which must not import the expendable
+	// package (S7's pointer rule runs comm -> store, never back). Both carry an instruction
+	// only their own text can deliver, and both reached the caller as "internal error":
+	// a session whose station was archived was told nothing, and had no way to learn that
+	// its notebook and credentials were intact and one console click would restore messaging.
+	case errors.Is(err, store.ErrStationArchived):
+		return errors.New(store.ErrStationArchived.Error())
+	case errors.Is(err, store.ErrStationKeyRevoked):
+		return errors.New(store.ErrStationKeyRevoked.Error())
 	case err == nil:
 		return nil
 	default:

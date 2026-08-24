@@ -149,8 +149,12 @@ func TestOnlyMembersMaySendAndTheRefusalsAreDistinct(t *testing.T) {
 	roomFixture(t, st, "room1", "s:st-alpha", "s:st-beta")
 
 	_, err := st.SendToRoom(ctx, outsider, "room1", "let me in", SendOpts{})
-	if !errors.Is(err, ErrNotInRoom) {
-		t.Fatalf("a non-member sending to a populated room got %v, want ErrNotInRoom", err)
+	// A NON-MEMBER GETS THE ROOM-EMPTY ANSWER, deliberately. Telling a non-member apart
+	// from an empty room would confirm "this room exists and has at least one member" to
+	// someone outside it — an existence oracle over every room on the deployment. The two
+	// cases are indistinguishable to the caller ON PURPOSE.
+	if !errors.Is(err, ErrRoomEmpty) {
+		t.Fatalf("a non-member sending to a populated room got %v, want ErrRoomEmpty — the non-member and empty-room answers must not differ", err)
 	}
 	_, err = st.SendToRoom(ctx, outsider, "no-such-room", "hello?", SendOpts{})
 	if !errors.Is(err, ErrRoomEmpty) {
@@ -208,8 +212,8 @@ func TestReplacingTheMirrorRemovesMembershipsThatAreGone(t *testing.T) {
 	if err := st.StampMirrorEpoch(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SendToRoom(ctx, beta, "room1", "and now?", SendOpts{}); !errors.Is(err, ErrNotInRoom) {
-		t.Fatalf("a removed station could still send: %v", err)
+	if _, err := st.SendToRoom(ctx, beta, "room1", "and now?", SendOpts{}); !errors.Is(err, ErrRoomEmpty) {
+		t.Fatalf("a removed station could still send, or got a distinguishable refusal: %v", err)
 	}
 	epoch, err := st.MirrorEpoch(ctx)
 	if err != nil {

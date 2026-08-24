@@ -174,7 +174,7 @@ func membersOfScope(ctx context.Context, t *sql.Tx, scope string) ([]scopeMember
 		// Refusing loudly beats defaulting to "nobody", which would accept a send and
 		// deliver it to no one — a success that delivered nothing is the worst answer
 		// available here.
-		return nil, errors.New("unknown scope kind: " + scope)
+		return nil, CallerSafe(errors.New("unknown scope kind: " + scope))
 	}
 	rows, err := t.QueryContext(ctx, `
 SELECT e.id, e.station_id

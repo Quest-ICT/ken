@@ -157,6 +157,32 @@ why these were not swept up with the others.
 **The three file-validation ones are the opposite case**: pure input validation, where the caller
 supplied the bad value itself and uniformity buys nothing.
 
+**FIXED 2026-08-24, all of them, plus two this table did not list.** `ErrRoomEmpty`, `ErrNoAudience`
+and `ErrShortWrite` are `CallerSafe`; the six inline raise sites in `file.go` and `party.go` are
+wrapped at the raise site. `ErrNotInRoom` was **deleted rather than wrapped** — once both non-member
+branches must answer alike, a second sentinel nothing returns is dead code, and the reason the two
+cases are indistinguishable now lives in the branch itself.
+
+**Two more were found by the gate below and are worse than anything in the table.**
+`store.ErrStationArchived` and `store.ErrStationKeyRevoked` each carry a full instruction — *"ask
+your human to unarchive it… Nothing was lost: your endpoint and its credentials still work"* — and
+both reached the caller as `internal error`. So a session whose station was archived was told
+nothing at all, and could not learn that one console click would restore it. They are named in
+`commError`'s switch rather than marked `CallerSafe`, because that marker lives in `comm` and `store`
+must not import the expendable package (S7's pointer rule).
+
+**AND THE TESTING LESSON IS NOW A TEST.** `internal/commserver/refusal_reachability_test.go` passes
+every named sentinel through the real `commError` and fails if any arrives as `internal error`. It
+was already in the tree as `zz_sweep_probe_test.go` — a probe that enumerated the sentinels, crossed
+the mapper, printed the answer, and **asserted nothing**, so it could not fail and the class kept
+recurring underneath it. It does the hard part already; it just never made a claim.
+
+Its limits are stated in the file and worth repeating here: it guards NAMED SENTINELS only. An
+earlier draft listed the inline raise sites by re-typing their text and went green the moment the
+COPY was wrapped, while the raise site could have stayed bare — a test of a reconstructed value is
+not a test of the value that is read. Those six are fixed and not guarded; closing that needs a test
+driving the real call through the MCP surface.
+
 **Judged correct as-is, recorded so nobody "fixes" them:** the `/mcp` auth refusals
 (`mcpserver/auth.go:208,226,229`) all collapse to HTTP 401 `invalid token`, and that flattening is
 the deliberate anti-probing behaviour, not an instance of this class.

@@ -33,16 +33,9 @@ import (
 // members are all retired shows two members on the console and delivers to none — and an
 // error saying the room is empty sends its reader to look for a membership problem that the
 // console will flatly contradict.
-var ErrRoomEmpty = errors.New("no member of that room can currently receive mail — nothing was sent, and nothing was lost. " +
+var ErrRoomEmpty = CallerSafe(errors.New("no member of that room can currently receive mail — nothing was sent, and nothing was lost. " +
 	"The room may genuinely be empty, or every other member may be an ARCHIVED station: a retired post keeps its " +
-	"membership and stops receiving, so the console still lists it. Ask your human to check the /stations console")
-
-// ErrNotInRoom refuses a send from a party that is not a member.
-//
-// Named rather than folded into ErrNotFound on purpose: a session that has been REMOVED
-// from a room needs to learn that it was removed, not that the room does not exist. The
-// second answer sends it looking for a typo.
-var ErrNotInRoom = errors.New("you are not a member of that room")
+	"membership and stops receiving, so the console still lists it. Ask your human to check the /stations console"))
 
 // SendToRoom delivers one body to every member of a room except the sender.
 //
@@ -92,14 +85,20 @@ func (s *Store) SendToRoom(ctx context.Context, ep *Endpoint, roomID, body strin
 			recipients = append(recipients, m)
 		}
 		if !sender {
-			if len(members) == 0 {
-				// An unknown room and an empty one are indistinguishable from the
-				// mirror alone, and both are "you cannot send here". The room-empty
-				// wording is the more useful of the two for the case that actually
-				// happens: a human made the room and has not filled it yet.
-				return ErrRoomEmpty
-			}
-			return ErrNotInRoom
+			// *** BOTH NON-MEMBER BRANCHES ANSWER THE SAME WAY, AND THAT IS THE POINT. ***
+			//
+			// An unknown room and an empty one are already indistinguishable from the
+			// mirror alone, and both are "you cannot send here". A room with members you
+			// are not in is a THIRD case — and answering it differently would confirm
+			// "this room exists and has at least one member" to a non-member, which is an
+			// existence oracle over every room on the deployment.
+			//
+			// There WAS a separate ErrNotInRoom sentinel here until 2026-08-24. It was
+			// deleted rather than made caller-safe: once both branches must answer alike,
+			// a second sentinel nothing returns is the shape this project spent a week
+			// removing. ErrRoomEmpty's wording is the more useful of the two for the case
+			// that actually happens — a human made the room and has not filled it yet.
+			return ErrRoomEmpty
 		}
 		if len(recipients) == 0 {
 			return ErrRoomEmpty
@@ -286,7 +285,7 @@ func nullInt(v sql.NullInt64) any {
 // Distinct from ErrRoomEmpty because the remedy differs: an empty room is one the human
 // has not filled, while an empty broadcast means this station is in no room with anyone
 // else. "Join a room" and "add someone to yours" are different sentences to hear.
-var ErrNoAudience = errors.New("you share no room with any other station, so a broadcast would reach nobody")
+var ErrNoAudience = CallerSafe(errors.New("you share no room with any other station, so a broadcast would reach nobody"))
 
 // Broadcast sends one body to every station the sender shares a room with.
 //

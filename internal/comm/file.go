@@ -208,7 +208,7 @@ func (s *Store) OfferFile(ctx context.Context, ep *Endpoint, channelID string, i
 	}
 	sha, ok := validSHA256(in.SHA256)
 	if !ok {
-		return nil, errors.New("sha256 must be 64 hex digits")
+		return nil, CallerSafe(errors.New("sha256 must be 64 hex digits"))
 	}
 	if in.SizeBytes <= 0 || in.SizeBytes > l.FileMaxBytes {
 		return nil, ErrTooLarge
@@ -220,14 +220,14 @@ func (s *Store) OfferFile(ctx context.Context, ep *Endpoint, channelID string, i
 		// it would invite the receiver to open a path on someone's say-so.
 		nonce, ok = validSHA256(in.NonceSHA256)
 		if !ok {
-			return nil, errors.New("path transfer requires nonce_sha256 (64 hex digits) — see the rendezvous protocol")
+			return nil, CallerSafe(errors.New("path transfer requires nonce_sha256 (64 hex digits) — see the rendezvous protocol"))
 		}
 	case "upload":
 		if err := s.CheckFileQuota(ctx, in.SizeBytes); err != nil {
 			return nil, err
 		}
 	default:
-		return nil, errors.New(`transfer must be "path" or "upload"`)
+		return nil, CallerSafe(errors.New(`transfer must be "path" or "upload"`))
 	}
 	if len(in.Note) > l.MaxBodyBytes {
 		return nil, ErrTooLarge
@@ -391,7 +391,7 @@ func (s *Store) GrantDownload(ctx context.Context, ep *Endpoint, attachmentID st
 			return ErrNotFound
 		}
 		if a.Transfer != "upload" || a.State != "ready" {
-			return errors.New("attachment has no downloadable bytes")
+			return CallerSafe(errors.New("attachment has no downloadable bytes"))
 		}
 		// Revocation must stop BYTES, not just new messages. Without this re-check a
 		// recipient could keep minting fresh download grants for an already-offered
@@ -507,7 +507,7 @@ SELECT channel_id, sender_endpoint, recipient_endpoint, state, note FROM attachm
 			return err
 		}
 		if state != "offered" {
-			return errors.New("attachment is not awaiting an upload")
+			return CallerSafe(errors.New("attachment is not awaiting an upload"))
 		}
 		m, err := s.enqueueLocked(ctx, t, chRow, sender, recipient, note.String, s.lim().FileTTLSeconds)
 		if err != nil {
@@ -683,7 +683,7 @@ func (s *Store) sweepPartFiles() {
 }
 
 // ErrShortWrite reports a stream that ended before the declared size.
-var ErrShortWrite = fmt.Errorf("upload ended before the declared size")
+var ErrShortWrite = CallerSafe(fmt.Errorf("upload ended before the declared size"))
 
 // ageSeconds is a file's age by mtime — used only by the .part sweep, where an
 // approximate answer is fine.

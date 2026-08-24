@@ -1,6 +1,17 @@
 # Ken — backup & restore
 
-Ken's data lives in one SQLite file (`data/ken.db` + its `-wal`/`-shm` sidecars).
+Ken's **durable** data lives in one SQLite file (`data/ken.db` + its `-wal`/`-shm` sidecars), and
+everything below is about that file. COMM keeps a second database and its relayed files under
+`data/comm/`, and they are **deliberately not backed up** — that is a design decision with a
+rationale, not a gap, and it is stated in full below. Read it before adding `data/comm/` to
+anything.
+
+> This sentence said "Ken's data lives in one SQLite file" until 2026-08-24. That was true when it
+> was written on 2026-07-26 and false the next day, when `comm.db` arrived — so the opening line of
+> the backup document contradicted its own COMM section 43 lines later for a month. It is corrected
+> rather than deleted because the correction is the useful part: a document whose first sentence
+> under-describes what an instance holds invites exactly one conclusion, and a session reading only
+> that line reached it.
 
 **What is in a snapshot.** A snapshot is a byte-complete copy of the knowledge base: every entry and
 every superseded revision (including proposals a human never promoted), the full curation history
