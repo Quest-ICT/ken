@@ -116,6 +116,31 @@ same change — never "docs later".
 
 ### Fixed
 
+- **A half-rebuilt mirror claimed to be current, and still authorised traffic the human had
+  revoked.** `mirror_state` is one row and both projections stamped its `roster_epoch`
+  themselves — while both rebuild paths deliberately run the two halves *independently* and
+  log-and-continue, so one failing cannot take the other down. So whichever half survived
+  recorded the new generation for both, and `MirrorEpoch` reported fresh over stale data: the
+  one check it exists to answer, answered wrongly in exactly the case that matters.
+
+  Reproduced before the fix — rebuild both at generation 5, then only the link half at 6, and
+  `MirrorEpoch` returns **6** while `room_member_mirror` still holds generation-5 rows.
+
+  The generation is now stamped **once, by the caller, only when both halves succeeded**
+  (`StampMirrorEpoch`). Leaving it behind is the safe direction: it says "re-read from
+  ken.db", never "trust this".
+
+  **No schema change** — which is the point. The obvious fix was per-projection epochs, a
+  comm.db migration shipping alone under Rule 4; moving the stamp out of the two rebuilds gets
+  the same honesty for free. It is coarser (a room-only failure marks the link mirror stale
+  too) and that trade is deliberate and documented.
+
+  The rationale that made this possible is corrected in the same change: `link_mirror.go` said
+  *"the two projections are refreshed together by one caller, so one generation describes
+  both"* — they are not, and have not been since the log-and-continue paths landed. Two
+  comments in one subsystem contradicting each other, and the epoch rested on the wrong one.
+
+
 - **`PendingReplies` disagreed with the notice path about what "still owes a response"
   means.** It keyed on `m.answered_at IS NULL` — a message-level, any-recipient rollup — while
   the `reply_overdue` notice keys on `d.replied_by IS NULL`, **per delivery**. In a room of

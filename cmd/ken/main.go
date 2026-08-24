@@ -440,6 +440,7 @@ func runServe(args []string) {
 		// an empty mirror refuses sends rather than misdirecting them. That is the safe
 		// direction, and taking the whole knowledge base down over a cache is not.
 		bootCtx := context.Background()
+		roomOK := false
 		if rows, err := st.RoomMirrorRows(bootCtx); err != nil {
 			log.Printf("COMM: room mirror read failed, room sends will refuse until the console is touched: %v", err)
 		} else if epoch, err := st.RosterEpoch(bootCtx); err != nil {
@@ -447,6 +448,7 @@ func runServe(args []string) {
 		} else if err := commStore.ReplaceRoomMirror(bootCtx, rows, epoch); err != nil {
 			log.Printf("COMM: room mirror rebuild failed: %v", err)
 		} else {
+			roomOK = true
 			log.Printf("COMM: room mirror rebuilt — %d room(s) at roster epoch %d", len(rows), epoch)
 		}
 		// AND THE STATION-LINK MIRROR, for the identical reason and with a sharper
@@ -455,6 +457,7 @@ func runServe(args []string) {
 		// — an answer that names a human decision as missing when the decision is
 		// sitting in ken.db, intact. Separate log line rather than folded into the one
 		// above: two projections that failed independently must be readable as two.
+		linkOK := false
 		if pairs, err := st.LinkMirrorRows(bootCtx); err != nil {
 			log.Printf("COMM: station-link mirror read failed, station-addressed sends will refuse until the console is touched: %v", err)
 		} else if epoch, err := st.RosterEpoch(bootCtx); err != nil {
@@ -462,7 +465,24 @@ func runServe(args []string) {
 		} else if err := commStore.ReplaceLinkMirror(bootCtx, pairs, epoch); err != nil {
 			log.Printf("COMM: station-link mirror rebuild failed: %v", err)
 		} else {
+			linkOK = true
 			log.Printf("COMM: station-link mirror rebuilt — %d link(s) at roster epoch %d", len(pairs), epoch)
+		}
+
+		// THE GENERATION IS STAMPED ONCE, AND ONLY IF BOTH HALVES SUCCEEDED. The two rebuilds
+		// above are deliberately independent so one failing cannot take the other down — and
+		// that independence is exactly why neither may stamp for itself. A surviving half used
+		// to record the new generation for both, so a partial rebuild read as FRESH over stale
+		// data and `MirrorEpoch` could not report what it exists to report. Leaving the epoch
+		// BEHIND is the safe direction: it says "re-read from ken.db", never "trust this".
+		if roomOK && linkOK {
+			if epoch, err := st.RosterEpoch(bootCtx); err != nil {
+				log.Printf("COMM: roster epoch read failed, mirrors left marked stale: %v", err)
+			} else if err := commStore.StampMirrorEpoch(bootCtx, epoch); err != nil {
+				log.Printf("COMM: mirror epoch stamp failed, mirrors left marked stale: %v", err)
+			}
+		} else {
+			log.Printf("COMM: a mirror half did not rebuild — the roster epoch is deliberately left behind so the projection reads as STALE rather than current")
 		}
 
 		commDeps := commserver.Deps{

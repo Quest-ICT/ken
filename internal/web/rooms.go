@@ -42,11 +42,14 @@ func (a *app) syncRoomMirror(r *http.Request) {
 		log.Printf("web: read roster epoch: %v", err)
 		return
 	}
+	roomOK := false
 	rows, err := a.store.RoomMirrorRows(ctx)
 	if err != nil {
 		log.Printf("web: read room membership: %v", err)
 	} else if err := a.comm.ReplaceRoomMirror(ctx, rows, epoch); err != nil {
 		log.Printf("web: sync room mirror: %v", err)
+	} else {
+		roomOK = true
 	}
 	// INDEPENDENT OF THE ROOM PUSH, not chained to it. A failure reading rooms must not
 	// silently skip the link refresh: they are separate authorities over separate
@@ -56,8 +59,20 @@ func (a *app) syncRoomMirror(r *http.Request) {
 		log.Printf("web: read station links: %v", err)
 		return
 	}
+	linkOK := true
 	if err := a.comm.ReplaceLinkMirror(ctx, pairs, epoch); err != nil {
 		log.Printf("web: sync station-link mirror: %v", err)
+		linkOK = false
+	}
+
+	// STAMPED ONCE, AND ONLY IF BOTH HALVES LANDED — see StampMirrorEpoch. The independence
+	// above is why: a surviving half stamping for both made a partial rebuild read as fresh.
+	if roomOK && linkOK {
+		if err := a.comm.StampMirrorEpoch(ctx, epoch); err != nil {
+			log.Printf("web: stamp mirror epoch: %v", err)
+		}
+	} else {
+		log.Printf("web: a mirror half did not sync — roster epoch left behind so the projection reads as stale")
 	}
 }
 

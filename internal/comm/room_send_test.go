@@ -199,8 +199,13 @@ func TestReplacingTheMirrorRemovesMembershipsThatAreGone(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "room1", "still here", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	// The human removes beta.
+	// The human removes beta. The generation is stamped SEPARATELY now — a rebuild half no
+	// longer records it for both projections, because whichever half survived a partial
+	// rebuild used to mark the whole mirror current over stale data.
 	if err := st.ReplaceRoomMirror(ctx, map[string][]string{"room1": {"s:st-alpha"}}, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.StampMirrorEpoch(ctx, 2); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.SendToRoom(ctx, beta, "room1", "and now?", SendOpts{}); !errors.Is(err, ErrNotInRoom) {

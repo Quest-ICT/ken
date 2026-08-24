@@ -19,10 +19,16 @@ import (
 // Revocation is the operation a human reaches for when something has gone wrong, so it
 // is the one that must not be the fragile path.
 //
-// epoch is ken.db's roster generation as of the read that produced these pairs, and it
-// is the SAME counter the room mirror uses — the two projections are refreshed together
-// by one caller, so one generation describes both. A link change bumps it for the same
-// reason an archived station does: it changes who a message can reach.
+// epoch is ken.db's roster generation as of the read that produced these pairs, and it is the
+// SAME counter the room mirror uses. A link change bumps it for the same reason an archived
+// station does: it changes who a message can reach.
+//
+// THIS COMMENT USED TO SAY "the two projections are refreshed together by one caller, so one
+// generation describes both". THEY ARE NOT REFRESHED TOGETHER — both rebuild paths run the
+// halves independently and log-and-continue, deliberately, so that one failing cannot take the
+// other down. On that shared assumption each half stamped the counter itself, and a partial
+// rebuild left the epoch reading FRESH over stale data. The parameter is accepted and ignored
+// here now; StampMirrorEpoch writes it once, after both halves succeed.
 func (s *Store) ReplaceLinkMirror(ctx context.Context, pairs [][2]string, epoch int64) error {
 	return s.tx(ctx, func(t *sql.Tx) error {
 		if _, err := t.ExecContext(ctx, `DELETE FROM station_link_mirror`); err != nil {
@@ -42,10 +48,9 @@ func (s *Store) ReplaceLinkMirror(ctx context.Context, pairs [][2]string, epoch 
 				return err
 			}
 		}
-		_, err := t.ExecContext(ctx, `
-UPDATE mirror_state SET roster_epoch=?, refreshed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
- WHERE id=1`, epoch)
-		return err
+		// NO EPOCH STAMP HERE — StampMirrorEpoch writes it once both halves are rebuilt.
+		_ = epoch
+		return nil
 	})
 }
 

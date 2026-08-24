@@ -39,11 +39,40 @@ func (s *Store) ReplaceRoomMirror(ctx context.Context, rooms map[string][]string
 				}
 			}
 		}
-		_, err := t.ExecContext(ctx, `
+		// NO EPOCH STAMP HERE — see StampMirrorEpoch. The generation is written by the
+		// caller, once, and only when BOTH projections have been rebuilt.
+		_ = epoch
+		return nil
+	})
+}
+
+// StampMirrorEpoch records the roster generation both projections were built from.
+//
+// IT IS SEPARATE FROM THE REBUILDS BECAUSE A PARTIAL REBUILD USED TO READ AS FRESH.
+// `mirror_state` is one row (`0010_rooms.sql:38`, `CHECK (id = 1)`) and both halves used to
+// write its `roster_epoch` themselves — while both rebuild paths deliberately run the halves
+// INDEPENDENTLY and log-and-continue (`internal/web/rooms.go`: "a failure reading rooms must
+// not silently skip the link refresh"). So whichever half survived stamped the new generation
+// for both, and `MirrorEpoch` reported fresh over stale data. Measured before the fix: rebuild
+// both at 5, then only the link half at 6, and MirrorEpoch returns 6 while room_member_mirror
+// still holds epoch-5 rows.
+//
+// That independence is CORRECT and stays — it exists so one projection's failure cannot take
+// the other down. What was wrong was `link_mirror.go`'s stated rationale for sharing one
+// counter: "the two projections are refreshed together by one caller, so one generation
+// describes both". They are not refreshed together, and have not been since the
+// log-and-continue paths landed. Two comments in one subsystem contradicting each other, and
+// the epoch rested on the wrong one.
+//
+// THE COARSENESS IS DELIBERATE. One counter still covers both, so a room-only failure now
+// marks the link mirror stale too. That is the safe direction — stale means "re-read from
+// ken.db", never "trust this" — and it costs no schema. Per-projection epochs would be sharper
+// and need a migration; if that is ever wanted, this is the seam to widen.
+func (s *Store) StampMirrorEpoch(ctx context.Context, epoch int64) error {
+	_, err := s.W.ExecContext(ctx, `
 UPDATE mirror_state SET roster_epoch=?, refreshed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
  WHERE id=1`, epoch)
-		return err
-	})
+	return err
 }
 
 // MirrorEpoch is the roster generation this projection was built from. A caller holding
