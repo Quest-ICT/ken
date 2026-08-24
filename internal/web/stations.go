@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/Quest-ICT/ken/internal/comm"
@@ -98,6 +99,14 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	taskTotal, err := a.store.CountCrossStationTasks(ctx, spaceForSession, blockedOn)
 	if err != nil {
 		log.Printf("web: cross-station task count: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	// THE SAME FUNCTION THE COUNT ENDPOINT CALLS. Rendering this marker from a different
+	// expression is exactly how it and the endpoint drift into a reload loop.
+	liveCount, err := a.stationsLiveCount(ctx)
+	if err != nil {
+		log.Printf("web: stations live count: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -281,8 +290,9 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 
 	a.render(w, r, sess, "stations", map[string]any{
 		"Stations": views, "Requests": requests, "Links": linkViews, "Promotions": promotions,
-		"Rooms": roomViews,
-		"Tasks": tasks, "TaskTotal": taskTotal, "TaskShown": len(tasks),
+		"Rooms":     roomViews,
+		"LiveCount": liveCount,
+		"Tasks":     tasks, "TaskTotal": taskTotal, "TaskShown": len(tasks),
 		"TaskCapped": taskTotal > len(tasks), "Archived": archived,
 		"BlockedOn": r.URL.Query().Get("blocked_on"),
 		"NewKey":    newKey,
@@ -666,19 +676,46 @@ func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess
 // handleStationsCount feeds the same generic poller Proposals and COMM use, so a
 // request filed while the operator is looking at the page surfaces without a reload.
 // Behind requireAuth like the page, so it is not an unauthenticated info leak.
+// stationsLiveCount is what the live-refresh contract compares: everything a SESSION can
+// cause to arrive on /stations while nobody is looking.
+//
+// ONE FUNCTION WITH TWO CALLERS, and that is the point rather than tidiness. app.js reloads
+// whenever the count endpoint disagrees with the value the page was rendered with, so if the
+// two are computed separately a mismatch is an INFINITE RELOAD LOOP — worse than the silence
+// it replaces. Summing them in the template would have been the same hazard with an
+// arithmetic slip as the trigger. They cannot drift if they cannot differ.
+//
+// Requests AND promotions. It counted requests alone, so a notebook promotion filed at any
+// hour left the page asserting "last checked <now>" on a timer with the item invisible below
+// it — the live-refresh contract half-wired against the surface it exists for.
+//
+// Stations and rooms are operator-created, so this is the COMPLETE set of session-driven
+// arrivals here. A third one belongs in this sum and nowhere else.
+func (a *app) stationsLiveCount(ctx context.Context) (int, error) {
+	reqs, err := a.store.PendingStationRequests(ctx, spaceForSession)
+	if err != nil {
+		return 0, err
+	}
+	promos, err := a.store.CountPendingPromotions(ctx, spaceForSession)
+	if err != nil {
+		return 0, err
+	}
+	return len(reqs) + promos, nil
+}
+
 func (a *app) handleStationsCount(w http.ResponseWriter, r *http.Request, _ *store.Session) {
 	if !a.stationsEnabled {
 		http.NotFound(w, r)
 		return
 	}
-	reqs, err := a.store.PendingStationRequests(r.Context(), spaceForSession)
+	n, err := a.stationsLiveCount(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	fmt.Fprintf(w, `{"count":%d}`, len(reqs))
+	fmt.Fprintf(w, `{"count":%d}`, n)
 }
 
 // handleStationLocker serves a locker blob to the operator. Stations are told never to

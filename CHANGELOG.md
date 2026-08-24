@@ -17,6 +17,26 @@ same change — never "docs later".
 
 ### Added
 
+- **Pending notebook promotions now reach the human.** `CountPendingPromotions` calls itself
+  *"the console's badge source"* in its own doc, and there was no badge. A session promoted a
+  page and nothing in the chrome moved.
+
+  Two halves, and they had to land together. The **badge** — promotions join open
+  human-blocked tasks in the `/stations` nav and dashboard counts, because both are things
+  waiting on the human on the same page and two adjacent numbers would ask them to add up.
+  And the **live-refresh count**: `/stations/count` returned pending *requests* only, so a
+  promotion filed at any hour left the page re-stamping *"last checked &lt;now&gt;"* on a timer
+  while the item sat invisible below it — the live-refresh contract half-wired against the
+  surface it exists for.
+
+  **The marker and the endpoint now come from one function**, `stationsLiveCount`. That is the
+  point rather than tidiness: `app.js` reloads whenever the endpoint disagrees with the value
+  the page was rendered with, so computing them separately makes a drift an **infinite reload
+  loop** — worse than the silence it replaces. Summing them in the template would have been
+  the same hazard with an arithmetic slip as the trigger. A test asserts the two surfaces agree
+  after each kind of arrival; `/stations/count` had no tests at all before this.
+
+
 - **Revoking a station key now states its blast radius before the click.** S6 has required this
   since stations shipped and `STATIONS.md` asserted it shipped; `CountEndpointsBoundBy` was
   written for it and had exactly one caller — a test whose failure message reads *"the console

@@ -48,8 +48,6 @@ func TestEveryExportedStoreMethodIsReachable(t *testing.T) {
 		"store.Store.StationVaultHistoryFor": "pending: the console history list. The restore repair landed " +
 			"first on purpose — painting 16 rows that all look recoverable when one was would have been the " +
 			"same defect amplified by the fix",
-		"store.Store.CountPendingPromotions": "pending: the /stations badge and the live-refresh count. " +
-			"Its doc calls it 'the console's badge source' and there is no badge",
 		"comm.Store.MirrorEpoch": "pending: it reports FRESH on a partial mirror rebuild, which is the one " +
 			"case it exists for. Fixing that is a schema question (per-projection epochs) and ships alone",
 	}

@@ -113,9 +113,17 @@
   <p class="lede">{{.T "stations.lede"}}</p>
   <!-- Same live-refresh contract as /comm and /proposals: app.js polls the count
        endpoint and reloads when it diverges from this rendered value, then re-stamps
-       the time on every poll so the page proves it is still checking. Here the count
-       is pending REQUESTS — the thing that arrives while nobody is looking. -->
-  <p class="live-checked" data-live-refresh="{{len .Data.Requests}}">{{.T "status.last_checked"}} <time data-live-checked></time></p>
+       the time on every poll so the page proves it is still checking.
+
+       THE COUNT IS EVERYTHING A SESSION CAN CAUSE TO ARRIVE HERE — pending requests
+       AND pending notebook promotions. It was requests alone, so a promotion filed
+       while nobody was looking left this line asserting "last checked <now>" on a
+       timer with the item invisible below it.
+
+       THIS EXPRESSION AND handleStationsCount MUST MATCH. app.js reloads whenever the
+       endpoint disagrees with this rendered value, so a mismatched pair is an infinite
+       reload loop — worse than the silence it replaces. Change both or neither. -->
+  <p class="live-checked" data-live-refresh="{{.Data.LiveCount}}">{{.T "status.last_checked"}} <time data-live-checked></time></p>
 </div>
 
 {{if .Data.Revealed}}

@@ -405,6 +405,13 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 		if n, err := a.store.CountCrossStationTasks(r.Context(), spaceForSession, "human"); err == nil {
 			sc = n
 		}
+		// PENDING NOTEBOOK PROMOTIONS BELONG IN THE SAME BADGE. A session promotes a page and
+		// nothing in the chrome moved: `CountPendingPromotions` calls itself "the console's
+		// badge source" in its own doc and there was no badge. Both are things waiting on the
+		// human on /stations, and two adjacent numbers would ask them to add up two badges.
+		if n, err := a.store.CountPendingPromotions(r.Context(), spaceForSession); err == nil {
+			sc += n
+		}
 	}
 	// A flash carries a message KEY (handlers redirect via flashRedirect with
 	// ?flash=<key>[&fa=<arg>]); T translates it, substituting the optional arg into
