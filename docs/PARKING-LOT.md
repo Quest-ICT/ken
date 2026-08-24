@@ -72,6 +72,18 @@ template renders no token column. **On that deployment this would show 10 endpoi
 reading normal while none of them can make a call.** Fix shape, smallest first: state the blast
 radius in the revoke confirmation — exactly what 3.8.0 already did for station-key revoke.
 
+**CLOSED 2026-08-24, and one half of it was reopened in the meantime by me.** The `/tokens` confirm
+now states the blast radius for a comm token, and `/comm` renders an **Owned by** column so the
+concentration is visible on the page rather than only in a hand-written query.
+
+The reopening is worth recording. 3.17.0 added the blast-radius count to the `/tokens` confirm —
+and gated it on the row being a STATION KEY, using `CountEndpointsBoundBy`, which counts by
+`bound_by_station_key_id`. That is precisely the column this entry says "matches zero rows and does
+nothing, silently" for a comm token. **So the fix for E1 shipped keyed on the exact column E1
+identifies as the wrong one**, and a plain comm token still showed no number at all. Two columns
+answering two different questions: a station key severs what it BOUND, a comm token kills what it
+OWNS. `CountEndpointsByToken` is the second, and both are wired now.
+
 **E2 — There is no comm-token rotation. Not a missing button: the operation does not exist.**
 `endpoint.token_id` is written once at registration and no `UPDATE` anywhere re-points it. No console
 route, no CLI verb, no migration; `ken token` is `add|list|revoke`. **So "rotate a compromised comm
@@ -82,6 +94,30 @@ session on the host — there, one token, 10 endpoints, 8 projects. The inversio
 id, the binding and every channel. **The endpoint has a rotation story and the token does not**,
 which is backwards — the token is the credential more likely to leak, because it is shared and
 long-lived. *This is the one I would want first if Rule 1 ever lifts.*
+
+**CLOSED 2026-08-24.** Rule 1 lifted on 2026-08-20 and this was indeed the one taken first — as an
+ordinary COMM defect fix rather than as a transition step, because it stands on its own.
+`POST /comm/endpoints/{id}/repoint` moves one endpoint to a different token and
+`POST /comm/tokens/{id}/repoint` moves every live endpoint of one token in a single statement. The
+endpoint keeps its id, its **secret**, its channels and seats, its station binding and everything
+queued for it — only which credential may drive it changes, so a session needs one line edited in
+its MCP config and a restart. **One config edit per machine, not one per endpoint.**
+
+Production's shape when this landed was worse than the "one token, 10 endpoints" recorded above:
+**eleven live endpoints on `jMl4ZNH4q73E`**, including the channel the two stations would have used
+to report that a rotation had gone wrong.
+
+**No migration.** `idx_endpoint_token` has existed since `0001_init` and nothing had ever used it —
+the schema anticipated this operation and nobody wrote it.
+
+**Three things this entry did not anticipate, each of which a naive fix gets wrong.** The whole
+OWNER TUPLE has to move: `actor_id` left stale means a later binding voucher compares
+`issued_to_actor` against the wrong actor and the endpoint can never be re-bound, failing forever
+with a message that blames the voucher. The CLAIMS must NOT be released — unbind, revoke and sever
+all release them because "a severed reader is never coming back to ack", and a re-pointed reader is
+coming back. And the TARGET must be validated: re-pointing onto a revoked or non-comm token
+produces an endpoint that authenticates nowhere and fails identically to one with a leaked secret,
+which is this project's own defect class manufactured by the control built to cure it.
 
 **E3 — Mail addressed to an unbound endpoint is unreadable forever by any successor, and binding
 does not fix it. Live instance included.** `delivery.party_key` is stamped at SEND time and never

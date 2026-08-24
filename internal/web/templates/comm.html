@@ -173,6 +173,9 @@
       <table class="table">
         <thead><tr>
           <th>{{.T "comm.col_endpoint"}}</th><th>{{.T "comm.col_label"}}</th>
+          <!-- WHICH TOKEN OWNS IT was never shown, which is why nobody could see that eleven
+               endpoints hung off one credential until it was queried by hand. -->
+          <th>{{.T "comm.col_owner"}}</th>
           <th>{{.T "comm.col_last_seen"}}</th><th>{{.T "comm.col_created"}}</th><th></th>
         </tr></thead>
         <tbody>
@@ -183,6 +186,7 @@
               {{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}
               {{if .RotatedAt}}<span class="badge badge--sm" title="{{$.T "comm.rotated_help"}}">{{$.T "comm.rotated"}} ×{{.RotateCount}}</span>{{end}}
             </td>
+            <td class="mono" style="font-size:.82rem">{{.Owner.TokenID}}</td>
             <td class="mono">{{localtime .LastSeenAt}}</td>
             <td class="mono">{{localtime .CreatedAt}}</td>
             <td>
@@ -190,6 +194,20 @@
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--sm" type="submit" title="{{$.T "comm.rotate_help"}}">{{$.T "comm.rotate"}}</button>
               </form>
+              <!-- RE-POINT: change which token may drive this endpoint, keeping its id, its
+                   secret, its channels, its station binding and its queued mail. A picker
+                   rather than a text field, filtered to tokens the operation will accept. -->
+              {{if $.Data.CommTokens}}
+              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/repoint"
+                    data-confirm="{{$.T "comm.repoint_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}&#10;{{$.T "comm.col_owner"}}: {{.Owner.TokenID}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <input type="hidden" name="from_token" value="{{.Owner.TokenID}}">
+                <select class="input" name="to_token" title="{{$.T "comm.repoint_help"}}" style="width:auto;font-size:.82rem">
+                  {{range $.Data.CommTokens}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
+                </select>
+                <button class="btn btn--sm" type="submit" title="{{$.T "comm.repoint_help"}}">{{$.T "comm.repoint"}}</button>
+              </form>
+              {{end}}
               <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{if .Bound}}{{$.T "comm.revoke_bound_endpoint_confirm"}}{{else}}{{$.T "comm.revoke_endpoint_confirm"}}{{end}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{if .Bound}}{{$.T "comm.confirm_station_keeps"}}{{else}}{{$.T "comm.confirm_will_close"}}{{end}} ({{.OpenChannels}}): {{.ChannelsLine}}{{end}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--danger btn--sm" type="submit" title="{{$.T "comm.revoke_endpoint_help"}}">{{$.T "comm.revoke"}}</button>

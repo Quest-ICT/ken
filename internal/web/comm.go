@@ -147,7 +147,7 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	}
 
 	a.render(w, r, sess, "comm", map[string]any{
-		"Endpoints": eps, "Channels": channels, "Codes": codes, "Stats": stats,
+		"Endpoints": eps, "CommTokens": a.repointTargets(r.Context()), "Channels": channels, "Codes": codes, "Stats": stats,
 		"NewCode": newCode, "CommURL": a.publicCommURL(r), "Fingerprint": fp,
 		"Rotated": rot,
 	})
@@ -254,6 +254,38 @@ func (a *app) handleCommRotateEndpoint(w http.ResponseWriter, r *http.Request, s
 	log.Printf("COMM: endpoint %s secret rotated by %q (actor %d) — the previous secret no longer authenticates",
 		id, sess.ActorName, sess.ActorID)
 	a.renderComm(w, r, sess, "", reveal{EndpointID: id, Secret: secret})
+}
+
+// repointTarget is one token an endpoint may be moved onto.
+type repointTarget struct {
+	TokenID string
+	Label   string
+	Actor   string
+}
+
+// repointTargets lists the tokens a re-point may legally name, so the console offers a CHOICE
+// rather than a free-text field.
+//
+// Filtered by the SAME rule the operation enforces — present, unrevoked, carrying `comm` —
+// because a picker that offers an option the action then refuses teaches an operator that the
+// control is unreliable. The store still re-checks: this list is convenience, not the gate,
+// and a stale page must fail rather than succeed.
+func (a *app) repointTargets(ctx context.Context) []repointTarget {
+	rows, err := a.store.ListTokens(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]repointTarget, 0, len(rows))
+	for _, t := range rows {
+		if t.RevokedAt != "" {
+			continue
+		}
+		if _, _, err := a.store.CommTokenOwner(ctx, t.TokenID); err != nil {
+			continue
+		}
+		out = append(out, repointTarget{TokenID: t.TokenID, Label: t.Label, Actor: t.ActorName})
+	}
+	return out
 }
 
 // handleCommRepointEndpoint moves ONE endpoint to a different owning token.
