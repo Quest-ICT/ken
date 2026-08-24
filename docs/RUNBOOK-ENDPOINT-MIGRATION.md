@@ -35,10 +35,18 @@ The only callers of the bind primitives in the whole tree are the MCP handlers: 
 | Create a station | **Only by approving a pending request** — there is no `POST /stations`, no from-scratch form | `/stations` → **Approve and name**, or `ken station add` |
 | Mint a station key | Yes — but **no actor field** (`internal/web/stations.go:499` passes the logged-in curator's `sess.ActorID`) | `/stations` → **Mint key**, or `ken station key --actor` |
 | Revoke an endpoint | Yes | `/comm` → **Revoke** |
-| See whether an endpoint is bound | **NO** — the endpoints table has no station column | inferable only from the Revoke confirm dialog (§6) |
-| See which actor owns an endpoint | **NO** — `comm.html` renders no owner/actor at all | `sqlite3` on `comm.db` |
+| Move an endpoint to another comm token | Yes, since 3.19.0 — one, or every live endpoint of a token | `/comm` → **Re-point**, **Re-point all** |
+| Move a binding to another key of the same station | Yes, since 3.20.0 — one, or every endpoint one key bound | `/comm` → **Re-bind**, **Re-bind all** |
+| See whether an endpoint is bound | Yes, since 3.20.0 — the **Bound by** column names the station key | `/comm` (was: inferable only from the Revoke confirm dialog, §6) |
+| See which token owns an endpoint | Yes, since 3.19.0 — the **Owned by** column | `/comm` (was: `sqlite3` on `comm.db`) |
+| See which ACTOR owns an endpoint | **NO** — `comm.html` renders the token, never the actor | `sqlite3` on `comm.db` |
 
-So: three of the five items are two MCP calls by the session and **zero** console clicks. Two need a station created first, and that is where the labour lives.
+So: three of the five bind/create items are two MCP calls by the session and **zero** console clicks. Two need a station created first, and that is where the labour lives.
+
+**Two rows of this table were falsified by 3.19.0 and 3.20.0 and are corrected above.** The
+console now answers "which token owns this" and "which key bound this" directly, and can move
+either — which removes the `sqlite3` step this runbook used to budget for. The remaining `NO` is
+the actor, which is a different question and still needs the database.
 
 ---
 
@@ -66,7 +74,7 @@ Consequences:
 
 1. **The session's `/comm/mcp` entry carries the SAME `ken_` token that registered that endpoint.** `auth()` ends with `if ep.Owner.TokenID != p.TokenID { return nil, errors.New("endpoint does not belong to this token") }` (`commserver.go:1064-1065`). `token_id` is written at registration (`internal/comm/endpoint.go:56-71`); a different machine's token fails even with a correct secret and a correct voucher. **Since 3.19.0 there IS a console override** — **Re-point** on `/comm`, per endpoint or for every live endpoint of a token at once — which moves the whole owner tuple and leaves the id, the secret, the channels, the binding and the queued mail untouched. Before it existed, a revoked token meant the endpoint was dead and its queued mail unreadable by anyone; now the move is one click, and the session needs the new token in its config plus a restart.
 
-   **A BOUND endpoint has a SECOND weld, and re-pointing the token does not touch it.** `bound_by_station_key_id` names the station key that authorised the binding and is checked on every call, so retiring that key ends the session just as surely. **Re-bind** (3.20.0) moves it to another key of the same station and costs the session nothing — no config edit, no restart. Move both, or the endpoint is half-moved in a way every count reconciles.
+   **A BOUND endpoint has a SECOND weld, and re-pointing the token does not touch it.** `bound_by_station_key_id` names the station key that authorised the binding and is checked on every call, so **revoking** that key — or deleting its row — ends the session just as surely. (Retiring it does not: `IsStationKeyRevoked` reads `revoked_at` alone, so a retired key stops the station surface and leaves the COMM session running.) **Re-bind** (3.20.0) moves it to another key of the same station and costs the session nothing — no config edit, no restart. Move both, or the endpoint is half-moved in a way every count reconciles.
 2. **The session has the endpoint's `endpoint_id` (22-char base62) and `endpoint_secret`.** Preferred as headers `X-Ken-Endpoint-Id` / `X-Ken-Endpoint-Secret` on the `/comm/mcp` entry — these win over the tool arguments (`commserver.go:993-1003`) and keep the secret out of the transcript. **All-or-nothing:** `withEndpointCred` (`:981-991`) ignores the header pair unless *both* are non-empty. If the secret is lost, the only recovery is you clicking **Rotate secret** on `/comm` (§5).
 3. **The session's `/station/mcp` entry carries a `kens_` key FOR THAT STATION.** One key = one station; there is deliberately no `station_id` argument (`internal/stationserver/types.go:306-318`) — the station comes from the Authorization header. Four different stations need four different keys, i.e. four sessions (or four `/station` entries).
 4. **That `kens_` key's actor == the endpoint's COMM token actor** (§1.1).

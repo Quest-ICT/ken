@@ -2,11 +2,50 @@ package web
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/Quest-ICT/ken/internal/comm"
 )
+
+// credentialsBlock and endpointsBlock cut /comm into the two regions these tests reason about.
+//
+// WHY EVERY ASSERTION BELOW IS SCOPED. The first version of this file asserted against the whole
+// page, and an adversarial review of the shipping commit showed what that bought: the check that
+// the two BULK pickers render options was satisfied by the per-endpoint pickers in the table
+// underneath, so both bulk selects could render with zero options and the suite stayed green;
+// and the check that the new "Bound by" column renders was satisfied by the same key id
+// appearing in the credentials block above it. Both were verified by deleting the markup.
+//
+// This is the same mistake as matching a flash against the page's own help text, one layer out:
+// an assertion satisfied by a DIFFERENT part of the page measures the page, not the thing.
+func credentialsBlock(t *testing.T, body string) string {
+	t.Helper()
+	return regionBetween(t, body, "Credentials these endpoints depend on", "Registered sessions")
+}
+
+func endpointsBlock(t *testing.T, body string) string {
+	t.Helper()
+	i := strings.Index(body, "Registered sessions")
+	if i < 0 {
+		t.Fatal("no endpoints section on /comm — the page did not render what these tests read")
+	}
+	return body[i:]
+}
+
+func regionBetween(t *testing.T, body, from, to string) string {
+	t.Helper()
+	i := strings.Index(body, from)
+	if i < 0 {
+		t.Fatalf("%q is not on the page — the section these assertions scope to did not render", from)
+	}
+	j := strings.Index(body[i:], to)
+	if j < 0 {
+		t.Fatalf("%q does not follow %q — the page layout changed and this helper now returns the wrong region", to, from)
+	}
+	return body[i : i+j]
+}
 
 // keyIDOf turns a minted station-key secret into the token id the binding column stores.
 func keyIDOf(secret string) string {
@@ -40,7 +79,19 @@ func TestRebindingAnEndpointFromTheConsole(t *testing.T) {
 	}
 	oldID, newID := keyIDOf(oldKey), keyIDOf(newKey)
 
-	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: oldID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+	// THE OWNING TOKEN AND THE BINDING KEY ARE DIFFERENT CREDENTIALS, and this fixture has to
+	// make them different VALUES or the assertions below cannot tell the two columns apart. An
+	// earlier version registered the endpoint under the station key itself, so "Bound by shows
+	// oldID" was satisfied by the Owned by cell — deleting the whole Bound by column left this
+	// test green. Production's shape is the honest one: ken-prod-ops runs tok=jMl4ZNH4q73E with
+	// key=86rzqnM35CCU.
+	ownerTok, err := st.IssueToken(ctx, actor, []string{"comm"}, "machine")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerID := strings.SplitN(strings.TrimPrefix(ownerTok, "ken_"), "_", 2)[0]
+
+	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: ownerID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +102,30 @@ func TestRebindingAnEndpointFromTheConsole(t *testing.T) {
 	// THE BINDING KEY IS ON THE PAGE. It never was, so the credential that severs a session
 	// on its next call was invisible to the only person who can act on it.
 	body := get(t, cli, base+"/comm")
-	if !strings.Contains(body, oldID) {
-		t.Fatal("the endpoint's binding station key is not rendered — the second weld is invisible")
+	rows := endpointsBlock(t, body)
+	// THE DATA CELLS ONLY — everything from the endpoint id to the row's first <form>. The key
+	// also travels in the re-bind form's `from_key` hidden input, so an assertion over the whole
+	// row is satisfied by the control rather than by the column: deleting the Bound by cell
+	// outright left this green until the region was narrowed. Third instance in this file of one
+	// mistake — an assertion answered by a neighbour — which is why the helpers exist.
+	cells := regionBetween(t, rows, ep.EndpointID, "<form")
+	if !strings.Contains(cells, oldID) {
+		t.Fatal("the endpoint's binding station key is not in the Bound by column — the second weld is " +
+			"invisible on the row it belongs to")
 	}
-	if !strings.Contains(body, "/rebind") {
-		t.Fatal("no re-bind control on the page")
+	if !strings.Contains(rows, `action="/comm/endpoints/`+ep.EndpointID+`/rebind"`) {
+		t.Fatal("no re-bind control on this endpoint's row")
+	}
+	// AND THE PICKER DOES NOT OFFER THE KEY IT IS ALREADY BOUND BY. That is the no-op-success
+	// defect this release fixed on the Re-point control; nothing stopped it being re-created
+	// on the new one, because the filter had no test.
+	pick := regionBetween(t, rows, `action="/comm/endpoints/`+ep.EndpointID+`/rebind"`, "</form>")
+	if strings.Contains(pick, `<option value="`+oldID+`"`) {
+		t.Error("the re-bind picker offers the key this endpoint is already bound by — submitting it " +
+			"moves nothing and flashes success")
+	}
+	if !strings.Contains(pick, `<option value="`+newID+`"`) {
+		t.Fatal("the re-bind picker has no option at all — this test cannot tell a filter from an empty picker")
 	}
 
 	csrf := extract(t, cli, base+"/comm", `name="csrf" value="([^"]+)"`)
@@ -202,12 +272,17 @@ func TestTheCredentialBlockOffersBothBulkMoves(t *testing.T) {
 	oldKey, _ := st.IssueStationKey(ctx, actor, s.StationID, "laptop", []string{"station"})
 	newKey, _ := st.IssueStationKey(ctx, actor, s.StationID, "replacement", []string{"station"})
 	oldID, newID := keyIDOf(oldKey), keyIDOf(newKey)
+	// Distinct owning token, for the reason the sibling test states: with one id in both roles
+	// the two rows of the block are indistinguishable, and a binder row that never rendered at
+	// all was matched by the owner row above it.
+	fromTok, _ := st.IssueToken(ctx, actor, []string{"comm"}, "old-machine")
 	toTok, _ := st.IssueToken(ctx, actor, []string{"comm"}, "new-machine")
+	fromTokID := strings.SplitN(strings.TrimPrefix(fromTok, "ken_"), "_", 2)[0]
 	toTokID := strings.SplitN(strings.TrimPrefix(toTok, "ken_"), "_", 2)[0]
 
 	var eps []string
 	for i := 0; i < 3; i++ {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: oldID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: fromTokID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -221,26 +296,53 @@ func TestTheCredentialBlockOffersBothBulkMoves(t *testing.T) {
 	// literal 3: a block whose number disagrees with what its own button moves is the failure
 	// this is watching for, and asserting a constant would pass through it.
 	body := get(t, cli, base+"/comm")
-	for _, want := range []string{"/comm/tokens/" + oldID + "/repoint", "/comm/keys/" + oldID + "/rebind"} {
-		if !strings.Contains(body, want) {
+	block := credentialsBlock(t, body)
+	for _, want := range []string{
+		`action="/comm/tokens/` + fromTokID + `/repoint"`,
+		`action="/comm/keys/` + oldID + `/rebind"`,
+	} {
+		if !strings.Contains(block, want) {
 			t.Fatalf("the credentials block does not offer %s — the bulk verb has no console surface", want)
 		}
 	}
-	// AND THE PICKER HAS SOMETHING IN IT. A form whose select renders empty is a button that
-	// posts no target and is refused — reachable, and useless. The two lists are assembled as
-	// []any so the one template loop can render either kind, which is exactly the shape that
-	// renders blank if the field names ever stop matching.
-	for _, want := range []string{`value="` + toTokID + `"`, `value="` + newID + `"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("no option %s in the credentials block — the picker renders empty", want)
+	// AND EACH PICKER HAS SOMETHING IN IT, checked inside the block. A form whose select renders
+	// empty is a button that posts no target and is refused — reachable, and useless. The two
+	// lists are assembled as []any so one template loop can render either kind, which is exactly
+	// the shape that renders blank if the field names ever stop matching.
+	for _, want := range []string{`<option value="` + toTokID + `"`, `<option value="` + newID + `"`} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("no option %s in the credentials block — the bulk picker renders empty", want)
 		}
 	}
+
+	// *** THE NUMBER BESIDE THE BUTTON IS READ OFF THE PAGE, AND ITS ORACLE IS THE STORE. ***
+	//
+	// This is the assertion the block exists for. The count is what an operator weighs before
+	// clicking a move they cannot undo, and comm.go takes it from the store precisely because
+	// the rendered row list is space-scoped while the verb is not. Asserting the store against
+	// the fixture — which is what this test did — checks the fixture, not the page: the block
+	// could render 0 beside every credential with the suite green.
 	n, err := cs.CountEndpointsBoundBy(ctx, oldID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != len(eps) {
 		t.Fatalf("fixture: %d bound, store counts %d", len(eps), n)
+	}
+	binderRow := regionBetween(t, block, oldID, "</tr>")
+	if !strings.Contains(binderRow, `>`+strconv.Itoa(n)+`<`) {
+		t.Errorf("the binding key's row does not render the live count %d that its own button would move:\n%s", n, binderRow)
+	}
+	m, err := cs.CountEndpointsByToken(ctx, fromTokID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m != len(eps) {
+		t.Fatalf("fixture: %d owned, store counts %d", len(eps), m)
+	}
+	ownerRow := regionBetween(t, block, fromTokID+`</td>`, `action="/comm/tokens/`+fromTokID+`/repoint"`)
+	if !strings.Contains(ownerRow, `>`+strconv.Itoa(m)+`<`) {
+		t.Errorf("the owning token's row does not render the live count %d that its own button would move:\n%s", m, ownerRow)
 	}
 
 	csrf := extract(t, cli, base+"/comm", `name="csrf" value="([^"]+)"`)
@@ -252,7 +354,7 @@ func TestTheCredentialBlockOffersBothBulkMoves(t *testing.T) {
 	}
 
 	csrf = extract(t, cli, base+"/comm", `name="csrf" value="([^"]+)"`)
-	postForm(t, cli, base+"/comm/tokens/"+oldID+"/repoint", url.Values{"csrf": {csrf}, "to_token": {toTokID}})
+	postForm(t, cli, base+"/comm/tokens/"+fromTokID+"/repoint", url.Values{"csrf": {csrf}, "to_token": {toTokID}})
 	for _, id := range eps {
 		if got := endpointOf(t, cs, id); got.Owner.TokenID != toTokID {
 			t.Fatalf("endpoint %s still owned by %q after the bulk re-point", id, got.Owner.TokenID)
@@ -392,4 +494,135 @@ func TestBulkRebindRefusesAKeyFromAnotherStation(t *testing.T) {
 			t.Fatalf("the control move was refused too — this test cannot tell the same-station rule from a broken bulk verb")
 		}
 	}
+}
+
+// *** THE from-key GUARD MAKES A STALE PAGE FAIL INSTEAD OF OVERWRITING SOMEBODY ELSE'S MOVE. ***
+//
+// `bound_by_station_key_id=?` in the WHERE is what makes the operation conditional rather than
+// check-then-act — §9.5 of docs/IDENTITY.md states that rule and says it outlives the mechanism
+// it came from. Nothing held it: dropping the clause AND its bound argument left the whole
+// repository suite green.
+//
+// It read as held because the first mutation that tried it removed the clause and LEFT the
+// argument, so the statement failed on placeholder arity and the test died of a SQL error. A
+// mutant that dies of its own malformation is indistinguishable from one the tests killed — this
+// project's defect class, committed inside the harness built to find it.
+func TestRebindRefusesAStaleFromKey(t *testing.T) {
+	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
+	cs := commOf(t)
+
+	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k1, _ := st.IssueStationKey(ctx, actor, s.StationID, "one", []string{"station"})
+	k2, _ := st.IssueStationKey(ctx, actor, s.StationID, "two", []string{"station"})
+	k3, _ := st.IssueStationKey(ctx, actor, s.StationID, "three", []string{"station"})
+	id1, id2, id3 := keyIDOf(k1), keyIDOf(k2), keyIDOf(k3)
+
+	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: id1, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.BindEndpointToStation(ctx, ep.EndpointID, s.StationID, id1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Operator B moves it while operator A's page sits open.
+	if err := cs.RepointEndpointBinder(ctx, ep.EndpointID, id1, id2, s.StationID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Operator A now submits their stale form, which still names the ORIGINAL key.
+	csrf := extract(t, cli, base+"/comm", `name="csrf" value="([^"]+)"`)
+	body := postForm(t, cli, base+"/comm/endpoints/"+ep.EndpointID+"/rebind",
+		url.Values{"csrf": {csrf}, "from_key": {id1}, "to_key": {id3}})
+
+	if got := endpointOf(t, cs, ep.EndpointID); got.BoundByStationKeyID != id2 {
+		t.Fatalf("a stale form overwrote a move that had already happened: binding is %q, want %q", got.BoundByStationKeyID, id2)
+	}
+	if !strings.Contains(body, "Nothing moved") {
+		t.Error("the stale submit reported success — an operator is told they moved something they did not")
+	}
+}
+
+// *** NEITHER VERB RESURRECTS A REVOKED ENDPOINT, INCLUDING THE BULK ONE. ***
+//
+// `revoked_at IS NULL` is stated in both statements and in the CHANGELOG — "a revoked endpoint is
+// refused here exactly as rotation and owner re-pointing refuse one" — and was held by nothing on
+// the bulk path: dropping the clause left the suite green. The consequence is not merely a wrong
+// row count. The bulk flash says *"The sessions keep running and need no restart"*, which would
+// then be said about sessions that are dead and, with no un-revoke path anywhere in the tree,
+// cannot be revived.
+func TestBulkRebindDoesNotMoveRevokedEndpoints(t *testing.T) {
+	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
+	cs := commOf(t)
+
+	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey, _ := st.IssueStationKey(ctx, actor, s.StationID, "laptop", []string{"station"})
+	newKey, _ := st.IssueStationKey(ctx, actor, s.StationID, "replacement", []string{"station"})
+	oldID, newID := keyIDOf(oldKey), keyIDOf(newKey)
+
+	var live, dead string
+	for i := 0; i < 2; i++ {
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: oldID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cs.BindEndpointToStation(ctx, ep.EndpointID, s.StationID, oldID); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			live = ep.EndpointID
+		} else {
+			dead = ep.EndpointID
+		}
+	}
+	if err := cs.RevokeEndpoint(ctx, dead); err != nil {
+		t.Fatal(err)
+	}
+
+	csrf := extract(t, cli, base+"/comm", `name="csrf" value="([^"]+)"`)
+	body := postForm(t, cli, base+"/comm/keys/"+oldID+"/rebind", url.Values{"csrf": {csrf}, "to_key": {newID}})
+
+	if got := endpointOf(t, cs, live); got.BoundByStationKeyID != newID {
+		t.Fatalf("the live endpoint did not move: binding is %q", got.BoundByStationKeyID)
+	}
+	// THE ORACLE IS THE COUNT THE OPERATOR IS SHOWN, not the row state alone: the flash asserts
+	// how many sessions kept running, and a revoked one inflating that number is the lie.
+	if !strings.Contains(body, "1 endpoint binding") {
+		t.Errorf("the bulk move did not report exactly one moved binding — a revoked endpoint was counted "+
+			"as a session that keeps running:\n%s", flashOf(body))
+	}
+	if raw := rawBinderOf(t, cs, dead); raw != oldID {
+		t.Errorf("a revoked endpoint's binding was moved (%q -> %q); it can never be un-revoked, so the move "+
+			"only makes the dead row look live", oldID, raw)
+	}
+}
+
+// rawBinderOf reads a REVOKED endpoint's binding column, which ListEndpoints deliberately hides.
+func rawBinderOf(t *testing.T, cs *comm.Store, endpointID string) string {
+	t.Helper()
+	var got string
+	if err := cs.R.QueryRow(
+		`SELECT COALESCE(bound_by_station_key_id,'') FROM endpoint WHERE endpoint_id=?`, endpointID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+// flashOf trims a page down to the flash region for a readable failure message.
+func flashOf(body string) string {
+	i := strings.Index(body, "flash")
+	if i < 0 {
+		return "(no flash on the page)"
+	}
+	j := i + 400
+	if j > len(body) {
+		j = len(body)
+	}
+	return body[i:j]
 }

@@ -250,8 +250,9 @@ condition is usually the thing being built:
   called its rows the safe ones.** Every BOUND endpoint carries the station key that authorised
   its binding, and that column is checked **at use, on every call** —
   `commserver.go` → `store.IsStationKeyRevoked`, which returns *revoked* for a **missing** row as
-  well as a revoked one. So retiring a station key ends its bound sessions just as surely as
-  retiring their comm token does. **Bound endpoints have two welds; unbound have one.** The
+  well as a revoked one. So **revoking** a station key — or deleting its row, which the identity
+  transition does — ends its bound sessions just as surely as revoking their comm token does.
+  **Bound endpoints have two welds; unbound have one.** The
   correction above was right that a bound endpoint's mail survives the token weld and wrong to
   read that as safety.
 
@@ -261,7 +262,7 @@ condition is usually the thing being built:
   live bound endpoints = 8      distinct bound_by_station_key_id = 8      RATIO 1:1
   ```
 
-  **No concentration at all — retiring one key costs exactly one session**, recoverable one at a
+  **No concentration at all — revoking one key costs exactly one session**, recoverable one at a
   time, against eleven at once for the token weld including the channel the report would travel
   on. That is why the token half shipped first, and it makes this a **correctness** fix rather
   than a blast-radius fix. It should not inherit the first one's alarm.

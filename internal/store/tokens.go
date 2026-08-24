@@ -158,6 +158,12 @@ var ErrNotAStationKey = errors.New("that token cannot have bound an endpoint —
 // treats a revoked key — and a MISSING one — as severing every endpoint it bound, so
 // re-pointing onto a dead key produces a session that is refused on its next call and fails
 // identically to one whose key leaked. That is the defect class this control exists to cure.
+//
+// A RETIRED KEY IS DELIBERATELY ACCEPTED, and this is the one place the retire/revoke split works
+// in the caller's favour. `IsStationKeyRevoked` reads `revoked_at` alone, so a retired key severs
+// nothing on the COMM surface and stays a perfectly good lever for a binding — refusing it would
+// remove a legal destination for no gain. What matters is that the key chosen here is the one a
+// future REVOKE will act through; retirement state lives on /stations, where it belongs.
 func (s *Store) StationKeyStation(ctx context.Context, tokenID string) (string, error) {
 	var stationID sql.NullString
 	var revoked sql.NullString

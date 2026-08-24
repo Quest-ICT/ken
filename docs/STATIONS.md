@@ -279,9 +279,10 @@ third verb: "rotate" is mint-new-then-retire-old, and the console composes it.
   survivable (3.20.0).** `/comm` renders `bound_by_station_key_id` and offers **Re-bind** per
   endpoint and per key. Unlike an owner re-point, the running session needs no config edit and no
   restart: nothing it holds changes, only which key could sever it. So the safe rotation above gains
-  a step that costs the session nothing — **mint new → re-bind the endpoints onto it → then retire
-  or revoke the old key** — and the retire step no longer has to wait for a restart to be safe for
-  COMM. The move never crosses stations; the rule is in the `UPDATE`'s `WHERE`, because a binding
+  a step that costs the session nothing — **mint new → install it in the client config → restart
+  the session → verify → re-bind the endpoints onto the new key → then retire or revoke the old
+  one.** The re-bind is what makes the final step safe either way: retiring never severed COMM,
+  and now revoking does not have to. The move never crosses stations; the rule is in the `UPDATE`'s `WHERE`, because a binding
   pointed at another station's key would hand that station's operator a lever over these sessions.
 - **The CLI path leaves work for the console, and it is repairable.** `ken token revoke` runs in a
   separate process with no `comm.db` handle, so the eager sweep cannot run there: the endpoints stay

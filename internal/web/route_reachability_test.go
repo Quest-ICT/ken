@@ -50,6 +50,18 @@ func TestEveryPostRouteHasAConsoleSurface(t *testing.T) {
 	}
 
 	// Everything a browser could post from: the templates and the one script.
+	//
+	// ONLY `action="…"` COUNTS, and that anchoring is the whole strength of this gate. The
+	// first version searched the corpus for the path anywhere at all, which meant a nav link
+	// `href="/settings"` in base.html satisfied the route `POST /settings`. Verified by
+	// deleting settings.html's only form action: the gate stayed green. Every route whose
+	// surface is a page-level form — /settings, /setup, /tokens, /rooms — was effectively
+	// unwatched, while the per-row routes passed for the right reason by accident (nothing
+	// links to `/comm/endpoints/{id}/rotate`).
+	//
+	// A gate that reports success because of a link to the page a form lives on is this
+	// project's defect class wearing the uniform of the check built to catch it — found by an
+	// adversarial review of the very commit that added it.
 	var surface strings.Builder
 	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -70,8 +82,8 @@ func TestEveryPostRouteHasAConsoleSurface(t *testing.T) {
 		t.Fatalf("walk templates: %v", err)
 	}
 	hay := surface.String()
-	if !strings.Contains(hay, "/comm/endpoints/") {
-		t.Fatal("the template corpus does not contain a known-present path; the walk is broken, not the routes")
+	if !strings.Contains(hay, `action="/comm/endpoints/`) {
+		t.Fatal("the template corpus does not contain a known-present form action; the walk is broken, not the routes")
 	}
 
 	// Routes reachable by a path the console never spells out literally. Each needs a
@@ -92,7 +104,7 @@ func TestEveryPostRouteHasAConsoleSurface(t *testing.T) {
 		// which never contain a slash or a quote.
 		pat := regexp.QuoteMeta(route)
 		pat = regexp.MustCompile(`\\\{[a-z]+\\\}`).ReplaceAllString(pat, `[^"/]*`)
-		found := regexp.MustCompile(pat).MatchString(hay)
+		found := regexp.MustCompile(`action="` + pat + `"`).MatchString(hay)
 		reason, exempt := allowed[route]
 		switch {
 		case found && exempt:

@@ -15,6 +15,71 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.20.1] — 2026-08-24
+
+Corrections to 3.20.0, found by an adversarial review of its own diff — five independent lenses
+over the change, every candidate finding handed to two skeptics told to refute it. Sixteen
+survived. No behaviour of the application changed; what changed is operator text that was false,
+tests that were not holding what they claimed, and a gate that was weaker than advertised.
+
+### Fixed
+
+- **RETIRING a station key does not end the COMM sessions it bound — REVOKING does, and 3.20.0
+  used the two words interchangeably.** `store.IsStationKeyRevoked` reads `revoked_at` and nothing
+  else, so a retired key stops the *station* surface at the holder's next call and leaves every
+  bound COMM endpoint running. That is what `RetireStationKey`'s own comment says and what
+  `stations.key_retire_help` has told operators all along — *"COMM endpoints it already bound keep
+  working. Use Revoke instead only when you also want those severed."*
+
+  3.20.0 shipped the opposite claim in `comm.credentials_help` and `comm.rebind_all_help`, **in all
+  three locales**, on a card whose neighbouring string got it right — plus in five documents and
+  the CHANGELOG. An operator reading it would either avoid Retire (the harmless verb) or reach for
+  Revoke (the destructive one, with no un-revoke path anywhere) believing they were equivalent.
+
+  **This is the second time the project has got this wrong, in opposite directions.** Six shipped
+  strings once promised that retiring left live sessions alone, for four releases after the code
+  stopped doing that, because the fix touched no `.properties` file — `internal/store/stations.go`
+  carries that story in a comment. `TestNoCommStringClaimsRetireSeversComm` now fails when a COMM
+  string asserts that retiring ends something, in any of the three locales. Verified by
+  reintroducing the exact strings 3.20.0 shipped.
+
+- **`TestEveryPostRouteHasAConsoleSurface` matched the route path anywhere on the page, so a nav
+  link counted as a form.** `href="/settings"` in the shared layout satisfied `POST /settings`.
+  Verified by deleting `settings.html`'s only form action: the gate stayed green. Every route whose
+  surface is a page-level form — `/settings`, `/setup`, `/tokens`, `/rooms` — was effectively
+  unwatched. It now requires `action="…"`, and catches all four.
+
+  The gate added in 3.20.0 to catch a control with no button was itself an instance of the class
+  it hunts.
+
+- **Four assertions in the new tests were answered by a different part of the page.** Both bulk
+  pickers could render with **zero options** and the suite stayed green (the per-endpoint pickers
+  below satisfied the check); the **Bound by** column could be deleted entirely (the re-bind form's
+  hidden `from_key` carried the same id); and the **live-endpoint count** — the number an operator
+  weighs before an irreversible bulk move — was never read off the page at all. The tests now scope
+  to the section they are about, and the fixtures give an endpoint a *different* owning token from
+  its binding key, as production does.
+
+- **Two guards in the new statements were held by nothing.** Dropping `bound_by_station_key_id=?`
+  from the single-endpoint WHERE (so a stale console page silently overwrites someone else's move)
+  and `revoked_at IS NULL` from the bulk WHERE (so the flash says *"the sessions keep running"*
+  about revoked ones) both left the whole repository green.
+
+  The first read as *held* because the mutation that tested it removed the clause and left its
+  bound argument, so the statement failed on placeholder arity and the test died of a SQL error.
+  **A mutant that dies of its own malformation is indistinguishable from one the tests killed** —
+  this project's defect class, committed inside the harness built to find it.
+
+- **The Re-bind picker had no test that it excludes the key the endpoint is already bound by** —
+  the no-op-that-flashes-success defect 3.20.0 fixed on Re-point could have been re-created on the
+  control added in the same commit.
+
+- **`RUNBOOK-ENDPOINT-MIGRATION.md`'s capability table still said the console cannot show which
+  token owns an endpoint or whether it is bound, and sent the reader to `sqlite3`.** Both have been
+  console columns since 3.19.0 and 3.20.0 — the two releases the runbook's own migration step is
+  about. The refusal message now names all four states it collapses, including the swept-away one
+  the CHANGELOG claimed and the string omitted.
+
 ## [3.20.0] — 2026-08-24
 
 ### Added
@@ -22,9 +87,11 @@ same change — never "docs later".
 - **The second weld can be moved too. A bound endpoint answers to TWO credentials, not one.**
   `token_id` says which token may drive an endpoint; `bound_by_station_key_id` says which station
   key authorised its binding, and that column is checked at **use, on every single call**
-  (`store.IsStationKeyRevoked`), with a **missing** row treated as revoked. So retiring a station
-  key ends its bound sessions exactly as retiring their comm token does — through a column nothing
-  rendered and `docs/IDENTITY.md` §9.3 did not name. 3.19.0 moved one weld and left the other.
+  (`store.IsStationKeyRevoked`), with a **missing** row treated as revoked. So **revoking** a station
+  key — or deleting its row — ends its bound sessions exactly as revoking their comm token does,
+  through a column nothing rendered and `docs/IDENTITY.md` §9.3 did not name. 3.19.0 moved one weld
+  and left the other. *(Corrected in 3.20.1: this entry originally said **retiring**, which severs
+  nothing here.)*
 
   `/comm` gains **Re-bind** beside Re-point, and `POST /comm/keys/{id}/rebind` moves every live
   endpoint one key bound in a single statement. The endpoint keeps its id, its **secret**, its
@@ -39,7 +106,7 @@ same change — never "docs later".
   reconciling.
 
   **Smaller than the first weld, and measured rather than assumed.** ken-prod-ops counted 8 live
-  bound endpoints against 8 distinct binding keys on 2026-08-24 — 1:1, so retiring one key today
+  bound endpoints against 8 distinct binding keys on 2026-08-24 — 1:1, so revoking one key today
   costs exactly one session, against eleven for the token weld. **That ratio is an accident of how
   those stations were provisioned one at a time, not a property**: nothing stops one key from
   binding several endpoints, which is why the bulk verb exists and why `/tokens` states the count
@@ -72,8 +139,8 @@ same change — never "docs later".
   job.
 
 - **The Re-point picker no longer defaults to a no-op.** It listed every comm token, the
-  endpoint's own included, and its own sorts first — so the default selection was "move it to the
-  token it is already on", and clicking flashed *"…the session needs the new token in its config
+  endpoint's own included — and tokens are listed newest first, so whenever the endpoint's own
+  token was also the most recent one it sat at the top and became the default. Clicking flashed *"…the session needs the new token in its config
   and a restart"* over a row nothing had touched. A success message for a no-op, with instructions
   attached. The store is right to accept the write; the console is what must not offer it.
 
@@ -81,7 +148,8 @@ same change — never "docs later".
   statement, so a key from another station simply moves no rows and the bare answer is
   `ErrNotFound` — telling the operator that an endpoint visible on the page does not exist. The
   explanation is derived *after* the refusal, so it cannot re-open a check-then-act window, and it
-  names the four possible states honestly rather than guessing which one applies.
+  names all four possible states honestly — wrong station, already moved, revoked, or swept away
+  while the page sat open — rather than guessing which one applies.
 
 ## [3.19.0] — 2026-08-24
 

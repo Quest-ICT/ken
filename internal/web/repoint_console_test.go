@@ -128,8 +128,9 @@ func endpointOf(t *testing.T, cs *comm.Store, id string) comm.Endpoint {
 
 // *** THE PICKER NEVER DEFAULTS TO A NO-OP. ***
 //
-// The control shipped in 3.19.0 listing every comm token, the endpoint's own included, and its
-// own sorts first — so the default selection was "move it to the token it is already on".
+// The control shipped in 3.19.0 listing every comm token, the endpoint's own included. Tokens
+// render newest-first, so whenever an endpoint's own token was also the most recent one it sat
+// at the top of the list and became the default — "move it to the token it is already on".
 // Clicking Re-point then flashed *"Endpoint X re-pointed. Its channels, binding and queued mail
 // are unchanged; the session needs the new token in its config and a restart"* over a row
 // nothing had touched: a success message for a no-op, with instructions to restart a session

@@ -125,7 +125,8 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	// WHY THIS BLOCK EXISTS AT ALL. Nobody could see that eleven live endpoints hung off
 	// one comm token until ken-prod-ops queried the database by hand on 2026-08-24; the
 	// console listed endpoints and never grouped them by the thing whose retirement kills
-	// them. The bulk re-point shipped in 3.19.0 with a route, a handler, a store primitive
+	// them. The counts are what a REVOKE would take down; a retire takes down none of them.
+	// The bulk re-point shipped in 3.19.0 with a route, a handler, a store primitive
 	// and flash strings in three locales — and no form anywhere posted to it, so the verb
 	// that exists precisely for the eleven-at-once case could be reached only with curl.
 	// TestEveryPostRouteHasAConsoleSurface now fails when that happens again.
@@ -537,7 +538,11 @@ func (a *app) binderTargets(ctx context.Context) []binderTarget {
 //
 // The second weld, and the reason it needs its own control rather than riding along with the
 // first: `token_id` and `bound_by_station_key_id` are two different credentials pointing at
-// the same row, each independently fatal when retired. Moving one leaves the other welded.
+// the same row, each independently fatal when REVOKED. Moving one leaves the other welded.
+//
+// Revoked, not retired — retiring a station key stops the station surface and leaves the COMM
+// endpoints it bound running (store.RetireStationKey, and stations.key_retire_help says exactly
+// that to the operator). Two strings on this page said otherwise for one release.
 func (a *app) handleCommRepointBinder(w http.ResponseWriter, r *http.Request, sess *store.Session) {
 	a.repointBinder(w, r, sess, r.PathValue("id"), "")
 }

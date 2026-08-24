@@ -290,7 +290,9 @@ func (s *Store) CountEndpointsByToken(ctx context.Context, tokenID string) (int,
 // endpoints it bound — SeverEndpointsBoundBy marks them revoked — and a revoked endpoint is
 // refused here exactly as rotation and owner re-pointing refuse one. There is no un-revoke path
 // anywhere in the tree, so on that path this is a move to make BEFORE retiring the key, the
-// same ordering §10 of docs/IDENTITY.md derives for the token weld.
+// same ordering §10 of docs/IDENTITY.md derives for the token weld. RETIRING it needs no
+// preparation at all, because retire severs nothing here — that is the difference the two verbs
+// exist to carry, and it is easy to flatten into one word.
 //
 // `ken token revoke` cannot sever anything: it runs in a separate process with no comm.db
 // handle. Its endpoints stay unrevoked in this table and are refused one call at a time by
