@@ -258,9 +258,18 @@ func (s *Store) RenameStation(ctx context.Context, stationID, name string) error
 	return nil
 }
 
+// SetStationPublished flips the directory listing, and REFUSES AN UNKNOWN STATION rather
+// than reporting success over zero rows — see the note on RenameStation above, which is
+// eight lines up and got this right on 2026-08-21 while its two neighbours did not.
 func (s *Store) SetStationPublished(ctx context.Context, stationID string, published bool) error {
-	_, err := s.W.ExecContext(ctx, `UPDATE station SET published=? WHERE station_id=?`, published, stationID)
-	return err
+	res, err := s.W.ExecContext(ctx, `UPDATE station SET published=? WHERE station_id=?`, published, stationID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: no station %q", ErrNotFound, stationID)
+	}
+	return nil
 }
 
 // ArchiveStation is reversible (S3/§10): assets are kept, links go dormant rather than
@@ -280,9 +289,20 @@ func (s *Store) ArchiveStation(ctx context.Context, stationID string, archived b
 		state, linkFrom, linkTo = "archived", "active", "dormant"
 		archivedAt = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
 	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE station SET state=?, archived_at=`+archivedAt+` WHERE station_id=?`, state, stationID); err != nil {
+	// STOP HERE IF THERE IS NO SUCH STATION, and stop BEFORE the epoch bump below.
+	//
+	// This used to return nil over zero rows, so the console flashed "archived" for an id
+	// that names nothing — and, worse, still advanced the roster generation, telling every
+	// consumer in the deployment that membership had changed when nothing had. A no-op that
+	// is indistinguishable from success is bad; one that broadcasts a change it did not make
+	// is worse, because the lie propagates.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE station SET state=?, archived_at=`+archivedAt+` WHERE station_id=?`, state, stationID)
+	if err != nil {
 		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("%w: no station %q", ErrNotFound, stationID)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE station_link SET state=? WHERE state=? AND (station_a=? OR station_b=?)`,

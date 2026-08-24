@@ -15,6 +15,35 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **Three console operations reported success without doing anything.**
+  `SetStationPublished` and `ArchiveStation` returned `nil` for a station id that names
+  nothing, so the console flashed *"published"* / *"archived"* over an `UPDATE` that matched
+  zero rows. `ArchiveStation` additionally **advanced the roster epoch** on the no-op — telling
+  every mirror consumer in the deployment that membership had changed when nothing had. A
+  no-op indistinguishable from success is a defect; one that propagates a change it did not
+  make is worse.
+
+  Both now return `ErrNotFound`, and the epoch bump happens only after the station is known to
+  exist. `RenameStation`, eight lines away in the same file, has done this correctly since
+  2026-08-21 — one instance was fixed and its neighbours were never looked at, which is why
+  the new test covers all three together.
+
+- **A destructive confirm stated a number nobody had measured.** The link-revoke dialog took a
+  bare int, so with COMM off — where the web package holds no comm handle and the live-channel
+  count is genuinely unknown — the same table row rendered `?` in the count column and said
+  *"0 live channel(s) will be closed"* in the confirm. The handler already refuses to pretend
+  otherwise in its own words (*"reporting 0 would assert a fact nobody checked. Two fields
+  rather than one because a bare int cannot say unknown"*) and the template discarded that
+  distinction one line later. There is now a second confirm string that says UNKNOWN, in all
+  three locales.
+
+  The revoke control is also **shown when the count is unknown**, where it used to be hidden:
+  "unknown" is not "zero", and hiding it made a revoked link whose channel sweep failed —
+  permission gone, conversation still running — unreachable from the one surface built to
+  expose exactly that state.
+
 ### Added
 
 - **The cross-station task pile now announces itself, in the console and in the briefing.**

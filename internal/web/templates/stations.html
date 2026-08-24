@@ -506,9 +506,17 @@
           <td data-sort="{{.ApprovedAt}}">{{localtime .ApprovedAt}}</td>
           <td data-sort="{{.LiveChannels}}">{{if .KnownLive}}{{.LiveChannels}}{{else}}?{{end}}</td>
           <td>
-            {{if or (ne .State "revoked") .LiveChannels}}
+            <!-- SHOWN WHEN THE COUNT IS UNKNOWN TOO. "Unknown" is not "zero": hiding the
+                 control on an unmeasured count is what makes a revoked link with a failed
+                 channel sweep — permission gone, conversation still running — unreachable
+                 from the one surface that exists to expose it. -->
+            {{if or (ne .State "revoked") .LiveChannels (not .KnownLive)}}
+            <!-- TWO CONFIRM STRINGS, because a bare int cannot say "unknown" and the handler
+                 already refuses to pretend otherwise (stations.go:182 — "reporting 0 would
+                 assert a fact nobody checked"). This row rendered `?` in the count column and
+                 said "0 live channel(s) will be closed" in the same breath. -->
             <form class="inline" method="post" action="/stations/links/{{.LinkID}}/revoke"
-                  data-confirm="{{$.T "stations.link_revoke_confirm" .NameA .NameB .LiveChannels}}">
+                  data-confirm="{{if .KnownLive}}{{$.T "stations.link_revoke_confirm" .NameA .NameB .LiveChannels}}{{else}}{{$.T "stations.link_revoke_confirm_unknown" .NameA .NameB}}{{end}}">
               <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
               <button class="btn btn--danger btn--sm" type="submit"
                       title="{{$.T "stations.link_revoke_help"}}">{{$.T "stations.link_revoke"}}</button>
