@@ -1331,11 +1331,35 @@ control can be, and telling them apart is the whole point of this document.
 
 ### station_block — a targeted deny that beats the roster and beats a link
 
+> **CORRECTED 2026-08-24. THIS ENTRY WAS WRONG, AND WRONG IN THE WAY THIS DOCUMENT'S OWN PREFACE
+> WARNS ABOUT.** It read *"Verdict: survives"* and described the block as the escape hatch that makes
+> Ken's broad addressing default safe. **The block is not enforced anywhere.** It exists in the
+> shipped schema of every deployment, can be written through an exported store method, and bumps the
+> roster epoch so the write looks consequential — and no send path reads it. Measured: zero
+> references to `station_block` anywhere in `internal/comm/`, against 6 and 11 for
+> `station_link_mirror` and `room_member_mirror` as a positive control on the same search.
+>
+> It is also **unenforceable from where sends happen**, which makes this structural rather than one
+> missing call: `comm.Store` (`internal/comm/comm.go:288`) holds handles to comm.db alone, and
+> comm.db has no block mirror — links and rooms each have one, blocks have none.
+>
+> The original entry was generated from an extraction pass that read the schema and its stated
+> reason and never asked whether anything called it. That is the failure this register was written
+> to prevent, committed by the register.
+
 - **Where:** `migrations/0017_comm_rooms.sql:62`
-- **Verdict:** survives
-- **Prevents:** An operator having to break four relationships to stop one, and therefore not doing it.
-- **Stated reason:** "This is what makes a broad addressing default safe to offer. Without it the only way to stop one station reaching another is to narrow something wide — unpublish a station, revoke a link — which costs every other relationship it had. An operator who has to break four things to fix one will not do it."
-- **If removed:** The broad addressing default (to_room:"all", broadcast) loses its escape hatch. Keyed on station_id, so it migrates unchanged. Its removal would be noticed only the first time the human wants to silence one pair and finds the only lever severs five.
+- **Verdict:** the single-user question is moot — **the control does not run.** Nothing about one
+  human versus many changes a deny nothing consults.
+- **Prevents:** *Nothing, today.* It was designed to spare an operator from breaking four
+  relationships to stop one. The design argument is sound and still unmet: revoking a link kills
+  only `to_station`, leaving rooms and `to_room:"all"` untouched, and archiving a station retires
+  the post entirely — so **the deny is not superseded by anything that exists.** It simply is not
+  there.
+- **Stated reason:** "This is what makes a broad addressing default safe to offer. Without it the only way to stop one station reaching another is to narrow something wide — unpublish a station, revoke a link — which costs every other relationship it had. An operator who has to break four things to fix one will not do it." *(Present tense in the applied migration, and false: the default has no escape hatch.)*
+- **If removed:** Nothing changes for anyone, which is the tell. The open fork is recorded in
+  `FINISHING.md` — wire it or delete it — deferred to Batch 5 on 2026-08-17 and still undecided.
+  The fact that pass did not have: wiring it is a **schema release** (a new comm.db mirror plus a
+  predicate inside the comm writer transactions), not an afternoon.
 
 ### station_link_mirror and room_member_mirror in comm.db — a derived projection, rebuilt wholesale, never authoritative
 
