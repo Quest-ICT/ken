@@ -34,6 +34,10 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.17.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 16 — verified by diffing every migration file against `v3.16.0`: none moved.
+
 ### ⚠ File exchange is now ON by default — read this if you ever turned it off
 
 `FilesEnabled` shipped defaulting **off** and now defaults **on**, following the ruling that no

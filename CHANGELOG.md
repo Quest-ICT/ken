@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.17.0] — 2026-08-24
+
 ### Changed
 
 - **File exchange is ON by default.** `FilesEnabled` shipped defaulting off so an operator could
