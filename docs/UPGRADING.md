@@ -34,6 +34,48 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.19.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17 — verified by diffing every
+migration file against `v3.18.0`: none moved.
+
+### What you get
+
+**Your COMM token becomes rotatable.** Before this, `endpoint.token_id` was write-once, so
+retiring a comm token meant re-registering every session it carried. If one token on your
+deployment owns several endpoints — and it probably does, because the token is per-machine by
+convention — that was a fleet-wide re-onboarding for a routine credential rotation.
+
+`/comm` now shows an **Owned by** column, and each endpoint has a **Re-point** control. There is
+also a bulk form that moves every live endpoint of one token at once.
+
+### What a re-point does and does not change
+
+**Unchanged:** the endpoint id, its **secret**, its channels and seats, its station binding, its
+queued mail, and its in-flight claims. **Changed:** which token may drive it, and nothing else.
+
+**What you must do afterwards:** each affected machine needs its MCP config pointed at the new
+token, and its sessions restarted. Until then those sessions are refused with *"endpoint does not
+belong to this token"* — which is the check working, not a fault.
+
+### Refusals you may see, and what they mean
+
+- **"that token cannot own a comm endpoint"** — the target must exist, be unrevoked, and carry
+  the `comm` scope. This refusal is deliberate: re-pointing onto a dead or wrong-scoped token
+  produces an endpoint that authenticates nowhere and fails *identically* to one whose secret
+  leaked.
+- **A re-point that reports not-found on an endpoint you can see** — the page was stale and the
+  endpoint has already moved. Reload and look at the **Owned by** column before retrying.
+
+### Suggested order for a real rotation
+
+1. Mint the new comm token, and confirm it carries the `comm` scope.
+2. Re-point the endpoints — bulk, if they share a token.
+3. Edit each machine's MCP config and restart its sessions.
+4. **Only then** revoke the old token. Its `/tokens` confirm now tells you how many live endpoints
+   it still owns; if that number is not zero, step 2 or 3 is incomplete.
+
+
 ## 3.18.0
 
 **MINOR. SCHEMA CHANGE: comm.db 16 → 17.** ken.db unchanged at 20. One migration —

@@ -15,6 +15,51 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.19.0] — 2026-08-24
+
+### Added
+
+- **A COMM token can be rotated. Until now the operation did not exist.** `endpoint.token_id` was
+  written once at registration and no `UPDATE` anywhere re-pointed it — so "rotate a compromised
+  comm token" decomposed into *revoke it, re-register every session, and hand a human-minted
+  pairing code to every unbound seat.* On the live deployment that is **eleven live endpoints on
+  one token**, including the channel the two stations would use to report that it had gone wrong.
+
+  `/comm` gains **Re-point** beside Rotate, and `POST /comm/tokens/{id}/repoint` moves every live
+  endpoint of one token in a single statement — a half-moved estate is the state nobody has a
+  recovery story for. The endpoint keeps its id, its **secret**, its channels and seats, its
+  station binding and everything queued for it. Only which credential may drive it changes, so a
+  session needs one line edited in its MCP config and a restart: **one edit per machine, not one
+  per endpoint.**
+
+  **Console only** — `requireAuth` + CSRF, no MCP tool in any form. An `endpoint_id` is not a
+  secret; it is the routing address, rendered on `/comm` and printed through the runbooks. A
+  self-service re-point would let any session on a shared machine seize any endpoint on it with
+  nothing to steal first.
+
+  **No migration.** `idx_endpoint_token` has existed since `0001_init` and nothing had ever used
+  it — the schema anticipated this operation and nobody wrote it.
+
+- **`/comm` shows which token owns each endpoint.** It never did, which is why a credential
+  carrying eleven endpoints was invisible until someone queried the database by hand.
+
+### Fixed
+
+- **The `/tokens` revoke confirm now states a blast radius for a plain COMM token.** The count
+  added in 3.17.0 was gated on the row being a *station key* and used `CountEndpointsBoundBy`,
+  which counts by `bound_by_station_key_id` — the exact column `PARKING-LOT.md` E1 names as the
+  one that "matches zero rows and does nothing, silently" for a comm token. So the fix for E1
+  shipped keyed on the column E1 identifies as wrong, and the credential that actually carries the
+  endpoints showed no number at all. A station key severs what it **bound**; a comm token kills
+  what it **owns**. Both are wired now.
+
+- **The endpoint-ownership check had no test.** `if ep.Owner.TokenID != p.TokenID` is the last
+  line of `auth()` and the only thing between "holds a valid endpoint id and secret" and "is the
+  right principal" — and deleting it left the entire suite green. The one grep hit for its error
+  string across every test file is a *comment* explaining how another test avoids triggering it.
+  Pinned now, verified by deleting the line.
+
+
 ## [3.18.0] — 2026-08-24
 
 ### Added
