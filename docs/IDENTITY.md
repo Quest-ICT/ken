@@ -203,6 +203,11 @@ condition is usually the thing being built:
   re-pointing path in the code.** Any transition that retires the current COMM tokens strands their
   endpoints and every queued message on them — permanently, and with no error. Re-point the rows or
   re-file the mail onto workspace parties **first**.
+  **Named on the live deployment 2026-08-24:** endpoint `UpxrlnZl76QfjbmiyHzn2g` — ken-prod-ops's
+  inbox, carrying every exchange between the two stations — is welded to comm token `jMl4ZNH4q73E`,
+  as is every other endpoint on that machine. Production had already reported this column as
+  write-once on 2026-08-18, filed then as a *rotation* gap. **Same column, two different disasters,
+  and the second is worse because it happens on purpose.**
 - **`api_token.station_id IS NULL` is a state, not data** — a key in it may call exactly one tool.
   §5 deletes the state deliberately. What must not go with it is the human-typed *name*: §5 keeps
   naming by moving the moment to the link-approval screen, which is the one place a bad name is in
@@ -214,9 +219,15 @@ The 46 in this class share a shape: they are keyed on a credential, and the repl
 many credentials into one identity. Three cost something real, and the design should say so rather
 than discover it:
 
-- **Revocation granularity collapses.** Today the unit is a key per machine — *"revoke this
-  laptop"*. One OAuth grant per instance makes the unit the whole instance. That is a capability
-  loss hiding inside a simplification, and single user does not shrink the machine count.
+- **Revocation granularity collapses, and this is no longer a hypothetical.** Today the unit is a
+  key per machine — *"revoke this laptop"*. One OAuth grant per instance makes the unit the whole
+  instance. Single user does not shrink the machine count.
+  **ken-prod-ops supplied the instance on 2026-08-24, and it is an incident rather than a
+  scenario:** that estate holds keys on three machines, and the credential incident of
+  2026-08-18 was resolved *precisely* by killing one key without touching the others. Under one
+  grant per instance the same incident becomes *"revoke everything, or accept the exposure"*.
+  The trade may still be worth making — but it must be made knowing that the case it costs has
+  already happened once, on the only deployment there is.
 - **Rate limiting is per token, with a separate bucket per surface.** Collapse the tokens and every
   session on every machine shares one bucket, so one runaway loop starves the rest — which is the
   exact starvation the per-token split was introduced to prevent.
