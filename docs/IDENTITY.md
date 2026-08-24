@@ -200,14 +200,47 @@ condition is usually the thing being built:
 ### 9.3 Two migration landmines — move the data *before* retiring the credential
 
 - **`endpoint.token_id` welds every live endpoint to the token that registered it, and there is no
-  re-pointing path in the code.** Any transition that retires the current COMM tokens strands their
-  endpoints and every queued message on them — permanently, and with no error. Re-point the rows or
-  re-file the mail onto workspace parties **first**.
-  **Named on the live deployment 2026-08-24:** endpoint `UpxrlnZl76QfjbmiyHzn2g` — ken-prod-ops's
-  inbox, carrying every exchange between the two stations — is welded to comm token `jMl4ZNH4q73E`,
-  as is every other endpoint on that machine. Production had already reported this column as
-  write-once on 2026-08-18, filed then as a *rotation* gap. **Same column, two different disasters,
-  and the second is worse because it happens on purpose.**
+  re-pointing path in the code.** Re-point the rows **first**; nothing that retires a credential may
+  run before that does.
+
+  > **CORRECTED 2026-08-24. This entry said the weld strands "their endpoints and every queued
+  > message on them", and the second half is wrong.** The poll predicate keys on the PARTY, and for
+  > a bound endpoint it deliberately matches *both* the station party and the endpoint's own — so a
+  > bound endpoint's mail is filed under `s:<station_id>` and a replacement endpoint bound to the
+  > same station inherits it. **The mail survives. What dies is the CONNECTION**: the row, its
+  > secret, and the session's ability to reach it without re-registering, taking a voucher and
+  > re-binding.
+  >
+  > That is not a smaller problem, it is a different one — and it is the ceremony §4b exists to
+  > remove, reached from the other end. Measured on production: of 16 endpoints, 8 are bound and
+  > survive; of the 8 unbound, 2 are revoked and 6 live; and the mail genuinely at risk is **7
+  > unacked deliveries across exactly two endpoints** (`rb5009-config` 3, `runway-prod-admin` 4).
+  > Everything else unbound is empty or fully acked.
+  >
+  > **Bounded, and knowable per endpoint in advance** — which decides the shape: a pre-flight that
+  > NAMES the endpoints holding unacked mail and refuses, not a caveat in a document. Check what the
+  > value has to produce, never its form.
+
+  **THE MAGNITUDE, measured on the only deployment there is (2026-08-24):**
+
+  ```
+  jMl4ZNH4q73E   endpoints=13   LIVE=11
+  eNfNcVwXQ0Uj   endpoints=2    live=2
+  qXykpIUyOLHg   endpoints=1    live=1
+  ```
+
+  **Eleven live endpoints hang off one token** — ken-prod-ops, ken-public-dev, both collector
+  proxies, ken-promo, network-infrastructure, both runways, rb5009-config, proxmox-servers.
+  Retiring that one credential today forces eleven re-onboardings at once, **including the channel
+  the two stations would use to report that it had gone wrong.**
+
+  **And there is an open rotation decision on that exact token**, carried as housekeeping. It is
+  not housekeeping: until this step lands, "rotate `jMl4ZNH4q73E`" means "re-onboard the estate".
+  That makes this step a live operational blocker rather than scaffolding for a transition — it
+  would be worth doing if the rest of this document were abandoned tomorrow.
+
+  Production had already reported this column as write-once on 2026-08-18, filed then as a
+  *rotation* gap. **Same column, two different disasters, and the second happens on purpose.**
 - **`api_token.station_id IS NULL` is a state, not data** — a key in it may call exactly one tool.
   §5 deletes the state deliberately. What must not go with it is the human-typed *name*: §5 keeps
   naming by moving the moment to the link-approval screen, which is the one place a bad name is in
@@ -282,8 +315,30 @@ Surfaced by the extraction, true of Ken today, and belonging in the parking lot 
 **Ordering, and it is derived from §9.3 rather than from convenience.** Data moves before
 credentials retire, or mail is stranded with no error.
 
-1. **Re-point what is welded to a credential.** `endpoint.token_id` first — re-point the rows, or
-   re-file queued mail onto workspace parties. Nothing else may start until this is reversible.
+1. **Re-point what is welded to a credential.** `endpoint.token_id` first. Nothing else may start
+   until this is reversible. §9.3 carries the magnitude: **eleven live endpoints on one token**, and
+   an open rotation decision on it that currently means "re-onboard the estate".
+
+   **THE TERMS FOR THIS ONE STEP, stated by ken-prod-ops before it is built and accepted here.**
+   They apply to no other step, and the reason is specific: *"it is the one migration where my
+   ability to tell you it went wrong is itself the thing at risk"* — the endpoint being re-pointed
+   is the channel the report would travel on.
+
+   1. **A rollback that has been EXERCISED**, against a fixture holding a bound endpoint — not a
+      snapshot that exists. Being wrong here looks like silence, and silence is indistinguishable
+      from nobody having written.
+   2. **An out-of-band path agreed in advance, and it is Vlad** — the only actor with console access
+      to both stations. Written into the plan rather than discovered during the failure.
+   3. **The post-state declared as LITERAL VALUES**, the way migration 0017's scope string was: the
+      actual expected `endpoint_id` and `token_id` for the specific row. A row that survives
+      pointing at the wrong token passes every count and silently orphans an inbox.
+   4. **State explicitly whether channel bindings and `station_link_mirror` ride along.** If
+      re-pointing disturbs a binding, that is a second migration wearing the first one's clothes.
+   5. **No change to a production endpoint without Vlad's approval in chat**, same as a restart. A
+      clean pre-flight is not permission.
+
+   And the pre-flight §9.3 names: **refuse by endpoint**, listing the ones holding unacked mail,
+   rather than warning in prose about a population.
 2. **Make one identity span `/comm` and `/station`.** This is the condition §9.2 names, and it is
    what unlocks the voucher chain. `auth.go:200` discarding the OAuth grant's scope is the blocker:
    until OAuth can express `comm` and `station`, no session can hold one identity across both.
