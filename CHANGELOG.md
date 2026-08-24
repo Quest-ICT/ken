@@ -17,6 +17,38 @@ same change — never "docs later".
 
 ### Fixed
 
+- **The vault could restore exactly one value of sixteen, and using it destroyed the rest.**
+  Measured before the fix — five puts A–E, then six restores:
+
+  ```
+  six consecutive restores yielded: D E D E D E
+  history rows afterwards, bound of 3: 9
+  ```
+
+  Two defects. `RestoreStationVaultSecret` read a hardcoded `ORDER BY rev DESC LIMIT 1`, and a
+  restore is *itself a write*, so the value it displaced went back into history at a higher
+  rev — the newest two swapped forever and A, B and C were unreachable by any code in the
+  tree. And the restore path never called `pruneVaultHistory` (its only call sites were put
+  and delete), so exercising recovery inflated history with churn duplicates until the next
+  ordinary put dropped the real history to make room. **The feature that exists to recover was
+  the one destroying what there was to recover.**
+
+  Restore now takes a **history row id** — `0` still means "the most recent", which is what the
+  console button has always done — prunes on the restore path, and returns how many rows it
+  dropped so the console can say when a restore spent recovery depth. A row belonging to a
+  different name is **refused**, never silently swapped for the newest.
+
+  Addressed by id rather than by rev because by-rev was never constructible: `rev` is the
+  revision a value was superseded *from*, `station_vault_history` has no unique constraint on
+  `(station_id, name, rev)`, and a put→delete→restore really does produce two rows at the same
+  rev. `StationVaultHistoryEntry` now carries the id, and its doc — which promised "ask for it
+  back by rev" — is corrected.
+
+  Three documents promised what the code did not do: `OPERATION.md`'s *"what makes a vault
+  write reversible"*, `STATIONS.md`'s *"16 revisions, pruned oldest-first"*, and the settings
+  help's *"how many superseded values stay **recoverable**"*. All three are now true.
+
+
 - **Three console operations reported success without doing anything.**
   `SetStationPublished` and `ArchiveStation` returned `nil` for a station id that names
   nothing, so the console flashed *"published"* / *"archived"* over an `UPDATE` that matched

@@ -393,7 +393,9 @@ decision.
 posture from the rest of Ken — see §6.1.
 
 **`station_vault_history_rev` is what makes a vault write reversible: at `0` an overwrite is
-final.** And `station_vault_read_log` is a COUNT of retained read records, not a switch — the
+final.** Every retained version is restorable individually from the console, not just the most
+recent — and because a restore is itself a write, a restore at the bound pushes the oldest
+recoverable value out and says so. And `station_vault_read_log` is a COUNT of retained read records, not a switch — the
 per-secret read count stays exact regardless, so lowering it shortens the audit trail without
 hiding how often a secret was read, and its minimum of 10 means read auditing cannot be turned
 off from this form.

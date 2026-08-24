@@ -810,10 +810,31 @@ func (a *app) handleStationVaultRestore(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	_ = r.ParseForm()
-	if _, err := a.store.RestoreStationVaultSecret(r.Context(), r.PathValue("id"),
-		strings.TrimSpace(r.FormValue("name")), "", sess.ActorID); err != nil {
+	// history_id NAMES WHICH SUPERSEDED VALUE, and its absence means the most recent —
+	// which is the behaviour this button has always had. The per-row control that supplies
+	// it is a later change; the store takes the argument now so the two can land apart.
+	var historyID int64
+	if v := strings.TrimSpace(r.FormValue("history_id")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			flashRedirect(w, r, "/stations", "flash.station_vault_restore_failed", "bad history id")
+			return
+		}
+		historyID = n
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	_, dropped, err := a.store.RestoreStationVaultSecret(r.Context(), a.vaultLimits(),
+		r.PathValue("id"), name, historyID, "", sess.ActorID)
+	if err != nil {
 		flashRedirect(w, r, "/stations", "flash.station_vault_restore_failed", err.Error())
 		return
 	}
-	flashRedirect(w, r, "/stations", "flash.station_vault_restored", r.FormValue("name"))
+	// SAY IT WHEN RECOVERY DEPTH WAS SPENT. A restore is itself a write, so it can push the
+	// oldest recoverable value out of the bound — and a recovery feature that quietly
+	// consumes recovery is exactly what this one was until today.
+	if dropped > 0 {
+		flashRedirect(w, r, "/stations", "flash.station_vault_restored_pruned", name)
+		return
+	}
+	flashRedirect(w, r, "/stations", "flash.station_vault_restored", name)
 }

@@ -646,7 +646,7 @@ multiplier from S12.
 | locker blob / total | 256 KiB / 2 MiB | memory and instruction files, not payloads |
 | vault secret | 8 KiB | a PEM private key fits; anything larger is a file, and files go in the locker |
 | secrets per station | 64 | a vault this full is holding something that belongs elsewhere |
-| vault versions per secret | 16, pruned oldest-first, **and the write reports what it dropped** | what makes an overwrite reversible; at 0 an overwrite is final |
+| vault versions per secret | 16, pruned oldest-first, **and every write that drops one says so — including a restore** | what makes an overwrite reversible; at 0 an overwrite is final. **All 16 are individually restorable, by history row id.** Until 2026-08-24 only the newest was reachable and restoring twice oscillated between the newest two, because a restore is itself a write and the value it displaced went back into history at a higher rev — see the note on `RestoreStationVaultSecret` |
 | vault reads retained | 500 per station | the trail is bounded; the per-secret read COUNT is exact regardless, so the console can say "the last 20 of 2,318" |
 | open tasks per station | 500 | a longer list is not being worked |
 | task `text` / `resolution` | 512 B each | one line, by construction |

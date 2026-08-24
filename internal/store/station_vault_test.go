@@ -72,7 +72,7 @@ func TestOverwritingAndDeletingAreBothRecoverable(t *testing.T) {
 	if _, _, err := st.PutStationVaultSecret(ctx, lim, station, "db", "oops-wrong-value", "", "tok", actor); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.RestoreStationVaultSecret(ctx, station, "db", "tok", actor); err != nil {
+	if _, _, err := st.RestoreStationVaultSecret(ctx, lim, station, "db", 0, "tok", actor); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.GetStationVaultSecret(ctx, lim, station, "db", "console", "tok", actor)
@@ -90,7 +90,7 @@ func TestOverwritingAndDeletingAreBothRecoverable(t *testing.T) {
 	if _, err := st.GetStationVaultSecret(ctx, lim, station, "db", "station", "tok", actor); !errors.Is(err, ErrVaultDeleted) {
 		t.Fatalf("reading a tombstone returned %v, want ErrVaultDeleted — a deleted secret must not be readable, and must not look like one that never existed either", err)
 	}
-	if _, err := st.RestoreStationVaultSecret(ctx, station, "db", "tok", actor); err != nil {
+	if _, _, err := st.RestoreStationVaultSecret(ctx, lim, station, "db", 0, "tok", actor); err != nil {
 		t.Fatal(err)
 	}
 	got, err = st.GetStationVaultSecret(ctx, lim, station, "db", "console", "tok", actor)

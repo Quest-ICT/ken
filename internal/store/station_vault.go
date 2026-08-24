@@ -59,9 +59,16 @@ type StationVaultEntry struct {
 }
 
 // StationVaultHistoryEntry is one superseded value. It never carries the secret: history
-// exists so a human can SEE that something is recoverable and ask for it back by rev,
-// not so a listing can hand out every value a name ever had.
+// exists so a human can SEE that something is recoverable and ask for it back, not so a
+// listing can hand out every value a name ever had.
+//
+// ADDRESSED BY ID, NOT BY REV. This doc used to say "ask for it back by rev" and that was
+// never constructible: station_vault_history has no unique constraint on
+// (station_id, name, rev), and a put -> delete -> restore sequence really does produce two
+// rows at the same rev. `rev` is the revision the value was superseded FROM, so it repeats.
+// The row id is the only stable handle, which is why it is on the struct.
 type StationVaultHistoryEntry struct {
+	ID         int64 // the handle RestoreStationVaultSecret takes; rev is not unique
 	Name       string
 	Note       string
 	SizeBytes  int
@@ -320,27 +327,56 @@ WHERE station_id=? AND name=?`, nullStr(tokenID), actorID, stationID, name); err
 	return tx.Commit()
 }
 
-// RestoreStationVaultSecret brings a name back to its most recent superseded value. This
-// is the other half of "reversible" — the console action a human takes after a session
-// deleted or overwrote the wrong thing.
-func (s *Store) RestoreStationVaultSecret(ctx context.Context, stationID, name, tokenID string, actorID int64) (*StationVaultEntry, error) {
+// RestoreStationVaultSecret brings a name back to a superseded value — `historyID` names
+// which one, and 0 means the most recent. It is the other half of "reversible": the console
+// action a human takes after a session deleted or overwrote the wrong thing.
+//
+// IT USED TO BE ABLE TO REACH EXACTLY ONE VALUE OF SIXTEEN, AND USING IT DESTROYED THE REST.
+// Two defects, both measured on 2026-08-24 before this was written:
+//
+//	five puts A,B,C,D,E then six restores  ->  D E D E D E
+//	history rows afterwards, bound of 3    ->  9
+//
+// The read was hardcoded to `ORDER BY rev DESC LIMIT 1`, and a restore is itself a write, so
+// the value it displaced went BACK into history at a higher rev — the newest two swapped
+// forever and A, B and C were unreachable by any code in the tree. And the restore path never
+// called pruneVaultHistory (its only call sites were put and delete), so exercising recovery
+// inflated history with churn duplicates of the same two values until an ordinary put dropped
+// the real history to make room. Three documents promised otherwise — OPERATION.md's "what
+// makes a vault write reversible", STATIONS.md's "16 revisions", and the settings help's "how
+// many superseded values stay RECOVERABLE".
+//
+// A NAMED ROW THAT IS NOT THIS NAME'S IS REFUSED, NOT SILENTLY IGNORED. Falling back to the
+// newest when the id does not match would restore a value the caller did not ask for and
+// report success — the same defect in a new place.
+//
+// Returns the entry and how many history rows the prune dropped, because a recovery feature
+// that silently consumes recovery depth is what this function just was.
+func (s *Store) RestoreStationVaultSecret(ctx context.Context, lim StationVaultLimits, stationID, name string, historyID int64, tokenID string, actorID int64) (*StationVaultEntry, int, error) {
 	tx, err := s.W.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	var secret, note, digest string
 	var size, rev int
-	err = tx.QueryRowContext(ctx, `
+	if historyID > 0 {
+		err = tx.QueryRowContext(ctx, `
+SELECT secret, note, size_bytes, sha256, rev FROM station_vault_history
+WHERE id=? AND station_id=? AND name=?`, historyID, stationID, name).
+			Scan(&secret, &note, &size, &digest, &rev)
+	} else {
+		err = tx.QueryRowContext(ctx, `
 SELECT secret, note, size_bytes, sha256, rev FROM station_vault_history
 WHERE station_id=? AND name=? ORDER BY rev DESC, id DESC LIMIT 1`, stationID, name).
-		Scan(&secret, &note, &size, &digest, &rev)
+			Scan(&secret, &note, &size, &digest, &rev)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, 0, ErrNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	// The restore itself is a write, so the value it displaces goes to history too —
@@ -350,13 +386,13 @@ INSERT INTO station_vault_history(station_id, name, secret, note, size_bytes, sh
 SELECT station_id, name, secret, note, size_bytes, sha256, rev, 'updated', ?, ?
 FROM station_vault WHERE station_id=? AND name=?`,
 		nullStr(tokenID), actorID, stationID, name); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var newRev int
 	if err := tx.QueryRowContext(ctx, `SELECT rev+1 FROM station_vault WHERE station_id=? AND name=?`,
 		stationID, name).Scan(&newRev); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE station_vault SET secret=?, note=?, size_bytes=?, sha256=?, rev=?, deleted_at=NULL,
@@ -364,19 +400,25 @@ UPDATE station_vault SET secret=?, note=?, size_bytes=?, sha256=?, rev=?, delete
        updated_by_token_id=?, updated_by_actor_id=?
 WHERE station_id=? AND name=?`,
 		secret, note, size, digest, newRev, nullStr(tokenID), actorID, stationID, name); err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+	// PRUNE HERE TOO. Put and delete have always done this; restore never did, which is why
+	// using the recovery feature was the thing that consumed the recovery depth.
+	dropped, err := pruneVaultHistory(ctx, tx, stationID, name, lim.MaxHistoryPerName)
+	if err != nil {
+		return nil, 0, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return &StationVaultEntry{Name: name, Note: note, SizeBytes: size, SHA256: digest, Rev: newRev}, nil
+	return &StationVaultEntry{Name: name, Note: note, SizeBytes: size, SHA256: digest, Rev: newRev}, dropped, nil
 }
 
 // StationVaultHistoryFor lists what is recoverable for one name, newest first. Never a
 // value: this answers "can I get it back", not "give it to me".
 func (s *Store) StationVaultHistoryFor(ctx context.Context, stationID, name string) ([]StationVaultHistoryEntry, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT name, note, size_bytes, sha256, rev, reason, replaced_at
+SELECT id, name, note, size_bytes, sha256, rev, reason, replaced_at
 FROM station_vault_history WHERE station_id=? AND name=? ORDER BY rev DESC, id DESC`, stationID, name)
 	if err != nil {
 		return nil, err
@@ -385,7 +427,7 @@ FROM station_vault_history WHERE station_id=? AND name=? ORDER BY rev DESC, id D
 	var out []StationVaultHistoryEntry
 	for rows.Next() {
 		var h StationVaultHistoryEntry
-		if err := rows.Scan(&h.Name, &h.Note, &h.SizeBytes, &h.SHA256, &h.Rev, &h.Reason, &h.ReplacedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.Note, &h.SizeBytes, &h.SHA256, &h.Rev, &h.Reason, &h.ReplacedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, h)
