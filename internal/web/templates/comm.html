@@ -164,6 +164,79 @@
   </div>
 </section>
 
+<!-- credentials: what would take these endpoints down, and how to move them first -->
+{{if or .Data.Owners .Data.Binders}}
+<section style="margin-top:var(--sp-5)">
+  <div class="card">
+    <div class="card__head"><h2 class="h3">{{.T "comm.credentials_heading"}}</h2></div>
+    <div class="card__body"><p class="help">{{.T "comm.credentials_help"}}</p></div>
+    {{if .Data.Owners}}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr>
+          <th>{{.T "comm.col_owner"}}</th><th>{{.T "comm.col_label"}}</th>
+          <th>{{.T "comm.col_live_endpoints"}}</th><th></th>
+        </tr></thead>
+        <tbody>
+        {{range .Data.Owners}}
+          <tr>
+            <td class="mono">{{.TokenID}}</td>
+            <td>{{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}</td>
+            <td class="mono">{{.Live}}</td>
+            <td>
+              {{if .Targets}}
+              <form class="inline" method="post" action="/comm/tokens/{{.TokenID}}/repoint"
+                    data-confirm="{{$.T "comm.repoint_all_confirm"}}&#10;&#10;{{$.T "comm.col_owner"}}: {{.TokenID}}&#10;{{$.T "comm.col_live_endpoints"}}: {{.Live}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <select class="input" name="to_token" title="{{$.T "comm.repoint_all_help"}}" style="width:auto;font-size:.82rem">
+                  {{range .Targets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
+                </select>
+                <button class="btn btn--sm" type="submit" title="{{$.T "comm.repoint_all_help"}}">{{$.T "comm.repoint_all"}}</button>
+              </form>
+              {{else}}<span class="muted">{{$.T "comm.no_other_token"}}</span>{{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+    {{if .Data.Binders}}
+    <div class="card__body"><p class="help">{{.T "comm.binders_help"}}</p></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr>
+          <th>{{.T "comm.col_binder"}}</th><th>{{.T "comm.col_station"}}</th>
+          <th>{{.T "comm.col_live_endpoints"}}</th><th></th>
+        </tr></thead>
+        <tbody>
+        {{range .Data.Binders}}
+          <tr>
+            <td class="mono">{{.TokenID}}{{if .Label}} <span class="muted">· {{.Label}}</span>{{end}}</td>
+            <td>{{.Station}}</td>
+            <td class="mono">{{.Live}}</td>
+            <td>
+              {{if .Targets}}
+              <form class="inline" method="post" action="/comm/keys/{{.TokenID}}/rebind"
+                    data-confirm="{{$.T "comm.rebind_all_confirm"}}&#10;&#10;{{$.T "comm.col_binder"}}: {{.TokenID}}&#10;{{$.T "comm.col_live_endpoints"}}: {{.Live}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <select class="input" name="to_key" title="{{$.T "comm.rebind_all_help"}}" style="width:auto;font-size:.82rem">
+                  {{range .Targets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
+                </select>
+                <button class="btn btn--sm" type="submit" title="{{$.T "comm.rebind_all_help"}}">{{$.T "comm.rebind_all"}}</button>
+              </form>
+              {{else}}<span class="muted">{{$.T "comm.no_other_key"}}</span>{{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
 <!-- endpoints -->
 <section style="margin-top:var(--sp-5)">
   <div class="card">
@@ -176,6 +249,10 @@
           <!-- WHICH TOKEN OWNS IT was never shown, which is why nobody could see that eleven
                endpoints hung off one credential until it was queried by hand. -->
           <th>{{.T "comm.col_owner"}}</th>
+          <!-- AND WHICH STATION KEY AUTHORISED THE BINDING, the second weld: this column is
+               checked at use on every call, and a revoked or deleted key severs the endpoint
+               exactly as retiring its owning token would. It was never shown either. -->
+          <th>{{.T "comm.col_binder"}}</th>
           <th>{{.T "comm.col_last_seen"}}</th><th>{{.T "comm.col_created"}}</th><th></th>
         </tr></thead>
         <tbody>
@@ -187,6 +264,7 @@
               {{if .RotatedAt}}<span class="badge badge--sm" title="{{$.T "comm.rotated_help"}}">{{$.T "comm.rotated"}} ×{{.RotateCount}}</span>{{end}}
             </td>
             <td class="mono" style="font-size:.82rem">{{.Owner.TokenID}}</td>
+            <td class="mono" style="font-size:.82rem">{{if .BoundByStationKeyID}}{{.BoundByStationKeyID}}{{else}}<span class="muted">—</span>{{end}}</td>
             <td class="mono">{{localtime .LastSeenAt}}</td>
             <td class="mono">{{localtime .CreatedAt}}</td>
             <td>
@@ -197,15 +275,30 @@
               <!-- RE-POINT: change which token may drive this endpoint, keeping its id, its
                    secret, its channels, its station binding and its queued mail. A picker
                    rather than a text field, filtered to tokens the operation will accept. -->
-              {{if $.Data.CommTokens}}
+              {{if .RepointTargets}}
               <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/repoint"
                     data-confirm="{{$.T "comm.repoint_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}&#10;{{$.T "comm.col_owner"}}: {{.Owner.TokenID}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <input type="hidden" name="from_token" value="{{.Owner.TokenID}}">
                 <select class="input" name="to_token" title="{{$.T "comm.repoint_help"}}" style="width:auto;font-size:.82rem">
-                  {{range $.Data.CommTokens}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
+                  {{range .RepointTargets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
                 </select>
                 <button class="btn btn--sm" type="submit" title="{{$.T "comm.repoint_help"}}">{{$.T "comm.repoint"}}</button>
+              </form>
+              {{end}}
+              <!-- RE-BIND: change which station key authorised this binding, keeping the
+                   station itself. Offered only when the station has another live key, and
+                   only ever that station's keys — a binding moved to another station's key
+                   would hand that operator a sever lever over this session. -->
+              {{if .RebindTargets}}
+              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/rebind"
+                    data-confirm="{{$.T "comm.rebind_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}&#10;{{$.T "comm.col_binder"}}: {{.BoundByStationKeyID}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <input type="hidden" name="from_key" value="{{.BoundByStationKeyID}}">
+                <select class="input" name="to_key" title="{{$.T "comm.rebind_help"}}" style="width:auto;font-size:.82rem">
+                  {{range .RebindTargets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
+                </select>
+                <button class="btn btn--sm" type="submit" title="{{$.T "comm.rebind_help"}}">{{$.T "comm.rebind"}}</button>
               </form>
               {{end}}
               <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{if .Bound}}{{$.T "comm.revoke_bound_endpoint_confirm"}}{{else}}{{$.T "comm.revoke_endpoint_confirm"}}{{end}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{if .Bound}}{{$.T "comm.confirm_station_keeps"}}{{else}}{{$.T "comm.confirm_will_close"}}{{end}} ({{.OpenChannels}}): {{.ChannelsLine}}{{end}}">

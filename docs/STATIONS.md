@@ -275,6 +275,20 @@ third verb: "rotate" is mint-new-then-retire-old, and the console composes it.
 - **`ken token revoke` must compose.** A station key is an ordinary token row, so revoking it from the
   CLI or `/tokens` must take the same severing path; otherwise the SemVer-stable surface silently
   bypasses this decision.
+- **A binding can be MOVED to another key of the same station, which is what makes rotation
+  survivable (3.20.0).** `/comm` renders `bound_by_station_key_id` and offers **Re-bind** per
+  endpoint and per key. Unlike an owner re-point, the running session needs no config edit and no
+  restart: nothing it holds changes, only which key could sever it. So the safe rotation above gains
+  a step that costs the session nothing — **mint new → re-bind the endpoints onto it → then retire
+  or revoke the old key** — and the retire step no longer has to wait for a restart to be safe for
+  COMM. The move never crosses stations; the rule is in the `UPDATE`'s `WHERE`, because a binding
+  pointed at another station's key would hand that station's operator a lever over these sessions.
+- **The CLI path leaves work for the console, and it is repairable.** `ken token revoke` runs in a
+  separate process with no `comm.db` handle, so the eager sweep cannot run there: the endpoints stay
+  unrevoked in `endpoint` and are refused one call at a time by the at-use check. They are listed on
+  `/comm` under their now-revoked key, and re-binding them to a live key restores them **without a
+  re-registration**. On the `/tokens` path the sweep marks them revoked and nothing un-revokes an
+  endpoint anywhere in the tree — so there, re-bind before you revoke.
 
 ### S7 — Durable state and expendable state, split by lifetime *(chosen: pointers run expendable → durable)*
 

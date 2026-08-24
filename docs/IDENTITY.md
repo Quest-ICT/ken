@@ -197,7 +197,7 @@ condition is usually the thing being built:
   pair scope is derived from the two ids, so it needs neither side to be online"*. **Build on the
   derived-scope shape; do not re-derive rendezvous.**
 
-### 9.3 Two migration landmines — move the data *before* retiring the credential
+### 9.3 Three migration landmines — move the data *before* retiring the credential
 
 - **`endpoint.token_id` welds every live endpoint to the token that registered it, and there is no
   re-pointing path in the code.** Re-point the rows **first**; nothing that retires a credential may
@@ -241,6 +241,48 @@ condition is usually the thing being built:
 
   Production had already reported this column as write-once on 2026-08-18, filed then as a
   *rotation* gap. **Same column, two different disasters, and the second happens on purpose.**
+
+  > **RESOLVED IN 3.19.0.** `POST /comm/endpoints/{id}/repoint` moves one, `POST
+  > /comm/tokens/{id}/repoint` moves every live endpoint of a token in one statement, and
+  > `/comm` renders the owning token so the concentration is visible without a database query.
+  > The step remains first in §10: the control exists, the estate has not moved.
+- **`endpoint.bound_by_station_key_id` is a SECOND weld on the same row, and the entry above
+  called its rows the safe ones.** Every BOUND endpoint carries the station key that authorised
+  its binding, and that column is checked **at use, on every call** —
+  `commserver.go` → `store.IsStationKeyRevoked`, which returns *revoked* for a **missing** row as
+  well as a revoked one. So retiring a station key ends its bound sessions just as surely as
+  retiring their comm token does. **Bound endpoints have two welds; unbound have one.** The
+  correction above was right that a bound endpoint's mail survives the token weld and wrong to
+  read that as safety.
+
+  **THE MAGNITUDE, measured by ken-prod-ops on 2026-08-24, and it is the INVERSE of the first:**
+
+  ```
+  live bound endpoints = 8      distinct bound_by_station_key_id = 8      RATIO 1:1
+  ```
+
+  **No concentration at all — retiring one key costs exactly one session**, recoverable one at a
+  time, against eleven at once for the token weld including the channel the report would travel
+  on. That is why the token half shipped first, and it makes this a **correctness** fix rather
+  than a blast-radius fix. It should not inherit the first one's alarm.
+
+  **The 1:1 is an accident of provisioning, not a design property.** Those eight stations were
+  set up one at a time; nothing prevents a future key from binding several endpoints. A guarantee
+  that matters has to be enforced rather than observed — and this one is not worth enforcing (one
+  key legitimately covers several sessions of one station), so what is built instead is the
+  count before the click and the move that makes retirement survivable.
+
+  > **RESOLVED IN 3.20.0.** `POST /comm/endpoints/{id}/rebind` and `POST /comm/keys/{id}/rebind`
+  > move a binding to another key **of the same station** — the rule is in the `UPDATE`'s `WHERE`,
+  > so another station's key can never become a lever over these sessions. Unlike an owner
+  > re-point, the running session needs no config edit and no restart. `/comm` renders the binding
+  > key and groups endpoints by both credentials.
+  >
+  > **One asymmetry to know: on the CLI revoke path this control is CURATIVE.** `ken token revoke`
+  > has no `comm.db` handle and cannot sever, so its endpoints stay live-looking and are refused
+  > one call at a time — re-binding them repairs a session that has already stopped answering. On
+  > the console revoke path the sweep marks them revoked and a revoked endpoint is refused here,
+  > so there the move must come **first**. There is no un-revoke path anywhere in the tree.
 - **`api_token.station_id IS NULL` is a state, not data** — a key in it may call exactly one tool.
   §5 deletes the state deliberately. What must not go with it is the human-typed *name*: §5 keeps
   naming by moving the moment to the link-approval screen, which is the one place a bad name is in
@@ -318,6 +360,11 @@ credentials retire, or mail is stranded with no error.
 1. **Re-point what is welded to a credential.** `endpoint.token_id` first. Nothing else may start
    until this is reversible. §9.3 carries the magnitude: **eleven live endpoints on one token**, and
    an open rotation decision on it that currently means "re-onboard the estate".
+
+   **BOTH welds are in this step, and the controls now exist for both** — `token_id` in 3.19.0,
+   `bound_by_station_key_id` in 3.20.0. A bound endpoint whose owner has been re-pointed is still
+   welded to its station key; moving one and calling the step done leaves the estate half-moved in
+   a way every count reconciles. The terms below were stated for the token half and apply to both.
 
    **THE TERMS FOR THIS ONE STEP, stated by ken-prod-ops before it is built and accepted here.**
    They apply to no other step, and the reason is specific: *"it is the one migration where my

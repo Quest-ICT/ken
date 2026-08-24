@@ -125,3 +125,38 @@ func endpointOf(t *testing.T, cs *comm.Store, id string) comm.Endpoint {
 	t.Fatalf("endpoint %s not in ListEndpoints", id)
 	return comm.Endpoint{}
 }
+
+// *** THE PICKER NEVER DEFAULTS TO A NO-OP. ***
+//
+// The control shipped in 3.19.0 listing every comm token, the endpoint's own included, and its
+// own sorts first — so the default selection was "move it to the token it is already on".
+// Clicking Re-point then flashed *"Endpoint X re-pointed. Its channels, binding and queued mail
+// are unchanged; the session needs the new token in its config and a restart"* over a row
+// nothing had touched: a success message for a no-op, with instructions to restart a session
+// that did not need it.
+//
+// The store is right to accept it — `token_id=? WHERE token_id=?` affects one row, which is
+// idempotent and correct. The console is what must not offer it.
+func TestThePickerDoesNotOfferTheTokenTheEndpointIsAlreadyOn(t *testing.T) {
+	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
+	cs := commOf(t)
+
+	own, _ := st.IssueToken(ctx, actor, []string{"comm"}, "current-machine")
+	other, _ := st.IssueToken(ctx, actor, []string{"comm"}, "other-machine")
+	ownID := strings.SplitN(strings.TrimPrefix(own, "ken_"), "_", 2)[0]
+	otherID := strings.SplitN(strings.TrimPrefix(other, "ken_"), "_", 2)[0]
+
+	if _, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: ownID, ActorID: actor, SpaceID: spaceForSession}, "laptop", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, cli, base+"/comm")
+	if strings.Contains(body, `<option value="`+ownID+`"`) {
+		t.Error("the re-point picker offers the endpoint's own token — the default selection is a no-op that flashes success")
+	}
+	// CONTROL: the other token IS offered, so the assertion above is about the filter and not
+	// about a picker that renders nothing at all.
+	if !strings.Contains(body, `<option value="`+otherID+`"`) {
+		t.Fatal("no re-point option renders at all — this test cannot tell a filter from an empty picker")
+	}
+}

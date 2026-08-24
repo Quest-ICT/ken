@@ -15,6 +15,74 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.20.0] — 2026-08-24
+
+### Added
+
+- **The second weld can be moved too. A bound endpoint answers to TWO credentials, not one.**
+  `token_id` says which token may drive an endpoint; `bound_by_station_key_id` says which station
+  key authorised its binding, and that column is checked at **use, on every single call**
+  (`store.IsStationKeyRevoked`), with a **missing** row treated as revoked. So retiring a station
+  key ends its bound sessions exactly as retiring their comm token does — through a column nothing
+  rendered and `docs/IDENTITY.md` §9.3 did not name. 3.19.0 moved one weld and left the other.
+
+  `/comm` gains **Re-bind** beside Re-point, and `POST /comm/keys/{id}/rebind` moves every live
+  endpoint one key bound in a single statement. The endpoint keeps its id, its **secret**, its
+  channels and seats, its **station**, and everything queued for it — and unlike an owner
+  re-point, **the running session needs no config edit and no restart**: nothing it holds changes,
+  only which key could sever it.
+
+  **A binding only ever moves to another key of the SAME station**, and that rule lives in the
+  `UPDATE`'s `WHERE` rather than in a check above it. Moving a binding onto another station's key
+  would hand that station's operator a lever that disconnects these sessions and take it away from
+  the station that owns them — an authority laundered, with every count on both pages still
+  reconciling.
+
+  **Smaller than the first weld, and measured rather than assumed.** ken-prod-ops counted 8 live
+  bound endpoints against 8 distinct binding keys on 2026-08-24 — 1:1, so retiring one key today
+  costs exactly one session, against eleven for the token weld. **That ratio is an accident of how
+  those stations were provisioned one at a time, not a property**: nothing stops one key from
+  binding several endpoints, which is why the bulk verb exists and why `/tokens` states the count
+  before the click.
+
+  **It is also the only repair for a session `ken token revoke` has already killed.** The CLI runs
+  in a separate process with no `comm.db` handle, so it cannot sever the endpoints its key bound:
+  they stay live in `endpoint`, listed and counted and apparently healthy, and are refused one call
+  at a time with nothing on any page saying why. Re-binding them to a working key restores them
+  without a re-registration. On the console revoke path the sweep does mark them, and a revoked
+  endpoint is refused here — so **there, this is a move to make first.** There is no un-revoke path
+  anywhere in the tree.
+
+- **`/comm` groups endpoints by the credentials that would end them**, with the live count and the
+  bulk move beside it — owning tokens in one table, binding station keys in the other. The
+  concentration this makes visible had to be queried from the database by hand.
+
+### Fixed
+
+- **The bulk re-point shipped in 3.19.0 with no way to reach it.** Route, handler,
+  `RepointEndpointsOfToken`, a console test through the mux, flash strings in three locales — and
+  no form anywhere posted to `/comm/tokens/{id}/repoint`. The verb that exists precisely for the
+  eleven-endpoints-on-one-token case could be used only with `curl`, which breaks the standing rule
+  that the console is the main method for any operation.
+
+  **`TestEveryPostRouteHasAConsoleSurface` now fails when a POST route has no form.** It reads the
+  templates rather than the mux, because a test that POSTs a path proves the handler works and
+  never that anything offers it. It failed on its first run naming exactly this route — and named
+  its own allowlist entry as wrong in the same run, which is the both-directions check doing its
+  job.
+
+- **The Re-point picker no longer defaults to a no-op.** It listed every comm token, the
+  endpoint's own included, and its own sorts first — so the default selection was "move it to the
+  token it is already on", and clicking flashed *"…the session needs the new token in its config
+  and a restart"* over a row nothing had touched. A success message for a no-op, with instructions
+  attached. The store is right to accept the write; the console is what must not offer it.
+
+- **A refused re-bind now says which rule refused it.** The same-station guard lives in the
+  statement, so a key from another station simply moves no rows and the bare answer is
+  `ErrNotFound` — telling the operator that an endpoint visible on the page does not exist. The
+  explanation is derived *after* the refusal, so it cannot re-open a check-then-act window, and it
+  names the four possible states honestly rather than guessing which one applies.
+
 ## [3.19.0] — 2026-08-24
 
 ### Added

@@ -206,6 +206,8 @@ func (a *app) routes() http.Handler {
 		mux.HandleFunc("POST /comm/endpoints/{id}/rotate", a.requireAuth(a.handleCommRotateEndpoint))
 		mux.HandleFunc("POST /comm/endpoints/{id}/repoint", a.requireAuth(a.handleCommRepointEndpoint))
 		mux.HandleFunc("POST /comm/tokens/{id}/repoint", a.requireAuth(a.handleCommRepointToken))
+		mux.HandleFunc("POST /comm/endpoints/{id}/rebind", a.requireAuth(a.handleCommRepointBinder))
+		mux.HandleFunc("POST /comm/keys/{id}/rebind", a.requireAuth(a.handleCommRepointKey))
 	}
 	mux.HandleFunc("GET /setup", a.handleSetupForm)
 	mux.HandleFunc("POST /setup", a.handleSetupSubmit)

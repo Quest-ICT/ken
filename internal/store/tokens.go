@@ -83,7 +83,6 @@ type TokenRow struct {
 	Station string
 }
 
-// ListTokens lists all API tokens, newest first.
 // ErrNotACommToken refuses a re-point target that cannot own a COMM endpoint.
 //
 // CallerSafe by nature: the console caller is already authenticated, so naming the reason
@@ -135,6 +134,48 @@ WHERE t.token_id = ?`, tokenID).Scan(&actorID, &spaceID, &scopesJSON, &revoked)
 	return 0, 0, ErrNotACommToken
 }
 
+// ErrNotAStationKey refuses a re-point target that cannot have authorised a binding.
+//
+// The mirror of ErrNotACommToken, and the two are NOT interchangeable: a comm token owns an
+// endpoint, a station key authorised its binding, and the console can move either. Pointing a
+// binding at a plain comm token would name an authority that can never be revoked as a station
+// key, which is a control that reads as present and is not.
+var ErrNotAStationKey = errors.New("that token cannot have bound an endpoint — it must exist, be unrevoked, and be a station key")
+
+// StationKeyStation resolves a station key to the station it belongs to, refusing any token
+// that could not have authorised a binding.
+//
+// WHY THE STATION COMES BACK RATHER THAN A BARE OK. `endpoint.bound_by_station_key_id` is the
+// lever that severs a session when its key is revoked (S6), so moving a binding onto a key of
+// a DIFFERENT station would hand that station's operator a lever over someone else's session —
+// and would take the real station's lever away. The caller passes this station id into the
+// re-point statement's WHERE clause, so the endpoint's own station has to match for any row to
+// move. The rule is enforced by the UPDATE rather than by a check preceding it (§9.5 of
+// docs/IDENTITY.md), which is what makes a stale console page fail loudly instead of laundering
+// an authority.
+//
+// REFUSING A REVOKED KEY IS THE POINT OF THE OPERATION, not a nicety. `IsStationKeyRevoked`
+// treats a revoked key — and a MISSING one — as severing every endpoint it bound, so
+// re-pointing onto a dead key produces a session that is refused on its next call and fails
+// identically to one whose key leaked. That is the defect class this control exists to cure.
+func (s *Store) StationKeyStation(ctx context.Context, tokenID string) (string, error) {
+	var stationID sql.NullString
+	var revoked sql.NullString
+	err := s.R.QueryRowContext(ctx,
+		`SELECT station_id, revoked_at FROM api_token WHERE token_id = ?`, tokenID).Scan(&stationID, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotAStationKey
+	}
+	if err != nil {
+		return "", err
+	}
+	if revoked.Valid || !stationID.Valid || stationID.String == "" {
+		return "", ErrNotAStationKey
+	}
+	return stationID.String, nil
+}
+
+// ListTokens lists all API tokens, newest first.
 func (s *Store) ListTokens(ctx context.Context) ([]TokenRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT t.token_id, a.display_name, a.kind, t.scopes, COALESCE(t.label,''),

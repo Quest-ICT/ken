@@ -119,6 +119,17 @@ coming back. And the TARGET must be validated: re-pointing onto a revoked or non
 produces an endpoint that authenticates nowhere and fails identically to one with a leaked secret,
 which is this project's own defect class manufactured by the control built to cure it.
 
+**And one thing this entry did not know existed: a SECOND weld on the same row.** `token_id` is
+which credential may DRIVE an endpoint; `bound_by_station_key_id` is which station key AUTHORISED
+its binding, checked at use on every call, with a missing row treated as revoked. Every bound
+endpoint is welded twice, and 3.19.0 moved one of them. **Closed in 3.20.0** by `POST
+/comm/endpoints/{id}/rebind` and `POST /comm/keys/{id}/rebind`, which move a binding to another key
+of the **same station** — the rule is in the `UPDATE`'s `WHERE`, since another station's key would
+be a lever over these sessions. Unlike an owner re-point it costs the session nothing: no config
+edit, no restart. Measured on production 2026-08-24: 8 live bound endpoints, 8 distinct keys, **1:1
+— the inverse of the token weld's eleven-on-one**, and an accident of provisioning rather than a
+guarantee.
+
 **E3 — Mail addressed to an unbound endpoint is unreadable forever by any successor, and binding
 does not fix it. Live instance included.** `delivery.party_key` is stamped at SEND time and never
 updated; `BindEndpointToStation` updates only the endpoint row. So an endpoint that receives mail
@@ -157,6 +168,17 @@ can read the entire knowledge base and leave nothing behind.** 3.10.0 fixed prec
 station keys, with the reasoning that "no timestamp" reads as "unused" rather than "unmeasured".
 This is the same sentence, and it pairs with the independently-found fact that the grant's scope is
 discarded — see §A of this file and TARGET-ARCHITECTURE.md §7.
+
+**E7 — A route with a handler, a store primitive, tests and translations, and no button. CLOSED
+2026-08-24 in 3.20.0.** `POST /comm/tokens/{id}/repoint` — the *bulk* verb, the half that exists
+precisely for the eleven-endpoints-on-one-token case — shipped in 3.19.0 with everything except a
+form that posts to it, so it could be reached only with `curl`. That breaks the standing rule that
+the console is the main method for any operation, and it is this project's recurring defect class
+one level above where the existing gates watch for it: `internal/audit` fails when an exported store
+method has no production caller, and a console test that POSTs a path proves the handler works while
+proving nothing about whether anything offers it. `TestEveryPostRouteHasAConsoleSurface` reads the
+templates instead. It failed on its first run naming exactly this route — **and named its own
+allowlist entry as wrong in the same run**, which is the both-directions check earning its keep.
 
 ---
 

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -104,6 +105,36 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		// keeps its channels and a successor inherits them with a voucher. One sentence
 		// cannot be true of both, and the one that shipped was the unbound case.
 		Bound bool
+		// RebindTargets are the OTHER live station keys of this endpoint's own station —
+		// the only legal destinations for its binding. Computed here rather than filtered
+		// in the template, and empty when the station has no alternative key, so the
+		// control appears only where it can do something. A picker whose single option is
+		// the value already set is a button that does nothing.
+		RebindTargets []binderTarget
+		// RepointTargets are the other comm tokens, for the same reason: the picker shipped
+		// in 3.19.0 listed EVERY comm token including this endpoint's own, and it sorts
+		// first, so the default selection was "move it to where it already is". Clicking
+		// Re-point then flashed "Endpoint X re-pointed. …the session needs the new token in
+		// its config and a restart" over a row nothing had touched — a success message for a
+		// no-op, with instructions attached.
+		RepointTargets []repointTarget
+	}
+	// credential is one credential that can end a live endpoint, with how many it would
+	// take. Two lists, because there are two welds and they are different questions.
+	//
+	// WHY THIS BLOCK EXISTS AT ALL. Nobody could see that eleven live endpoints hung off
+	// one comm token until ken-prod-ops queried the database by hand on 2026-08-24; the
+	// console listed endpoints and never grouped them by the thing whose retirement kills
+	// them. The bulk re-point shipped in 3.19.0 with a route, a handler, a store primitive
+	// and flash strings in three locales — and no form anywhere posted to it, so the verb
+	// that exists precisely for the eleven-at-once case could be reached only with curl.
+	// TestEveryPostRouteHasAConsoleSurface now fails when that happens again.
+	type credential struct {
+		TokenID string
+		Label   string
+		Station string // "" for a comm token; the station name for a station key
+		Live    int
+		Targets []any // where its endpoints may be moved: repointTarget or binderTarget
 	}
 	//
 	// GROUPED BY STATION WHERE THERE IS ONE, because a channel belongs to the station and
@@ -134,20 +165,114 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 			}
 		}
 	}
+	commTokens := a.repointTargets(ctx)
+	keys := a.binderTargets(ctx)
+
 	eps := make([]epView, 0, len(endpoints))
 	for _, ep := range endpoints {
 		names := byEndpoint[ep.EndpointID]
 		if ep.StationID != "" {
 			names = byStation[ep.StationID]
 		}
-		eps = append(eps, epView{
+		v := epView{
 			Endpoint: ep, OpenChannels: len(names), ChannelsLine: strings.Join(names, ", "),
 			Bound: ep.StationID != "",
-		})
+		}
+		if ep.StationID != "" {
+			for _, k := range keys {
+				if k.Station == ep.StationID && k.TokenID != ep.BoundByStationKeyID {
+					v.RebindTargets = append(v.RebindTargets, k)
+				}
+			}
+		}
+		for _, ct := range commTokens {
+			if ct.TokenID != ep.Owner.TokenID {
+				v.RepointTargets = append(v.RepointTargets, ct)
+			}
+		}
+		eps = append(eps, v)
+	}
+
+	// THE ROWS ARE DISCOVERED FROM THE ENDPOINTS, NOT FROM THE PICKER LISTS, and that is the
+	// difference between a block that reports the estate and one that reports the estate it
+	// approves of. `repointTargets`/`binderTargets` are filtered to credentials a move may
+	// legally name; a credential that OWNS or BOUND live endpoints and is not a legal target —
+	// a revoked station key above all — would be silently absent from a block whose entire
+	// purpose is to make such a credential visible before someone retires it.
+	//
+	// THE REVOKED-KEY ROW IS THE ONE THAT MATTERS. `ken token revoke` runs in a separate
+	// process with no comm.db handle, so it cannot sever the endpoints its key bound: they stay
+	// live in this list and are refused at use by store.IsStationKeyRevoked, one call at a
+	// time, with nothing on any page saying why. Rendering the row — and offering the move —
+	// turns that into a repair the operator can make.
+	//
+	// THE COUNT COMES FROM THE STORE RATHER THAN FROM THE LIST, because `ListEndpoints` is
+	// space-scoped while the bulk verbs and the revoke that makes them urgent are NOT:
+	// `RepointEndpointsOfToken` and `SeverEndpointsBoundBy` name the credential and nothing
+	// else. A count taken from the rendered rows would print a number smaller than what the
+	// button beside it moves, and smaller than the blast radius /tokens states for the same
+	// credential. It is the pair /tokens uses, so the two pages cannot drift.
+	labels := map[string]string{}
+	if rows, err := a.store.ListTokens(ctx); err == nil {
+		for _, t := range rows {
+			labels[t.TokenID] = t.Label
+		}
+	}
+	var ownerIDs, binderIDs []string
+	stationOf := map[string]string{}
+	seenOwner, seenBinder := map[string]bool{}, map[string]bool{}
+	for _, ep := range endpoints {
+		if !seenOwner[ep.Owner.TokenID] {
+			seenOwner[ep.Owner.TokenID] = true
+			ownerIDs = append(ownerIDs, ep.Owner.TokenID)
+		}
+		if ep.BoundByStationKeyID != "" && !seenBinder[ep.BoundByStationKeyID] {
+			seenBinder[ep.BoundByStationKeyID] = true
+			binderIDs = append(binderIDs, ep.BoundByStationKeyID)
+			stationOf[ep.BoundByStationKeyID] = ep.StationID
+		}
+	}
+	owners := make([]credential, 0, len(ownerIDs))
+	for _, id := range ownerIDs {
+		n, err := a.comm.CountEndpointsByToken(ctx, id)
+		if err != nil {
+			log.Printf("web: count endpoints by token %s: %v", id, err)
+			continue
+		}
+		c := credential{TokenID: id, Label: labels[id], Live: n}
+		for _, other := range commTokens {
+			if other.TokenID != id {
+				c.Targets = append(c.Targets, other)
+			}
+		}
+		owners = append(owners, c)
+	}
+	binders := make([]credential, 0, len(binderIDs))
+	for _, id := range binderIDs {
+		n, err := a.comm.CountEndpointsBoundBy(ctx, id)
+		if err != nil {
+			log.Printf("web: count endpoints bound by %s: %v", id, err)
+			continue
+		}
+		// The station's human name comes from any live key of that station, its own
+		// included, and falls back to the raw id when the station has no live key left —
+		// which is honest rather than blank: that row is a station whose every key is gone.
+		c := credential{TokenID: id, Label: labels[id], Station: stationOf[id], Live: n}
+		for _, k := range keys {
+			if k.Station != stationOf[id] {
+				continue
+			}
+			c.Station = k.StationName
+			if k.TokenID != id {
+				c.Targets = append(c.Targets, k)
+			}
+		}
+		binders = append(binders, c)
 	}
 
 	a.render(w, r, sess, "comm", map[string]any{
-		"Endpoints": eps, "CommTokens": a.repointTargets(r.Context()), "Channels": channels, "Codes": codes, "Stats": stats,
+		"Endpoints": eps, "Channels": channels, "Codes": codes, "Stats": stats,
+		"Owners": owners, "Binders": binders,
 		"NewCode": newCode, "CommURL": a.publicCommURL(r), "Fingerprint": fp,
 		"Rotated": rot,
 	})
@@ -369,6 +494,136 @@ func (a *app) repoint(w http.ResponseWriter, r *http.Request, sess *store.Sessio
 	log.Printf("COMM: %d live endpoint(s) re-pointed from token %s to token %s (actor %d) by %q",
 		n, fromToken, to.TokenID, to.ActorID, sess.ActorName)
 	flashRedirect(w, r, "/comm", "flash.comm_repointed_bulk", fmt.Sprint(n))
+}
+
+// binderTarget is one station key an endpoint's BINDING may be moved onto.
+//
+// It carries the station, which the template needs: a binding may only move to a key of the
+// same station, so the picker for one endpoint must offer that station's keys and no others.
+type binderTarget struct {
+	TokenID     string
+	Label       string
+	Station     string // station id the key belongs to
+	StationName string // what a human recognises; falls back to the id
+}
+
+// binderTargets lists the station keys a binding re-point may legally name.
+//
+// Filtered by the SAME rule store.StationKeyStation enforces — present, unrevoked, a station
+// key — for the reason repointTargets gives: a picker offering an option the action then
+// refuses teaches an operator the control is unreliable. The store still re-checks, and the
+// same-station rule is enforced by the UPDATE rather than by this list, so a stale page fails
+// instead of laundering an authority.
+func (a *app) binderTargets(ctx context.Context) []binderTarget {
+	rows, err := a.store.ListTokens(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]binderTarget, 0, len(rows))
+	for _, t := range rows {
+		if t.RevokedAt != "" {
+			continue
+		}
+		station, err := a.store.StationKeyStation(ctx, t.TokenID)
+		if err != nil {
+			continue
+		}
+		out = append(out, binderTarget{TokenID: t.TokenID, Label: t.Label, Station: station, StationName: t.Station})
+	}
+	return out
+}
+
+// handleCommRepointBinder moves ONE bound endpoint's binding onto a different station key.
+//
+// The second weld, and the reason it needs its own control rather than riding along with the
+// first: `token_id` and `bound_by_station_key_id` are two different credentials pointing at
+// the same row, each independently fatal when retired. Moving one leaves the other welded.
+func (a *app) handleCommRepointBinder(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	a.repointBinder(w, r, sess, r.PathValue("id"), "")
+}
+
+// handleCommRepointKey moves EVERY live endpoint one station key bound at once.
+func (a *app) handleCommRepointKey(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	a.repointBinder(w, r, sess, "", r.PathValue("id"))
+}
+
+// repointBinder validates the TARGET KEY and then performs one of the two moves.
+//
+// Structurally the twin of repoint above, and deliberately not merged with it. The two verbs
+// answer different questions — which credential may DRIVE this endpoint, versus which key
+// AUTHORISED its binding — and share only their shape. A single handler taking a "which
+// column" flag would put the two welds one typo apart.
+//
+// THE STATION COMES BACK FROM THE VALIDATION AND IS PASSED INTO THE MOVE. That is the whole
+// same-station rule: whatever station the target key belongs to is the station the endpoint
+// must already be on, checked inside the UPDATE. Nothing here compares them, so there is no
+// window between the check and the write.
+func (a *app) repointBinder(w http.ResponseWriter, r *http.Request, sess *store.Session, endpointID, fromKey string) {
+	if a.comm == nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	target := strings.TrimSpace(r.FormValue("to_key"))
+	if target == "" {
+		flashRedirect(w, r, "/comm", "flash.comm_rebind_no_target", "")
+		return
+	}
+	station, err := a.store.StationKeyStation(r.Context(), target)
+	if err != nil {
+		flashRedirect(w, r, "/comm", "flash.comm_rebind_bad_target", target)
+		return
+	}
+
+	if endpointID != "" {
+		from := strings.TrimSpace(r.FormValue("from_key"))
+		if err := a.comm.RepointEndpointBinder(r.Context(), endpointID, from, target, station); err != nil {
+			// EXPLAIN AFTER THE REFUSAL, NEVER BEFORE THE WRITE. The same-station rule lives
+			// in the statement's WHERE, so a target belonging to another station simply moves
+			// no rows — and the bare answer is ErrNotFound, which tells the operator an
+			// endpoint they can see on the page does not exist. That is the defect class this
+			// project keeps finding, worn by the control built to cure it.
+			//
+			// So the diagnosis is derived from what was already refused. It cannot re-open a
+			// check-then-act window because the write has definitively not happened, and it
+			// names the four states honestly rather than guessing which one applies: the store
+			// deliberately collapses them so they never become a probe.
+			if errors.Is(err, comm.ErrNotFound) {
+				flashRedirect(w, r, "/comm", "flash.comm_rebind_nothing_moved", station)
+				return
+			}
+			flashRedirect(w, r, "/comm", "flash.comm_rebind_failed", err.Error())
+			return
+		}
+		// The audit record, and the one that survives: comm.db is expendable and carries no
+		// history of this column, so this line is the trace. It names the station because the
+		// same-station rule is the property a reader will want to confirm afterwards.
+		log.Printf("COMM: endpoint %s binding re-pointed from station key %s to %s (station %s) by %q — id, secret, channels, station and queued mail unchanged",
+			endpointID, from, target, station, sess.ActorName)
+		flashRedirect(w, r, "/comm", "flash.comm_rebound", endpointID)
+		return
+	}
+
+	n, err := a.comm.RepointEndpointsBoundBy(r.Context(), fromKey, target, station)
+	if err != nil {
+		flashRedirect(w, r, "/comm", "flash.comm_rebind_failed", err.Error())
+		return
+	}
+	// The bulk verb reports a count rather than an error, so zero is its refusal — and the
+	// overwhelmingly likely cause is the same one: a key of another station. Same reasoning
+	// as above, same honest enumeration.
+	if n == 0 {
+		flashRedirect(w, r, "/comm", "flash.comm_rebind_nothing_moved", station)
+		return
+	}
+	log.Printf("COMM: %d live endpoint binding(s) re-pointed from station key %s to %s (station %s) by %q",
+		n, fromKey, target, station, sess.ActorName)
+	flashRedirect(w, r, "/comm", "flash.comm_rebound_bulk", fmt.Sprint(n))
 }
 
 // commTokenOwner resolves a target token through the store, which owns the question.

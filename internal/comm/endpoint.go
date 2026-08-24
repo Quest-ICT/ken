@@ -246,6 +246,98 @@ func (s *Store) CountEndpointsByToken(ctx context.Context, tokenID string) (int,
 	return n, err
 }
 
+// RepointEndpointBinder moves ONE bound endpoint onto a different station key of the SAME
+// station, keeping everything else: its id, its secret, its channels and seats, its station,
+// its queued mail and its claims.
+//
+// WHY THIS EXISTS — THE SECOND WELD, and it is the one the first one's write-up got wrong.
+// A bound endpoint is welded to TWO credentials, not one. `token_id` says which token may
+// drive it; `bound_by_station_key_id` says which station key authorised the binding, and that
+// column is checked at USE on every single call (commserver.go, via store.IsStationKeyRevoked)
+// with a MISSING row treated as revoked. So retiring a station key kills its bound endpoints
+// just as surely as retiring their comm token does, through a column nobody was looking at.
+// docs/IDENTITY.md §9.3 listed the token weld and called bound endpoints the safer case. They
+// are the case with two welds.
+//
+// AND IT IS SMALLER THAN THE FIRST ONE, measured rather than assumed. ken-prod-ops counted 8
+// live bound endpoints against 8 distinct binding keys on 2026-08-24 — 1:1, so retiring one
+// key today costs exactly one session, recoverable one at a time, while the token weld
+// concentrates eleven on one credential including the channel the report would travel on.
+// That makes this a correctness fix rather than a blast-radius fix, and it is why the token
+// half shipped first. THE RATIO IS AN ACCIDENT OF PROVISIONING, NOT A PROPERTY: nothing stops
+// one key from binding several endpoints, which is why the bulk verb below exists and why
+// /tokens states the count before the click rather than trusting the shape of today's estate.
+//
+// THE SAME-STATION RULE IS IN THE `WHERE`, NEVER IN A CHECK BEFORE IT. `ofStation` is the
+// station the caller resolved the TARGET key to; the statement requires the endpoint's own
+// station to equal it. Moving a binding onto another station's key would hand that station's
+// operator a sever lever over this session and take the real station's lever away — an
+// authority laundered, with every count still reconciling. Enforced by the UPDATE, it cannot
+// happen; enforced by an `if` above the UPDATE, it happens the first time two operators click
+// at once.
+//
+// `fromKeyID` is in the WHERE for the same reason RepointEndpointOwner puts the old token
+// there: idempotent, and a stale console page fails loudly rather than moving a row somebody
+// else already moved.
+//
+// IT DOES NOT TOUCH THE CLAIMS. Sever, unbind and revoke all release
+// `delivery.claimed_by_endpoint` because "a severed reader is never coming back to ack". A
+// re-pointed reader is coming back — copying that pattern by reflex would hand a live
+// session's in-flight mail to a sibling reader mid-conversation.
+//
+// PREVENTIVE ON ONE REVOCATION PATH AND CURATIVE ON THE OTHER, which is worth stating exactly
+// because the two look identical from the console. Revoking a key from /tokens also SEVERS the
+// endpoints it bound — SeverEndpointsBoundBy marks them revoked — and a revoked endpoint is
+// refused here exactly as rotation and owner re-pointing refuse one. There is no un-revoke path
+// anywhere in the tree, so on that path this is a move to make BEFORE retiring the key, the
+// same ordering §10 of docs/IDENTITY.md derives for the token weld.
+//
+// `ken token revoke` cannot sever anything: it runs in a separate process with no comm.db
+// handle. Its endpoints stay unrevoked in this table and are refused one call at a time by
+// store.IsStationKeyRevoked, which is why that check exists at use. Those rows are still live
+// here, so re-pointing them onto a working key REPAIRS a session that has already stopped
+// answering — the only repair for it that does not cost a re-registration.
+//
+// THE TARGET MUST BE AN api_token ROW and this package cannot check that — `internal/comm`
+// does not import `internal/store` and must not learn to (S7's pointer rule). The caller
+// validates with store.StationKeyStation: present, unrevoked, a station key, and the station
+// it names is what lands in `ofStation`.
+func (s *Store) RepointEndpointBinder(ctx context.Context, endpointID, fromKeyID, toKeyID, ofStation string) error {
+	res, err := s.W.ExecContext(ctx, `
+UPDATE endpoint SET bound_by_station_key_id=?
+ WHERE endpoint_id=? AND bound_by_station_key_id=? AND station_id=? AND revoked_at IS NULL`,
+		toKeyID, endpointID, fromKeyID, ofStation)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Unknown, revoked, already-moved and wrong-station are one answer. The console
+		// caller is already authenticated so it loses nothing, and the four never diverge
+		// into a probe — the same stance RepointEndpointOwner takes above.
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RepointEndpointsBoundBy moves EVERY live endpoint one station key bound onto another key of
+// the same station, in a single statement, and returns how many moved.
+//
+// The mirror of RepointEndpointsOfToken, and it exists for the case today's estate does not
+// have rather than the one it does. At 1:1 this is the per-endpoint verb with extra steps; the
+// moment one key binds several sessions it is the difference between retiring a key and
+// half-retiring it, which is the state nobody has a recovery story for.
+func (s *Store) RepointEndpointsBoundBy(ctx context.Context, fromKeyID, toKeyID, ofStation string) (int, error) {
+	res, err := s.W.ExecContext(ctx, `
+UPDATE endpoint SET bound_by_station_key_id=?
+ WHERE bound_by_station_key_id=? AND station_id=? AND revoked_at IS NULL`,
+		toKeyID, fromKeyID, ofStation)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 func (s *Store) RotateEndpointSecret(ctx context.Context, endpointID string) (string, error) {
 	secret, err := randBase62(40)
 	if err != nil {
