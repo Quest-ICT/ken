@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -253,6 +254,103 @@ func (a *app) handleCommRotateEndpoint(w http.ResponseWriter, r *http.Request, s
 	log.Printf("COMM: endpoint %s secret rotated by %q (actor %d) — the previous secret no longer authenticates",
 		id, sess.ActorName, sess.ActorID)
 	a.renderComm(w, r, sess, "", reveal{EndpointID: id, Secret: secret})
+}
+
+// handleCommRepointEndpoint moves ONE endpoint to a different owning token.
+//
+// The security property is WHERE this handler is, exactly as for rotation: behind
+// requireAuth + CSRF, so it needs curator authentication — a credential no session holds and
+// none can obtain from the machine. An equivalent MCP tool was refused for rotation with an
+// argument that applies here even more strongly: a secret at least has to be handed over,
+// while an `endpoint_id` is NOT a secret. It is the routing address, rendered on this very
+// page and printed throughout the runbooks. A self-service re-point would let any session on
+// a shared machine seize any endpoint on it, with nothing to steal first.
+func (a *app) handleCommRepointEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	a.repoint(w, r, sess, r.PathValue("id"), "")
+}
+
+// handleCommRepointToken moves EVERY live endpoint of one token at once.
+//
+// Not convenience. Eleven endpoints on one token is the shape that makes a per-endpoint
+// control feel like the ceremony it was built to remove, and a half-moved estate is the state
+// nobody has a recovery story for.
+func (a *app) handleCommRepointToken(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	a.repoint(w, r, sess, "", r.PathValue("id"))
+}
+
+// repoint validates the TARGET and then performs one of the two moves.
+//
+// THE VALIDATION LIVES HERE AND NOWHERE ELSE, and that is a placement decision rather than
+// convenience. `internal/comm` cannot check an api_token: it does not import `internal/store`
+// and must not learn to, because S7's pointer rule runs comm -> store and never back. This
+// package holds both handles already.
+//
+// AND IT IS PART OF THE AUTHORISATION, not a nicety. Re-pointing onto a revoked or non-comm
+// token produces an endpoint that authenticates NOWHERE and fails indistinguishably from one
+// whose secret leaked — a missing scope is a 401 at the transport, a revoked target is the bare
+// ownership string, and neither says "you re-pointed onto a dead token". That is the hunted
+// defect class, manufactured by the control built to cure it.
+func (a *app) repoint(w http.ResponseWriter, r *http.Request, sess *store.Session, endpointID, fromToken string) {
+	if a.comm == nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	target := strings.TrimSpace(r.FormValue("to_token"))
+	if target == "" {
+		flashRedirect(w, r, "/comm", "flash.comm_repoint_no_target", "")
+		return
+	}
+
+	to, ok := a.commTokenOwner(r.Context(), target)
+	if !ok {
+		flashRedirect(w, r, "/comm", "flash.comm_repoint_bad_target", target)
+		return
+	}
+
+	if endpointID != "" {
+		from := strings.TrimSpace(r.FormValue("from_token"))
+		if err := a.comm.RepointEndpointOwner(r.Context(), endpointID, from, to); err != nil {
+			flashRedirect(w, r, "/comm", "flash.comm_repoint_failed", err.Error())
+			return
+		}
+		// THE AUDIT RECORD, and it is the one that survives: comm.db is expendable and not
+		// backed up, so the row carries no history and this line is the trace. It names both
+		// tokens because "which credential does this endpoint answer to now" is the whole
+		// question a re-point changes.
+		log.Printf("COMM: endpoint %s re-pointed from token %s to token %s (actor %d) by %q — id, secret, channels, binding and queued mail unchanged",
+			endpointID, from, to.TokenID, to.ActorID, sess.ActorName)
+		flashRedirect(w, r, "/comm", "flash.comm_repointed", endpointID)
+		return
+	}
+
+	n, err := a.comm.RepointEndpointsOfToken(r.Context(), fromToken, to)
+	if err != nil {
+		flashRedirect(w, r, "/comm", "flash.comm_repoint_failed", err.Error())
+		return
+	}
+	log.Printf("COMM: %d live endpoint(s) re-pointed from token %s to token %s (actor %d) by %q",
+		n, fromToken, to.TokenID, to.ActorID, sess.ActorName)
+	flashRedirect(w, r, "/comm", "flash.comm_repointed_bulk", fmt.Sprint(n))
+}
+
+// commTokenOwner resolves a target token through the store, which owns the question.
+//
+// Deliberately a thin wrapper: the resolution and the refusal both live in
+// store.CommTokenOwner, using the SAME query the comm surface uses to build a principal. A
+// second resolution here would be a second answer to "who owns this token", and the drift
+// would be silent — the endpoint would simply stop authenticating.
+func (a *app) commTokenOwner(ctx context.Context, tokenID string) (comm.Owner, bool) {
+	actorID, spaceID, err := a.store.CommTokenOwner(ctx, tokenID)
+	if err != nil {
+		return comm.Owner{}, false
+	}
+	return comm.Owner{TokenID: tokenID, ActorID: actorID, SpaceID: spaceID}, true
 }
 
 // handleCommRevokeEndpoint revokes one session's endpoint, denying it further use.

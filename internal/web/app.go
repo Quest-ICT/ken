@@ -204,6 +204,8 @@ func (a *app) routes() http.Handler {
 		mux.HandleFunc("POST /comm/channels/{id}/revoke", a.requireAuth(a.handleCommRevokeChannel))
 		mux.HandleFunc("POST /comm/endpoints/{id}/revoke", a.requireAuth(a.handleCommRevokeEndpoint))
 		mux.HandleFunc("POST /comm/endpoints/{id}/rotate", a.requireAuth(a.handleCommRotateEndpoint))
+		mux.HandleFunc("POST /comm/endpoints/{id}/repoint", a.requireAuth(a.handleCommRepointEndpoint))
+		mux.HandleFunc("POST /comm/tokens/{id}/repoint", a.requireAuth(a.handleCommRepointToken))
 	}
 	mux.HandleFunc("GET /setup", a.handleSetupForm)
 	mux.HandleFunc("POST /setup", a.handleSetupSubmit)
@@ -934,8 +936,24 @@ func (a *app) renderTokens(w http.ResponseWriter, r *http.Request, sess *store.S
 	views := make([]tokenView, 0, len(rows))
 	for _, tr := range rows {
 		v := tokenView{TokenRow: tr}
-		if a.comm != nil && tr.Station != "" && tr.RevokedAt == "" {
-			n, err := a.comm.CountEndpointsBoundBy(r.Context(), tr.TokenID)
+		// COUNT BY WHAT THE TOKEN ACTUALLY OWNS, WHICHEVER IT IS.
+		//
+		// This asked CountEndpointsBoundBy — which counts by the STATION KEY that bound an
+		// endpoint — and gated it on the row being a station key. So a plain COMM TOKEN showed
+		// no number at all, and on the live estate that is the credential carrying ELEVEN live
+		// endpoints. The console offered to revoke the thing that darkens the whole deployment
+		// behind a generic confirm with nothing in it.
+		//
+		// Two different columns answering two different questions, and only one was wired. A
+		// station key severs what it BOUND; a comm token kills what it OWNS.
+		if a.comm != nil && tr.RevokedAt == "" {
+			var n int
+			var err error
+			if tr.Station != "" {
+				n, err = a.comm.CountEndpointsBoundBy(r.Context(), tr.TokenID)
+			} else {
+				n, err = a.comm.CountEndpointsByToken(r.Context(), tr.TokenID)
+			}
 			if err != nil {
 				// DEGRADE, never 500 — same reason as the link count on /stations: comm.db
 				// is the expendable database and the token list must not die with it.

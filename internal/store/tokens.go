@@ -84,6 +84,57 @@ type TokenRow struct {
 }
 
 // ListTokens lists all API tokens, newest first.
+// ErrNotACommToken refuses a re-point target that cannot own a COMM endpoint.
+//
+// CallerSafe by nature: the console caller is already authenticated, so naming the reason
+// reveals nothing, and a bare refusal would leave an operator guessing between three states.
+var ErrNotACommToken = errors.New("that token cannot own a comm endpoint — it must exist, be unrevoked, and carry the `comm` scope")
+
+// CommTokenOwner resolves a token to the owner tuple a COMM endpoint carries, and refuses any
+// token that could not authenticate one.
+//
+// THE SAME QUERY THE COMM SURFACE ITSELF USES to build a principal — actor from the token, space
+// from the ACTOR, never a hardcoded space — so a re-point cannot produce an owner tuple that
+// differs from what authentication would compute for the same token. Two resolutions of one
+// question is how they drift, and the drift here would be silent: the endpoint would simply stop
+// authenticating, indistinguishably from a leaked secret.
+//
+// THE WHOLE TUPLE MATTERS, not just the id. A binding voucher compares `issued_to_actor` against
+// the endpoint's actor, so an endpoint re-pointed by token alone onto a token under a different
+// actor could never be re-bound afterwards — failing forever with a message that blames the
+// voucher rather than the re-point.
+//
+// REFUSING A REVOKED OR NON-COMM TARGET IS PART OF THE OPERATION, not a nicety: re-pointing onto
+// one produces an endpoint that authenticates NOWHERE and fails exactly like a compromised one.
+// A control that manufactures the defect class it exists to cure is worse than no control.
+func (s *Store) CommTokenOwner(ctx context.Context, tokenID string) (actorID, spaceID int64, err error) {
+	var scopesJSON string
+	var revoked sql.NullString
+	err = s.R.QueryRowContext(ctx, `
+SELECT t.actor_id, a.space_id, t.scopes, t.revoked_at
+FROM api_token t JOIN actor a ON a.id = t.actor_id
+WHERE t.token_id = ?`, tokenID).Scan(&actorID, &spaceID, &scopesJSON, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, ErrNotACommToken
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	if revoked.Valid {
+		return 0, 0, ErrNotACommToken
+	}
+	var scopes []string
+	if err := json.Unmarshal([]byte(scopesJSON), &scopes); err != nil {
+		return 0, 0, err
+	}
+	for _, sc := range scopes {
+		if sc == "comm" {
+			return actorID, spaceID, nil
+		}
+	}
+	return 0, 0, ErrNotACommToken
+}
+
 func (s *Store) ListTokens(ctx context.Context) ([]TokenRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT t.token_id, a.display_name, a.kind, t.scopes, COALESCE(t.label,''),

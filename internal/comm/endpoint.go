@@ -158,6 +158,94 @@ WHERE id=? AND last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-60 seconds')
 // A revoked endpoint is refused: rotating one would quietly resurrect a capability
 // an operator deliberately destroyed, and the revoke path is what a leak response
 // escalates TO, never back from.
+// RepointEndpointOwner moves ONE endpoint to a different owning token, keeping everything
+// else about it: its id, its secret, its channels and seats, its station binding, its queued
+// mail and its claims.
+//
+// WHY THIS EXISTS. `endpoint.token_id` was write-once. Every endpoint a token registered was
+// welded to it for life, so retiring that credential meant re-registering every session it
+// carried — and on the live estate ELEVEN endpoints hang off one token, including the channel
+// the two stations would use to report that it had gone wrong. Production filed the same
+// column twice: as a rotation gap on 2026-08-18 and as a transition landmine on 2026-08-24.
+// The endpoint had a rotation story and the token did not, which is backwards — the token is
+// the credential more likely to leak, because it is shared and long-lived.
+//
+// THE WHOLE OWNER TUPLE MOVES, not just the token id. `actor_id` and `space_id` are part of
+// the owner and other machinery reads them: a voucher redeemed later compares `issued_to_actor`
+// against the endpoint's actor, so an endpoint re-pointed by token alone onto a token under a
+// different actor can never be re-bound — ErrVoucherNotYours, permanently, with a message that
+// blames the voucher.
+//
+// CONDITIONAL, NEVER CHECK-THEN-ACT. `fromTokenID` is in the WHERE, so the operation is
+// idempotent and a stale console page fails loudly instead of moving a row someone else already
+// moved. §9.5 of docs/IDENTITY.md states that rule and says it outlives the mechanism it came
+// from.
+//
+// AND IT DOES NOT TOUCH THE CLAIMS. Unbind, revoke and sever all release
+// `delivery.claimed_by_endpoint`, each for the same stated reason — "a severed reader is never
+// coming back to ack". A RE-POINTED reader is coming back. Copying that pattern by reflex would
+// hand a live session's in-flight mail to a sibling reader mid-conversation.
+//
+// A REVOKED ENDPOINT IS REFUSED, exactly as rotation refuses one: re-pointing it would quietly
+// resurrect a capability an operator deliberately destroyed.
+//
+// THE TARGET MUST BE AN api_token ROW, and this package cannot check that — `internal/comm`
+// does not import `internal/store` and must not learn to (S7's pointer rule). The caller
+// validates: present, not revoked, carrying the `comm` scope. Re-pointing onto a dead or
+// non-comm token produces an endpoint that authenticates nowhere and fails IDENTICALLY to one
+// with a leaked secret, which is the defect class this control exists to cure.
+func (s *Store) RepointEndpointOwner(ctx context.Context, endpointID, fromTokenID string, to Owner) error {
+	res, err := s.W.ExecContext(ctx, `
+UPDATE endpoint SET token_id=?, actor_id=?, space_id=?
+ WHERE endpoint_id=? AND token_id=? AND revoked_at IS NULL`,
+		to.TokenID, to.ActorID, to.SpaceID, endpointID, fromTokenID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Unknown, revoked, and already-moved are one answer. The console caller is
+		// already authenticated so it loses nothing, and the three never diverge into a
+		// probe — the same stance RotateEndpointSecret takes below.
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RepointEndpointsOfToken moves EVERY live endpoint of one token in a single statement, and
+// returns how many moved.
+//
+// The bulk verb is not convenience: eleven endpoints on one token is the shape that makes a
+// per-endpoint control feel like the ceremony it was built to remove. One statement means the
+// estate cannot end up half-moved, which is the state nobody has a recovery story for.
+func (s *Store) RepointEndpointsOfToken(ctx context.Context, fromTokenID string, to Owner) (int, error) {
+	res, err := s.W.ExecContext(ctx, `
+UPDATE endpoint SET token_id=?, actor_id=?, space_id=?
+ WHERE token_id=? AND revoked_at IS NULL`,
+		to.TokenID, to.ActorID, to.SpaceID, fromTokenID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// CountEndpointsByToken reports how many LIVE endpoints a token owns, so a revoke confirm can
+// state its blast radius before the click.
+//
+// The mirror of CountEndpointsBoundBy, which counts by the STATION KEY that bound an endpoint
+// rather than the token that owns it. Both were needed and only one existed, so /tokens showed
+// a count for a station key and nothing at all for a plain comm token — the credential that
+// actually carries eleven endpoints on the live estate.
+//
+// This is also the first reader of `idx_endpoint_token`, which has existed since 0001_init and
+// which nothing has ever used. The schema anticipated this operation and nobody wrote it.
+func (s *Store) CountEndpointsByToken(ctx context.Context, tokenID string) (int, error) {
+	var n int
+	err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM endpoint WHERE token_id=? AND revoked_at IS NULL`, tokenID).Scan(&n)
+	return n, err
+}
+
 func (s *Store) RotateEndpointSecret(ctx context.Context, endpointID string) (string, error) {
 	secret, err := randBase62(40)
 	if err != nil {
