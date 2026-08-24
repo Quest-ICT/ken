@@ -17,6 +17,20 @@ same change — never "docs later".
 
 ### Added
 
+- **Revoking a station key now states its blast radius before the click.** S6 has required this
+  since stations shipped and `STATIONS.md` asserted it shipped; `CountEndpointsBoundBy` was
+  written for it and had exactly one caller — a test whose failure message reads *"the console
+  states this number before the click"*, standing in for a surface that did not exist.
+
+  The `/tokens` revoke confirm now says how many live sessions revoking would sever. It stays on
+  `/tokens` rather than `/stations` deliberately: revoking goes through the ordinary token path
+  so it cannot diverge from `ken token revoke`, which is S6's own reasoning.
+
+  **With COMM off it says UNKNOWN, not zero** — comm.db and every endpoint in it outlive the
+  server flag, so a zero there would assert a fact nobody measured. That is the two-field shape
+  repaired one page over in the same release, applied here from the start rather than after.
+
+
 - **A test that fails when an exported store method has no production caller.** Thirteen had
   accumulated, and nothing would ever have caught them: an unused *exported* method is never a
   compile error, `go vet` does not look, and staticcheck's `unused` deliberately skips exported

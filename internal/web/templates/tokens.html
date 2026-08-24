@@ -88,7 +88,7 @@
             <td>{{if .RevokedAt}}<span class="badge badge--danger badge--sm">{{$.T "tokens.status_revoked"}}</span>{{else}}<span class="badge badge--success badge--sm">{{$.T "tokens.status_active"}}</span>{{end}}</td>
             <td>
               {{if not .RevokedAt}}
-              <form class="inline" method="post" action="/tokens/{{.TokenID}}/revoke" data-confirm="{{$.T "tokens.revoke_confirm"}}{{if .Station}}&#10;&#10;{{$.T "tokens.revoke_station_warning"}} {{.Station}}{{end}}">
+              <form class="inline" method="post" action="/tokens/{{.TokenID}}/revoke" data-confirm="{{$.T "tokens.revoke_confirm"}}{{if .Station}}&#10;&#10;{{$.T "tokens.revoke_station_warning"}} {{.Station}}&#10;{{if .KnownLive}}{{$.TN "tokens.revoke_severs" .LiveEndpoints}}{{else}}{{$.T "tokens.revoke_severs_unknown"}}{{end}}{{end}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--danger btn--sm" type="submit">{{$.T "tokens.revoke"}}</button>
               </form>

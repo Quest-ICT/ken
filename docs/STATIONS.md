@@ -687,7 +687,12 @@ on, and it was never gated on COMM's state either, because stations work with CO
   contract, `blocked_on` filtering to `human` by default, station name as a column, archived stations
   marked, and the `hearsay_at_write` badge shown exactly as S9 badges a peer-prompted request. This is
   the human's whole-pile view and the only surface where the pile is visible at once;
-- the **key list** with retire / revoke and revoke's "this will disconnect N live sessions" count;
+- the **key list** with retire, and revoke's "this will disconnect N live sessions" count — which
+  became true on 2026-08-24 and had been asserted here since stations shipped. The count is stated
+  on the **`/tokens`** confirm, not here: revoking goes through the ordinary token path so it cannot
+  diverge from `ken token revoke` (S6), and the station key's row on `/tokens` names its station.
+  With COMM off the confirm says the count is **unknown** rather than zero — comm.db and every
+  endpoint in it outlive the server flag, so a zero there would be a fact nobody measured;
 - **rename** — the one control here with no consequences anywhere else, and it is worth saying why
   rather than leaving the operator to wonder what a rename might break. **Nothing addresses a station
   by name.** Routing is by `station_id`, the `station_link_mirror` in comm.db carries ids only, a

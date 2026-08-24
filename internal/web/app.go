@@ -902,8 +902,46 @@ func (a *app) renderTokens(w http.ResponseWriter, r *http.Request, sess *store.S
 	if a.oauthEnabled {
 		connectors, _ = a.store.ListOAuthGrants(r.Context())
 	}
+
+	// THE BLAST RADIUS, BEFORE THE CLICK, which S6 has required since stations shipped and
+	// which nothing has ever rendered: revoking a station key SEVERS every endpoint it bound.
+	// `CountEndpointsBoundBy` was written for exactly this and had one caller — a test whose
+	// failure message reads "the console states this number before the click", standing in for
+	// a surface that did not exist.
+	//
+	// TWO FIELDS, NOT ONE, and this is the pattern commit fed8838 had to repair one page over.
+	// `/tokens` is registered unconditionally while `a.comm` may be nil, and comm.db and every
+	// endpoint in it outlive the server flag — so with COMM off the count is UNKNOWN, and a
+	// bare int would make the confirm assert a zero nobody measured. An int cannot say
+	// "unknown"; a second field can.
+	//
+	// The count's WHERE is character-identical to the UPDATE inside SeverEndpointsBoundBy —
+	// they are a matched pair by construction. Do not add a space_id predicate to one of them:
+	// scoping the count alone would UNDERSTATE the blast radius, which is the one thing S6
+	// exists to prevent.
+	type tokenView struct {
+		store.TokenRow
+		LiveEndpoints int
+		KnownLive     bool
+	}
+	views := make([]tokenView, 0, len(rows))
+	for _, tr := range rows {
+		v := tokenView{TokenRow: tr}
+		if a.comm != nil && tr.Station != "" && tr.RevokedAt == "" {
+			n, err := a.comm.CountEndpointsBoundBy(r.Context(), tr.TokenID)
+			if err != nil {
+				// DEGRADE, never 500 — same reason as the link count on /stations: comm.db
+				// is the expendable database and the token list must not die with it.
+				log.Printf("web: count endpoints bound by %s: %v", tr.TokenID, err)
+			} else {
+				v.LiveEndpoints, v.KnownLive = n, true
+			}
+		}
+		views = append(views, v)
+	}
+
 	a.render(w, r, sess, "tokens", map[string]any{
-		"Tokens": rows, "Scopes": agentScopes, "CommScopes": consoleCommScopes, "NewSecret": newSecret, "NewActor": newActor, "MCPURL": mcpURL,
+		"Tokens": views, "Scopes": agentScopes, "CommScopes": consoleCommScopes, "NewSecret": newSecret, "NewActor": newActor, "MCPURL": mcpURL,
 		"OAuthEnabled": a.oauthEnabled, "Connectors": connectors,
 	})
 }
