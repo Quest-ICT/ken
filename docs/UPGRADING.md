@@ -34,6 +34,50 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.15.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 19 and comm.db at 16 — verified by diffing every
+migration file against `v3.14.0`: the only one that moved is `0016_index_sender_party.sql`, and
+only its **comments** did. Its `CREATE INDEX` is byte-identical, so a fresh install and an
+upgraded deployment still agree on what `sqlite_master` holds.
+
+### Do this first
+
+**Nothing is required.** No migration runs, so the schema band should come back with the same
+counts on both sides and identical row totals.
+
+### What changed, and what to look at
+
+This release is mostly **defects found by one sweep and the mechanism that stops them
+recurring.** Four are worth an operator's attention because they change what a control does:
+
+- **The vault could restore exactly one value of sixteen, and using restore destroyed the
+  rest.** If you have ever clicked Restore on a secret, the history behind that name is
+  probably shorter than the retention bound suggests, and the values it holds are likely
+  duplicates of the newest two. Nothing is corrupted and nothing needs repairing — but do not
+  read a full-looking history as sixteen distinct recoverable values on a name that has been
+  restored before. Every retained version is individually restorable from now on.
+- **`SetStationPublished` and `ArchiveStation` reported success for a station id that names
+  nothing**, and archive additionally advanced the roster generation on that no-op. If you ever
+  saw an unexplained mirror rebuild, this is a candidate cause.
+- **The link-revoke confirm said "0 live channel(s) will be closed" when the count was
+  UNKNOWN** — with COMM off, or when the count simply errored. It now says unknown, and the
+  revoke control is reachable in that case rather than hidden.
+- **A half-rebuilt mirror reported itself current.** Both projections stamped one shared
+  generation counter while the two rebuilds run independently, so whichever half survived
+  marked the whole mirror fresh over stale data. It now stays behind unless both halves
+  succeed. Watch for a new boot line: *"a mirror half did not rebuild — the roster epoch is
+  deliberately left behind"*. That line means re-touch the console, not that something broke
+  further.
+
+**`station_block` is gone from the code and its table is NOT dropped in this release.** The
+`DROP TABLE` ships on its own under Rule 4. Until then the table is an orphan holding zero
+rows; nothing reads or writes it.
+
+**A new nav badge and dashboard stat on `/stations`** count open human-blocked tasks plus
+pending notebook promotions, and `station_me` now tells a session how many items are waiting on
+its human *on other stations* — a count only, never contents.
+
 ## 3.14.0
 
 **MINOR. SCHEMA CHANGE: comm.db 15 → 16.** ken.db unchanged at 19. One migration —

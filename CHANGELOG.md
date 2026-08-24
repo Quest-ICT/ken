@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.15.0] — 2026-08-24
+
 ### Added
 
 - **Pending notebook promotions now reach the human.** `CountPendingPromotions` calls itself
