@@ -15,6 +15,63 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.26.0] — 2026-08-25
+
+### Added
+
+- **A session with no workspace now gets one immediately — the station-registration deadlock is
+  gone.** `docs/IDENTITY.md` §5: *"fully working, auto-named, no approval."*
+
+  What it replaces, and Vlad's words for it at the console — *"It is absurd the way it works now"*:
+
+  ```
+  station_request lives on /station/mcp
+  /station/mcp    required a station-scoped token
+  a station key   is minted per-station, for an EXISTING station
+  a station       is created by approving a station_request
+  ```
+
+  Every arrow points back one step. `station_request`'s own description called it *"the only tool a
+  key with no station may call"* — true, and it hid the real constraint: **a key with no station
+  could call it; a session with no KEY could not, and that is every session being onboarded.** There
+  was no `POST /stations` either, so a deployment with zero stations could only get its first from
+  the CLI — and a console-minted key was issued under the OPERATOR's actor, so it could never bind
+  the session it was minted for. Console-first and binding were mutually exclusive.
+
+  Now: call `station_me` — the call every session is already told to make first — and you have a
+  workspace, named after your folder, working from the next call. The id comes back in the result
+  along with what to tell your human, because a result is the channel that always arrives.
+
+- **`X-Ken-Workspace` on the folder's MCP entry selects which workspace a session works as**
+  (§4). **It authorises nothing** — the credential does that — which is exactly why it can live in
+  a config file forever: *"a name tag cannot leak, cannot be burned, never expires and never
+  rotates."* A credential that carries its own station ignores the header, because that binding is
+  a fact about the credential rather than a preference.
+
+  **Existing stations need no migration.** The header value IS the `station_id` they already have.
+
+### Changed
+
+- **`station_request` is now for the case that is still a decision** — a human who wants to name and
+  approve a particular workspace — and its description says so, instead of advertising itself as
+  the only door for a session that had no way to reach it.
+
+### Fixed
+
+- **A second folder with the same name was refused a workspace.** The collision retry matched the
+  error *message* for `"unique"`, while the sentinel's text reads *"already in use in this space"*.
+  **The deadlock rebuilt in miniature, by a check reading human-readable prose** — which is the
+  failure mode that stops working silently the day someone improves the wording. It matches the
+  sentinel now.
+
+- **The workspace header was resolved somewhere the tool handler could never see it.** It was read
+  in the auth middleware and written onto the principal; the middleware ran, the header was present,
+  the log line fired, the principal was built correctly, and the handler still saw an empty station.
+  The SDK does not hand a tool handler the request's context — it hands it the request, with
+  `Extra.Header` on it, **exactly as `internal/commserver` has lifted its endpoint credential since
+  it shipped.** The mechanism already existed in this repository and a second one was built that
+  could not work.
+
 ## [3.25.0] — 2026-08-25
 
 ### Added

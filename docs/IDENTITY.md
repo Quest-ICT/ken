@@ -422,6 +422,28 @@ credentials retire, or mail is stranded with no error.
 3. **Then delete the voucher chain**, in one change, with its tests, saying why.
 4. **Then the workspace id in config**, and auto-naming for unknown folders (§5). Existing stations
    keep their `station_id` and become workspaces; §8 covers the estate.
+
+   > **DONE 2026-08-25, and it took the station-registration deadlock with it.** `X-Ken-Workspace`
+   > on the folder's MCP entry selects the workspace; the credential authorises. A session with no
+   > workspace calls `station_me` — the call it is already told to make first — and gets one, named
+   > after its folder, working from the next call, **with nothing to approve**. The id comes back in
+   > the RESULT, which is the channel that always arrives, together with what to tell the human.
+   >
+   > **Existing stations needed no migration at all**: the header value IS the `station_id` they
+   > already have, so an estate becomes an estate of workspaces by having the header written into
+   > each folder's config. §8's concern turned out to be a config edit per folder, not a data move.
+   >
+   > `station_request` survives for the one case that is still a decision — *"my human wants to name
+   > and approve this one"* — and its description now says so instead of claiming to be "the only
+   > tool a key with no station may call", which was true and was the deadlock's disguise.
+   >
+   > **Two failures worth keeping.** A name collision was detected by grepping the error MESSAGE for
+   > "unique" while the sentinel's text says "already in use in this space", so a second folder of
+   > the same name was refused a workspace — the deadlock rebuilt in miniature by a check reading
+   > prose. And the header was first resolved in the auth middleware, which the SDK never hands to a
+   > tool handler: it hands the request, with `Extra.Header` on it, exactly as `internal/commserver`
+   > has lifted its endpoint credential since it shipped. The mechanism existed; a second one was
+   > built that could not work.
 5. **`space_id` last**, with its test, as one deliberate change (§9.1) — it blocks nothing, and
    doing it early is churn that makes the remaining plumbing look intentional.
 

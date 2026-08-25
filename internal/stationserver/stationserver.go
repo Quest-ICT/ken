@@ -415,8 +415,11 @@ func newServer(d Deps) *mcp.Server {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_request",
-		Description: "Ask your human to create a station for you. You supply a PURPOSE and may suggest a name; " +
-			"your human types the real name when they approve. This is the only tool a key with no station may call.",
+		Description: "Ask your human to create a station for you, and WAIT for them to approve it. " +
+			"YOU ALMOST CERTAINLY WANT station_me INSTEAD: if you have no workspace, station_me makes you one " +
+			"immediately — named after your folder, working from the next call, with nothing to approve and " +
+			"nobody to wait for. Use this only when your human has told you they want to name and approve this " +
+			"one themselves. You supply a PURPOSE and may suggest a name; they type the real name on approval.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in requestIn) (*mcp.CallToolResult, requestOut, error) {
 		p := principalFrom(ctx)
 		if p == nil {

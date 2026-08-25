@@ -132,8 +132,16 @@ approves in the console and **types the name**. No tool writes `name`.
   can be taken by a new station; the console says so at the release click, and unarchive is refused
   while the name is taken (offering rename-on-unarchive).
 - **The chicken-and-egg is solved by a station-less key.** A `station` key may exist with
-  `station_id` NULL. Such a key can call exactly one tool — `station_request` — and nothing else. That
-  is how a session with no station asks for one.
+  `station_id` NULL. **Since 2026-08-25 such a session simply calls `station_me` and gets a
+  workspace** — named after its folder, working from the next call, with nothing to approve
+  (docs/IDENTITY.md §5). `station_request` remains for the one case that is still a decision: a
+  human who wants to name and approve a particular workspace themselves.
+
+  > This paragraph used to say `station_request` was the only tool a station-less key could call,
+  > which was true and was the deadlock's disguise: a key with no station could call it, and a
+  > session with no KEY could not — which is every session being onboarded. The console had no
+  > station-creation route either, and a console-minted key was issued under the operator's actor,
+  > so it could never bind the session it was minted for.
 
 ### S4 — The station owns the inbox; endpoints are credentialed readers *(chosen: claim-once with a lease)*
 
@@ -487,7 +495,7 @@ advertised_at}`.
 
 **Station key** — an `api_token` row with `{actor_id, scopes, station_id (nullable), label,
 secret_sha256, created_at, last_used_at, retired_at, revoked_at}` and a `kens_` prefix. `station_id`
-NULL means the key can only call `station_request` (S3).
+NULL means the session has no workspace yet — `station_me` gives it one on the spot (§5); `station_request` is for when a human wants to name and approve it instead.
 
 **Endpoint** — unchanged from COMM plus `station_id` and `bound_by_station_key_id`. Still ephemeral,
 still swept, still the holder of a *reader's* credential.
@@ -582,7 +590,7 @@ transfer collides on it, and every station is expected to have one.
 |---|---|
 | `station_me` | Who am I, my links, my counts — the briefing on demand. Sets `self_described_*`. |
 | `station_binding_voucher` | Exchange the header credential for a single-use voucher naming ONE endpoint, which `comm_bind` redeems. |
-| `station_request` | Ask the human to create a station. The only tool a station-less key may call. |
+| `station_request` | Ask the human to name and approve a station. **Rarely needed**: `station_me` mints one immediately for a session that has none. |
 | `station_directory` | Published stations plus those I have a link to. A session names a peer by the name its human uses; discovery is deferred until there are enough stations for a list to beat asking. |
 | `station_link_request` | Ask the human to approve a relationship: `to_station`, `reason` (human-only). |
 | `station_note_list` / `_read` / `_write` | Keys, titles, sizes; one page; `append`/`replace` with `if_rev`. |

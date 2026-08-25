@@ -34,6 +34,33 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.26.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### Onboarding a session no longer needs you
+
+**A session with no workspace calls `station_me` and has one** — named after its folder, working
+immediately, nothing to approve. It will then ask you to add one line to that folder's Ken MCP
+entry:
+
+    X-Ken-Workspace: <the id it gives you>
+
+Without that line the NEXT session in the folder starts fresh and mints a second workspace. **The id
+is not a secret** — it is a name tag, not a key, so it belongs in the config file in plain sight.
+
+**Your existing stations are workspaces already.** The header value is the `station_id` you already
+have, visible on `/stations`. Nothing migrates; you write the header into each folder's config when
+you get to it, and until then those sessions keep using their station keys exactly as before.
+
+**`station_request` still exists** for when you want to name and approve a workspace yourself. It is
+no longer the only path, which is what it used to be — and could not actually be, for any session
+that did not already hold a station-scoped key.
+
+### Nothing to do
+
+No action on upgrade. No migration runs.
+
 ## 3.25.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.

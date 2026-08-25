@@ -61,8 +61,8 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.25.0** (2026-08-25) — IDENTITY.md §10 step 2: one identity across all three
-surfaces. Previously 3.24.0 — the snapshot-encryption documentation defect, the
+**Released: 3.26.0** (2026-08-25) — IDENTITY.md §10 steps 2 and 4: one identity across all three
+surfaces, and a session that can get its own workspace. Previously 3.25.0 and 3.24.0 — the snapshot-encryption documentation defect, the
 instruction re-fetch, and the outcome prompt. **Production is on 3.23.0**, verified by ken-prod-ops at 2026-08-25T17:05Z with both databases
 row-identical and the whole `endpoint` table byte-identical; the fresh-session test passed on the
 m600 machine, which named all three surfaces from its instructions alone before calling anything.
