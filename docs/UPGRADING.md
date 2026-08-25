@@ -34,6 +34,47 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.24.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### CHECK THIS BEFORE ANYTHING ELSE
+
+**If you ever set an age recipient believing it would encrypt your nightly snapshots, it did not — that control was removed in 2.0.0.**
+
+Four places — `INSTALL.md`, the installer's post-install summary, the systemd unit's own
+`Description`, and `BACKUP.md` — described a procedure for turning on snapshot encryption. **Ken
+removed that in 2.0.0 and there is no setting that turns it on.** Setting `KEN_AGE_RECIPIENT`
+produces a NOTE in the journal and a plaintext snapshot, which is written and kept. The claim that
+the step "fails closed" and keeps nothing was false in the other direction too.
+
+    systemctl show ken-snapshot.service -p Environment | grep -i age   # is a recipient set?
+    ls -l /opt/ken/backups                                             # .db.gz = compressed PLAINTEXT
+
+**A snapshot is a full copy of the knowledge base, the curator accounts and every station vault
+secret.** `0600` protects it on that host and nowhere else. If yours have been going off-box — an
+object store, a sync target, a laptop, a VM image — treat them as plaintext that has already left,
+because they are.
+
+**What to do:** encrypt them yourself in whatever moves the file (`age`, `gpg`, your sync tool's own
+encryption), or use tier 1 — Litestream's `age:` block in `configs/litestream.yml`, which is
+Litestream's feature and covers the continuous replica only. There is nothing to switch on inside
+Ken.
+
+### Also in this release
+
+**Sessions are asked to close the knowledge-base loop at the moment they owe an outcome.** `kb_get`
+now returns the slugs it handed over with the ask attached. The loop is currently closed 14.8% of
+the time; the instruction has always existed and arrives hundreds of tool calls before the occasion.
+
+**`ken_version{include_instructions}` now works from a session whose client has no schema for it** —
+which is every session the argument was built for. It was boolean-only and those clients send a
+string.
+
+### Nothing to do
+
+No action on upgrade beyond the check above. No migration runs.
+
 ## 3.23.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.

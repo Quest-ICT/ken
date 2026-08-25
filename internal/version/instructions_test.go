@@ -72,7 +72,32 @@ func TestTheRefetchPathIsReachableFromAFrozenSession(t *testing.T) {
 	// The argument must stay OPTIONAL. ken_version is the cheap call a session makes to discover
 	// it is stale; making it always carry kilobytes is how sessions stop making it.
 	var in InstructionsIn
-	if in.IncludeInstructions {
+	if in.Wants() {
 		t.Error("include_instructions defaults to true; ken_version must stay cheap or it stops being called")
+	}
+
+	// *** IT MUST ACCEPT WHAT A SCHEMA-LESS CLIENT SENDS, WHICH IS A STRING. ***
+	//
+	// ken-prod-ops ran this from inside the population the argument exists for and it failed:
+	// their client had no schema for the property, so it serialized true as "true", and schema
+	// validation rejected the call on type. The argument crossed the freeze — the premise holds —
+	// and then died at the door.
+	//
+	// A client with no schema for a property CANNOT type that property correctly. That is the
+	// definition of the case, not a client bug, so a boolean-only contract is wrong for exactly
+	// the callers this serves.
+	for _, yes := range []any{true, "true", "TRUE", " true ", "yes", "1", "on", float64(1)} {
+		if !(InstructionsIn{IncludeInstructions: yes}).Wants() {
+			t.Errorf("%#v does not read as yes — a frozen session sending it gets no instructions and no "+
+				"reason why", yes)
+		}
+	}
+	// AND LENIENT IN ONE DIRECTION ONLY. Guessing wrong toward yes costs a few kilobytes in one
+	// result; toward no it silently withholds the fix a session just asked for.
+	for _, no := range []any{false, "false", "no", "0", "", nil, float64(0), []string{"true"}} {
+		if (InstructionsIn{IncludeInstructions: no}).Wants() {
+			t.Errorf("%#v reads as yes; ken_version is the cheap call sessions make to notice they are "+
+				"stale, and it must stay cheap by default", no)
+		}
 	}
 }

@@ -18,7 +18,7 @@
 > Also built: the live settings group (every limit is operator-tunable without a restart), the
 > `ken_comm_*` Prometheus gauges, the curation provenance marker (§7), and **file exchange** (§11) —
 > same-host rendezvous offers, and a one-time-grant HTTP relay for cross-host transfers, gated behind
-> its own live setting (`comm_files_enabled`, default off) and the `comm-file` scope. Verified end to
+> its own live setting (`comm_files_enabled`, default ON since 2026-08-24) and the `comm-file` scope. Verified end to
 > end against the running binary. The whole COMM design is now implemented.
 
 Ken's knowledge base answers *"has this problem been solved before?"*. COMM answers a different
@@ -838,9 +838,12 @@ two-sided establishment before the tools freeze, since both would otherwise be M
 
 ## 11. File exchange
 
-Built, and gated twice: the `comm-file` scope on the token, and the live `comm_files_enabled` setting
-(default **off** — the relay stores bytes on the server's disk, so the operator opts into it
-separately from COMM itself, and can kill it live mid-incident).
+Built, and gated twice: the `comm-file` scope on the token, and the live `comm_files_enabled`
+setting (**default ON** since 2026-08-24 — a KILL SWITCH rather than an opt-in). It shipped
+defaulting OFF because the relay is the bulk of the subsystem's risk, and that default was reversed
+under Vlad's ruling that no Ken feature is optional or off by default: withholding the SWITCH was
+never the point, withholding the DEFAULT was. Turning it off still stops bytes immediately, checked
+per operation and with no restart, which is what makes it worth having in an incident.
 
 Three tiers, in the preference order the instructions teach:
 

@@ -249,10 +249,10 @@ URL when TLS is on, `http://<host>:8080/` only behind a TLS-terminating proxy):
 
 ## Optional: OAuth connector for claude.ai
 
-Ken ships an **optional OAuth 2.1 authorization server** so claude.ai can add it
+Ken ships an **OAuth 2.1 authorization server** so claude.ai can add it
 as a *custom connector* with the normal **Connect** button (no static token to
-paste). It is **off by default** — static bearer tokens above are unaffected
-whether it is on or not.
+paste). **It is ON and cannot be turned off** (see below) — static bearer tokens above are
+unaffected either way.
 
 It requires a public **HTTPS** origin (so `KEN_TLS=acme|file`, or a
 TLS-terminating proxy). **There is nothing to enable** — the OAuth authorization
@@ -419,18 +419,26 @@ sudo ufw allow 8080/tcp                                                         
 
 Ken has no git mirror, so backups are non-negotiable — and are set up for you:
 
-- **Nightly snapshots** via `ken-snapshot.timer` (03:30) are **enabled by default — and are written
-  UNENCRYPTED at mode `0600`** until you configure an age recipient. Snapshots land in
-  `/opt/ken/backups` and are pruned to `KEN_BACKUP_KEEP` (default 14).
+- **Nightly snapshots** via `ken-snapshot.timer` (03:30) are **enabled by default and are written as
+  compressed PLAINTEXT at mode `0600`.** Snapshots land in `/opt/ken/backups` and are pruned to
+  `KEN_BACKUP_KEEP` (default 14).
 
-  To encrypt them, follow **[docs/BACKUP.md → Encryption: turning it on](BACKUP.md#encryption-turning-it-on)**
-  — it covers what a snapshot contains and when encryption is warranted. Two things you must not get
-  wrong:
+  **Ken cannot encrypt them, and there is no setting that turns encryption on.** 2.0.0 retired
+  `KEN_AGE_RECIPIENT`; setting it produces a NOTE in the journal and a plaintext snapshot, which is
+  written and kept. **If your snapshots ever leave this machine — and tier 3 in
+  [docs/BACKUP.md](BACKUP.md) is exactly that — the encryption is yours to add outside Ken**, in
+  whatever moves the file: pipe it through `age` or `gpg`, or use your sync tool's own. The one
+  encryption option inside this system belongs to Litestream, not Ken: the `age:` block in
+  `configs/litestream.yml`, which protects the continuous replica and not the nightly snapshot.
 
-  1. **Install `age` on this host *before* setting a recipient.** The snapshot step fails closed:
-     recipient set + `age` missing = the plaintext is deleted and **no snapshot is kept that run**.
-  2. **Generate the keypair off the box and escrow the private key.** Lose it and every encrypted
-     snapshot is permanently unrecoverable.
+  **`0600` protects the file on this box and nowhere else.** A snapshot is a full copy of the
+  knowledge base, the curator accounts and every station vault secret; the mode does not travel with
+  it.
+
+  > **THIS BLOCK GAVE A PROCEDURE FOR TURNING ON ENCRYPTION UNTIL 2026-08-25** — install `age`, escrow
+  > a keypair, set a recipient — for a control removed in 2.0.0, complete with a false warning that
+  > the snapshot "fails closed" and keeps nothing when `age` is missing. It does not. An operator who
+  > followed it believed their off-box backups were ciphertext and had plaintext.
 
   ```sh
   sudo systemctl start ken-snapshot.service && ls -l /opt/ken/backups   # confirm a .db.gz appeared

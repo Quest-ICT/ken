@@ -7,9 +7,15 @@ This is the path Anthropic's personal (Pro/Max) connector UI expects: that UI is
 **OAuth-only**, so before this existed the only way to connect Ken on a personal
 account was Route B (per-machine `claude mcp add`; see [AI-INTEGRATION.md](AI-INTEGRATION.md)).
 
-**It is off by default.** Ken's static bearer tokens keep working exactly as
-before whether or not OAuth is enabled; turning OAuth on only *adds* the
-connector path.
+**It is ON and there is nothing to enable.** `KEN_OAUTH_ENABLED` was removed in **2.0.0** and
+`cmd/ken/main.go` now hardcodes it; `TestNoFeatureCanBeSwitchedOff` fails the build if anything
+reads the retired variable again. Ken's static bearer tokens keep working exactly as before — the
+connector path is *additional*, never a replacement.
+
+> **This paragraph said "It is off by default" until 2026-08-25**, four releases after the switch
+> was removed. That is the class this project keeps finding: text asserting a control that does not
+> exist. INSTALL.md carried both statements four lines apart — "off by default" and "there is
+> nothing to enable" — and neither reader nor writer noticed.
 
 ---
 

@@ -15,6 +15,97 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.24.0] — 2026-08-25
+
+### Fixed
+
+- **SECURITY-RELEVANT DOCUMENTATION DEFECT: four places told operators they could encrypt their
+  nightly snapshots. Ken removed that in 2.0.0 and there is no setting that turns it on.**
+
+  | where | what it said |
+  |---|---|
+  | `docs/INSTALL.md` | a numbered procedure — install `age`, escrow a keypair, set a recipient |
+  | `scripts/install.sh` | the same procedure, printed on the terminal after every install |
+  | `deploy/ken-snapshot.service` | `Description=Ken nightly **encrypted** snapshot`, plus a recommendation to set a recipient |
+  | `docs/BACKUP.md` | *"Encryption is opt-in and OFF by default — on both off-box tiers"* |
+
+  `scripts/ken-snapshot-lib.sh` states the truth in its own comment — *"IT NO LONGER ENCRYPTS"* — and
+  `docs/OPERATION.md` has said so since 2.0.0. The INSTALL procedure also warned that the step
+  *"fails closed"* and keeps no snapshot when `age` is missing: **false in the other direction**, the
+  plaintext is written and kept. And it linked to `BACKUP.md#encryption-turning-it-on`, a section
+  that does not exist.
+
+  **An operator who followed it installed `age`, generated and escrowed a keypair, set a recipient,
+  and believed every off-box snapshot was ciphertext. Every one was plaintext** — of the whole
+  knowledge base, the curator accounts, and every station vault secret. `0600` protects the file on
+  that host and nowhere else, and tier 3 of the backup design is an off-box copy by definition.
+
+  All four corrected. **The only encryption in this system belongs to Litestream** — the `age:` block
+  in `configs/litestream.yml`, which covers the continuous replica and not the nightly snapshot.
+  Anything else is the operator's to add in whatever moves the file.
+
+  `TestNothingPromisesSnapshotEncryption` now fails the build when operator-facing text offers the
+  control, verified by reintroducing the exact text that shipped, at each of the three sites.
+
+  Found by an audit for the class `FINISHING.md` names — *"text asserting a control that does not
+  exist is the class that propagates"* — **in a lens that died on a server error and had to be
+  re-run.** Its absence would have been reported as "found nothing": a dead agent returns null and
+  the harness filtered it out. The instrument had the defect it was hunting.
+
+- **Three console strings told operators a feature was "switched off" that nothing can switch
+  off — and the worst was read at an irreversible act.** After revoking a station link, an operator
+  was told *"COMM is switched off in this server … Re-check from the Comm console once COMM is
+  on."* There is no switch: `cmd/ken/main.go` says *"THERE IS NO SWITCH … both are gone"*, and a
+  test fails the build if anything reads a retired gate. When COMM is unavailable it is because
+  `comm.db` would not open — logged as **`COMM: DEGRADED … This is a failure, not a setting`** — and
+  `/comm` is not routed in that state, so **the console the message sent them to 404s.** The real
+  cause and the real remedy appeared nowhere.
+
+  All three strings corrected in all three locales, and they now name the fault and point at the
+  log line. `TestNoStringClaimsAFeatureIsSwitchedOff` reads the prose rather than grepping for
+  retired variable names — which is why the 3.10.0 sweep missed these, as `FINISHING.md` predicted
+  it would: *"text that describes the vanished switch WITHOUT NAMING IT."*
+
+- **"Off by default" was wrong about two features, in five documents and the settings console.**
+  `comm_files_enabled` has defaulted **ON** since 2026-08-24 — the code comment explains it flipped
+  under the ruling that no Ken feature is optional or off by default — while the settings help, the
+  operator manual and `COMM.md` all still said off. And the **OAuth server** has been unconditional
+  since 2.0.0, yet `OAUTH.md` and `INSTALL.md` both said "off by default"; `INSTALL.md` carried both
+  claims **four lines apart**, "off by default" and "there is nothing to enable", and neither reader
+  nor writer noticed. This is the exact phrase `FINISHING.md` cites as what *"put 'off by default'
+  on the public site"*.
+
+- **`include_instructions` was unusable by the sessions it exists for.** ken-prod-ops ran it from
+  inside that population and it failed: their client, having no schema for the property, serialized
+  `true` as the string `"true"`, and validation refused the call before any handler ran. **A client
+  with no schema for a property cannot type that property correctly** — that is the definition of
+  the case, so a boolean-only contract excluded exactly the callers the argument serves. It accepts
+  what a schema-less client sends now.
+
+  The test that would have caught it did not exist because **every test written inside this
+  repository has the schema available**, and therefore types the argument correctly. There is now
+  one that sends the raw JSON a schema-less client sends, over the real transport, and it
+  reproduces prod's exact failure as a mutation.
+
+- **Twenty-one tool descriptions had no space at the join**, and one rule was duplicated — both
+  introduced by the scripted edit that moved per-tool rules into descriptions in 3.22.0.
+
+### Added
+
+- **`kb_get` asks for the outcome at the moment one is owed**, naming every slug it just handed
+  over. The instructions have always said *"close the loop EVERY time"* and the live deployment
+  measures **14.8%** — 250 uses, 37 outcomes, and only 22 of 108 entries with any outcome at all.
+  `FINISHING.md`'s diagnosis is what this acts on: *"something the instructions request that nothing
+  prompts for at the moment it matters."* A rule delivered once at connect competes with the whole
+  conversation; a rule in a result arrives at the occasion.
+
+### Changed
+
+- **`station_task_defer` asks for the reason as state, not as feeling.** Prod's observation was that
+  the verb is date-shaped while the problem is state-shaped — *"the condition may already be
+  satisfied and nobody rechecked."* The date stays a reminder; the reason is now documented as where
+  a recheck is recorded, since `blocked_on` is set once at creation and nothing ever revisits it.
+
 ## [3.23.0] — 2026-08-25
 
 ### Added

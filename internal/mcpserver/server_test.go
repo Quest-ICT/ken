@@ -131,6 +131,33 @@ func TestMCPEndToEnd(t *testing.T) {
 		t.Fatalf("unexpected kb_get result: %+v", go_)
 	}
 
+	// *** AND IT NAMES EVERY SLUG IT JUST HANDED OVER, THROUGH THE REAL TOOL. ***
+	//
+	// The prompt exists because the loop is closed 14.8% of the time on the live deployment, and
+	// the fix is to ask at the occasion rather than at connect. Asserted HERE, over the transport,
+	// because a unit test that builds the owed-list itself proves nothing about the handler:
+	// mutation showed exactly that — collecting only entries[0] survived the unit test and is
+	// caught here. `use_count` is bumped per slug, so a batch owes an outcome per slug.
+	if len(go_.OutcomeOwed) != len(go_.Entries) {
+		t.Errorf("kb_get returned %d entries and named %d in outcome_owed; a session reporting on what it "+
+			"was asked for would leave the rest unproven", len(go_.Entries), len(go_.OutcomeOwed))
+	}
+	for _, e := range go_.Entries {
+		found := false
+		for _, s := range go_.OutcomeOwed {
+			if s == e.Slug {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("kb_get handed over %q and did not name it in outcome_owed", e.Slug)
+		}
+	}
+	if go_.OutcomeNote == "" {
+		t.Error("kb_get returned entries with no outcome prompt — the instruction to close the loop then " +
+			"reaches the session only at connect, which is where it is already ignored six times in seven")
+	}
+
 	// kb_save without a dedup_check_token is rejected (search-before-save gate).
 	bad, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "kb_save", Arguments: map[string]any{
 		"kind": "project", "title": "x", "summary": "y",

@@ -858,15 +858,19 @@ Service
 Backups (design decision: backup is the only durability path)
 -------
   The nightly snapshot timer (ken-snapshot.timer, 03:30) is enabled. Snapshots are
-  written UNENCRYPTED at mode 0600 until you configure an age recipient.
+  written as compressed PLAINTEXT at mode 0600.
 
-  To encrypt them - read docs/BACKUP.md first; order matters:
-    1. install 'age' on this host   (recipient set + age missing = NO snapshot kept)
-    2. 'age-keygen -o age.key' on your workstation, NOT here; escrow age.key off-box
-       (lose it and every encrypted snapshot is unrecoverable)
-    3. systemctl edit ken-snapshot.service
-         [Service]
-    4. systemctl start ken-snapshot.service && ls -l $BACKUPS   # expect a .db.gz
+  KEN CANNOT ENCRYPT THEM. 2.0.0 retired KEN_AGE_RECIPIENT and there is no setting that
+  turns encryption on; setting the old variable logs a NOTE and writes plaintext anyway.
+  A snapshot is a full copy of the knowledge base, the curator accounts and every station
+  vault secret, and 0600 protects it on this box only.
+
+  If snapshots ever leave this machine, encrypt them yourself in whatever moves them
+  (pipe through 'age' or 'gpg', or use your sync tool's own encryption). Litestream can
+  encrypt the continuous replica via the age: block in configs/litestream.yml - that is
+  Litestream's feature, not Ken's, and it does not cover the nightly snapshot.
+
+    systemctl start ken-snapshot.service && ls -l $BACKUPS   # expect a .db.gz
 
   Also consider Litestream (continuous ~1s-RPO replication) — see docs/BACKUP.md
   and configs/litestream.yml. Snapshots land in $BACKUPS.

@@ -61,8 +61,8 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.23.0** (2026-08-25) — instruction re-fetch, on top of 3.22.0's delivery refit.
-**Production is on 3.22.0**, verified by ken-prod-ops at 2026-08-25T17:05Z with both databases
+**Released: 3.24.0** (2026-08-25) — the snapshot-encryption documentation defect, the
+instruction re-fetch, and the outcome prompt. **Production is on 3.23.0**, verified by ken-prod-ops at 2026-08-25T17:05Z with both databases
 row-identical and the whole `endpoint` table byte-identical; the fresh-session test passed on the
 m600 machine, which named all three surfaces from its instructions alone before calling anything.
 3.21.0 was verified at

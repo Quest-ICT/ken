@@ -247,8 +247,14 @@ var Fields = []Field{
 
 	// File exchange. A live off-switch on purpose: turning it off mid-incident
 	// stops bytes immediately without a restart.
+	//
+	// THE HELP SAID "Off by default" UNTIL 2026-08-25, and it had been wrong since the default
+	// flipped on 2026-08-24. internal/comm/comm.go:200 records the flip and its reason — Vlad's
+	// ruling that no Ken feature is optional or off by default — so the code and the text
+	// disagreed about the one thing an operator reads this line to learn. Found by an audit for
+	// exactly that class; the same claim was live in docs/OPERATION.md and docs/COMM.md.
 	{Key: "comm_files_enabled", Group: "Inter-session comms", Label: "File exchange enabled", Type: "bool", Live: true,
-		Help: "Lets paired sessions exchange files (same-host handoff, or relayed through Ken). Off by default — the relay stores bytes on this server's disk.",
+		Help: "Lets paired sessions exchange files (same-host handoff, or relayed through Ken). ON by default, like every Ken feature. Turn it OFF to stop the relay writing bytes to this server's disk — it applies immediately, with no restart, which is what makes it useful mid-incident.",
 		Get:  func(v Values) string { return boolStr(v.CommFilesEnabled) },
 		Set:  func(v *Values, s string) error { v.CommFilesEnabled = truthy(s); return nil }},
 	intField("comm_file_max_mb", "Inter-session comms", "Max file size (MB)",

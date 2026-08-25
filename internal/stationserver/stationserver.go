@@ -320,7 +320,7 @@ func newServer(d Deps) *mcp.Server {
 			"`oldest_open_task_days` ages EVERY open item, including the ones blocked on YOU: a task can be accurate " +
 			"and no longer the point, and no other figure here can see that. Ken never defers or closes anything on age — " +
 			"it shows you the number and you decide." +
-			"'not_shown' reads as a queue awaiting its turn; 'never_briefed' is how many have never had one — when it is non-zero, read the full list with station_task_list rather than trusting the head. 'briefed_count' only rises, so an item raised every session looks attended to: when the age is large, read the list, look at created_at, and ASK whether each item is still worth doing, or done being worth doing.",
+			" 'not_shown' reads as a queue awaiting its turn; 'never_briefed' is how many have never had one — when it is non-zero, read the full list with station_task_list rather than trusting the head. 'briefed_count' only rises, so an item raised every session looks attended to: when the age is large, read the list, look at created_at, and ASK whether each item is still worth doing, or done being worth doing.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in meIn) (*mcp.CallToolResult, meOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -406,7 +406,7 @@ func newServer(d Deps) *mcp.Server {
 			"`revisions_lost` is how many of a page's older revisions the history bound has ALREADY deleted, oldest first: " +
 			"nothing warns you when that happens, so this is the only place it shows. `history_bytes` grows with the SQUARE " +
 			"of a page kept by append, which is why it reaches the cap long before the page looks large. " +
-			"Working state only: durable lessons belong in the knowledge base.",
+			" Working state only: durable lessons belong in the knowledge base.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, noteListOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -458,7 +458,7 @@ func newServer(d Deps) *mcp.Server {
 			"is the WRONG place: reading it needs the station key, so it is unreachable in exactly that emergency. " +
 			"Write the RECOVERY PATH instead — which station, which peers, what to re-run. " +
 			"Routing rule: if a session on a DIFFERENT station would want this months from now, it is knowledge (kb_save), not a note." +
-			"Sessions rarely get notice, which is why AS YOU GO is the only schedule that works. One measured station reached 96% of its history cap with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained by replace cost a tenth of that. The routing rule in full: kb_save or kb_propose_enhancement on /mcp for anything a DIFFERENT station would want months from now; the notebook is for what only this post needs, only for now.",
+			" Sessions rarely get notice, which is why AS YOU GO is the only schedule that works. One measured station reached 96% of its history cap with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained by replace cost a tenth of that. The routing rule in full: kb_save or kb_propose_enhancement on /mcp for anything a DIFFERENT station would want months from now; the notebook is for what only this post needs, only for now.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteWriteIn) (*mcp.CallToolResult, noteOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -522,7 +522,7 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_task_list",
 		Description: "Your tasks, ordered: overdue first, then what is blocked on your human, then whatever has " +
 			"gone longest without being raised. A pure query — reading it does not count as raising anything." +
-			"This is the FULL list, and the briefing head is only a sample of it: when station_me reports a non-zero 'never_briefed', read it here — what has never been shown to anyone is what is most likely to be stale. When 'oldest_open_task_days' is large, look at created_at and ask whether an item is still worth doing, or done being worth doing — overtaken is not the same as wrong.",
+			" This is the FULL list, and the briefing head is only a sample of it: when station_me reports a non-zero 'never_briefed', read it here — what has never been shown to anyone is what is most likely to be stale. When 'oldest_open_task_days' is large, look at created_at and ask whether an item is still worth doing, or done being worth doing — overtaken is not the same as wrong.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskListIn) (*mcp.CallToolResult, taskListOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -551,9 +551,12 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name: "station_task_defer",
 		Description: "Push a task out to a date, with a reason. Deliberately more work than closing it — deferring " +
-			"is legitimate, deferring silently and repeatedly is how a list rots. The count is shown back to you." +
-			"An item briefed repeatedly with nothing changed gets one of two things: what is blocking it, said out loud to your human, or a deferral with a reason. Never silence, and never a drop of something your human owes." +
-			"IF AN ITEM HAS BEEN BRIEFED REPEATEDLY AND NOTHING CHANGED, say what is blocking it or defer it with a reason. Do NOT silently leave it, and do NOT drop something your human owes — that is theirs to abandon, not yours.",
+			"is legitimate, deferring silently and repeatedly is how a list rots. The count is shown back to you. " +
+			"IF AN ITEM HAS BEEN BRIEFED REPEATEDLY AND NOTHING CHANGED, say what is blocking it out loud to your human, or defer it with a reason. " +
+			"Never silence, and do NOT drop something your human owes — that is theirs to abandon, not yours. " +
+			"WRITE THE REASON AS WHAT YOU CHECKED AND WHEN, not as a feeling: \"checked the release tag 2026-08-25, still unpublished\" tells the next " +
+			"session what to re-run, while \"still waiting\" makes it start over. The date is a reminder; the REASON is where a recheck is recorded — " +
+			"blocked_on is set once at creation and nothing ever revisits it, so there is nowhere else to put one.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskDeferIn) (*mcp.CallToolResult, okOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -594,7 +597,7 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_locker_list",
 		Description: "Files stored against this station — names, sizes, digests. The locker is for what a fresh " +
 			"session on another machine needs to reconstitute you: memory and instruction files, conventions. Never secrets." +
-			"Tool preferences belong here too.",
+			" Tool preferences belong here too.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, lockerListOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -616,7 +619,7 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_locker_put",
 		Description: "Store a small text file against this station. NEVER put a token, key or password here — Ken " +
 			"cannot tell, your human can read it, and it goes into every backup." +
-			"Those belong in the VAULT (station_vault_put), which exists for exactly that. Ken cannot inspect a blob and know it is a secret, so this rule is yours to keep.",
+			" Those belong in the VAULT (station_vault_put), which exists for exactly that. Ken cannot inspect a blob and know it is a secret, so this rule is yours to keep.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lockerPutIn) (*mcp.CallToolResult, lockerMeta, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -665,7 +668,7 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name: "station_vault_list",
 		Description: "Secrets held for this station — names, notes, digests and how often each has been read. " +
-			"NEVER values: reading one is a separate, logged call. Entries marked with deleted_at are recoverable.",
+			" NEVER values: reading one is a separate, logged call. Entries marked with deleted_at are recoverable.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, vaultListOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -689,7 +692,7 @@ func newServer(d Deps) *mcp.Server {
 			"where those belong; the LOCKER is not. Two things to know rather than discover: your human can read " +
 			"anything here from the console, and it is stored unencrypted, so the protection is the machine and the " +
 			"backup rather than Ken. Writes are reversible — an overwrite keeps the previous value." +
-			"Unencrypted also means the value travels in EVERY backup. That is a deliberate decision rather than a gap — a key kept beside the ciphertext protects nobody who can read the file.",
+			" Unencrypted also means the value travels in EVERY backup. That is a deliberate decision rather than a gap — a key kept beside the ciphertext protects nobody who can read the file.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultPutIn) (*mcp.CallToolResult, vaultPutOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -729,7 +732,7 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Retire a secret. It stops being readable immediately and stays RECOVERABLE from your human's " +
 			"console — deliberately unlike station_locker_delete, which destroys. Rotating a credential is a put, not " +
 			"a delete then a put." +
-			"Nothing here is destroyed, so a mistake costs your human a click rather than the credential.",
+			" Nothing here is destroyed, so a mistake costs your human a click rather than the credential.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, okOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -748,7 +751,7 @@ func newServer(d Deps) *mcp.Server {
 		// Whole tools do not travel across the freeze; parameters do, because the server
 		// validates what ARRIVES rather than the client's captured schema. So a session
 		// frozen before ken_instructions existed can still ask for the current text here.
-		if in.IncludeInstructions {
+		if in.Wants() {
 			i := version.InstructionsFor("/station/mcp", instructions)
 			out.Instructions = &i
 		}

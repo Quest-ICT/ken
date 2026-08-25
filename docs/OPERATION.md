@@ -342,7 +342,7 @@ configuration choice. All 18 fields are live.
 | Pairing code lifetime (seconds) | `comm_pairing_code_ttl_sec` | 900 | 30–86400 |
 | Max long-poll wait (seconds) | `comm_poll_wait_max_sec` | 15 | 1–30 |
 | Hearsay window (seconds) | `comm_provenance_window_sec` | 3600 | 0–604800 |
-| File exchange enabled | `comm_files_enabled` | off | on/off |
+| File exchange enabled | `comm_files_enabled` | **on** | on/off |
 | Max file size (MB) | `comm_file_max_mb` | 16 | 1–1024 |
 | Relay storage budget (MB) | `comm_file_budget_mb` | 256 | 1–100000 |
 | Free-space floor (MB) | `comm_file_min_free_mb` | 512 | 0–1000000 |

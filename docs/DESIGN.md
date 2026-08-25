@@ -234,7 +234,7 @@ Remote **streamable-HTTP** MCP at `https://<ken-host>/mcp`, TLS-only.
 Wiring: `claude mcp add --transport http ken https://<ken-host>/mcp --header "Authorization: Bearer $KEN_TOKEN" --scope user`.
 On connect the server delivers **its own operating instructions** in the `initialize` response
 (`serverInstructions`, `internal/mcpserver/server.go`), so an agent learns the search-first → record-outcome →
-save/enhance loop without a human pasting a prompt. An **optional OAuth 2.1 authorization server** (off by default)
+save/enhance loop without a human pasting a prompt. An **OAuth 2.1 authorization server** (on, unconditional since 2.0.0)
 lets claude.ai add Ken as a custom connector instead of a pasted bearer token — see [`OAUTH.md`](OAUTH.md).
 
 **Two-phase, token-light:**

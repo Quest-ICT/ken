@@ -71,11 +71,28 @@ durability path — so it is treated as non-negotiable, in three tiers.
 | 2 | **Nightly snapshot** (`scripts/ken-snapshot.sh` via the timer) — compressed, `0600`, not encrypted | 24 h | Named "give me last Tuesday" restore points |
 | 3 | Off-box copy of the snapshots (any file sync) | — | Last resort |
 
-**Encryption is opt-in and OFF by default — on both off-box tiers.** Out of the box, tier 2 writes a
-plaintext `.db` at mode `0600` (with a warning in the journal), and tier 1 replicates unencrypted
-unless you uncomment the `age:` block in `configs/litestream.yml` or enable bucket SSE. Check what you
-have right now — `ls -l /opt/ken/backups`: a bare `.db` is a full plaintext copy of the knowledge base,
-`.db.gz` is compressed; `ken backup verify` reads it directly.
+**KEN DOES NOT ENCRYPT ANYTHING. Tier 2 cannot be encrypted by Ken at all, and there is no setting
+that changes that.** 2.0.0 retired `KEN_AGE_RECIPIENT` and `scripts/ken-snapshot-lib.sh` says so in
+its own comment: *"IT NO LONGER ENCRYPTS … Ken writes a compressed, unencrypted snapshot at 0600 and
+stops."* Setting the retired variable produces a NOTE in the journal and a plaintext snapshot,
+which is written and KEPT.
+
+**Tier 1 can be encrypted, by Litestream rather than by Ken** — uncomment the `age:` block in
+`configs/litestream.yml`, or enable bucket SSE. That is the only encryption option in this system,
+and it protects the continuous replica, not the nightly snapshot.
+
+> **THIS PARAGRAPH SAID "encryption is opt-in and OFF by default — on both off-box tiers" UNTIL
+> 2026-08-25**, and INSTALL.md, `scripts/install.sh` and `deploy/ken-snapshot.service` each carried a
+> procedure for turning on a control that has not existed since 2.0.0 — down to a numbered step
+> claiming the snapshot "fails closed" and keeps nothing if `age` is missing. It does not; it writes
+> the plaintext and keeps it. **An operator who followed that procedure escrowed a key, believed
+> their off-box snapshots were ciphertext, and had plaintext** — of the whole knowledge base, the
+> curator accounts, and every station vault secret. Found by an audit for exactly this class:
+> *text asserting a control that does not exist.* The worst instance of it yet, because the control
+> was encryption.
+
+Check what you have right now — `ls -l /opt/ken/backups`: a bare `.db` is a full plaintext copy of the
+knowledge base, `.db.gz` is compressed plaintext; `ken backup verify` reads either directly.
 
 **Why this matters: `0600` protects the file on this box, and nowhere else.** That mode is enforced by
 this host's kernel for this filesystem. The file's *contents* travel with every copy; its *protection*
@@ -85,8 +102,11 @@ readable by whoever reaches that medium — including whoever ends up with the d
 destroyed. **Tier 3 above _is_ an off-box copy**: if you follow this runbook, your snapshots leave the
 box by design.
 
-**The deciding question: do your backups ever leave this machine?** If yes — or might — encrypt
-(below). If they genuinely never do, plaintext `0600` is a defensible choice, but make it a conscious
+**The deciding question: do your backups ever leave this machine?** If yes — or might — **the
+encryption is yours to add, outside Ken.** Pipe the snapshot through `age`, `gpg` or your sync tool's
+own encryption in whatever moves it off the box; or rely on tier 1 with Litestream's `age:` block.
+What you cannot do is switch something on inside Ken, because there is nothing there to switch. If
+your backups genuinely never leave, plaintext `0600` is a defensible choice — but make it a conscious
 one rather than a default you never noticed.
 
 ## Make / verify a snapshot manually
@@ -117,8 +137,8 @@ passed with no upgrade, which would have left none at all).
 
 Naming and securing are shared, not duplicated. `scripts/ken-snapshot-lib.sh` is the one
 home for the snapshot **stamp** (UTC, `…T…Z` — self-describing and time-sortable) and the
-**secure** step (chmod `0600`, and the backup group when one is set, removing the
-plaintext only after a confirmed encrypt). Both the nightly snapshot **and the installer's
+**secure** step (chmod `0600`, and the backup group when one is set — there is no
+encryption step for it to sequence around; that clause described a 1.x code path). Both the nightly snapshot **and the installer's
 pre-upgrade snapshot** (`backups/pre-upgrade-<UTC-Z>.db`, taken before an upgrade flips the
 `current` symlink) go through it, so the two can never drift on timezone, mode, or
 compression. The pre-upgrade snapshot is compressed exactly like a nightly, for

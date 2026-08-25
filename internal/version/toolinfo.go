@@ -3,6 +3,7 @@ package version
 import (
 	"fmt"
 	"runtime"
+	"strings"
 )
 
 // Info is what `ken_version` returns on every surface.
@@ -117,7 +118,48 @@ const ToolDescription = "What version of Ken you are actually talking to, comput
 // in conversations that began AFTER the upgrade — while its ken_version RESULT came back
 // completely current. No Ken release can reach that captured text. A result can.
 type InstructionsIn struct {
-	IncludeInstructions bool `json:"include_instructions,omitempty" jsonschema:"return this surface's CURRENT connect-time instructions in full. Use it when your captured text may be older than the running server, or when it looks truncated: the client cuts the instructions field, and a result is never cut"`
+	// A STRING-OR-BOOLEAN, and the type is the whole design of this field.
+	//
+	// ken-prod-ops ran the test from inside the exact population this argument exists for — a
+	// session whose captured ken_version schema has no such property — and it failed:
+	//
+	//	on 3.23.0:  ken_version{include_instructions: true}
+	//	  -> validating /properties/include_instructions: type: true has type "string", want "boolean"
+	//
+	// The argument CROSSED the freeze, which confirms the premise. Then schema validation
+	// rejected it, because their client had no schema telling it the value was a boolean and so
+	// serialized it as the string "true".
+	//
+	// **A client with no schema for a property cannot type that property correctly.** That is not
+	// a client bug; it is the definition of the case. So a boolean-only contract is correct for
+	// every caller EXCEPT the ones this feature is for, which makes it the wrong contract.
+	//
+	// Declared as `any` so the generated schema constrains nothing, and coerced below. The
+	// description carries the intent for clients that DO have the schema; the leniency is scoped
+	// to this one argument rather than adopted as a general posture.
+	IncludeInstructions any `json:"include_instructions,omitempty" jsonschema:"true to return this surface's CURRENT connect-time instructions in full (the string \"true\" is accepted too, because a client whose schema predates this property cannot know it is a boolean). Use it when your captured text may be older than the running server, or when it looks truncated: the client cuts the instructions field, and a result is never cut"`
+}
+
+// Wants reports whether the caller asked for the instructions, accepting every shape a client
+// without a schema plausibly sends.
+//
+// DELIBERATELY LENIENT IN ONE DIRECTION ONLY: anything that clearly means yes is yes, and
+// everything else — including an unparseable value — is no. The failure mode of guessing wrong
+// toward "yes" is a couple of extra kilobytes in one result; toward "no" it is a frozen session
+// silently not getting the fix it asked for, which is the thing that already happened.
+func (in InstructionsIn) Wants() bool {
+	switch v := in.IncludeInstructions.(type) {
+	case bool:
+		return v
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "yes", "y", "1", "on":
+			return true
+		}
+	case float64: // JSON numbers arrive as float64
+		return v != 0
+	}
+	return false
 }
 
 // InstructionsInfo is what ken_instructions returns, and what ken_version returns alongside the

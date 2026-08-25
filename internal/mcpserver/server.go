@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -233,6 +234,27 @@ type getIn struct {
 type getOut struct {
 	Entries []model.Entry `json:"entries"`
 	Missing []string      `json:"missing,omitempty"`
+	// OutcomeOwed names the slugs just handed over, and OutcomeNote says what to do with them.
+	//
+	// *** THE INSTRUCTION EXISTS AND IS IGNORED 85% OF THE TIME. *** Measured on the live
+	// deployment: 250 recorded uses against 37 outcomes — 14.8% — and only 22 of 108 entries
+	// carry any outcome at all. The connect-time text says "close the loop EVERY time … do not
+	// skip it", and every session skips it, including the ones that wrote that sentence.
+	//
+	// The diagnosis in FINISHING.md is what this field acts on: it is "something the
+	// instructions request that nothing prompts for AT THE MOMENT IT MATTERS." A rule delivered
+	// once at connect, hundreds of tool calls before the occasion, competes with everything
+	// else in the conversation. A rule delivered IN THE RESULT arrives at the occasion itself.
+	//
+	// kb_get is exactly that occasion, and the denominator says so: `use_count` is bumped ONLY
+	// by Store.Get, whose sole caller is this tool — the console uses GetEntry, which
+	// deliberately does not bump, and kb_search does not bump either. So a "use" is precisely
+	// "an agent fetched the full entry to apply it", which is the moment an outcome is owed.
+	//
+	// Same shape as every other fix this week: the connect-time channel is pinned, truncated
+	// and early; the result channel is current, whole, and arrives when it is needed.
+	OutcomeOwed []string `json:"outcome_owed,omitempty"`
+	OutcomeNote string   `json:"outcome_note,omitempty"`
 }
 
 // --- kb_save ---
@@ -532,7 +554,11 @@ func NewServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, getOut{}, mcpError(err)
 		}
-		return nil, getOut{Entries: entries, Missing: missing}, nil
+		owed := make([]string, 0, len(entries))
+		for _, e := range entries {
+			owed = append(owed, e.Slug)
+		}
+		return nil, getOut{Entries: entries, Missing: missing, OutcomeOwed: owed, OutcomeNote: outcomeNote(len(owed))}, nil
 	})
 
 	addTool(s, d, &mcp.Tool{
@@ -687,7 +713,7 @@ func NewServer(d Deps) *mcp.Server {
 		// Whole tools do not travel across the freeze; parameters do, because the server
 		// validates what ARRIVES rather than the client's captured schema. So a session
 		// frozen before ken_instructions existed can still ask for the current text here.
-		if in.IncludeInstructions {
+		if in.Wants() {
 			i := version.InstructionsFor("/mcp", buildInstructions(d.CurationLangs))
 			out.Instructions = &i
 		}
@@ -760,4 +786,30 @@ func (h *Handler) SetCurationLangs(langs []string) {
 	d := h.d
 	d.CurationLangs = langs
 	h.ptr.Store(NewServer(d))
+}
+
+// outcomeNote is the prompt kb_get returns with the entries it just handed over.
+//
+// A FUNCTION RATHER THAN AN INLINE STRING so the test reads the shipped text instead of a copy of
+// it. A test that rebuilds the sentence it is checking asserts against itself, which is this
+// project's own recurring defect one layer over — the same reason the instruction tests now read
+// the delivered value rather than the const.
+//
+// Names the count because a session that fetched several must report on EACH: the tracker
+// predicted the failure exactly — "one kb_get may carry several slugs and bumps each, while a
+// session is likely to record at most one outcome for the batch."
+func outcomeNote(n int) string {
+	if n == 0 {
+		return ""
+	}
+	suffix := "ies"
+	if n == 1 {
+		suffix = "y"
+	}
+	return "You now owe an outcome on " + strconv.Itoa(n) + " entr" + suffix +
+		". After you act, call kb_record_outcome for EACH slug in outcome_owed: helped | didnt-apply | " +
+		"was-wrong. This is the only evidence Ken collects, and it is currently skipped about six times in " +
+		"seven — an entry nobody reports on stays unproven forever, and the next session cannot tell a good " +
+		"answer from an untested one. If kb_record_outcome is not in your tool list, tell your human in words " +
+		"instead, naming the slug and what happened."
 }

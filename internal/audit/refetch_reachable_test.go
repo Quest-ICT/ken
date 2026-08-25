@@ -31,7 +31,7 @@ func TestEverySurfaceOffersTheInstructionRefetch(t *testing.T) {
 			t.Errorf("%s does not register ken_instructions — a session there can never re-read its "+
 				"own instructions, and will not know that is even possible", name)
 		}
-		if !strings.Contains(src, "in.IncludeInstructions") {
+		if !strings.Contains(src, "in.Wants()") {
 			t.Errorf("%s's ken_version ignores include_instructions — sessions frozen before "+
 				"ken_instructions existed have no way in at all, and they are the population it is for", name)
 		}
