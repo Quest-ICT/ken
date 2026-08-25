@@ -34,6 +34,25 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.21.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### What changes on screen
+
+**The two bulk confirms on `/comm` now list the sessions they will move, by label**, instead of
+stating a count. If you approved one of these on the strength of a number, the number was correct
+— what you could not do was check it against the page, because the sessions table lists every
+endpoint and the credentials block groups only some of them.
+
+The re-bind confirm lists only the endpoints that key actually bound. Unbound endpoints sharing
+the same comm token appear in the **re-point** confirm and not the re-bind one, because that is
+what each verb moves.
+
+### Nothing to do
+
+No action on upgrade.
+
 ## 3.20.1
 
 **PATCH. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17. Nothing in the application

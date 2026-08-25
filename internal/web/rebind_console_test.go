@@ -626,3 +626,150 @@ func flashOf(body string) string {
 	}
 	return body[i:j]
 }
+
+// *** THE CONFIRM NAMES EVERY SESSION THE BULK VERB WILL MOVE, NOT JUST HOW MANY. ***
+//
+// ken-prod-ops put the objection to a bare number on 2026-08-25, against a page that had just
+// passed its own count check: "an operator reads 11, inspects 6, clicks a bulk verb that moves 11
+// — and the five they never saw include `runway-prod-admin` and `rb5009-config`, both in use this
+// week." A number is a claim about a population. A confirm that names the population is a claim
+// the operator can check, which is the standard S6 already sets for revocation one step earlier.
+//
+// The list comes from the verb's own predicate, so it cannot be shorter than what the button
+// moves — see TestTheBlastRadiusListAndCountCannotDisagree for the other half of that.
+func TestTheBulkConfirmNamesEverySessionItWillMove(t *testing.T) {
+	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
+	cs := commOf(t)
+
+	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := st.IssueStationKey(ctx, actor, s.StationID, "laptop", []string{"station"})
+	keyID := keyIDOf(key)
+	tok, _ := st.IssueToken(ctx, actor, []string{"comm"}, "old-machine")
+	tokID := strings.SplitN(strings.TrimPrefix(tok, "ken_"), "_", 2)[0]
+	if _, err := st.IssueToken(ctx, actor, []string{"comm"}, "new-machine"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.IssueStationKey(ctx, actor, s.StationID, "replacement", []string{"station"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two bound and one UNBOUND, all on the same token. The unbound one is the case prod named:
+	// it hangs off the comm token exactly as the bound ones do, and revoking that token ends it.
+	labels := []string{"runway-prod-admin", "rb5009-config", "collector-proxy-dev"}
+	for i, label := range labels {
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: tokID, ActorID: actor, SpaceID: spaceForSession}, label, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i < 2 {
+			if err := cs.BindEndpointToStation(ctx, ep.EndpointID, s.StationID, keyID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	block := credentialsBlock(t, get(t, cli, base+"/comm"))
+
+	// THE OWNER CONFIRM NAMES ALL THREE, the unbound one included.
+	ownerConfirm := regionBetween(t, block, `action="/comm/tokens/`+tokID+`/repoint"`, "</form>")
+	for _, label := range labels {
+		if !strings.Contains(ownerConfirm, label) {
+			t.Errorf("the bulk re-point confirm does not name %q — an operator approving it cannot see "+
+				"what they are moving:\n%s", label, ownerConfirm)
+		}
+	}
+
+	// THE BINDER CONFIRM NAMES THE TWO BOUND ONES AND NOT THE THIRD, because that is what its
+	// own verb moves. A confirm that over-states is as wrong as one that under-states.
+	binderConfirm := regionBetween(t, block, `action="/comm/keys/`+keyID+`/rebind"`, "</form>")
+	for _, label := range labels[:2] {
+		if !strings.Contains(binderConfirm, label) {
+			t.Errorf("the bulk re-bind confirm does not name %q", label)
+		}
+	}
+	if strings.Contains(binderConfirm, "collector-proxy-dev") {
+		t.Error("the bulk re-bind confirm names an UNBOUND endpoint, which its verb cannot move — " +
+			"an over-stated blast radius is a false alarm the operator learns to ignore")
+	}
+}
+
+// *** THE NUMBER AND THE LIST COME FROM ONE QUERY, AND STAY EQUAL TO WHAT /tokens STATES. ***
+//
+// The console now renders a count that is `len(list)`, so those two cannot drift by construction.
+// What CAN drift is this pair against `CountEndpointsByToken` / `CountEndpointsBoundBy`, which
+// `/tokens` still uses to state a revoke's blast radius — two pages describing one credential.
+// Their WHERE clauses are character-identical today; this fails the moment they are not.
+func TestTheBlastRadiusListAndCountCannotDisagree(t *testing.T) {
+	st, ctx, _, _, actor := stationsHarnessWithComm(t)
+	cs := commOf(t)
+
+	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := st.IssueStationKey(ctx, actor, s.StationID, "laptop", []string{"station"})
+	keyID := keyIDOf(key)
+	tok, _ := st.IssueToken(ctx, actor, []string{"comm"}, "machine")
+	tokID := strings.SplitN(strings.TrimPrefix(tok, "ken_"), "_", 2)[0]
+
+	var revoked string
+	for i := 0; i < 4; i++ {
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: tokID, ActorID: actor, SpaceID: spaceForSession}, "s", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i < 3 {
+			if err := cs.BindEndpointToStation(ctx, ep.EndpointID, s.StationID, keyID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if i == 0 {
+			revoked = ep.EndpointID
+		}
+	}
+	// A revoked row, because that is the discriminator: a count including it reports a leftover
+	// that does not exist, on every attempt, forever — which trains an operator to click through
+	// the one number meant to stop them. prod tested /tokens for exactly this on 2026-08-24.
+	if err := cs.RevokeEndpoint(ctx, revoked); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		list  func() ([]comm.EndpointRef, error)
+		count func() (int, error)
+		want  int
+	}{
+		{"owned by token", func() ([]comm.EndpointRef, error) { return cs.EndpointsOwnedBy(ctx, tokID) },
+			func() (int, error) { return cs.CountEndpointsByToken(ctx, tokID) }, 3},
+		{"bound by key", func() ([]comm.EndpointRef, error) { return cs.EndpointsBoundBy(ctx, keyID) },
+			func() (int, error) { return cs.CountEndpointsBoundBy(ctx, keyID) }, 2},
+	} {
+		refs, err := tc.list()
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err := tc.count()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(refs) != n {
+			t.Errorf("%s: the list names %d and the count says %d — /comm and /tokens would describe "+
+				"the same credential differently", tc.name, len(refs), n)
+		}
+		// AND BOTH MUST BE RIGHT. Equal-and-wrong is the failure mode a pure agreement check
+		// cannot see, so the expected value is stated independently of either query.
+		if len(refs) != tc.want {
+			t.Errorf("%s: %d live endpoints, want %d — the pair agrees with itself and not with the data",
+				tc.name, len(refs), tc.want)
+		}
+		for _, r := range refs {
+			if r.EndpointID == revoked {
+				t.Errorf("%s: the revoked endpoint is named in the blast radius", tc.name)
+			}
+		}
+	}
+}

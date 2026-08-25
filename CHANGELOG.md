@@ -15,6 +15,36 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.21.0] — 2026-08-25
+
+### Added
+
+- **A bulk move's confirm now NAMES every session it will move, instead of counting them.**
+  ken-prod-ops put the objection on 2026-08-25, against a page that had just passed its own count
+  check: *"an operator reads 11, inspects 6, clicks a bulk verb that moves 11 — and the five they
+  never saw include `runway-prod-admin` and `rb5009-config`, both in use this week."*
+
+  A number is a claim about a population; a confirm that names the population is a claim the
+  operator can check. That is the standard S6 already sets for revocation — *"this will disconnect
+  2 live sessions"* — carried one step further, to which two.
+
+  `EndpointsOwnedBy` and `EndpointsBoundBy` list exactly what the matching verb moves, using the
+  verb's own predicate — no `space_id`, because the verbs have none either. **The count beside the
+  button is now `len(list)`**, so the number and the list cannot disagree; a test pins both against
+  the `Count…` pair `/tokens` still uses, and pins that pair against the data, because
+  equal-and-wrong is the failure an agreement check cannot see.
+
+  The re-bind confirm deliberately omits unbound endpoints that share the token: its verb cannot
+  move them, and an over-stated blast radius is a false alarm an operator learns to click through.
+
+### Fixed
+
+- **`/comm` was reported as omitting unbound endpoints from the sessions table. It does not** —
+  verified on the live deployment (14 rows, six showing `—` under **Bound by**) and reproduced
+  locally. The reading behind the report was about the credentials block above it, where an
+  unbound endpoint correctly has no *binding key* row. Recorded because the underlying worry was
+  right even though the mechanism was not, and the fix above is what it earned.
+
 ## [3.20.1] — 2026-08-24
 
 Corrections to 3.20.0, found by an adversarial review of its own diff — five independent lenses

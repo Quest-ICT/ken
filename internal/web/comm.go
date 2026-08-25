@@ -135,7 +135,12 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		Label   string
 		Station string // "" for a comm token; the station name for a station key
 		Live    int
-		Targets []any // where its endpoints may be moved: repointTarget or binderTarget
+		// Endpoints are exactly the rows this credential's bulk verb would move, named so
+		// the confirm dialog can list them. `Live` is len(Endpoints) rather than a separate
+		// COUNT: a number and a list that can disagree is the thing being fixed here, and
+		// two queries answering one question is how they drift.
+		Endpoints []comm.EndpointRef
+		Targets   []any // where its endpoints may be moved: repointTarget or binderTarget
 	}
 	//
 	// GROUPED BY STATION WHERE THERE IS ONE, because a channel belongs to the station and
@@ -207,12 +212,16 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	// time, with nothing on any page saying why. Rendering the row — and offering the move —
 	// turns that into a repair the operator can make.
 	//
-	// THE COUNT COMES FROM THE STORE RATHER THAN FROM THE LIST, because `ListEndpoints` is
-	// space-scoped while the bulk verbs and the revoke that makes them urgent are NOT:
-	// `RepointEndpointsOfToken` and `SeverEndpointsBoundBy` name the credential and nothing
-	// else. A count taken from the rendered rows would print a number smaller than what the
-	// button beside it moves, and smaller than the blast radius /tokens states for the same
-	// credential. It is the pair /tokens uses, so the two pages cannot drift.
+	// THE BLAST RADIUS IS A NAMED LIST, NOT A NUMBER, and it comes from the verb's own
+	// predicate rather than from the rendered rows. `ListEndpoints` above is space-scoped
+	// while the bulk verbs and the revoke that makes them urgent are NOT, so a population
+	// derived from the page would be SHORTER than what the button moves.
+	//
+	// ken-prod-ops put the objection to the number on 2026-08-25: an operator reads eleven,
+	// looks at the page, recognises the ones they know, and clicks — and the ones they did
+	// not recognise move too. On the live estate those included `runway-prod-admin` and
+	// `rb5009-config`, both in use that week. `Live` is now len(Endpoints), so the count
+	// beside the button and the list inside its confirm cannot disagree.
 	labels := map[string]string{}
 	if rows, err := a.store.ListTokens(ctx); err == nil {
 		for _, t := range rows {
@@ -235,12 +244,13 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	}
 	owners := make([]credential, 0, len(ownerIDs))
 	for _, id := range ownerIDs {
-		n, err := a.comm.CountEndpointsByToken(ctx, id)
+		refs, err := a.comm.EndpointsOwnedBy(ctx, id)
 		if err != nil {
-			log.Printf("web: count endpoints by token %s: %v", id, err)
+			log.Printf("web: endpoints owned by token %s: %v", id, err)
 			continue
 		}
-		c := credential{TokenID: id, Label: labels[id], Live: n}
+		n := len(refs)
+		c := credential{TokenID: id, Label: labels[id], Live: n, Endpoints: refs}
 		for _, other := range commTokens {
 			if other.TokenID != id {
 				c.Targets = append(c.Targets, other)
@@ -250,15 +260,16 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	}
 	binders := make([]credential, 0, len(binderIDs))
 	for _, id := range binderIDs {
-		n, err := a.comm.CountEndpointsBoundBy(ctx, id)
+		refs, err := a.comm.EndpointsBoundBy(ctx, id)
 		if err != nil {
-			log.Printf("web: count endpoints bound by %s: %v", id, err)
+			log.Printf("web: endpoints bound by %s: %v", id, err)
 			continue
 		}
+		n := len(refs)
 		// The station's human name comes from any live key of that station, its own
 		// included, and falls back to the raw id when the station has no live key left —
 		// which is honest rather than blank: that row is a station whose every key is gone.
-		c := credential{TokenID: id, Label: labels[id], Station: stationOf[id], Live: n}
+		c := credential{TokenID: id, Label: labels[id], Station: stationOf[id], Live: n, Endpoints: refs}
 		for _, k := range keys {
 			if k.Station != stationOf[id] {
 				continue

@@ -186,7 +186,7 @@
             <td>
               {{if .Targets}}
               <form class="inline" method="post" action="/comm/tokens/{{.TokenID}}/repoint"
-                    data-confirm="{{$.T "comm.repoint_all_confirm"}}&#10;&#10;{{$.T "comm.col_owner"}}: {{.TokenID}}&#10;{{$.T "comm.col_live_endpoints"}}: {{.Live}}">
+                    data-confirm="{{$.T "comm.repoint_all_confirm"}}&#10;&#10;{{$.T "comm.col_owner"}}: {{.TokenID}}&#10;{{$.T "comm.confirm_will_move"}} ({{.Live}}):{{range .Endpoints}}&#10;  · {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{end}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <select class="input" name="to_token" title="{{$.T "comm.repoint_all_help"}}" style="width:auto;font-size:.82rem">
                   {{range .Targets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
@@ -218,7 +218,7 @@
             <td>
               {{if .Targets}}
               <form class="inline" method="post" action="/comm/keys/{{.TokenID}}/rebind"
-                    data-confirm="{{$.T "comm.rebind_all_confirm"}}&#10;&#10;{{$.T "comm.col_binder"}}: {{.TokenID}}&#10;{{$.T "comm.col_live_endpoints"}}: {{.Live}}">
+                    data-confirm="{{$.T "comm.rebind_all_confirm"}}&#10;&#10;{{$.T "comm.col_binder"}}: {{.TokenID}}&#10;{{$.T "comm.confirm_will_move"}} ({{.Live}}):{{range .Endpoints}}&#10;  · {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{end}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <select class="input" name="to_key" title="{{$.T "comm.rebind_all_help"}}" style="width:auto;font-size:.82rem">
                   {{range .Targets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}

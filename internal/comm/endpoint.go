@@ -246,6 +246,58 @@ func (s *Store) CountEndpointsByToken(ctx context.Context, tokenID string) (int,
 	return n, err
 }
 
+// EndpointRef names one endpoint a bulk verb would move: enough for a human to recognise it in a
+// confirm dialog, and nothing more.
+type EndpointRef struct {
+	EndpointID string
+	Label      string // agent-supplied; "" when the session never named itself
+	StationID  string // "" when unbound
+}
+
+// EndpointsOwnedBy and EndpointsBoundBy list exactly what the matching bulk verb would move.
+//
+// WHY A LIST AND NOT JUST A COUNT. The console stated the blast radius as a NUMBER — "this moves
+// 11" — beside a button whose effect cannot be undone, and ken-prod-ops put the objection
+// precisely: an operator reads eleven, looks at the page, recognises some of them, and clicks. The
+// ones they did not recognise move too. On the live estate those included `runway-prod-admin` and
+// `rb5009-config`, both in use that week.
+//
+// A number is a claim about a population; a confirm dialog that names the population is a claim
+// the operator can check. That is the same standard S6 already sets for revocation, one step
+// further along: not "this will disconnect N live sessions" but which ones.
+//
+// THE PREDICATE IS THE VERB'S OWN, deliberately character-identical to the UPDATE beside it and
+// to the COUNT that /tokens renders — no `space_id`, because the verbs have none either. A list
+// derived from the space-scoped console listing would be SHORTER than what the button moves,
+// which is the failure this pair exists to prevent rather than to introduce.
+// TestTheBlastRadiusListAndCountCannotDisagree pins the two together.
+func (s *Store) EndpointsOwnedBy(ctx context.Context, tokenID string) ([]EndpointRef, error) {
+	return s.endpointRefs(ctx, `token_id=? AND revoked_at IS NULL`, tokenID)
+}
+
+func (s *Store) EndpointsBoundBy(ctx context.Context, keyID string) ([]EndpointRef, error) {
+	return s.endpointRefs(ctx, `bound_by_station_key_id=? AND revoked_at IS NULL`, keyID)
+}
+
+func (s *Store) endpointRefs(ctx context.Context, where string, arg any) ([]EndpointRef, error) {
+	rows, err := s.R.QueryContext(ctx, `
+SELECT endpoint_id, COALESCE(label,''), COALESCE(station_id,'')
+FROM endpoint WHERE `+where+` ORDER BY COALESCE(label,''), endpoint_id`, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EndpointRef
+	for rows.Next() {
+		var r EndpointRef
+		if err := rows.Scan(&r.EndpointID, &r.Label, &r.StationID); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // RepointEndpointBinder moves ONE bound endpoint onto a different station key of the SAME
 // station, keeping everything else: its id, its secret, its channels and seats, its station,
 // its queued mail and its claims.
