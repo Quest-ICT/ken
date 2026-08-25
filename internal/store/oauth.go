@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -414,3 +415,79 @@ func (s *Store) PurgeExpiredOAuth(ctx context.Context) error {
 		`DELETE FROM oauth_token WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 days')`)
 	return err
 }
+
+// --- what a connector may do, decided by the human at grant time ---
+
+// Ken-namespaced OAuth scopes. These are the per-surface capability decision the human makes on
+// the consent screen, carried in the grant's `scope` column — which is why that column stopped
+// being cosmetic.
+const (
+	ScopeKB      = "ken:kb"      // the knowledge base: read, write-draft, propose
+	ScopeCommSet = "ken:comm"    // inter-session messaging, including the file relay
+	ScopeStation = "ken:station" // a durable working identity, including its locker
+)
+
+// GrantedCapabilities maps a grant's OAuth scope string to the Ken capabilities it carries.
+//
+// *** THIS IS THE CONDITION docs/IDENTITY-CONTROLS.md PUT ON §10 STEP 2, AND IT IS NOT OPTIONAL. ***
+//
+// Step 2 consolidates three authenticators into one identity. The control it removes is the one
+// that said `/comm/mcp` accepts a `ken_` token and NOTHING else — and the register's verdict on
+// that control is unusually pointed:
+//
+//	"This is the highest-value item for a design that intends OAuth as the only mechanism, because
+//	 THIS CONTROL IS THE ONE THAT SAYS NO TO EXACTLY THAT... Consolidating three authenticators
+//	 into one OAuth path removes it by construction, and the removal is INVISIBLE — every surface
+//	 keeps working, better even, and the day a connector is compromised the blast radius has
+//	 quietly grown from the knowledge base to the message bus and the vault. If the new design
+//	 consolidates, the withholding has to be RE-EXPRESSED AS AN EXPLICIT PER-SURFACE CAPABILITY
+//	 DECISION AT GRANT TIME, not inherited from the fact that three files exist."
+//
+// So a global "connectors get everything" constant is exactly the invisible removal it names. The
+// decision lives on the grant instead, where a human made it and where it can be read back.
+//
+// DEFAULTS ARE ALL THREE, because Vlad's ruling is that no Ken feature is optional or off by
+// default and that a session needs "just an actor registration and ONE approval". The consent
+// screen grants everything unless the human narrows it. What changed is that the grant now RECORDS
+// what was granted, so narrowing is possible and revocation is legible — not that anything is
+// withheld by default.
+//
+// A GRANT WITH NO `ken:` SCOPE IS LEGACY AND GETS THE KNOWLEDGE BASE ONLY. Every grant approved
+// before this shipped was approved when a connector could reach `/mcp` and nothing else; that is
+// what its human agreed to. Widening it silently would be the invisible removal wearing a
+// migration's clothes. They keep what they had until a human approves anew.
+func GrantedCapabilities(scope string) []string {
+	var kb, comm, station bool
+	for _, f := range strings.Fields(scope) {
+		switch f {
+		case ScopeKB:
+			kb = true
+		case ScopeCommSet:
+			comm = true
+		case ScopeStation:
+			station = true
+		}
+	}
+	if !kb && !comm && !station {
+		// Legacy grant: exactly what a connector could do before step 2.
+		return []string{"read", "write-draft", "propose"}
+	}
+	var out []string
+	if kb {
+		out = append(out, "read", "write-draft", "propose")
+	}
+	if comm {
+		out = append(out, "comm", "comm-file")
+	}
+	if station {
+		out = append(out, "station", "station-locker")
+	}
+	// NEVER "curate", on any path. A human promotes; an agent never advances the curated head or
+	// asserts freshness. That exclusion is the curation gate, so it is stated as a deliberate
+	// omission rather than left for a reader to notice by its absence.
+	return out
+}
+
+// DefaultGrantScopes is what the consent screen offers, and grants when the human does not narrow
+// it: everything, because no Ken feature is optional or off by default.
+func DefaultGrantScopes() []string { return []string{ScopeKB, ScopeCommSet, ScopeStation} }

@@ -87,13 +87,39 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			authFail(w, reg, "missing bearer token")
 			return
 		}
+		// *** EITHER A `kens_` STATION KEY OR AN OAUTH ACCESS TOKEN, AS OF §10 STEP 2. ***
+		//
+		// This endpoint used to accept `kens_` keys and nothing else, which is half of why
+		// one identity could not span the three surfaces. The other half was /comm/mcp
+		// refusing anything but `ken_`; both are gone.
+		//
+		// AN OAUTH PRINCIPAL ARRIVES WITH NO STATION, AND THAT IS NOT A DEGRADED STATE —
+		// it is the state `station_request` exists to serve, described in its own tool text
+		// as "the only tool a key with no station may call". Until now that sentence was
+		// true and useless: a key with no station could call it, but a session with no KEY
+		// could not, and that is every session being onboarded. An OAuth session can.
+		//
+		// What it CANNOT do is anything station-scoped, because requireStation refuses a
+		// principal with no station id — so the notebook, tasks, locker and vault stay shut
+		// until a human approves a station. That refusal is the same one a station-less
+		// `kens_` key already met; nothing about it is new or weaker.
 		sp, err := st.AuthenticateStationKey(r.Context(), tok)
 		if err != nil {
-			// Unknown, retired and revoked keys are refused identically — extending
-			// COMM's unprobeability rule. A caller learns WHY only after its own
-			// credential has verified, which informs a holder and tells a prober nothing.
-			authFail(w, reg, "invalid station key")
-			return
+			if op, oerr := st.ValidateOAuthAccessToken(r.Context(), tok); oerr == nil {
+				sp = &store.StationPrincipal{
+					ActorID: op.ActorID,
+					TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
+					Scopes:  store.GrantedCapabilities(op.Scope),
+					// StationID deliberately empty: see above.
+				}
+			} else {
+				// Unknown, retired and revoked keys are refused identically — extending
+				// COMM's unprobeability rule. A caller learns WHY only after its own
+				// credential has verified, which informs a holder and tells a prober
+				// nothing. An unknown OAuth token joins that same answer.
+				authFail(w, reg, "invalid station key")
+				return
+			}
 		}
 		if !hasScope(sp.Scopes, ScopeStation) {
 			authFail(w, reg, "this token does not carry the station scope")

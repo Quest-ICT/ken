@@ -188,8 +188,17 @@ func authenticate(ctx context.Context, st *store.Store, tok string) (*principal,
 	if strings.HasPrefix(tok, "ken_") {
 		return authenticateAPIToken(ctx, st, tok)
 	}
-	// OAuth access token: a human-approved connector gets the standard agent
-	// capability set (read | write-draft | propose) — never curate.
+	// OAuth access token: the capabilities the HUMAN granted, read off the grant — the same
+	// function all three surfaces use, so one identity means the same thing everywhere.
+	//
+	// The grant's scope decides. A grant approved before §10 step 2 carries no ken: scope and
+	// resolves to the knowledge base alone, which is exactly what its human agreed to.
+	//
+	// It used to be a literal {read, write-draft, propose} here, with op.Scope discarded.
+	// That was the blocker docs/IDENTITY.md §10 names: a connector could reach the knowledge
+	// base and nothing else, so a session wanting all three surfaces had to hold three
+	// credentials minted three different ways — and the binding voucher exists only because
+	// a station key must never cross to the comm surface as a tool argument.
 	op, err := st.ValidateOAuthAccessToken(ctx, tok)
 	if err != nil {
 		return nil, err
@@ -197,7 +206,7 @@ func authenticate(ctx context.Context, st *store.Store, tok string) (*principal,
 	return &principal{
 		ActorID: op.ActorID,
 		TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
-		Scopes:  scopeSet([]string{scopeRead, scopeWriteDraft, scopePropose}),
+		Scopes:  scopeSet(store.GrantedCapabilities(op.Scope)),
 	}, nil
 }
 

@@ -390,6 +390,35 @@ credentials retire, or mail is stranded with no error.
 2. **Make one identity span `/comm` and `/station`.** This is the condition §9.2 names, and it is
    what unlocks the voucher chain. `auth.go:200` discarding the OAuth grant's scope is the blocker:
    until OAuth can express `comm` and `station`, no session can hold one identity across both.
+
+   > **DONE 2026-08-25.** All three authenticators resolve an OAuth bearer through one function,
+   > `store.GrantedCapabilities(grant.scope)`. `/mcp` no longer discards `op.Scope`; `/comm/mcp` no
+   > longer answers *"comm requires a dedicated `ken_` API token"*; `/station/mcp` accepts an OAuth
+   > principal — **with no station**, which is exactly the state `station_request` was written for
+   > and the reason the next step is now reachable.
+   >
+   > **THE PRICE WAS SET IN ADVANCE AND IS PAID IN FULL.** Consolidating removes the control that
+   > refused OAuth on the comm surface, and `IDENTITY-CONTROLS.md` calls that *"the highest-value
+   > item for a design that intends OAuth as the only mechanism, because THIS CONTROL IS THE ONE
+   > THAT SAYS NO TO EXACTLY THAT"* — warning that the removal would be invisible, every surface
+   > still working, until the day a connector is compromised and the blast radius turns out to have
+   > grown from the knowledge base to the message bus and the vault. Its condition was that the
+   > withholding be **"re-expressed as an explicit per-surface capability decision at grant time,
+   > not inherited from the fact that three files exist."**
+   >
+   > So the consent screen now asks, per surface, and the grant records the answer — which is what
+   > makes `oauth_grant.scope` load-bearing rather than the cosmetic column its own schema comment
+   > called it. **Everything is ticked by default** (no Ken feature is optional or off by default);
+   > what changed is that a human *can* withhold, which the register's own complaint said they
+   > could not. **No schema change**: OAuth scope is the standard mechanism for exactly this, so
+   > `ken:kb`, `ken:comm` and `ken:station` live in the column that already existed.
+   >
+   > **A grant approved before today carries no `ken:` scope and resolves to the knowledge base
+   > alone** — what its human actually agreed to. Widening those silently would have been the
+   > invisible removal wearing a migration's clothes.
+   >
+   > And `curate` is on no path at all. Four mutations pin it: legacy widening, `curate` appended,
+   > the consent form ignoring the untick, and the picker rendering unticked.
 3. **Then delete the voucher chain**, in one change, with its tests, saying why.
 4. **Then the workspace id in config**, and auto-naming for unknown folders (§5). Existing stations
    keep their `station_id` and become workspaces; §8 covers the estate.

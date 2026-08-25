@@ -93,6 +93,7 @@ func (a *app) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, sess, "consent", map[string]any{
 		"CSRF":         sess.CSRF,
 		"Actors":       actors,
+		"Surfaces":     consentSurfaces(),
 		"ClientName":   clientDisplayName(client),
 		"RedirectHost": redirHost,
 		"RedirectURI":  p.RedirectURI,
@@ -158,6 +159,33 @@ func (a *app) handleOAuthAuthorizeDecision(w http.ResponseWriter, r *http.Reques
 	if scope == "" {
 		scope = "read write offline_access"
 	}
+	// *** RECORD WHICH KEN SURFACES THIS APPROVAL COVERS. ***
+	//
+	// Until §10 step 2 the grant's scope was cosmetic — the schema comment said so — because the
+	// capability set was a literal in the authenticator and `/comm/mcp` and `/station/mcp` refused
+	// OAuth outright. Consolidating those three authenticators removes a control that
+	// docs/IDENTITY-CONTROLS.md calls "the one that says NO to exactly that", and it sets the
+	// condition this line meets: the withholding becomes "an explicit per-surface capability
+	// decision at grant time, not inherited from the fact that three files exist."
+	//
+	// EVERYTHING BY DEFAULT, because no Ken feature is optional or off by default and a session
+	// should need one approval rather than a negotiation. The human narrows it by unticking a
+	// surface on the consent screen; the grant then records exactly what they agreed to, which is
+	// what makes narrowing possible and revocation legible.
+	granted := store.DefaultGrantScopes()
+	if picked := r.Form["ken_surface"]; len(picked) > 0 {
+		granted = nil
+		allowed := map[string]bool{}
+		for _, sc := range store.DefaultGrantScopes() {
+			allowed[sc] = true
+		}
+		for _, sc := range picked {
+			if allowed[sc] {
+				granted = append(granted, sc)
+			}
+		}
+	}
+	scope = strings.TrimSpace(scope + " " + strings.Join(granted, " "))
 	code, err := a.store.CreateOAuthGrantAndCode(r.Context(), store.NewAuthCode{
 		ClientID:            p.ClientID,
 		ConnectorActorID:    connActor,
@@ -322,4 +350,27 @@ func (a *app) redirectAuthError(w http.ResponseWriter, r *http.Request, p authPa
 // 200 — render() owns the response headers/body, so we don't pre-write a status.
 func (a *app) oauthErrorPage(w http.ResponseWriter, r *http.Request, msg string) {
 	a.render(w, r, a.currentSession(r), "consent", map[string]any{"Error": msg})
+}
+
+// consentSurface is one Ken surface the human is granting on the consent screen.
+type consentSurface struct{ Scope, LabelKey, HelpKey string }
+
+// consentSurfaces is what the consent screen offers, in the order a human meets them.
+//
+// THE LIST IS DERIVED FROM store.DefaultGrantScopes() rather than written out again, so a surface
+// added there cannot be silently ungrantable here — the mismatch would be invisible, which is the
+// failure mode this whole area keeps producing.
+func consentSurfaces() []consentSurface {
+	labels := map[string]consentSurface{
+		store.ScopeKB:      {store.ScopeKB, "consent.surface_kb", "consent.surface_kb_help"},
+		store.ScopeCommSet: {store.ScopeCommSet, "consent.surface_comm", "consent.surface_comm_help"},
+		store.ScopeStation: {store.ScopeStation, "consent.surface_station", "consent.surface_station_help"},
+	}
+	out := make([]consentSurface, 0, len(labels))
+	for _, sc := range store.DefaultGrantScopes() {
+		if cs, ok := labels[sc]; ok {
+			out = append(out, cs)
+		}
+	}
+	return out
 }

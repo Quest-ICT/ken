@@ -70,21 +70,96 @@ func TestAuthRequiresACommScopedAPIToken(t *testing.T) {
 	}
 }
 
-// A cloud-hosted connector is the worst possible holder of "reach into the
-// sessions on my machines", and its scope set is hard-coded rather than
-// operator-chosen. An OAuth-shaped bearer must not authenticate here at all.
-func TestAuthRejectsOAuthShapedTokens(t *testing.T) {
+// *** A CONNECTOR REACHES MESSAGING ONLY IF ITS HUMAN GRANTED IT — NOT BY TOKEN SHAPE. ***
+//
+// This test used to assert that an OAuth-shaped bearer "must not authenticate here at all",
+// because "a cloud-hosted connector is the worst possible holder of 'reach into the sessions on my
+// machines', and its scope set is hard-coded rather than operator-chosen, so an operator could not
+// withhold comm from it even if they wanted to."
+//
+// **THE SECOND HALF OF THAT SENTENCE IS WHY IT CHANGED, NOT THE FIRST.** The objection was never
+// to OAuth; it was that nobody could withhold. docs/IDENTITY.md §10 step 2 consolidates the three
+// authenticators so one identity spans all three surfaces — and docs/IDENTITY-CONTROLS.md sets the
+// price precisely: *"the withholding has to be re-expressed as an explicit per-surface capability
+// decision at grant time, not inherited from the fact that three files exist."*
+//
+// So the control survives, keyed on the GRANT rather than on the token's prefix. An operator can
+// now withhold comm from a connector, which they could not do before — the register's own
+// complaint. What must never happen is the invisible version it warns about: consolidation that
+// silently widens every existing connector from the knowledge base to the message bus.
+func TestAConnectorReachesCommOnlyIfItsGrantSaysSo(t *testing.T) {
 	ctx := context.Background()
 	st := newKB(t)
 
-	// OAuth access tokens are base62 with no underscore.
-	if _, err := authenticate(ctx, st, "abc123DEFopaqueoauthtokenvalue", ScopeComm); err == nil {
-		t.Fatal("an OAuth-shaped token was accepted on the comm endpoint")
+	// A LEGACY GRANT — approved before step 2, carrying no ken: scope. It must be refused,
+	// because reaching the knowledge base is all its human ever agreed to.
+	legacy := mintOAuth(t, st, "read write offline_access")
+	if _, err := authenticate(ctx, st, legacy, ScopeComm); err == nil {
+		t.Error("a connector approved before per-surface consent reached COMM — consolidation " +
+			"silently widened an existing grant from the knowledge base to the message bus, which is " +
+			"exactly the invisible removal IDENTITY-CONTROLS.md warns about")
 	}
-	if err := func() error { _, e := authenticate(ctx, st, "abc123DEFopaque", ScopeComm); return e }(); err == nil ||
-		!strings.Contains(err.Error(), "dedicated ken_ API token") {
-		t.Fatalf("want the dedicated-token message, got %v", err)
+
+	// A NARROWED GRANT — the human unticked messaging. Same refusal, different reason.
+	narrowed := mintOAuth(t, st, "read write "+store.ScopeKB+" "+store.ScopeStation)
+	if _, err := authenticate(ctx, st, narrowed, ScopeComm); err == nil {
+		t.Error("a grant that does not carry ken:comm reached COMM — the human's decision to " +
+			"withhold it did nothing, which is the state this control exists to prevent")
 	}
+
+	// AND A GRANT THAT DOES CARRY IT WORKS, or the two refusals above prove only that OAuth is
+	// still rejected wholesale and step 2 never happened.
+	full := mintOAuth(t, st, "read write "+store.ScopeKB+" "+store.ScopeCommSet)
+	p, err := authenticate(ctx, st, full, ScopeComm)
+	if err != nil {
+		t.Fatalf("a grant carrying ken:comm was refused: %v — one identity does not span /comm/mcp", err)
+	}
+	if p.ActorID == 0 {
+		t.Error("the OAuth principal carries no actor; endpoints registered under it would have no owner")
+	}
+	if p.SpaceID == 0 {
+		t.Error("the OAuth principal carries no space — its endpoints would be filed where its own " +
+			"successor cannot poll them")
+	}
+	// The file relay rides on the same grant and is refused when comm was not granted.
+	if _, err := authenticate(ctx, st, narrowed, ScopeCommFile); err == nil {
+		t.Error("a grant without ken:comm reached the byte relay")
+	}
+}
+
+// mintOAuth creates a live grant with the given OAuth scope string and returns an access token
+// for it, so a test can assert on what a HUMAN approved rather than on a token's prefix.
+func mintOAuth(t *testing.T, st *store.Store, scope string) string {
+	t.Helper()
+	ctx := context.Background()
+	human, err := st.FindOrCreateActor(ctx, "human", "curator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := st.FindOrCreateActor(ctx, "ai", "connector-"+scope[:4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientID, err := st.RegisterOAuthClient(ctx, "test-connector", []string{"https://example.invalid/cb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := st.CreateOAuthGrantAndCode(ctx, store.NewAuthCode{
+		ClientID: clientID, ConnectorActorID: conn, HumanActorID: human,
+		RedirectURI: "https://example.invalid/cb", Scope: scope,
+	}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cd, err := st.PeekOAuthCode(ctx, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	access, _, err := st.ExchangeOAuthCode(ctx, code, cd.GrantID, time.Hour, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return access
 }
 
 // The dev-token bypass has an empty token id and therefore escapes per-token rate

@@ -51,6 +51,19 @@
       <li class="perm-no"><svg viewBox="0 0 24 24" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span><b>{{.T "consent.perm_never_lead"}}</b> {{.T "consent.perm_never_rest"}}</span></li>
     </ul>
 
+    <!-- WHICH SURFACES THIS APPROVAL COVERS. All ticked, because no Ken feature is optional or
+         off by default — untick one only to withhold it. Recording the choice on the grant is
+         the condition IDENTITY-CONTROLS.md put on consolidating the three authenticators: the
+         withholding has to be "an explicit per-surface capability decision at grant time". -->
+    <h2 class="h3" style="margin:var(--sp-5) 0 var(--sp-3)">{{.T "consent.surfaces_heading"}}</h2>
+    <p class="help" style="margin-top:calc(var(--sp-3) * -1)">{{.T "consent.surfaces_help"}}</p>
+    <ul class="perm-list">
+      {{range .Data.Surfaces}}
+      <li><label><input type="checkbox" name="ken_surface" value="{{.Scope}}" checked>
+        <b>{{$.T .LabelKey}}</b> — {{$.T .HelpKey}}</label></li>
+      {{end}}
+    </ul>
+
     {{if .Data.Actors}}
     <h2 class="h3" style="margin:var(--sp-5) 0 var(--sp-3)">{{.T "consent.write_as_heading"}}</h2>
     <div class="field">

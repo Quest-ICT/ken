@@ -134,12 +134,31 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 	})
 }
 
-// authenticate resolves a bearer to a comm principal, accepting only a
-// `ken_<id>_<secret>` API token carrying requiredScope (`comm` for the MCP
-// transport, `comm-file` for the byte-relay HTTP surface).
+// authenticate resolves a bearer to a comm principal from EITHER a `ken_<id>_<secret>` API token
+// or an OAuth access token, in both cases requiring requiredScope (`comm` for the MCP transport,
+// `comm-file` for the byte-relay HTTP surface).
+//
+// *** OAUTH IS ACCEPTED HERE AS OF §10 STEP 2, AND THAT IS THE POINT OF THE STEP. ***
+//
+// This function used to open with `if !strings.HasPrefix(tok, "ken_") { return … "comm requires a
+// dedicated ken_ API token" }`, so a human-approved connector could reach the knowledge base and
+// was refused by messaging — one identity could not span two surfaces. docs/IDENTITY.md §9.2 names
+// what that costs: the binding-voucher chain, its TTL, single-use, endpoint pinning, actor
+// matching, hash-at-rest and sweep exist SOLELY so a station key never crosses to this surface as
+// a tool argument. Nothing to hand across, nothing to hand it with.
+//
+// THE HUMAN DECIDES PER SURFACE, AT GRANT TIME. docs/IDENTITY-CONTROLS.md put that condition on
+// this exact removal: the withholding "has to be re-expressed as an explicit per-surface capability
+// decision at grant time, not inherited from the fact that three files exist." So the capability
+// set comes from store.GrantedCapabilities(grant.scope) — shared with /mcp and /station/mcp — and a
+// connector reaches messaging only if its grant says ken:comm. Grants approved before this shipped
+// carry no ken: scope and are refused here, which is what their humans agreed to.
+//
+// UNPROBEABILITY IS UNCHANGED. Both paths fail with the same opaque "invalid token" at the
+// middleware; nothing here tells a caller which shape it got wrong.
 func authenticate(ctx context.Context, st *store.Store, tok, requiredScope string) (*principal, error) {
 	if !strings.HasPrefix(tok, "ken_") {
-		return nil, errors.New("comm requires a dedicated ken_ API token")
+		return authenticateOAuth(ctx, st, tok, requiredScope)
 	}
 	parts := strings.SplitN(tok, "_", 3)
 	if len(parts) != 3 || parts[0] != "ken" {
@@ -204,4 +223,37 @@ func httpError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(code)
 	_, _ = w.Write([]byte(msg + "\n"))
+}
+
+// authenticateOAuth resolves an opaque OAuth access token to a comm principal.
+//
+// THE SPACE COMES FROM THE ACTOR, never a hardcoded 1, because that is where the api_token path
+// gets it (the JOIN in authenticate above) and two resolutions of one question is how they drift.
+// An endpoint registered under an OAuth identity must land in the same space as one registered
+// under that actor's api_token, or its mail is filed somewhere its successor cannot poll.
+func authenticateOAuth(ctx context.Context, st *store.Store, tok, requiredScope string) (*principal, error) {
+	op, err := st.ValidateOAuthAccessToken(ctx, tok)
+	if err != nil {
+		return nil, err
+	}
+	var spaceID int64
+	if err := st.R.QueryRowContext(ctx, `SELECT space_id FROM actor WHERE id=?`, op.ActorID).Scan(&spaceID); err != nil {
+		return nil, err
+	}
+	set := map[string]bool{}
+	for _, sc := range store.GrantedCapabilities(op.Scope) {
+		set[sc] = true
+	}
+	if !set[requiredScope] {
+		return nil, errors.New("token does not carry the " + requiredScope + " scope")
+	}
+	return &principal{
+		ActorID: op.ActorID,
+		// The same handle /mcp uses, so rate limiting and logging read the same identity
+		// across surfaces. It is deliberately not an api_token id: TouchToken finds no row
+		// and does nothing, which is correct — an OAuth grant's use is not an api_token's.
+		TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
+		SpaceID: spaceID,
+		Scopes:  set,
+	}, nil
 }
