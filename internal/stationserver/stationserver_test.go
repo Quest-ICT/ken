@@ -178,13 +178,13 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 
 	// The case that used to be refused, and is the whole point of the change.
 	bare := &principal{StationID: "s1", Scopes: map[string]bool{ScopeStation: true}}
-	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, bare)); err != nil {
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, bare), nil); err != nil {
 		t.Fatalf("a station key without the legacy locker scope cannot reach the locker: %v", err)
 	}
 
 	// An existing key that carries the old scope must not regress.
 	legacy := &principal{StationID: "s1", Scopes: map[string]bool{ScopeStation: true, ScopeStationLocker: true}}
-	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, legacy)); err != nil {
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, legacy), nil); err != nil {
 		t.Fatalf("a key carrying the legacy locker scope was refused: %v", err)
 	}
 
@@ -192,22 +192,41 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 	// everything" would pass for the wrong reason — a locker reachable with no station
 	// at all is a different and worse bug than the one being fixed.
 	stationless := &principal{StationID: "", Scopes: map[string]bool{ScopeStation: true}}
-	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, stationless)); err == nil {
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, stationless), nil); err == nil {
 		t.Fatal("a station-less key reached the locker — the locker now gates on nothing at all")
 	}
 }
 
-// A station-less key may call station_request and nothing else — that is how a session
-// with no station asks for one (S3). The refusal must say what to do next.
-func TestStationLessKeyIsGatedWithGuidance(t *testing.T) {
+// A session with no workspace still cannot reach workspace-scoped tools — and the refusal must
+// now point at something it can do BY ITSELF.
+//
+// IT USED TO POINT AT station_request, AND THAT WAS THE DEADLOCK IN ONE SENTENCE. The tool's own
+// description called it "the only tool a key with no station may call", which was true and
+// concealed the constraint: a key with no station could call it, and a session with no KEY could
+// not — which is every session being onboarded. The console could not create a station either, and
+// a console-minted key was issued under the operator's actor so it could never bind the session it
+// was minted for. Vlad, at the console and unable to give a session Station: "It is absurd the way
+// it works now."
+//
+// docs/IDENTITY.md §5 replaced the ask with a fact: call station_me and you have a workspace,
+// immediately, with nothing to approve. So the refusal points there, and this test asserts the
+// PROPERTY — that a session reading it can act without waiting for a human — rather than a
+// sentence, because the sentence is what changed.
+func TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone(t *testing.T) {
 	ctx := context.Background()
 	c := context.WithValue(ctx, ctxKey{}, &principal{StationID: "", Scopes: map[string]bool{ScopeStation: true}})
-	_, err := requireStation(c)
+	_, err := requireStation(c, nil)
 	if err == nil {
-		t.Fatal("a station-less key must not reach station-scoped tools")
+		t.Fatal("a session with no workspace must not reach workspace-scoped tools")
 	}
-	if !strings.Contains(err.Error(), "station_request") {
-		t.Fatalf("the refusal should point at station_request, got: %v", err)
+	if !strings.Contains(err.Error(), "station_me") {
+		t.Errorf("the refusal does not name the call that fixes it, so the session waits: %v", err)
+	}
+	for _, stale := range []string{"station_request", "ask your human", "they give you"} {
+		if strings.Contains(err.Error(), stale) {
+			t.Errorf("the refusal still routes through a human (%q) — that is the deadlock, and it is "+
+				"the thing §5 removed: %v", stale, err)
+		}
 	}
 }
 

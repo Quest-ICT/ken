@@ -3,6 +3,8 @@ package stationserver
 import (
 	"context"
 	"errors"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,19 +61,76 @@ func principalFrom(ctx context.Context) *principal {
 
 // requireStation resolves the caller's station, refusing a station-less key. Every tool
 // except station_request goes through it.
-func requireStation(ctx context.Context) (*principal, error) {
+func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, error) {
 	p := principalFrom(ctx)
 	if p == nil {
 		return nil, errors.New("unauthenticated")
 	}
 	if p.StationID == "" {
-		return nil, errors.New("this key is not bound to a station yet — call station_request to ask your human to create one, " +
-			"then use the key they give you for that station")
+		p = p.withWorkspace(workspaceFrom(req))
+	}
+	if p.StationID == "" {
+		return nil, errors.New("no workspace yet — call station_me with workspace_name set to this folder's name " +
+			"and Ken will make you one immediately: nothing to approve and nothing to wait for")
 	}
 	return p, nil
 }
 
-// authMiddleware authenticates a `kens_` bearer key and requires the station scope.
+// workspaceFrom lifts the declared workspace id off the tool call's headers.
+//
+// *** READ HERE, NOT IN THE MIDDLEWARE, AND THE REASON IS WORTH THE PARAGRAPH. ***
+//
+// The first implementation resolved the workspace in authMiddleware and wrote it onto the
+// principal. The middleware ran, the header was present, the log line fired, the principal was
+// built with the right station — and the tool handler still saw an empty one. Measured, not
+// guessed: logging both sides of the seam in one run showed `hdr="glZ..." -> station="glZ..."`
+// three times, followed by `handler sees station=""`.
+//
+// The SDK does not hand a tool handler the HTTP request's context. It hands it the request, with
+// `Extra.Header` on it — which is exactly how internal/commserver has always lifted its endpoint
+// credential (withEndpointCred). The mechanism already existed in this repository; I built a
+// second one that could not work and spent the debugging finding out.
+//
+// IT AUTHORISES NOTHING (docs/IDENTITY.md §9.2). The value only SELECTS which workspace; the
+// credential on the request is what authorises, and requireStation still refuses a principal that
+// has neither. A station key bound to its own station never consults this — see authMiddleware.
+func workspaceFrom(req *mcp.CallToolRequest) string {
+	if req == nil || req.Extra == nil || req.Extra.Header == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Extra.Header.Get(WorkspaceHeader))
+}
+
+// withWorkspace returns a copy of the principal working as the declared workspace, or the
+// principal unchanged when the declaration is empty or names nothing live.
+//
+// A COPY, because the principal in the context is shared across a session and a per-call
+// declaration must not leak into the next call.
+func (p *principal) withWorkspace(ws string) *principal {
+	if ws == "" {
+		return p
+	}
+	c := *p
+	c.StationID = ws
+	return &c
+}
+
+// WorkspaceHeader carries the stable opaque workspace id a folder's MCP entry declares.
+//
+// NOT A SECRET, and docs/IDENTITY.md §4 says that is the whole point: it replaces a per-folder
+// station KEY, which was a bearer credential a human had to generate, deliver and protect — and
+// whose only delivery path on 2026-08-18 was a prompt, which the same instruction forbade, so the
+// key was burned on arrival. "A credential whose delivery path is a prompt is not protecting
+// anything."
+//
+// §9.2 states the condition this design lives under: "A stable opaque workspace id in an MCP header
+// authorises nothing, so there is nothing to keep out of a transcript. IF THAT ID EVER GAINS
+// AUTHORITY, THIS CONTROL COMES STRAIGHT BACK." It selects a workspace; the OAuth grant is what
+// authorises, and single-user is what makes selection sufficient.
+const WorkspaceHeader = "X-Ken-Workspace"
+
+// authMiddleware authenticates a `kens_` bearer key or an OAuth grant, requires the station scope,
+// and resolves which workspace the session is working as.
 func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No CORS headers: like /comm/mcp this endpoint has no browser client, so a
@@ -124,6 +183,47 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 		if !hasScope(sp.Scopes, ScopeStation) {
 			authFail(w, reg, "this token does not carry the station scope")
 			return
+		}
+
+		// *** THE WORKSPACE HEADER — docs/IDENTITY.md §4, step 4 of §10. ***
+		//
+		//	X-Ken-Workspace: lhqBQKBpTSyJoZyu    <- permanent, meaningless, NOT a secret
+		//
+		// §4: "The human's OAuth grant proves WHO, and single-user makes that sufficient: within
+		// one instance there is one human and one Claude account, so a session declaring a
+		// workspace is that human's own session. There is no other tenant to protect against."
+		// The id selects; the grant authorises. That is why it can live in a config file, in
+		// plain sight, forever — "a name tag cannot leak, cannot be burned, never expires and
+		// never rotates", which is the whole point of replacing a per-folder station KEY.
+		//
+		// A CREDENTIAL THAT CARRIES ITS OWN STATION WINS. A `kens_` key is bound to one station
+		// and that binding is a fact about the credential, not a preference; letting a header
+		// override it would let a station key read a station it was never issued for, which is
+		// authority the header must not have. So the header applies only to a principal that
+		// arrives with no station — which today means an OAuth grant.
+		//
+		// THE RESIDUAL RISK IS CONFUSION, NOT COMPROMISE (§4), and it is mitigated by visibility
+		// rather than by credentials: the claim is logged, and the console can show which
+		// workspace each session claimed. Vlad ruled on 2026-08-25 that the vault follows the
+		// workspace like everything else, rather than growing a second factor that would
+		// reintroduce the ceremony this design exists to remove.
+		if sp.StationID == "" {
+			if ws := strings.TrimSpace(r.Header.Get(WorkspaceHeader)); ws != "" {
+				ok, err := st.StationExists(r.Context(), ws)
+				if err != nil {
+					authFail(w, reg, "invalid station key")
+					return
+				}
+				if !ok {
+					// Same opaque answer as an unknown credential. A workspace id is not a
+					// secret, but "does this id exist" must not become a probe either — the
+					// unprobeability rule is about what an unproven caller can enumerate.
+					authFail(w, reg, "invalid station key")
+					return
+				}
+				sp.StationID = ws
+				log.Printf("STATION: session on token %s claimed workspace %s via %s", sp.TokenID, ws, WorkspaceHeader)
+			}
 		}
 		if limiter != nil {
 			if ok, retry := limiter.Allow(sp.TokenID); !ok {

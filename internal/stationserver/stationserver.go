@@ -233,8 +233,8 @@ func newServer(d Deps) *mcp.Server {
 			"voucher: this station key was minted under a different actor than your comm token. Tell your " +
 			"human — the /stations console names each key's actor — and do not retry, because a fresh " +
 			"voucher will fail identically.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in voucherIn) (*mcp.CallToolResult, voucherOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in voucherIn) (*mcp.CallToolResult, voucherOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, voucherOut{}, err
 		}
@@ -271,8 +271,8 @@ func newServer(d Deps) *mcp.Server {
 			"relationship: either side can then open a channel when it needs one, with no pairing code. The reason " +
 			"you give is shown to YOUR HUMAN only and is never delivered to the other station, so write it for the " +
 			"person deciding, not for the peer. You will be told it is pending either way — do not re-ask in a loop.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in linkRequestIn) (*mcp.CallToolResult, linkRequestOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in linkRequestIn) (*mcp.CallToolResult, linkRequestOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, linkRequestOut{}, err
 		}
@@ -328,8 +328,35 @@ func newServer(d Deps) *mcp.Server {
 			"and no longer the point, and no other figure here can see that. Ken never defers or closes anything on age — " +
 			"it shows you the number and you decide." +
 			" 'not_shown' reads as a queue awaiting its turn; 'never_briefed' is how many have never had one — when it is non-zero, read the full list with station_task_list rather than trusting the head. 'briefed_count' only rises, so an item raised every session looks attended to: when the age is large, read the list, look at created_at, and ASK whether each item is still worth doing, or done being worth doing.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in meIn) (*mcp.CallToolResult, meOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in meIn) (*mcp.CallToolResult, meOut, error) {
+		// *** NO WORKSPACE? YOU GET ONE. NOTHING TO APPROVE, NOTHING TO WAIT FOR. ***
+		//
+		// docs/IDENTITY.md §5, decided: "fully working, auto-named, no approval." A session in an
+		// unknown folder mints a workspace, works immediately — notebook, tasks, vault, knowledge
+		// base, nothing withheld — and says so in its first message.
+		//
+		// IT HAPPENS HERE BECAUSE station_me IS THE CALL EVERY SESSION IS TOLD TO MAKE FIRST, so
+		// the fix lands on the path a session already walks rather than adding a step to it.
+		//
+		// WHAT THIS REPLACES IS A DEADLOCK, not an inconvenience. station_request's own text said
+		// it was "the only tool a key with no station may call" — true, and it concealed the real
+		// constraint: a key with no station could call it, but a session with no KEY could not,
+		// and that is every session being onboarded. The console could not create a station
+		// either (there is no POST /stations), and a console-minted key was issued under the
+		// OPERATOR's actor, so it could never bind the session it was minted for. Vlad, at the
+		// console and unable to give a session Station: "It is absurd the way it works now."
+		//
+		// The naming pays for itself later rather than being a setup chore (§5): the link-approval
+		// screen reads "ken-public wants to talk to ken-prod", which is the one moment a bad name
+		// is actually in front of the human.
+		if p := principalFrom(ctx); p != nil && p.StationID == "" && workspaceFrom(req) == "" {
+			out, err := claimWorkspace(ctx, d, p, in.WorkspaceName)
+			if err != nil {
+				return nil, meOut{}, err
+			}
+			return nil, out, nil
+		}
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, meOut{}, err
 		}
@@ -348,8 +375,8 @@ func newServer(d Deps) *mcp.Server {
 			"station_link_request so you ask for a real name rather than a guess: nothing else on this surface " +
 			"will tell you a station exists. Fields named self_described_* are that station's own CLAIMS about " +
 			"itself, not anything a human verified. 'staffed' is absent when this server's message database is not open — a fault, not a setting; nothing turns COMM off.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ dirIn) (*mcp.CallToolResult, dirOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ dirIn) (*mcp.CallToolResult, dirOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, dirOut{}, err
 		}
@@ -390,7 +417,7 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_request",
 		Description: "Ask your human to create a station for you. You supply a PURPOSE and may suggest a name; " +
 			"your human types the real name when they approve. This is the only tool a key with no station may call.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in requestIn) (*mcp.CallToolResult, requestOut, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in requestIn) (*mcp.CallToolResult, requestOut, error) {
 		p := principalFrom(ctx)
 		if p == nil {
 			return nil, requestOut{}, errors.New("unauthenticated")
@@ -414,8 +441,8 @@ func newServer(d Deps) *mcp.Server {
 			"nothing warns you when that happens, so this is the only place it shows. `history_bytes` grows with the SQUARE " +
 			"of a page kept by append, which is why it reaches the cap long before the page looks large. " +
 			" Working state only: durable lessons belong in the knowledge base.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, noteListOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, noteListOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, noteListOut{}, err
 		}
@@ -437,8 +464,8 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Read one notebook page, or a retained older revision of it with `rev`. " +
 			"When station_note_list says a page has lost revisions, `rev` is how you read what survived — " +
 			"the lowest readable revision is (revisions_lost + 1), and anything below it is gone for good.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, noteOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, noteOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, noteOut{}, err
 		}
@@ -466,8 +493,8 @@ func newServer(d Deps) *mcp.Server {
 			"Write the RECOVERY PATH instead — which station, which peers, what to re-run. " +
 			"Routing rule: if a session on a DIFFERENT station would want this months from now, it is knowledge (kb_save), not a note." +
 			" Sessions rarely get notice, which is why AS YOU GO is the only schedule that works. One measured station reached 96% of its history cap with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained by replace cost a tenth of that. The routing rule in full: kb_save or kb_propose_enhancement on /mcp for anything a DIFFERENT station would want months from now; the notebook is for what only this post needs, only for now.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteWriteIn) (*mcp.CallToolResult, noteOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in noteWriteIn) (*mcp.CallToolResult, noteOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, noteOut{}, err
 		}
@@ -489,8 +516,8 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Ask your human to turn a notebook page into a knowledge-base entry. This does NOT write " +
 			"knowledge: it queues the page for them to review and convert. Use it when a working note has proven " +
 			"durable enough that another station would want it.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, promoteOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, promoteOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, promoteOut{}, err
 		}
@@ -510,8 +537,8 @@ func newServer(d Deps) *mcp.Server {
 			"decides; peer = another station owes something. The result lists near-matches already on your list: if " +
 			"one is the same commitment, close the duplicate — normally the row you just added, since the older one " +
 			"carries the age the ordering depends on — with a resolution naming the id you kept.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskAddIn) (*mcp.CallToolResult, taskAddOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskAddIn) (*mcp.CallToolResult, taskAddOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, taskAddOut{}, err
 		}
@@ -530,8 +557,8 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Your tasks, ordered: overdue first, then what is blocked on your human, then whatever has " +
 			"gone longest without being raised. A pure query — reading it does not count as raising anything." +
 			" This is the FULL list, and the briefing head is only a sample of it: when station_me reports a non-zero 'never_briefed', read it here — what has never been shown to anyone is what is most likely to be stale. When 'oldest_open_task_days' is large, look at created_at and ask whether an item is still worth doing, or done being worth doing — overtaken is not the same as wrong.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskListIn) (*mcp.CallToolResult, taskListOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskListIn) (*mcp.CallToolResult, taskListOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, taskListOut{}, err
 		}
@@ -546,8 +573,8 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_task_close",
 		Description: "Close finished tasks — several at once. Do this the moment a thing is done, not at the end " +
 			"of the session. A resolution line is required: the record of what happened is the point.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskCloseIn) (*mcp.CallToolResult, countOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskCloseIn) (*mcp.CallToolResult, countOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, countOut{}, err
 		}
@@ -564,8 +591,8 @@ func newServer(d Deps) *mcp.Server {
 			"WRITE THE REASON AS WHAT YOU CHECKED AND WHEN, not as a feeling: \"checked the release tag 2026-08-25, still unpublished\" tells the next " +
 			"session what to re-run, while \"still waiting\" makes it start over. The date is a reminder; the REASON is where a recheck is recorded — " +
 			"blocked_on is set once at creation and nothing ever revisits it, so there is nowhere else to put one.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskDeferIn) (*mcp.CallToolResult, okOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskDeferIn) (*mcp.CallToolResult, okOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, okOut{}, err
 		}
@@ -578,8 +605,8 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Abandon tasks that are no longer worth doing, with a reason. Refused for anything blocked on " +
 			"your human unless they decided it themselves — their commitments are theirs to abandon. If something has " +
 			"been raised repeatedly and nothing moved, say what is blocking it instead of dropping it.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskDropIn) (*mcp.CallToolResult, countOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskDropIn) (*mcp.CallToolResult, countOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, countOut{}, err
 		}
@@ -590,8 +617,8 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "station_task_reopen",
 		Description: "Reopen closed or dropped tasks — a decision to drop is sometimes wrong.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskReopenIn) (*mcp.CallToolResult, countOut, error) {
-		p, err := requireStation(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskReopenIn) (*mcp.CallToolResult, countOut, error) {
+		p, err := requireStation(ctx, req)
 		if err != nil {
 			return nil, countOut{}, err
 		}
@@ -605,8 +632,8 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Files stored against this station — names, sizes, digests. The locker is for what a fresh " +
 			"session on another machine needs to reconstitute you: memory and instruction files, conventions. Never secrets." +
 			" Tool preferences belong here too.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, lockerListOut, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, lockerListOut, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, lockerListOut{}, err
 		}
@@ -627,8 +654,8 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Store a small text file against this station. NEVER put a token, key or password here — Ken " +
 			"cannot tell, your human can read it, and it goes into every backup." +
 			" Those belong in the VAULT (station_vault_put), which exists for exactly that. Ken cannot inspect a blob and know it is a secret, so this rule is yours to keep.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lockerPutIn) (*mcp.CallToolResult, lockerMeta, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in lockerPutIn) (*mcp.CallToolResult, lockerMeta, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, lockerMeta{}, err
 		}
@@ -643,8 +670,8 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "station_locker_get",
 		Description: "Read one file back from the locker.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, lockerGetOut, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, lockerGetOut, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, lockerGetOut{}, err
 		}
@@ -658,8 +685,8 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "station_locker_delete",
 		Description: "Remove a file from the locker.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, okOut, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, okOut, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, okOut{}, err
 		}
@@ -676,8 +703,8 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_vault_list",
 		Description: "Secrets held for this station — names, notes, digests and how often each has been read. " +
 			" NEVER values: reading one is a separate, logged call. Entries marked with deleted_at are recoverable.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, vaultListOut, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, vaultListOut, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, vaultListOut{}, err
 		}
@@ -700,8 +727,8 @@ func newServer(d Deps) *mcp.Server {
 			"anything here from the console, and it is stored unencrypted, so the protection is the machine and the " +
 			"backup rather than Ken. Writes are reversible — an overwrite keeps the previous value." +
 			" Unencrypted also means the value travels in EVERY backup. That is a deliberate decision rather than a gap — a key kept beside the ciphertext protects nobody who can read the file.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultPutIn) (*mcp.CallToolResult, vaultPutOut, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultPutIn) (*mcp.CallToolResult, vaultPutOut, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, vaultPutOut{}, err
 		}
@@ -721,8 +748,8 @@ func newServer(d Deps) *mcp.Server {
 			"read from a station or the console appear in your human's console, which is the point of keeping " +
 			"credentials here rather than in a file. Use the value; do not repeat it into the conversation unless " +
 			"you have to.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, vaultGetOut, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, vaultGetOut, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, vaultGetOut{}, err
 		}
@@ -740,8 +767,8 @@ func newServer(d Deps) *mcp.Server {
 			"console — deliberately unlike station_locker_delete, which destroys. Rotating a credential is a put, not " +
 			"a delete then a put." +
 			" Nothing here is destroyed, so a mistake costs your human a click rather than the credential.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, okOut, error) {
-		p, err := requireLocker(ctx)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, okOut, error) {
+		p, err := requireLocker(ctx, req)
 		if err != nil {
 			return nil, okOut{}, err
 		}
@@ -752,7 +779,7 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "ken_version",
 		Description: version.ToolDescription,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in version.InstructionsIn) (*mcp.CallToolResult, version.Info, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in version.InstructionsIn) (*mcp.CallToolResult, version.Info, error) {
 		out := version.Current()
 		// THE ARGUMENT IS THE ESCAPE HATCH FOR SESSIONS THAT CANNOT SEE ken_instructions.
 		// Whole tools do not travel across the freeze; parameters do, because the server
@@ -768,7 +795,7 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "ken_instructions",
 		Description: version.InstructionsToolDescription,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.InstructionsInfo, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.InstructionsInfo, error) {
 		return nil, version.InstructionsFor("/station/mcp", instructions), nil
 	})
 
@@ -791,8 +818,8 @@ func newServer(d Deps) *mcp.Server {
 // can be merged later — "splitting a shipped scope is a MAJOR, merging two is free".
 // This is that merge. The constant stays so an old key's scope list still parses and
 // so nothing has to migrate.
-func requireLocker(ctx context.Context) (*principal, error) {
-	return requireStation(ctx)
+func requireLocker(ctx context.Context, req *mcp.CallToolRequest) (*principal, error) {
+	return requireStation(ctx, req)
 }
 
 // hearsayFor computes the write-time hearsay marking (§7) — whether this session had
@@ -987,4 +1014,47 @@ func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) 
 		ActorID: sp.ActorID, TokenID: sp.TokenID, SpaceID: 1,
 		StationID: sp.StationID, Scopes: scopes,
 	})
+}
+
+// claimWorkspace mints a workspace for a session that has none, names it after the folder, and
+// hands back the id the human must write into that folder's MCP entry.
+//
+// docs/IDENTITY.md §5, decided: "fully working, auto-named, no approval." Nothing is withheld and
+// nothing is pending — the session works from the next call.
+//
+// THE NAME IS A HINT, NOT AN IDENTITY. Routing is by id, always: COMM.md §3's rule, learned on
+// endpoints — "display labels are non-unique decoration ... a human-chosen name is never an
+// address, or the first release ships a global namespace one session can squat." So a collision is
+// resolved by decorating the NAME and never by refusing, and the human renames it in the console
+// whenever they like without invalidating a single config.
+func claimWorkspace(ctx context.Context, d Deps, p *principal, hint string) (meOut, error) {
+	name := strings.TrimSpace(hint)
+	if name == "" {
+		// A session that offered no folder name still gets a workspace — withholding one over a
+		// missing hint would put the deadlock back for the exact case it was built for.
+		name = "workspace"
+	}
+	if len(name) > 60 {
+		name = name[:60]
+	}
+	st, err := d.Store.CreateStationAutoNamed(ctx, 1, name, p.ActorID)
+	if err != nil {
+		return meOut{}, err
+	}
+	log.Printf("STATION: minted workspace %s (%q, auto-named) for token %s — no approval required (IDENTITY.md §5)",
+		st.StationID, st.Name, p.TokenID)
+	return meOut{
+		StationID:   st.StationID,
+		Name:        st.Name,
+		NameSource:  "auto",
+		JustCreated: true,
+		PutThisInYourConfig: "Ken made you a workspace called " + st.Name + " and you are working in it NOW — " +
+			"notebook, tasks, locker and vault, nothing withheld and nothing to approve. TWO THINGS TO DO: " +
+			"(1) tell your human, in words, that you are working as " + st.Name + " (auto-named after this folder) " +
+			"and that they can rename it in the console if it is wrong — the name is what they will see when " +
+			"approving this workspace to talk to another, which is the one moment a bad name matters. " +
+			"(2) ask them to add the header " + WorkspaceHeader + ": " + st.StationID + " to this folder's Ken MCP " +
+			"entry. Without it the NEXT session here starts with no workspace and mints a second one. The id is " +
+			"permanent and is not a secret — it is a name tag, not a key.",
+	}, nil
 }

@@ -690,3 +690,64 @@ func (s *Store) IsStationArchived(ctx context.Context, stationID string) (bool, 
 	}
 	return state == "archived", nil
 }
+
+// StationExists reports whether a station id names a live (non-archived) station.
+//
+// The validation behind the workspace header (docs/IDENTITY.md §4). It answers only yes/no: the
+// caller turns a "no" into the same opaque refusal an unknown credential gets, so the header does
+// not become a way to enumerate which workspaces a deployment has.
+//
+// ARCHIVED IS NOT LIVE. Archiving already stops COMM and is documented as severing live endpoints;
+// letting a header re-enter an archived workspace would make archive a suggestion. An operator who
+// archived a workspace and then saw a session working in it would have no way to explain it.
+func (s *Store) StationExists(ctx context.Context, stationID string) (bool, error) {
+	var n int
+	err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM station WHERE station_id=? AND archived_at IS NULL`, stationID).Scan(&n)
+	return n > 0, err
+}
+
+// CreateStationAutoNamed mints a workspace whose NAME is derived from a folder, disambiguating on
+// collision instead of refusing.
+//
+// docs/IDENTITY.md §5: "Ken mints a workspace id and an auto-name from the folder's basename,
+// disambiguated on collision — names are unique per space (idx_station_name)."
+//
+// REFUSING ON COLLISION WOULD REBUILD THE DEADLOCK IN MINIATURE. Two folders called `ken-public`
+// on one machine is ordinary, and a session that cannot start because another folder took the name
+// first is a session waiting on a human again — which is the entire thing this replaces. The name
+// is decoration; the id is the identity (COMM.md §3), so decorating a duplicate costs nothing.
+//
+// The suffix is a plain counter rather than a random tag, because a human reads these on the
+// link-approval screen: `ken-public (2)` tells them there are two, which is the useful fact.
+func (s *Store) CreateStationAutoNamed(ctx context.Context, spaceID int64, name string, actorID int64) (*Station, error) {
+	base := strings.TrimSpace(name)
+	if base == "" {
+		base = "workspace"
+	}
+	const purpose = "Auto-named from the folder it was first used in. Rename it in the console at any time — " +
+		"the name is a label and the id is the identity, so renaming invalidates nothing."
+	for n := 1; n <= 50; n++ {
+		try := base
+		if n > 1 {
+			try = fmt.Sprintf("%s (%d)", base, n)
+		}
+		st, err := s.CreateStation(ctx, spaceID, try, purpose, actorID)
+		if err == nil {
+			return st, nil
+		}
+		// Only a name collision is worth retrying; anything else is a real failure and must
+		// surface rather than be retried fifty times into a confusing final error.
+		//
+		// MATCHED ON THE SENTINEL, NOT ON THE MESSAGE TEXT. The first version of this grepped the
+		// error string for "unique" and never matched, because CreateStation returns
+		// ErrStationNameTaken whose text is "station name already in use in this space" — so a
+		// collision surfaced as a hard refusal and the second folder got no workspace at all.
+		// A substring match on a human-readable message is a check that silently stops working
+		// the day someone improves the wording.
+		if !errors.Is(err, ErrStationNameTaken) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("could not find a free name based on %q after 50 tries", base)
+}

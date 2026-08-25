@@ -39,6 +39,7 @@ type dirOut struct {
 type meIn struct {
 	SelfDescribedAbout string   `json:"self_described_about,omitempty" jsonschema:"optional; how YOU describe what you know and are responsible for. A CLAIM, shown to others as self-described"`
 	SelfDescribedTags  []string `json:"self_described_tags,omitempty" jsonschema:"optional; short self-declared topic tags"`
+	WorkspaceName      string   `json:"workspace_name,omitempty" jsonschema:"optional; the basename of the folder you are working in. Only used when you have NO workspace yet: Ken mints one, names it after the folder, and hands you back an id to put in your MCP config. Nothing to approve and nothing to wait for"`
 }
 
 type briefingView struct {
@@ -79,14 +80,22 @@ type elsewhereView struct {
 }
 
 type meOut struct {
-	StationID          string       `json:"station_id"`
-	Name               string       `json:"name"`
-	NameSource         string       `json:"name_source"` // always "human": no tool writes a station name
-	Purpose            string       `json:"purpose"`
-	SelfDescribedAbout string       `json:"self_described_about"`
-	SelfDescribedTags  []string     `json:"self_described_tags,omitempty"`
-	Tasks              briefingView `json:"tasks"`
-	Handoff            string       `json:"handoff"`
+	StationID  string `json:"station_id"`
+	Name       string `json:"name"`
+	NameSource string `json:"name_source"` // "human", or "auto" for a workspace Ken named from a folder
+	// JustCreated and PutThisInYourConfig appear only on the call that MINTED this workspace.
+	//
+	// The id has to reach the human, because the next session in this folder finds the workspace
+	// only if the folder's MCP entry declares it — and a value that lives in one conversation is
+	// a value that dies with it. So the instruction rides in the RESULT, which is the channel that
+	// always arrives, rather than in connect-time text the session may never see.
+	JustCreated         bool         `json:"workspace_just_created,omitempty"`
+	PutThisInYourConfig string       `json:"put_this_in_your_config,omitempty"`
+	Purpose             string       `json:"purpose"`
+	SelfDescribedAbout  string       `json:"self_described_about"`
+	SelfDescribedTags   []string     `json:"self_described_tags,omitempty"`
+	Tasks               briefingView `json:"tasks"`
+	Handoff             string       `json:"handoff"`
 	// Elsewhere counts what is RECORDED as waiting on this human on OTHER stations. A
 	// count and a station count, never contents: a session staffs one post, and STATIONS.md
 	// S6 is that a station key does not let its holder read another station's assets — two
