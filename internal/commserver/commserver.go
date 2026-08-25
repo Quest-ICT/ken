@@ -233,7 +233,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			"WRITE THEM TO A FILE ON DISK NOW, before you do anything else (mode 0600, outside any git repo). " +
 			"Do not rely on remembering them: your context can be compacted at any time, silently. " +
 			"If you do lose the secret you are not stuck — ask your human to ROTATE it from Ken's web console, " +
-			"which keeps this endpoint and every channel it is in. Only a human can do that. If you are staffing a STATION, bind AFTER saving your secret: ask station_binding_voucher on /station for a voucher naming the endpoint_id you just received, then call comm_bind. Binding is deliberately not part of this call, so nothing about it can cost you the secret." +
+			"which keeps this endpoint and every channel it is in. Only a human can do that. If you are staffing a WORKSPACE, bind AFTER saving your secret: call comm_bind with the X-Ken-Workspace header set. Binding is deliberately not part of this call, so nothing about it can cost you the secret." +
 			" Register ONCE per session: an endpoint is a connection, not a message. If you already hold an endpoint_id and secret, do not re-register — re-read your 0600 file. The console that rotates a lost secret is at /comm.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in registerIn) (*mcp.CallToolResult, registerOut, error) {
 		p := principalFrom(ctx)
@@ -260,11 +260,10 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		Name: "comm_bind",
 		Description: "Bind the endpoint you ALREADY have to a workspace, without re-registering. You keep your " +
 			"endpoint_id, your secret and every channel you are in, and the workspace gains your inbox — so a " +
-			"later session can take over from you. NO VOUCHER NEEDED: if this connection sends the " +
-			"X-Ken-Workspace header (your human puts it in this folder's Ken MCP entry, and station_me hands " +
-			"you the id if you have none yet), just call this with no arguments. A binding_voucher from " +
-			"station_binding_voucher still works if you hold a station key — but if that tool is not in your " +
-			"list, you do not need it and never did. comm_register does not bind; registration never binds." +
+			"later session can take over from you. NO VOUCHER, NOTHING TO FETCH: send the " +
+			"X-Ken-Workspace header on this connection (your human puts it in this folder's Ken MCP entry, and " +
+			"station_me on /station/mcp hands you the id if you have none yet) and call this with no arguments. " +
+			"comm_register does not bind; registration never binds." +
 			" STATION vs ENDPOINT, the distinction you need when you record what a peer told you: a station is a DURABLE post, the same correspondent next month and across every session that staffs it, while an endpoint is ONE connection whose row is DELETED once it has been idle for the retention window (7 days by default). A knowledge-base entry has no expiry, so an endpoint id written into one names a row that does not exist, and three conversations with one correspondent read as three unrelated strangers.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in bindIn) (*mcp.CallToolResult, bindOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
@@ -304,51 +303,45 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 				"(Your old station's unread mail does NOT come with you; it stays filed under that station.) " +
 				"Register a new endpoint instead if you need a second station, and ask your human if you are unsure")
 		}
-		// *** THE VOUCHER IS NO LONGER REQUIRED — docs/IDENTITY.md §10 step 3. ***
+		// *** THE VOUCHER CHAIN IS GONE — docs/IDENTITY.md §10 step 3, completed. ***
 		//
-		// The chain exists for ONE reason, §9.2: "The voucher exists solely so a station key never
-		// crosses to the comm surface as a tool argument. Nothing to hand across, nothing to hand
-		// it with." Since step 2 one identity spans both surfaces and since step 4 a session
-		// declares its workspace in a header that authorises nothing — so there is no key to keep
-		// off this surface, and nothing left for a voucher to carry.
+		// §9.2 called it "the single largest safe deletion available" and named the one condition:
+		// "The voucher exists SOLELY so a station key never crosses to the comm surface as a tool
+		// argument. Nothing to hand across, nothing to hand it with." Step 2 gave one identity both
+		// surfaces; step 4 replaced the per-folder station key with a header that authorises
+		// nothing. There is no key to keep off this surface, so the voucher carried nothing.
 		//
-		// THE HEADER PATH BINDS WITH NO AUTHORISING KEY, and that is deliberate rather than a gap.
+		// What went with it: the 5-minute TTL, single-use redemption, endpoint pinning, actor
+		// matching, hash-at-rest, the hourly sweep, and four sentinel errors whose wording existed
+		// to tell a session which of them it had tripped.
+		//
+		// THE ENDPOINT BINDS WITH NO AUTHORISING KEY, and that is the point rather than a gap.
 		// `bound_by_station_key_id` is the second weld: checked at USE on every call, with a
-		// MISSING row treated as revoked. An endpoint bound this way names no key, so the check
-		// below skips it entirely (`ep.BoundByStationKeyID != ""`) — correct, because no key
-		// authorised it and therefore no key can sever it. Revocation moves to the credential that
-		// OWNS the endpoint, which is the first weld and is re-pointable since 3.19.0. One
-		// credential, one revocation, instead of two welds on one row.
+		// MISSING row treated as revoked. Bound this way an endpoint names no key, so that check
+		// skips it — nothing authorised it, so nothing can sever it through that column.
+		// Revocation moves to the credential that OWNS the endpoint, re-pointable since 3.19.0.
+		// One credential, one revocation, instead of two welds on one row.
 		//
-		// THE VOUCHER PATH STAYS for now. Production holds eight endpoints bound the old way and
-		// they keep working untouched; deleting the chain is a separate change, after prod has
-		// verified this one. Rule 3, and the deletion is the half where their measurement is worth
-		// more than my tests.
-		var sid, keyID string
-		if in.BindingVoucher == "" {
-			sid = workspaceFrom(req)
-			if sid == "" {
-				return nil, bindOut{}, errors.New("no workspace declared and no binding voucher supplied. " +
-					"Send the X-Ken-Workspace header on this connection — your human puts it in this folder's " +
-					"Ken MCP entry, and station_me hands you the id if you do not have one yet. " +
-					"(A binding voucher still works if you hold a station key, but you almost certainly do not need one.)")
-			}
-			ok, verr := d.Store.StationExists(ctx, sid)
-			if verr != nil {
-				return nil, bindOut{}, verr
-			}
-			if !ok {
-				// Same opaque answer an unknown credential gets: a workspace id is not a secret,
-				// but "does this one exist" must not become a way to enumerate them either.
-				return nil, bindOut{}, errors.New("that workspace is not one this server knows, or it has been archived")
-			}
-		} else {
-			var verr error
-			sid, keyID, verr = d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID, ep.Owner.ActorID)
-			if verr != nil {
-				return nil, bindOut{}, verr
-			}
+		// EXISTING BINDINGS ARE UNTOUCHED. Endpoints bound before this keep their key id and keep
+		// being severed by it; only the ability to MINT a new voucher is gone. ken-prod-ops holds
+		// eight of them and verified 3.27.0 before this shipped.
+		sid := workspaceFrom(req)
+		if sid == "" {
+			return nil, bindOut{}, errors.New("no workspace declared. Send the X-Ken-Workspace header on this " +
+				"connection — your human puts it in this folder's Ken MCP entry, and station_me on /station/mcp " +
+				"hands you the id if you do not have one yet. Binding vouchers are gone: there is nothing to " +
+				"fetch and nothing to redeem")
 		}
+		ok, verr := d.Store.StationExists(ctx, sid)
+		if verr != nil {
+			return nil, bindOut{}, verr
+		}
+		if !ok {
+			// Same opaque answer an unknown credential gets: a workspace id is not a secret, but
+			// "does this one exist" must not become a way to enumerate them either.
+			return nil, bindOut{}, errors.New("that workspace is not one this server knows, or it has been archived")
+		}
+		const keyID = "" // no key authorised this binding; see above
 		if err := d.Comm.BindEndpointToStation(ctx, ep.EndpointID, sid, keyID); err != nil {
 			return nil, bindOut{}, commError(err)
 		}
@@ -408,7 +401,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if ep.StationID == "" {
 			return nil, directoryOut{}, errors.New("this endpoint is not bound to a station, so it has no vantage point " +
 				"from which to see one — the directory answers 'who may I see', and an unbound endpoint is not a 'who'. " +
-				"Ask station_binding_voucher on /station for a voucher naming this endpoint_id, then call comm_bind")
+				"Set the X-Ken-Workspace header on this connection and call comm_bind — there is no voucher to fetch")
 		}
 		p := principalFrom(ctx)
 		list, err := d.Store.ListStationsVisibleTo(ctx, p.SpaceID, ep.StationID)
@@ -538,7 +531,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		}
 		if ep.StationID == "" {
 			return nil, openLinkedOut{}, errors.New("this endpoint is not bound to a station, so it has no relationships to spend — " +
-				"ask station_binding_voucher on /station for a voucher naming this endpoint_id and call comm_bind, or use a pairing code from your human")
+				"set the X-Ken-Workspace header on this connection and call comm_bind, or use a pairing code from your human")
 		}
 		p := principalFrom(ctx)
 		// ONE refusal for every unavailable target, and it is deliberate.
@@ -1166,8 +1159,8 @@ func auth(ctx context.Context, d Deps, endpointID, secret string) (*comm.Endpoin
 				"only they can fix it and only from Ken's web console (/comm): if this endpoint is still listed there, ask " +
 				"them to ROTATE its secret — you keep your endpoint id and every channel, so nothing needs re-pairing. If it " +
 				"is gone, you need comm_register plus a fresh pairing code from them — UNLESS you staff a station, in which " +
-				"case comm_register, WRITE THE NEW SECRET TO A FILE, then take a voucher from station_binding_voucher on " +
-				"/station naming that new endpoint_id and call comm_bind — you inherit your station's mail with no code and no waiting")
+				"case comm_register, WRITE THE NEW SECRET TO A FILE, then call comm_bind with the X-Ken-Workspace " +
+				"header set — you inherit your workspace's mail with no code, no voucher and no waiting")
 		}
 		return nil, commError(err)
 	}

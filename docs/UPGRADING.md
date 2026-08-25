@@ -34,6 +34,28 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.29.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17. The `station_binding_voucher` table
+is now unused but is NOT dropped — that migration ships alone under Rule 4.
+
+### Binding no longer uses a voucher
+
+`comm_bind` takes no `binding_voucher`, and `station_binding_voucher` is gone from `/station/mcp`.
+A session binds by sending `X-Ken-Workspace` on the connection and calling `comm_bind` with no
+arguments.
+
+**Your existing bindings are untouched.** Endpoints bound the old way keep working exactly as they
+are — only the ability to mint a new voucher is gone.
+
+**If you have a runbook or a note that says "get a voucher, then bind", it is stale.** There is
+nothing to fetch, nothing to echo back, and nothing you must avoid writing down: the workspace id is
+not a secret, which is the whole point of it replacing a per-folder key.
+
+### Nothing to do
+
+No action on upgrade. No migration runs.
+
 ## 3.28.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.

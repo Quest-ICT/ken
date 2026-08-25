@@ -41,14 +41,15 @@ func TestCommBindNoLongerDemandsAVoucherItCannotGet(t *testing.T) {
 		t.Error("comm_bind's description never mentions the workspace header, so the voucher-free " +
 			"path is unreachable by anyone who reads only the tool list")
 	}
-	if !strings.Contains(desc, "NO VOUCHER NEEDED") {
-		t.Error("comm_bind still presents the voucher as the way in — the session that reported this " +
-			"was told to get one from station_binding_voucher, a tool it demonstrably did not have")
+	if !strings.Contains(desc, "NO VOUCHER") {
+		t.Error("comm_bind still presents a voucher as the way in — the session that reported this " +
+			"was told to fetch one from station_binding_voucher, a tool it demonstrably did not have")
 	}
-	// And it must say the old path still works, because production has endpoints bound that way.
-	if !strings.Contains(desc, "binding_voucher") {
-		t.Error("the voucher path is no longer described at all; it still works and eight live " +
-			"endpoints on the estate were bound with it")
+	// AND IT MUST NOT SEND ANYONE TO THE DELETED TOOL. The chain is gone; a description that
+	// still names station_binding_voucher routes a session to something that cannot exist, which
+	// is strictly worse than the original defect — that tool at least existed on some surface.
+	if strings.Contains(desc, "station_binding_voucher") {
+		t.Error("comm_bind still names station_binding_voucher, which no longer exists on any surface")
 	}
 }
 

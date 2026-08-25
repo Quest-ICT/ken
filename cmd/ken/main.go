@@ -665,16 +665,10 @@ func runServe(args []string) {
 				if oauthEnabled {
 					_ = st.PurgeExpiredOAuth(janitorCtx) // spent codes + long-expired tokens
 				}
-				if stationsEnabled {
-					// Expired UNREDEEMED binding vouchers. Redeemed ones are kept
-					// deliberately: they answer "which key bound this endpoint",
-					// which is the first question asked when a station key leaks.
-					// Hourly is right — a voucher lives five minutes, so this is
-					// about unbounded growth in a BACKED-UP database, not latency.
-					if n, err := st.SweepBindingVouchers(janitorCtx); err == nil && n > 0 {
-						log.Printf("housekeeping: swept %d expired binding voucher(s)", n)
-					}
-				}
+				// THE BINDING-VOUCHER SWEEP IS GONE with the chain it swept (IDENTITY.md §10
+				// step 3). It existed because vouchers accumulated in a BACKED-UP database and
+				// expired ones were unbounded growth; there are no vouchers now. The table
+				// survives until its migration ships alone under Rule 4, and its rows are inert.
 			}
 		}
 	}()

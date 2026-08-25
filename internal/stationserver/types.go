@@ -340,32 +340,6 @@ type okOut struct {
 	OK bool `json:"ok"`
 }
 
-// voucherIn names the endpoint that will redeem the voucher, and nothing else.
-//
-// There is deliberately still NO station_id argument: the station is decided by the
-// key in the Authorization header, never by anything the model says, or a session
-// could ask to be bound to a station it holds no key for.
-//
-// EndpointID is the opposite case — it is safe as an argument precisely because it
-// is not a credential. It NARROWS the voucher rather than widening it: naming an
-// endpoint you do not control mints a voucher you cannot use, because redeeming it
-// still requires that endpoint's secret. There is nothing to gain by lying here.
-type voucherIn struct {
-	EndpointID string `json:"endpoint_id" jsonschema:"required; the endpoint_id this voucher will bind — your OWN, from comm_register. The voucher is usable by that endpoint alone, so a leaked one is inert. Register and save your secret FIRST, then ask for the voucher"`
-}
-
-type voucherOut struct {
-	BindingVoucher string `json:"binding_voucher"`
-	ExpiresInSec   int    `json:"expires_in_seconds"`
-	StationID      string `json:"station_id"`
-	StationName    string `json:"station_name"`
-	// ForEndpoint echoes the nomination so a session can see WHICH endpoint it just
-	// tied the voucher to. A voucher minted for the wrong endpoint id fails at
-	// comm_bind with a refusal that reads like a leak; echoing it turns that into a
-	// typo the session can spot before it calls.
-	ForEndpoint string `json:"for_endpoint"`
-}
-
 type linkRequestIn struct {
 	ToStation string `json:"to_station" jsonschema:"required; the station you want to be able to talk to, by NAME as your human refers to it"`
 	Reason    string `json:"reason" jsonschema:"required; why this relationship should exist. Written for YOUR HUMAN, who decides — it is never shown to the other station before they approve, so do not address it to them"`

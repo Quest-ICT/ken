@@ -405,10 +405,14 @@ to seconds; the session is still stalled until somebody is available.
 
 **Replacement — bind a fresh endpoint to the same station.** [Stations](STATIONS.md) are core and on
 by default, so what this still requires is the binding arranged in advance (S5): the lost session must
-have bound its endpoint to the station. A new session staffing that station calls `comm_register`, writes the new secret to disk,
-takes a voucher from `station_binding_voucher` naming that new `endpoint_id`, and redeems it with
-`comm_bind` — inheriting the station's unread mail, because the **station** owns the inbox (S4), and
-the dead endpoint's claims return to the unclaimed tail rather than stranding.
+have bound its endpoint to the station. A new session staffing that workspace calls `comm_register`, writes the new secret to disk, and
+calls `comm_bind` with the `X-Ken-Workspace` header set — inheriting the workspace's unread mail,
+because the **station** owns the inbox (S4), and the dead endpoint's claims return to the unclaimed
+tail rather than stranding.
+
+> **The voucher step was deleted in 3.29.0** (`docs/IDENTITY.md` §10 step 3). It existed solely so
+> a station key never crossed to the comm surface as a tool argument; one identity spans both
+> surfaces now and the workspace id authorises nothing, so there was nothing left to hand across.
 Where the two stations already hold an approved **link** (S9), it re-opens the channel with
 `comm_open_channel`: no pairing code, and no human in the loop at that moment. This is the only path
 that recovers without waiting for a person. *What it does not solve:* it recovers the **mailbox and

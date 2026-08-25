@@ -15,6 +15,52 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.29.0] — 2026-08-25
+
+### Removed
+
+- **The binding-voucher chain is deleted — `docs/IDENTITY.md` §10 step 3, and §9.2 called it "the
+  single largest safe deletion available".** Gone: `IssueBindingVoucher`, `RedeemBindingVoucher`,
+  `SweepBindingVouchers`, the 5-minute TTL, single-use redemption, endpoint pinning, actor matching,
+  hash-at-rest, the hourly janitor sweep, the `station_binding_voucher` tool, the `binding_voucher`
+  argument, and four sentinel errors whose wording existed only to say which way a voucher failed.
+
+  **Its condition was met before a line was deleted.** §9.2: *"The voucher exists SOLELY so a
+  station key never crosses to the comm surface as a tool argument. Nothing to hand across, nothing
+  to hand it with."* 3.25.0 gave one identity all three surfaces; 3.26.0 replaced the per-folder
+  station KEY with a workspace id that authorises nothing. There was no key left to keep off that
+  surface.
+
+  **Binding now:** `comm_bind` with the `X-Ken-Workspace` header set. Nothing to fetch, nothing to
+  redeem, nothing that expires in five minutes.
+
+  **The endpoint binds with an EMPTY `bound_by_station_key_id`, deliberately.** That column is the
+  second weld — checked at use on every call, with a *missing* row treated as revoked. Bound this
+  way an endpoint names no key, so the check skips it: nothing authorised it, nothing can sever it
+  through that column, and revocation moves to the credential that **owns** the endpoint, which has
+  been re-pointable since 3.19.0. **One credential, one revocation, instead of two welds on one
+  row.** Writing anything into that column would look tidy and would cut the endpoint off on its
+  very next call, for a key that never existed — a test asserts it stays empty.
+
+  **Existing bindings are untouched.** Endpoints bound the old way keep their key id and keep being
+  severed by it; only the ability to mint a voucher is gone. ken-prod-ops holds eight of them and
+  verified 3.27.0 on the wire before this shipped.
+
+  **The tests went with it**, which is what the step asked for: `station_voucher_test.go`, ten cases.
+  That also settles item (2) of an open task recording that `VoucherTTL` was effectively untested —
+  *"either write the clock test or delete the mechanism, but do not leave it in this state."*
+  `TestTheVoucherChainStaysDeleted` now fails if any of it returns, because deleting tests is how a
+  removed mechanism quietly comes back.
+
+  **The table survives** until its migration ships alone under Rule 4. Nothing reads it.
+
+### Changed
+
+- **Every text that routed a session to a voucher was corrected**, including four agent-facing error
+  messages, `comm_register`'s and `comm_bind`'s descriptions, `docs/COMM.md`, the endpoint-migration
+  runbook, and `STATIONS.md`'s S5 — which is marked SUPERSEDED with its reasoning preserved, because
+  that reasoning is exactly *why* the deletion was safe.
+
 ## [3.28.0] — 2026-08-25
 
 ### Fixed

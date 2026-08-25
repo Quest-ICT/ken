@@ -171,7 +171,23 @@ the claim is recorded on the row, and one ack settles it for the station.
   endpoints keep the shipped `(channel, sender_endpoint, seq)` behaviour, so the two regimes coexist
   in one index by writing the station id when there is one and the endpoint id when there is not.
 
-### S5 — The station key is a header credential; binding uses a voucher *(chosen: never a tool argument)*
+### S5 — The station key is a header credential; binding uses a voucher *(chosen: never a tool argument)* — **SUPERSEDED 2026-08-25**
+
+> **THE VOUCHER HALF OF THIS DECISION IS DELETED** (`docs/IDENTITY.md` §10 step 3). The reasoning
+> below is preserved because it is correct and it is *why* the deletion was safe: the voucher
+> existed **solely** so a station key never crossed to the comm surface as a tool argument. Once one
+> identity spanned both surfaces (§10 step 2) and the per-folder station KEY became a workspace id
+> that authorises nothing (§4), there was no key to keep off that surface — so the voucher carried
+> nothing and went, with its 5-minute TTL, single-use redemption, endpoint pinning, actor matching,
+> hash-at-rest and hourly sweep.
+>
+> **Binding today:** `comm_bind` with the `X-Ken-Workspace` header set. The endpoint is bound with an
+> EMPTY `bound_by_station_key_id` — no key authorised it, so none can sever it, and revocation moved
+> to the credential that owns the endpoint.
+>
+> **The header rule below still stands for station KEYS, which still exist.** §9.2's condition is
+> the one to re-read before changing any of this: *"a stable opaque workspace id in an MCP header
+> authorises nothing… **if that id ever gains authority, this control comes straight back**."*
 
 A **station key** is an `api_token` row — same table, same hashing, same revocation, same `/tokens`
 listing — carrying `actor_id`, `scopes` and a new nullable `station_id`, minted with a **`kens_`**
@@ -242,7 +258,7 @@ single-use **binding voucher** that `comm_register` accepts.
 ### S5a — Binding is `comm_bind`, never `comm_register` *(chosen: one path, one guarantee)*
 
 Registration mints a credential and stops. To bind: **`comm_register` → write the secret to disk →
-`station_binding_voucher` naming that endpoint → `comm_bind`.**
+`comm_bind` with the workspace header — no voucher since 3.29.0.**
 
 - **A voucher passed to registration cannot name its redeemer**, because the endpoint does not exist
   yet. That path could only ever carry the weaker guarantee, and shipping two strengths under one
@@ -589,7 +605,7 @@ transfer collides on it, and every station is expected to have one.
 | Tool | Purpose |
 |---|---|
 | `station_me` | Who am I, my links, my counts — the briefing on demand. Sets `self_described_*`. |
-| `station_binding_voucher` | Exchange the header credential for a single-use voucher naming ONE endpoint, which `comm_bind` redeems. |
+| ~~`station_binding_voucher`~~ | **Deleted in 3.29.0.** Binding needs no voucher: `comm_bind` with `X-Ken-Workspace` set. |
 | `station_request` | Ask the human to name and approve a station. **Rarely needed**: `station_me` mints one immediately for a session that has none. |
 | `station_directory` | Published stations plus those I have a link to. A session names a peer by the name its human uses; discovery is deferred until there are enough stations for a list to beat asking. |
 | `station_link_request` | Ask the human to approve a relationship: `to_station`, `reason` (human-only). |
@@ -1009,7 +1025,7 @@ The order matters, and only the last step involves the sessions themselves:
 4. **Put the key in that machine's MCP client config as an `Authorization` header** — never in a
    prompt, never as a tool argument (S5). The session now has a notebook, a task list and a locker
    immediately; nothing further is required for those.
-5. **Only if you want the messaging half:** the session calls `station_binding_voucher` on `/station`
+5. **Only if you want the messaging half:** the session calls `comm_bind` with `X-Ken-Workspace` set (no voucher since 3.29.0)
    **naming its own `endpoint_id`**, and passes the voucher to **`comm_bind`** on `/comm`. It keeps its
    endpoint id, its secret and every channel it is in — adoption costs no re-pairing. A session with no
    endpoint yet calls `comm_register` first, writes the secret to disk, and then does the same.

@@ -503,7 +503,6 @@ type openLinkedOut struct {
 type bindIn struct {
 	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
 	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
-	BindingVoucher string `json:"binding_voucher,omitempty" jsonschema:"OPTIONAL and no longer the usual path. Send the X-Ken-Workspace header on this connection instead and bind needs no voucher at all. Still accepted for a session holding a station key that mints one"`
 }
 
 type bindOut struct {

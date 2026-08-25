@@ -421,24 +421,35 @@ credentials retire, or mail is stranded with no error.
    > the consent form ignoring the untick, and the picker rendering unticked.
 3. **Then delete the voucher chain**, in one change, with its tests, saying why.
 
-   > **HALF DONE 2026-08-25, and the half that is done is the half that can be done safely.**
-   > `comm_bind` no longer requires a voucher: a session that declares `X-Ken-Workspace` binds with
-   > nothing handed across, which is the condition §9.2 states — *"the voucher exists solely so a
-   > station key never crosses to the comm surface as a tool argument."* There is no key to keep
-   > off this surface any more.
+   > **DONE 2026-08-25.** The chain is gone: `IssueBindingVoucher`, `RedeemBindingVoucher`,
+   > `SweepBindingVouchers`, the 5-minute TTL, single-use redemption, endpoint pinning, actor
+   > matching, hash-at-rest, the hourly janitor sweep, the `station_binding_voucher` tool, the
+   > `binding_voucher` argument, and four sentinel errors whose careful wording existed only to say
+   > which way a voucher had failed. `comm_bind` reads `X-Ken-Workspace` and binds.
    >
-   > **The endpoint is bound with NO authorising key, and that is deliberate.**
-   > `bound_by_station_key_id` is the second weld: checked at use on every call, with a **missing**
-   > row treated as revoked. An endpoint bound this way names no key, so the check skips it — no
-   > key authorised it, so none can sever it. Revocation moves to the credential that OWNS the
-   > endpoint, re-pointable since 3.19.0. **One credential, one revocation, instead of two welds on
-   > one row.** Stuffing anything into that column would sever the endpoint on its very next call,
-   > for a key that never existed; a test asserts it stays empty.
+   > **The condition §9.2 set was met before a line was deleted**: *"the voucher exists SOLELY so a
+   > station key never crosses to the comm surface as a tool argument."* Step 2 gave one identity
+   > both surfaces; step 4 replaced the per-folder key with an id that authorises nothing. There was
+   > no key left to keep off that surface.
    >
-   > **THE DELETION ITSELF WAITS FOR ken-prod-ops.** Eight live endpoints on the estate are bound
-   > the old way, and the voucher path still serves them untouched. Removing the chain is a
-   > separate change after they have verified this one — Rule 3, and this is the half where their
-   > measurement is worth more than my tests.
+   > **The endpoint binds with an EMPTY `bound_by_station_key_id`** — no key authorised it, so the
+   > at-use severing check skips it and nothing can cut it off through that column. Revocation moved
+   > to the credential that OWNS the endpoint, re-pointable since 3.19.0: **one credential, one
+   > revocation, instead of two welds on one row.** Putting anything in that column would sever the
+   > endpoint on its next call, for a key that never existed; a test asserts it stays empty.
+   >
+   > **The tests went with it, which is what the step asked for** — `station_voucher_test.go`, ten
+   > cases over wrong-endpoint, wrong-actor, single-use, no-nomination, pre-migration NULLs and
+   > archived-station redemption. That also settles item (2) of task `t-laLaMYzb`, which recorded
+   > that `VoucherTTL` was effectively untested and instructed: *"either write the clock test or
+   > delete the mechanism, but do not leave it in this state."* The mechanism is deleted.
+   > `TestTheVoucherChainStaysDeleted` fails if any of it returns, because deleting tests is how a
+   > removed mechanism quietly comes back.
+   >
+   > **The TABLE survives** until its migration ships alone under Rule 4. Nothing reads it; the rows
+   > are inert. Existing bindings are untouched — eight on the live estate keep their key id and
+   > keep being severed by it.
+
 4. **Then the workspace id in config**, and auto-naming for unknown folders (§5). Existing stations
    keep their `station_id` and become workspaces; §8 covers the estate.
 

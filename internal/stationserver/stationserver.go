@@ -216,56 +216,6 @@ func newServer(d Deps) *mcp.Server {
 		&mcp.ServerOptions{Instructions: version.InstructionStamp() + instructions, KeepAlive: mcpKeepAlive})
 
 	addTool(s, d, &mcp.Tool{
-		Name: "station_binding_voucher",
-		Description: "Get a short-lived voucher that binds ONE named COMM endpoint to this station. " +
-			"THE ORDER MATTERS: call comm_register on /comm first, write the returned endpoint_id and " +
-			"endpoint_secret to a file on disk, and only then ask for a voucher naming that endpoint_id — " +
-			"then redeem it with comm_bind. Binding is no longer part of comm_register, so registering can " +
-			"never fail in a way that costs you the one-time secret. " +
-			"Binding means the STATION owns the inbox: a later session staffing this station inherits the " +
-			"unread mail, so losing your endpoint stops being fatal. " +
-			"NEVER pass your station key to a /comm tool — that is what this voucher exists to avoid; it " +
-			"expires in minutes and is good for exactly one binding. " +
-			"THE VOUCHER IS STILL A CREDENTIAL, but a narrow one: only the endpoint it names can redeem it, " +
-			"and that needs the endpoint's own secret, so a voucher you leak is inert in anyone else's hands. " +
-			"Use it yourself, immediately, and then it is spent. " +
-			"If redemption says the voucher was issued to a different identity, nothing is wrong with the " +
-			"voucher: this station key was minted under a different actor than your comm token. Tell your " +
-			"human — the /stations console names each key's actor — and do not retry, because a fresh " +
-			"voucher will fail identically.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in voucherIn) (*mcp.CallToolResult, voucherOut, error) {
-		p, err := requireStation(ctx, req)
-		if err != nil {
-			return nil, voucherOut{}, err
-		}
-		st, err := d.Store.StationByID(ctx, p.StationID)
-		if err != nil {
-			return nil, voucherOut{}, err
-		}
-		// Refuse at ISSUE for an archived station, rather than handing out a voucher
-		// that redemption will always reject. An archived station's keys stop binding
-		// (S3), so the voucher could never work — and comm_register would report it
-		// as "unknown, already used, or expired", which is three wrong reasons that
-		// send the session looking for a problem it does not have.
-		if st.State != "active" {
-			return nil, voucherOut{}, fmt.Errorf("station %q is archived, so it cannot bind new endpoints — tell your human; they can unarchive it from the /stations console", st.Name)
-		}
-		// p.TokenID, not anything the caller supplied: the voucher records which KEY
-		// asked, so revoking that key later severs the endpoints it bound (S6).
-		v, err := d.Store.IssueBindingVoucher(ctx, p.StationID, p.TokenID, in.EndpointID, p.ActorID, p.SpaceID)
-		if err != nil {
-			return nil, voucherOut{}, err
-		}
-		return nil, voucherOut{
-			BindingVoucher: v,
-			ExpiresInSec:   int(store.VoucherTTL.Seconds()),
-			StationID:      st.StationID,
-			StationName:    st.Name,
-			ForEndpoint:    in.EndpointID,
-		}, nil
-	})
-
-	addTool(s, d, &mcp.Tool{
 		Name: "station_link_request",
 		Description: "Ask your human to let this station talk to another one. An approved link is a standing " +
 			"relationship: either side can then open a channel when it needs one, with no pairing code. The reason " +

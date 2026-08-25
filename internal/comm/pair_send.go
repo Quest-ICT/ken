@@ -52,7 +52,7 @@ import (
 // human approval when the actual problem is that this session has no station identity to
 // be linked WITH. Two very different next actions.
 var ErrNotAStation = CallerSafe(errors.New("to_station addresses one station from another, and this endpoint is not bound to a station. " +
-	"Bind it first (comm_bind with a station binding voucher), or address this message with channel_id instead"))
+	"Bind it first (comm_bind, with the X-Ken-Workspace header set), or address this message with channel_id instead"))
 
 // ErrNotLinked refuses a pair send with no approved link behind it.
 //

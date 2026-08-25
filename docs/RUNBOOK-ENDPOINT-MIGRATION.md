@@ -31,7 +31,7 @@ The only callers of the bind primitives in the whole tree are the MCP handlers: 
 
 | Operation | Console? | Where it actually happens |
 |---|---|---|
-| Bind an endpoint to a station | **NO — no route, no form, no i18n string** | the session: `station_binding_voucher` → `comm_bind` |
+| Bind an endpoint to a workspace | **NO — and it no longer needs one** | the session: `comm_bind`, with `X-Ken-Workspace` set. No voucher since 3.29.0 |
 | Create a station | **Only by approving a pending request** — there is no `POST /stations`, no from-scratch form | `/stations` → **Approve and name**, or `ken station add` |
 | Mint a station key | Yes — but **no actor field** (`internal/web/stations.go:499` passes the logged-in curator's `sess.ActorID`) | `/stations` → **Mint key**, or `ken station key --actor` |
 | Revoke an endpoint | Yes | `/comm` → **Revoke** |
@@ -107,8 +107,7 @@ Zero console steps if the pre-flight holds. Two tool calls.
 |---|---|---|
 | 1 | You | Confirm ep 6's `endpoint_id` and `actor_id` (§1.4), and that the live `quest-infra` key on `/stations` shows the **same** actor in the Actor column (`stations.html:310`). |
 | 2 | You | Open the project that owns ep 6. Its `/comm/mcp` entry must already carry ep 6's registering `ken_` token plus the endpoint headers; add a `/station/mcp` entry with the `quest-infra` `kens_` key **before starting the session**. |
-| 3 | You → session, in words | *"You are staffing quest-infra. Your endpoint is already registered but not bound. Call `station_binding_voucher` with `endpoint_id` = `<ep6 endpoint_id>`, check the `for_endpoint` echo matches, then immediately call `comm_bind` with that `binding_voucher`. Do not pass the voucher to `comm_register` — that argument does not exist any more. Do not write the voucher anywhere or send it over COMM."* |
-| 4 | Session | `mcp__ken-station__station_binding_voucher { "endpoint_id": "<ep6 endpoint_id>" }` → returns `binding_voucher` (32 chars), `expires_in_seconds: 300`, `station_id`, `station_name`, `for_endpoint`. (`stationserver.go:256-304`) |
+| 3 | You → session, in words | *"You are staffing quest-infra. Your endpoint is already registered but not bound. Add `X-Ken-Workspace: <the workspace id>` to this folder's Ken MCP entry, then call `comm_bind` with no arguments."* **The voucher steps below are gone as of 3.29.0** — there is nothing to fetch, nothing to echo back, and nothing you must avoid writing down, because the workspace id is not a secret. |
 | 5 | Session | `mcp__ken-comm__comm_bind { "binding_voucher": "<value>" }`, with `endpoint_id`/`endpoint_secret` supplied via the headers. → `{station_id, note}`. (`commserver.go:266-299`) |
 
 **Voucher hygiene:** TTL is 5 minutes (`store.VoucherTTL`, `station_binding.go:36`), single-use, and it is a **bearer credential narrowed to one endpoint**. Step 5 follows step 4 in the very next call. It is never written to a file and never sent over COMM.
