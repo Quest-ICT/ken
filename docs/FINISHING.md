@@ -35,6 +35,13 @@ afterwards. **A human should be able to open this file and know exactly where we
 4. **A migration ships alone.** A rollback must never discard behaviour fixes along with a data
    rewrite.
 
+> **Rules 2 and 4 are the two that have ever been broken, and only one of them now has a
+> mechanism.** Rule 2 was broken nine releases running until the status header was put behind
+> `TestFinishingHeaderIsNotStale`. Rule 4 has held every time, because a schema change is a file
+> you have to create — the discipline is attached to an artefact rather than to a memory. That is
+> the pattern worth copying: **when a rule keeps failing, look for the artefact it could hang
+> off.**
+
 ## How to read the states
 
 | Mark | Meaning |
@@ -54,32 +61,32 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.12.1** (2026-08-19). **Production is on 3.12.1**, live since
-2026-08-20T15:32:53Z and verified by ken-prod-ops against the live databases: `ken version` reports
-3.12.1, healthz 200, `NRestarts=0`, and both `applied_at` timestamps PREDATE the upgrade — so no
-migration ran at all, which is a stronger statement than "schema unchanged". Their schema band was
-clean on both databases, taken through the backup API rather than `cp`, defeating a 4.1 MB ken.db
-WAL and a 3.0 MB comm.db WAL that a file copy would have silently discarded.
+**Released: 3.21.0** (2026-08-25). **Production is on 3.21.0**, verified by ken-prod-ops at
+2026-08-25T15:32Z against the live databases: healthz reports `Ken 3.21.0 linux/amd64`, both
+`applied_at` timestamps unchanged, schema band clean on both, and — the strongest form this check
+has taken — **the whole `endpoint` table byte-identical before and after, `last_seen_at` included**,
+with row counts identical on both databases (2581 / 1624). They tested the "this release writes
+nothing" claim by hashing table CONTENTS rather than counting rows, and this time no session polled
+during the window, so there was no drift to attribute.
 
-> **This header went stale again within 24 hours of being fixed**, and the fix was to add "and the
-> status header" to Rule 2. It said production was on 3.12.0 with the upgrade "in flight" while prod
-> had confirmed 3.12.1 live. **A rule is not a mechanism.** The header is only correct when someone
-> updates it, and the discipline that keeps checkboxes honest — they sit next to the work — does not
-> attach to a paragraph that sits somewhere else. If this recurs a third time, the answer is to
-> derive the line rather than write it.
+**Seven items remain open across Batches 1–4** — the list is in those batches and nothing rounds it
+up. Batch 6 is CLOSED; its last item, the endpoint migration, closed at **ep 6 only** by Vlad's
+scope decision on 2026-08-19.
 
-**Batch 6 is CLOSED. This file is NOT.** Fifteen items remain open across Batches 1–4 — the list is
-in those batches and nothing rounds it up. Batch 6's last item, the endpoint migration, closed at
-**ep 6 only** by Vlad's scope decision on 2026-08-19.
-
-> **THIS SECTION WENT FOUR RELEASES STALE, and that is the finding worth keeping.** It said
-> "Released: 3.9.0 … Batch 4 is closed. Batch 5 is next" while 3.10.0, 3.11.0, 3.12.0 and 3.12.1
-> had all shipped. Every one of those four release commits EDITED this file — and none touched
-> this block. **Rule 2 was obeyed to the letter and the headline still rotted**, because the rule
-> is practised on CHECKBOXES and the narrative around them has no habit attached. That is a fifth
-> distinct failure mode, added to the four already recorded below.
+> **THIS HEADER WENT NINE RELEASES STALE — 3.13.0 through 3.21.0 — and is now DERIVED rather than
+> promised.** It said "Released: 3.12.1 … Fifteen items remain open" while 3.21.0 was live and
+> seven boxes were unchecked. Every one of those nine release commits edited this file.
 >
-> **Rule 2 now covers prose.** A release commit updates this section or it is not a release commit.
+> The two earlier recurrences are recorded below and each produced a stronger rule: Rule 2 was
+> extended to cover the header, then extended again to cover prose. **Neither worked, and the file
+> had already written down why — "a rule is not a mechanism" — along with the remedy for a third
+> recurrence: "derive the line rather than write it."**
+>
+> `TestFinishingHeaderIsNotStale` (`internal/audit`) now fails the build when this paragraph does
+> not name the newest release in `CHANGELOG.md`, or when the count it states does not match the
+> unchecked boxes. The prose stays hand-written, because the *reasoning* around a number is worth
+> writing; the two NUMBERS are checked against the sources that cannot drift. Rule 2 stands, and no
+> longer has to be remembered.
 
 ### Previously
 
