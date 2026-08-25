@@ -58,7 +58,27 @@ func TestStationKeyAuthAndRevocation(t *testing.T) {
 	}
 
 	// A tampered secret is refused.
-	if _, err := st.AuthenticateStationKey(ctx, key[:len(key)-1]+"x"); !errors.Is(err, ErrNotFound) {
+	//
+	// *** THE TAMPER IS ASSERTED TO BE A TAMPER, AND THAT IS NOT PEDANTRY — IT COST A RELEASE. ***
+	//
+	// This was `key[:len(key)-1]+"x"`. Secrets are base62, so ROUGHLY ONE RUN IN 62 the secret
+	// already ended in 'x', the "tampered" key was byte-identical to the real one, authentication
+	// correctly succeeded, and the test reported that Ken accepts a forged station key. It fired
+	// for the first time on the v3.26.0 release build — green locally, red in CI, on a security
+	// assertion — and read exactly like a regression in the code I had just changed.
+	//
+	// The bug was never the flakiness. It was that the test could not tell "the secret was
+	// tampered with and accepted" from "the secret was not tampered with at all", which is this
+	// project's own defect class inside its own suite.
+	tampered := key[:len(key)-1] + "x"
+	if tampered == key {
+		tampered = key[:len(key)-1] + "y"
+	}
+	if tampered == key {
+		t.Fatal("the tampered key is identical to the real one, so the assertion below would be " +
+			"testing that a VALID key authenticates — which is the opposite of its name")
+	}
+	if _, err := st.AuthenticateStationKey(ctx, tampered); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("tampered secret should be ErrNotFound, got %v", err)
 	}
 	// An unknown key is refused the SAME way — unprobeable (§5).
