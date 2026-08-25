@@ -872,11 +872,28 @@ var agentScopes = []string{"read", "write-draft", "propose"}
 // handed it to a session, and watched comm_register refuse it for a missing scope. Worse, the
 // handler DROPPED the unknown scope silently, so nothing said why.
 //
-// Station scopes are still not mintable here, for the reason `ken token add` gives: /station/mcp
-// requires a `kens_` key BOUND to a station, and this path issues an unbound `ken_` token, so it
-// would authenticate nowhere while looking exactly like a working credential. Station keys are
-// minted on the Stations page.
-var consoleCommScopes = []string{"comm", "comm-file"}
+// *** AND IT HAPPENED AGAIN, IN THE RELEASE THAT REMOVED THE REASON. ***
+//
+// This list excluded the station family, justified by: "/station/mcp requires a `kens_` key BOUND
+// to a station, and this path issues an unbound `ken_` token, so it would authenticate nowhere
+// while looking exactly like a working credential."
+//
+// **That was true until 3.27.0 and false the moment it shipped.** 3.27.0's fourth wall-fix is
+// precisely that a plain `ken_` token carrying `station` reaches /station/mcp — because Claude Code
+// inside the desktop app is non-interactive and cannot run an OAuth flow, so it was the ONLY door
+// left for the session that reported the whole deadlock. **The justification for the exclusion was
+// deleted by the same commit that left the exclusion standing**, and the result was that Vlad could
+// not mint the one credential that fix exists to serve. Found by ken-prod-ops within the hour.
+//
+// Read the paragraph above this one: it records the SAME list, the SAME omission and the SAME
+// operator, in 3.10.0. **A comment describing a past instance of a defect is not a guard against
+// the next one** — it sat four lines above the line that reproduced it. That is why
+// TestConsoleCanMintEveryAgentScope now exists: the list is checked against the scopes the
+// surfaces actually accept, so the next family added to a transport cannot be silently unmintable.
+//
+// CheckScopeMix already permits `{station, comm}` — scopes_test.go calls it "THE PERMITTED PAIR: a
+// station that talks" — so offering both families together loosens nothing.
+var consoleCommScopes = []string{"comm", "comm-file", "station", "station-locker"}
 
 func agentScopeOK(s string) bool {
 	for _, a := range agentScopes {

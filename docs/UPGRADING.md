@@ -34,6 +34,25 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.28.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### You can now mint a station token from the console
+
+`/tokens` offers the **station** and **station-locker** scopes. That is the credential a
+non-interactive client needs: Claude Code inside the desktop app cannot run an OAuth sign-in, so a
+plain `ken_` token carrying `station` is how such a session reaches `/station/mcp` and calls
+`station_me` to get a workspace.
+
+Until this release the console offered `comm` and `comm-file` and nothing station-shaped, on the
+grounds that an unbound `ken_` token could not authenticate there — which stopped being true in
+3.27.0.
+
+### Nothing to do
+
+No action on upgrade. No migration runs. Existing tokens are unchanged.
+
 ## 3.27.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.

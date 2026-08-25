@@ -15,6 +15,36 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.28.0] — 2026-08-25
+
+### Fixed
+
+- **The console could not mint a station-scoped token — and the reason it gave was removed by the
+  release that shipped one line above it.** `consoleCommScopes` excluded the station family,
+  justified by *"/station/mcp requires a `kens_` key BOUND to a station, and this path issues an
+  unbound `ken_` token, so it would authenticate nowhere while looking exactly like a working
+  credential."*
+
+  **True this morning; false as of 3.27.0**, whose fourth wall-fix is precisely that a plain `ken_`
+  token carrying `station` reaches `/station/mcp` — the only door left for a client that cannot run
+  an OAuth flow. **The justification was deleted by the same commit that left the exclusion
+  standing**, so the operator could not mint the one credential the fix exists to serve. Found by
+  ken-prod-ops within the hour of it shipping.
+
+  **This omission has now happened twice on the same list.** The comment four lines above it
+  records the first: until 3.10.0 the console could not mint comm scopes either, and *"an operator
+  following it minted a token, handed it to a session, and watched `comm_register` refuse it for a
+  missing scope."* **A comment describing a past instance of a defect is not a guard against the
+  next one** — it sat directly above the line that reproduced it.
+
+  `TestConsoleCanMintEveryAgentScope` now derives the requirement from the transports themselves:
+  every scope `/comm/mcp` or `/station/mcp` requires must be mintable from the console, so a family
+  added to a surface cannot be silently unmintable a third time. Verified against both historical
+  instances. `curate` stays unmintable by every path.
+
+  `CheckScopeMix` already permitted `{station, comm}` — its own test calls it *"THE PERMITTED PAIR:
+  a station that talks"* — so offering both families together loosens nothing.
+
 ## [3.27.0] — 2026-08-25
 
 ### Fixed
