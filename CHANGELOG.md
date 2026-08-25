@@ -15,6 +15,54 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.25.0] — 2026-08-25
+
+### Added
+
+- **One identity now spans all three MCP surfaces — `docs/IDENTITY.md` §10 step 2.** A single
+  human approval reaches the knowledge base, messaging and a working identity. Before this, a
+  connector reached `/mcp` and nothing else: `/comm/mcp` answered *"comm requires a dedicated
+  `ken_` API token"* and `/station/mcp` took `kens_` keys only, so a session wanting all three held
+  three credentials minted three different ways.
+
+  That is the blocker §9.2 names for everything after it — **the binding-voucher chain exists
+  solely so a station key never crosses to the comm surface as a tool argument**, and with one
+  identity there is nothing to hand across.
+
+- **The consent screen asks which surfaces the approval covers, and the grant records the answer.**
+  All three are ticked by default, because no Ken feature is optional or off by default. Untick one
+  to withhold it.
+
+  **This is not decoration — it is the control that replaces the one consolidation removed.**
+  `IDENTITY-CONTROLS.md` calls the old refusal *"the highest-value item for a design that intends
+  OAuth as the only mechanism, because THIS CONTROL IS THE ONE THAT SAYS NO TO EXACTLY THAT"*, and
+  warns the removal would be invisible — every surface still working, until the day a connector is
+  compromised and the blast radius has grown from the knowledge base to the message bus and the
+  vault. Its stated condition: the withholding must be *"re-expressed as an explicit per-surface
+  capability decision at grant time, not inherited from the fact that three files exist."*
+
+  So `oauth_grant.scope` became load-bearing rather than the cosmetic column its own schema comment
+  called it. **No schema change** — OAuth scope is the standard mechanism for precisely this, so
+  `ken:kb`, `ken:comm` and `ken:station` live in the column that already existed. And a human can
+  now withhold messaging from a cloud connector, which the register's own complaint said they
+  could not.
+
+### Changed
+
+- **Connectors approved before this release keep the knowledge base alone.** They carry no `ken:`
+  scope, which is exactly what their human agreed to. **Re-approve a connector to widen it.**
+  Widening them silently would have been the invisible removal wearing a migration's clothes.
+
+- **`curate` is on no path, on any surface.** The capability mapping is a whitelist rather than a
+  pass-through, so a client cannot name its way past the curation gate. A human promotes.
+
+### Fixed
+
+- Four failure modes that would each have been silent are now pinned by tests, all of them
+  survivors before the tests existed: legacy grants widening themselves, `curate` reaching the
+  returned set, the consent handler ignoring what the human unticked, and the picker rendering
+  unticked (withholding everything while looking like it granted it).
+
 ## [3.24.0] — 2026-08-25
 
 ### Fixed

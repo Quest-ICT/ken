@@ -34,6 +34,36 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.25.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### What changes for your connectors
+
+**One approval now covers all three surfaces.** A connector can reach the knowledge base,
+inter-session messaging and a durable working identity — where before it reached the knowledge base
+and was refused by the other two.
+
+**Your EXISTING connectors are unchanged and stay knowledge-base-only.** They were approved when
+that was all a connector could do, and that is what their human agreed to; nothing widens by
+upgrading. **To give an existing connector the other surfaces, re-approve it** — revoke it on
+`/tokens` and connect again, and the consent screen will ask.
+
+**The consent screen now asks which surfaces the approval covers**, with all three ticked. Untick
+one to withhold it. That choice is recorded on the grant, so you can see later exactly what was
+granted, and revoking the connector takes all of it back at once.
+
+**If you would rather a cloud-hosted connector never reached your local sessions, untick
+Messaging.** That was previously impossible — the refusal was wired into which file authenticated
+you, so nobody could choose. Now it is a decision you make and Ken records.
+
+**No connector, on any path, can promote.** A human promotes; that has not changed and cannot be
+granted.
+
+### Nothing to do
+
+No action on upgrade. No migration runs. Existing static `ken_` and `kens_` tokens are untouched.
+
 ## 3.24.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
