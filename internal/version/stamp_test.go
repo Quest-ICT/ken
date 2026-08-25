@@ -30,19 +30,51 @@ func TestTheStampAndTheToolReportTheSameVersion(t *testing.T) {
 	}
 }
 
-// THE STAMP MUST SAY WHAT TO DO, not merely state a number.
+// THE STAMP MUST SAY WHAT TO DO, not merely state a number — AND IT MUST FIT.
 //
-// A version in a wall of instructions is a number a session reads past. The three things
-// that make it actionable are the ones a session cannot work out for itself, and two of
-// them are counter-intuitive: the text does not refresh on RECONNECT, and stale text is
-// normal rather than a fault.
+// A version in a wall of instructions is a number a session reads past. The things that make it
+// actionable are the ones a session cannot work out for itself, and two of them are
+// counter-intuitive: the text does not refresh on RECONNECT, and stale text is normal rather than
+// a fault.
+//
+// *** THE CONTRACT IS NOW SPLIT ACROSS TWO PLACES, AND THAT IS THE POINT OF THIS EDIT. ***
+//
+// Every phrase below used to be required in the stamp alone, which was 1053 characters appended
+// to instruction blocks of 2754, 7042 and 4714. The MCP client cuts the instructions field at
+// version.InstructionBudget characters — so the stamp began past the cut on all three surfaces
+// and **no session ever received a word of it.** The test passed for five months against text
+// nothing could read: it asserted on the Go string, and the Go string was never the delivered one.
+//
+// So the split is deliberate, and it follows what each half is FOR:
+//
+//	the STAMP carries what a session needs BEFORE it suspects anything — that this text has a
+//	version, what to call, and that neither reconnecting nor waiting refreshes it. It is short
+//	because it is prepended, and under a cap position is delivery.
+//
+//	ken_version's TOOL DESCRIPTION carries the rest — what the freeze does and does not block —
+//	because a session reads it at the moment it calls ken_version, which is the moment the
+//	discrepancy is actually in front of it. Descriptions are delivered intact: all 43 of Ken's
+//	are under the budget, the largest being comm_poll.
+//
+// The union is asserted, so nothing may quietly leave BOTH.
 func TestTheStampTellsASessionWhatToDoWithADiscrepancy(t *testing.T) {
 	stamp := strings.ToLower(InstructionStamp())
+	desc := strings.ToLower(ToolDescription)
+
+	// In the STAMP, because a session must have them before it knows to look anywhere.
 	for _, want := range []string{
 		"ken_version",  // what to call
 		"reconnect",    // that reconnecting does NOT help — the counter-intuitive part
 		"tool descrip", // that descriptions are pinned too, not just this text
 		"result",       // that results ARE current, so something is still trustworthy
+	} {
+		if !strings.Contains(stamp, want) {
+			t.Errorf("the stamp never mentions %q — a session reading it cannot act on it:\n%s", want, InstructionStamp())
+		}
+	}
+
+	// In ken_version's DESCRIPTION, read when the discrepancy is in hand.
+	for _, want := range []string{
 		// THE FREEZE BLOCKS DISCOVERY, NOT TRANSMISSION — and ken-prod-ops proved it by
 		// doing it. Their comm_send schema predates rooms, has no `to_room` property at
 		// all and still marks channel_id required; passing `to_room` anyway WORKED,
@@ -50,8 +82,8 @@ func TestTheStampTellsASessionWhatToDoWithADiscrepancy(t *testing.T) {
 		// of the schema says.
 		//
 		// I had told them, and Vlad, that a frozen session cannot use what it cannot see.
-		// Half right, and I overstated it. Without this sentence the stamp tells a session
-		// it is stuck when it is only blind.
+		// Half right, and I overstated it. Without this sentence a session is told it is
+		// stuck when it is only blind.
 		"pass it",
 		// AND that a whole new TOOL does not travel, which is the sharper limit and the
 		// one that bites the mechanism itself: ken_version is a tool added in 3.1.0, so
@@ -59,16 +91,27 @@ func TestTheStampTellsASessionWhatToDoWithADiscrepancy(t *testing.T) {
 		// for. Vlad found that by asking me to use it and watching it not be there.
 		"whole tools do not",
 	} {
-		if !strings.Contains(stamp, want) {
-			t.Errorf("the stamp never mentions %q — a session reading it cannot act on it:\n%s", want, InstructionStamp())
+		if !strings.Contains(desc, want) {
+			t.Errorf("ken_version's description never mentions %q, and the stamp is too small to carry it:\n%s", want, ToolDescription)
 		}
 	}
-	// And it must NOT read as an alarm. Stale instructions are the ordinary condition of
-	// a long conversation; a session that treats it as breakage will reconnect, which
-	// does nothing, or escalate to its human over normal operation.
-	if !strings.Contains(stamp, "nothing is broken") {
-		t.Error("the stamp does not say the condition is normal, so a session meeting it will treat " +
-			"an ordinary state as a fault")
+
+	// And SOMETHING must say the condition is normal. Stale instructions are the ordinary
+	// condition of a long conversation; a session that treats it as breakage will reconnect,
+	// which does nothing, or escalate to its human over normal operation.
+	if !strings.Contains(stamp, "nothing is broken") && !strings.Contains(desc, "nothing is broken") {
+		t.Error("neither the stamp nor ken_version's description says the condition is normal, so a " +
+			"session meeting it will treat an older manual as breakage")
+	}
+
+	// *** AND THE STAMP MUST LEAVE ROOM FOR THE INSTRUCTIONS IT IS PREPENDED TO. ***
+	//
+	// This is the assertion whose absence let the old stamp consume more than half the budget
+	// on the KB surface and all of it twice over on COMM. A stamp that fits is not a nicety:
+	// every character it takes is a character of operational instruction that does not arrive.
+	if n := len([]rune(InstructionStamp())); n > 400 {
+		t.Errorf("the stamp is %d characters against a %d-character delivery budget; it is prepended to "+
+			"every surface, so it spends that budget before any instruction does", n, InstructionBudget)
 	}
 }
 

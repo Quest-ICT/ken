@@ -61,7 +61,8 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.21.0** (2026-08-25). **Production is on 3.21.0**, verified by ken-prod-ops at
+**Released: 3.22.0** (2026-08-25) — the instruction-delivery refit; **production is on 3.21.0**
+and has not been offered it yet. 3.21.0 was verified by ken-prod-ops at
 2026-08-25T15:32Z against the live databases: healthz reports `Ken 3.21.0 linux/amd64`, both
 `applied_at` timestamps unchanged, schema band clean on both, and — the strongest form this check
 has taken — **the whole `endpoint` table byte-identical before and after, `last_seen_at` included**,
@@ -69,7 +70,7 @@ with row counts identical on both databases (2581 / 1624). They tested the "this
 nothing" claim by hashing table CONTENTS rather than counting rows, and this time no session polled
 during the window, so there was no drift to attribute.
 
-**Seven items remain open across Batches 1–4** — the list is in those batches and nothing rounds it
+**Six items remain open across Batches 1–4** — the list is in those batches and nothing rounds it
 up. Batch 6 is CLOSED; its last item, the endpoint migration, closed at **ep 6 only** by Vlad's
 scope decision on 2026-08-19.
 
@@ -554,12 +555,13 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       record — and how to qualify it — when the sender holds no station. *Reaches NEW conversations
       only: instructions pin at connect, so every session already running keeps the old rule until
       it ends.*
-- [ ] **The loop in that same block never mentions `comm_bind`.** It now speaks of stations
-      throughout — `to_station`, `comm_directory`, `station_link_request` — but never says how an
-      endpoint acquires one, so a session reading only the instructions has no path from
-      `comm_register` to a station and is left on the pairing-code route. Split out of the hearsay
-      item above when that shipped; the original wording ("never mentions `comm_bind` **or stations
-      at all**") is now half-false and is corrected here.
+- [x] **The loop in that same block never mentions `comm_bind`** — **done 2026-08-25**, as part of
+  a much larger finding than this item described. The block did not merely omit `comm_bind`: **it
+  was never delivered.** The MCP client truncates the instructions field at 2048 characters, and
+  COMM was sending 8095 — 25% arrived. This item was recorded weeks before ken-prod-ops reported
+  the same wall from the other side, and it was filed as an omission because nobody measured the
+  block against what a client accepts. All three surfaces now deliver in full, and per-tool rules
+  live in the descriptions of the tools they govern, which are not truncated.
 - [x] **Keys missing from both `messages_es` and `messages_fr`** — **done 2026-08-24. Both locales
       are now at parity: 702 keys each, zero missing.**
       **The figure in this item was stale.** It said 89; the real count when I measured was **67**,

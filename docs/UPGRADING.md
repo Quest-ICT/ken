@@ -34,6 +34,29 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.22.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### What changes for your sessions
+
+**Your sessions have been receiving between a quarter and a half of Ken's instructions.** The MCP
+client cuts that field at 2048 characters and Ken was sending up to 8095. All three surfaces now
+fit, so a session connecting after this upgrade is told things no session has ever been told —
+including, on COMM, the rule about writing its endpoint secret to a file before doing anything else.
+
+**Sessions already connected keep the old text.** Instructions pin when a conversation begins.
+A session started before the upgrade is unaffected, for better and worse; `ken_version` is how it
+finds out, and its result now also names every MCP surface this deployment serves.
+
+**If you run with curation languages configured, that rule now reaches your sessions.** It was
+appended last and was therefore always the first thing cut. It is on `kb_save` and
+`kb_propose_enhancement` now.
+
+### Nothing to do
+
+No action on upgrade. No migration runs.
+
 ## 3.21.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.

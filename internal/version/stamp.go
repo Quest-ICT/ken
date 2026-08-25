@@ -24,26 +24,38 @@ import "fmt"
 // protocol, and no reasoning about its own state — which is exactly why it works where
 // self-detection cannot.
 
-// InstructionStamp is appended to every surface's connect-time instructions.
+// InstructionStamp is prepended to every surface's connect-time instructions.
 //
-// It states the version and tells the session what to do with the discrepancy, because a
-// number with no instruction attached is a number a session will read past. The wording
-// deliberately does not say "you are broken": stale text is the NORMAL condition of a
-// long conversation, and the useful response is to re-read the tool descriptions, not to
-// panic or reconnect — reconnecting does not help, which is the counter-intuitive part
-// worth stating where it will be read.
+// PREPENDED, AND SHORT, BECAUSE FOR ITS ENTIRE LIFE IT WAS NEITHER. The MCP client truncates
+// the instructions field at 2048 CHARACTERS. This stamp was 1053 characters APPENDED to blocks
+// of 2754, 7042 and 4714 — so on all three surfaces it began past the cut, and **no session has
+// ever received it.** Shipped in 3.1.0, measured 2026-08-25.
+//
+// The mechanism survived anyway, and only because it was built with two channels: `Info` carries
+// `instructions_may_be_stale` and `how_to_check` in every ken_version RESULT, and results are not
+// truncated. A session did report an instruction ambiguity rather than asserting an absence — the
+// design worked through the half nobody knew was the only live one.
+//
+// So the rule this file now embodies: **under a cap, position IS delivery.** What must arrive goes
+// first and stays small. The long explanation moved to ToolDescription (internal/version/toolinfo.go),
+// which is read at the moment a session calls ken_version — the moment the discrepancy is in front
+// of it — and which the client delivers intact.
 func InstructionStamp() string {
-	return fmt.Sprintf(`
-THESE INSTRUCTIONS WERE WRITTEN BY KEN %s. Call ken_version to see what is running NOW.
-If the two differ, this text and every tool description you hold are from the older one —
-they were captured when this conversation began and do NOT refresh, not on reconnect and
-not on a server upgrade. Nothing is broken; you are simply reading an older manual. Trust
-the tool RESULTS, which are always current, and ask your human what changed.
-WHAT THE FREEZE DOES AND DOES NOT BLOCK — the distinction is worth reading twice.
-PARAMETERS travel: if you learn from your human, a peer or the docs that a tool has gained
-an argument, PASS IT. The server validates what arrives, not your copy of the schema, so a
-tool that refuses your old way may accept the new one. WHOLE TOOLS DO NOT travel: a tool
-added after this conversation began is not in your list and you have no handle to call it,
-however much you know about it. That is why the running version is also reported inside
-results you already call — a result is the one channel that always reaches you.`, Version)
+	return fmt.Sprintf("KEN %s WROTE THIS TEXT. Call ken_version for what runs NOW; if it differs, this and "+
+		"every tool description you hold are older — they pin when a conversation begins and never refresh, "+
+		"not even on reconnect. Trust tool results: always current.\n\n", Version)
 }
+
+// InstructionBudget is the number of CHARACTERS an MCP client delivers of the instructions field.
+//
+// Not Ken's limit — Ken has no truncation code anywhere. Measured downstream three ways on
+// 2026-08-25: two independently observed cut points, on two machines and two client builds, land
+// exactly where character 2048 falls in the source (COMM after "...the other scopes are then
+// hidden", STATION after "...most of your list has never been shown t"), and the third was
+// arithmetic — computing that offset from the source predicted both fragments verbatim.
+//
+// Treated as a BUDGET rather than as a known constant. If the real cap is larger, staying under
+// this costs a little brevity; if it is smaller or varies by client, everything load-bearing is
+// still at the front. Enforced per surface by tests, on `instructions + InstructionStamp()` —
+// the string that actually faces the cap, which is the distinction the first refit missed.
+const InstructionBudget = 2048

@@ -182,74 +182,23 @@ func NewHTTPHandler(d Deps) *Handler {
 // This text is not a control — Ken cannot verify that a model captured an item or told
 // the human about one (§11.2). It changes behaviour in the common case, which is worth
 // having, and the design says plainly where it stops.
-const instructions = `Ken stations — a durable working identity you STAFF (docs/STATIONS.md).
+const instructions = `Ken stations — a durable working identity you STAFF: a post that outlives this conversation.
 
-You are staffing a station: a post that outlives this conversation. It owns a notebook,
-a task list and a small locker, and they are all still here next time.
+THREE MCP SURFACES: /station/mcp (station_*, this post), /mcp (kb_*, the knowledge base), /comm/mcp (comm_*, messaging with other AI sessions). Each is a SEPARATE entry your human configures; you hold only the ones they set up, so ask for the others BY NAME. ken_version names the surfaces this deployment serves.
 
-START HERE, EVERY SESSION:
-- Call station_me first. It returns your briefing: open tasks (named, not just counted),
-  how stale your handoff page is, and what is waiting on your human.
-- IN YOUR FIRST MESSAGE, TELL YOUR HUMAN IN WORDS every task blocked on them and
-  everything past its date. The briefing is a tool result; it reaches nobody unless you
-  say it. This is the point of the whole feature.
+Your station owns a notebook, a task list, a locker and a vault. They are all still here next time.
 
-TASKS — the list exists because pending things decay out of a conversation:
-- Add the moment you say "we should" — station_task_add is one line and one call. Adding
-  late means not adding.
-- blocked_on is required: self = you can act now; human = it cannot move until your human
-  does or decides; peer = another station owes something.
-- CLOSE the moment a thing is done, not at the end of the session. Closing takes several
-  ids at once.
-- If an item has been briefed repeatedly and nothing changed, say what is blocking it or
-  defer it with a reason. Do NOT silently leave it, and do NOT drop something your human
-  owes — that is theirs to abandon, not yours.
-- BEFORE YOU TELL YOUR HUMAN THEY OWE SOMETHING, CHECK THE UNDERLYING STATE — NOT THE FLAG.
-  blocked_on is set once when the task is created and NOTHING EVER REVISITS IT, so a task
-  whose condition has already been satisfied looks exactly like one still waiting, and both
-  are counted in "waiting on you". For a knowledge-base item that check is one kb_search;
-  for a release or a deployment it is one command. It is far cheaper than telling your
-  human twice that he owes something he finished last week — which has happened, on more
-  than one station, to more than one human.
-- THE BRIEFING IS A SAMPLE, NOT A SUMMARY. The head holds at most seven items. Read
-  'never_briefed': if it is large, most of your list has never been shown to anyone, and
-  the things most likely to be stale are the ones you have never seen. 'not_shown' reads as
-  a queue awaiting its turn; 'never_briefed' is how many have never had one. When it is
-  non-zero, go and read the full list with station_task_list rather than trusting the head.
-- AGE IS A THIRD KIND OF STALENESS, and 'oldest_open_task_days' is the only figure that sees
-  it. An item can be entirely accurate and no longer the point — overtaken, not wrong. The
-  human-blocked age misses those (they are usually blocked on YOU), and briefed_count only
-  rises, so one briefed every session looks attended to. When that number is large, read the
-  list, look at created_at, and ASK: still worth doing, or done being worth doing? Ken will
-  never defer or close anything for you — the number surfaces, you and your human decide.
+FIRST, EVERY SESSION: call station_me. Then, IN YOUR FIRST MESSAGE, TELL YOUR HUMAN IN WORDS every task blocked on them and everything past its date. The briefing is a tool result; it reaches nobody unless you say it. This is the point of the whole feature.
 
-NOTEBOOK — working state, not knowledge:
-- Keep the 'handoff' page current as you go — with mode='replace' and if_rev, NOT append.
-  A handoff written only when you know you are leaving is never written, because sessions
-  rarely get notice. But append stores a full copy of the page as history EVERY time, so
-  history grows with the square of the page: one measured station reached 96% of its cap
-  with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained
-  by replace cost a tenth of that.
-- The routing rule: would a session on a DIFFERENT station, months from now, want this?
-  Then it is kb_save / kb_propose_enhancement in the knowledge base, not a notebook page.
-  The notebook is for what only this post needs, only for now.
-- station_note_promote does not write knowledge; it asks your human to convert a page.
+BEFORE TELLING THEM THEY OWE SOMETHING, CHECK THE UNDERLYING STATE — NOT THE FLAG. blocked_on is set once, at creation, and nothing ever revisits it, so a task already satisfied looks exactly like one still waiting, and both count as waiting on them. One kb_search for a knowledge-base item, one command for a release: far cheaper than telling your human twice that they owe what they finished last week.
 
-LOCKER — the non-secret half of a working identity: memory and instruction files, tool
-preferences, conventions. NEVER a token, key or password — those go in the VAULT, which
-exists for exactly that. Ken cannot inspect a blob and know it is a secret, so this rule
-is yours to keep.
+TASKS: add the moment you say "we should"; adding late means not adding. blocked_on is required: self = you can act now; human = it cannot move until your human does or decides; peer = another station owes something. CLOSE the moment a thing is done, not at session end.
 
-VAULT — where a credential belongs: station_vault_put / _get / _list / _delete. Three
-things about it are worth knowing rather than discovering:
-- Values are stored UNENCRYPTED and travel in every backup. The protection is the machine
-  and the backup, not Ken. This is a deliberate decision, not a gap — a key kept beside
-  the ciphertext protects nobody who can read the file.
-- Every READ is logged and shows up in your human's console with the name and the time.
-- Nothing is destroyed. An overwrite keeps the previous value and a delete is reversible,
-  so a mistake here costs your human a click rather than the credential.
+NOTEBOOK is working state: keep the handoff current AS YOU GO with mode='replace', not append. Would a session on a DIFFERENT station want it months from now? Then it is kb_save, not a note.
 
-Your human reads all of it. Nothing here is private from them.`
+Credentials go in the vault: NEVER a token, key or password in the locker or a note.
+
+Your human reads all of it; nothing here is private from them.`
 
 // mcpKeepAlive matches the interval on the other MCP surfaces. The measurement behind the 30s,
 // and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
@@ -257,7 +206,7 @@ const mcpKeepAlive = 30 * time.Second
 
 func newServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-station", Version: "1"},
-		&mcp.ServerOptions{Instructions: instructions + version.InstructionStamp(), KeepAlive: mcpKeepAlive})
+		&mcp.ServerOptions{Instructions: version.InstructionStamp() + instructions, KeepAlive: mcpKeepAlive})
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_binding_voucher",
@@ -370,7 +319,8 @@ func newServer(d Deps) *mcp.Server {
 			"nothing revisits it. Check the underlying state before telling your human they still owe something. " +
 			"`oldest_open_task_days` ages EVERY open item, including the ones blocked on YOU: a task can be accurate " +
 			"and no longer the point, and no other figure here can see that. Ken never defers or closes anything on age — " +
-			"it shows you the number and you decide.",
+			"it shows you the number and you decide." +
+			"'not_shown' reads as a queue awaiting its turn; 'never_briefed' is how many have never had one — when it is non-zero, read the full list with station_task_list rather than trusting the head. 'briefed_count' only rises, so an item raised every session looks attended to: when the age is large, read the list, look at created_at, and ASK whether each item is still worth doing, or done being worth doing.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in meIn) (*mcp.CallToolResult, meOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -507,7 +457,8 @@ func newServer(d Deps) *mcp.Server {
 			"every backup. If you are worried about losing a credential when your context is compacted, a page here " +
 			"is the WRONG place: reading it needs the station key, so it is unreachable in exactly that emergency. " +
 			"Write the RECOVERY PATH instead — which station, which peers, what to re-run. " +
-			"Routing rule: if a session on a DIFFERENT station would want this months from now, it is knowledge (kb_save), not a note.",
+			"Routing rule: if a session on a DIFFERENT station would want this months from now, it is knowledge (kb_save), not a note." +
+			"Sessions rarely get notice, which is why AS YOU GO is the only schedule that works. One measured station reached 96% of its history cap with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained by replace cost a tenth of that. The routing rule in full: kb_save or kb_propose_enhancement on /mcp for anything a DIFFERENT station would want months from now; the notebook is for what only this post needs, only for now.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in noteWriteIn) (*mcp.CallToolResult, noteOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -570,7 +521,8 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name: "station_task_list",
 		Description: "Your tasks, ordered: overdue first, then what is blocked on your human, then whatever has " +
-			"gone longest without being raised. A pure query — reading it does not count as raising anything.",
+			"gone longest without being raised. A pure query — reading it does not count as raising anything." +
+			"This is the FULL list, and the briefing head is only a sample of it: when station_me reports a non-zero 'never_briefed', read it here — what has never been shown to anyone is what is most likely to be stale. When 'oldest_open_task_days' is large, look at created_at and ask whether an item is still worth doing, or done being worth doing — overtaken is not the same as wrong.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskListIn) (*mcp.CallToolResult, taskListOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -599,7 +551,9 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name: "station_task_defer",
 		Description: "Push a task out to a date, with a reason. Deliberately more work than closing it — deferring " +
-			"is legitimate, deferring silently and repeatedly is how a list rots. The count is shown back to you.",
+			"is legitimate, deferring silently and repeatedly is how a list rots. The count is shown back to you." +
+			"An item briefed repeatedly with nothing changed gets one of two things: what is blocking it, said out loud to your human, or a deferral with a reason. Never silence, and never a drop of something your human owes." +
+			"IF AN ITEM HAS BEEN BRIEFED REPEATEDLY AND NOTHING CHANGED, say what is blocking it or defer it with a reason. Do NOT silently leave it, and do NOT drop something your human owes — that is theirs to abandon, not yours.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in taskDeferIn) (*mcp.CallToolResult, okOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -639,7 +593,8 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name: "station_locker_list",
 		Description: "Files stored against this station — names, sizes, digests. The locker is for what a fresh " +
-			"session on another machine needs to reconstitute you: memory and instruction files, conventions. Never secrets.",
+			"session on another machine needs to reconstitute you: memory and instruction files, conventions. Never secrets." +
+			"Tool preferences belong here too.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, lockerListOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -660,7 +615,8 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name: "station_locker_put",
 		Description: "Store a small text file against this station. NEVER put a token, key or password here — Ken " +
-			"cannot tell, your human can read it, and it goes into every backup.",
+			"cannot tell, your human can read it, and it goes into every backup." +
+			"Those belong in the VAULT (station_vault_put), which exists for exactly that. Ken cannot inspect a blob and know it is a secret, so this rule is yours to keep.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in lockerPutIn) (*mcp.CallToolResult, lockerMeta, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -732,7 +688,8 @@ func newServer(d Deps) *mcp.Server {
 		Description: "Store a credential against this station — a token, key, password or connection string. This is " +
 			"where those belong; the LOCKER is not. Two things to know rather than discover: your human can read " +
 			"anything here from the console, and it is stored unencrypted, so the protection is the machine and the " +
-			"backup rather than Ken. Writes are reversible — an overwrite keeps the previous value.",
+			"backup rather than Ken. Writes are reversible — an overwrite keeps the previous value." +
+			"Unencrypted also means the value travels in EVERY backup. That is a deliberate decision rather than a gap — a key kept beside the ciphertext protects nobody who can read the file.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultPutIn) (*mcp.CallToolResult, vaultPutOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {
@@ -771,7 +728,8 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_vault_delete",
 		Description: "Retire a secret. It stops being readable immediately and stays RECOVERABLE from your human's " +
 			"console — deliberately unlike station_locker_delete, which destroys. Rotating a credential is a put, not " +
-			"a delete then a put.",
+			"a delete then a put." +
+			"Nothing here is destroyed, so a mistake costs your human a click rather than the credential.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, okOut, error) {
 		p, err := requireLocker(ctx)
 		if err != nil {

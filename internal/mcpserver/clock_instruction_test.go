@@ -53,11 +53,16 @@ func TestTheClockParagraphStaysProportionate(t *testing.T) {
 	if i < 0 {
 		t.Fatal("the clock paragraph is absent, so its size cannot be judged")
 	}
-	end := strings.Index(whole[i:], "\n\n")
-	if end < 0 {
-		t.Fatal("the clock paragraph does not end in a blank line — it has merged with what follows")
+	// The paragraph now sits LAST in the block, so "ends at a blank line" became "ends at a
+	// blank line OR at the end of the text". It was moved there deliberately when the block was
+	// refitted under version.InstructionBudget: everything before it is procedure a session
+	// needs in order, and this is the one rule that governs every step rather than any one of
+	// them. Both terminators are accepted rather than pinning the position, because where it
+	// sits is an editorial call and the size limit below is the property under test.
+	para := whole[i:]
+	if end := strings.Index(para, "\n\n"); end >= 0 {
+		para = para[:end]
 	}
-	para := whole[i : i+end]
 
 	if len(para) > 800 {
 		t.Errorf("the clock paragraph is %d characters, which is long enough to be skimmed past; the block it sits in is %d",

@@ -15,6 +15,66 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.22.0] — 2026-08-25
+
+### Fixed
+
+- **Most of Ken's connect-time instructions had never reached any session.** The MCP client
+  truncates the `instructions` field at **2048 characters**. Ken was sending 3807, 8095 and 5767:
+
+  | surface | sent | delivered |
+  |---|---:|---:|
+  | `/mcp` knowledge base | 3807 | **53%** |
+  | `/comm/mcp` | 8095 | **25%** |
+  | `/station/mcp` | 5767 | **35%** |
+
+  Reported by a Claude Code session that could not find Station, verified by ken-prod-ops against
+  the v3.21.0 source, and confirmed here three ways: two independently observed cut points on two
+  machines land exactly where character 2048 falls in the source, and computing that offset
+  predicted both fragments verbatim. Ken contains no truncation code; the cap is downstream.
+
+  **All three now deliver in full** — 2047, 2048 and 2037 characters — and a test per surface fails
+  the build when the string that faces the cap grows past it.
+
+- **The instruction-drift stamp had never been delivered either, on any surface, since 3.1.0.** It
+  was 1053 characters **appended** to blocks of 2754, 7042 and 4714, so it began past the cut every
+  time. The mechanism survived only because it was built with two channels: `instructions_may_be_stale`
+  and `how_to_check` ride in every `ken_version` RESULT, and results are not truncated. **The design
+  was saved by redundancy nobody knew was load-bearing.**
+
+  The stamp is now 240 characters and **prepended**: under a cap, position is delivery. The long
+  explanation of what the freeze does and does not block moved into `ken_version`'s description,
+  which arrives intact and is read at the moment a session has the discrepancy in front of it.
+
+- **A session holding only `/mcp` had no way to learn that COMM and stations exist.** The knowledge
+  base block mentioned neither, and the two blocks that would have said so are on endpoints it
+  cannot reach. A session spent a conversation probing four paths and reading three 404s to find
+  `/station/mcp`, then correctly refused to assert Station did not exist because it could not tell
+  *absent* from *undocumented*. **Every block now names all three surfaces in its opening lines**,
+  and `ken_version` reports them in its result — the one channel that reaches a running session.
+
+- **The curation-language rule was appended last, so the deployment that turned the feature ON was
+  the only one guaranteed never to be told about it.** It rides on `kb_save` and
+  `kb_propose_enhancement` now, the two calls it can change.
+
+### Changed
+
+- **Per-tool rules moved from the instruction blocks into the descriptions of the tools they
+  govern**, which the client delivers intact — all 43 are under the budget, the largest being
+  `comm_poll`. A rule is read at the moment it applies rather than in a wall of text at connect,
+  and a second gate fails the build if a description grows past the cap in turn.
+
+  Several tests had pinned exact sentences against the truncated consts — green about text no
+  session had ever read. They now assert against the UNION of what a client receives, and against
+  the property rather than the wording, so a rewrite that keeps the rule passes and one that drops
+  it does not. Pinning the sentence would have forced the text back into the field that cuts it.
+
+- **`FINISHING.md`'s status header is derived rather than promised.** It went nine releases stale
+  saying "Released: 3.12.1 … Fifteen items remain open" while 3.21.0 was live and seven boxes were
+  unchecked — the third recurrence of a failure the file had already diagnosed
+  (*"a rule is not a mechanism"*) and already prescribed the remedy for. A test now fails the build
+  when the header does not name the newest release, or when its count disagrees with the boxes.
+
 ## [3.21.0] — 2026-08-25
 
 ### Added

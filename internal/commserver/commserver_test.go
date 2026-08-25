@@ -2,12 +2,14 @@ package commserver
 
 import (
 	"context"
+	"github.com/Quest-ICT/ken/internal/version"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -305,28 +307,82 @@ func TestPollExcludedFromDurationHistogram(t *testing.T) {
 	}
 }
 
-// TestInstructionsTellTheModelWhereToKeepTheSecret pins the fix for a real outage:
-// a dev session lost its endpoint_secret to context compaction, could not
-// reconnect, and work stopped for a day waiting for a human to mint a fresh
-// pairing code.
+// TestTheModelIsToldWhereToKeepTheSecret pins the fix for a real outage: a dev session lost its
+// endpoint_secret to context compaction, could not reconnect, and work stopped for a day waiting
+// for a human to mint a fresh pairing code.
 //
-// The old text said "KEEP the endpoint_id and endpoint_secret". That is advice a
-// human client follows by writing a config file and an AI client follows by
-// remembering — and remembering is precisely the thing that fails, silently and by
-// design. The instruction is only useful if it names the DESTINATION, so this test
-// asserts the destination and the irreversibility, not merely that the words
-// "endpoint_secret" appear.
-func TestInstructionsTellTheModelWhereToKeepTheSecret(t *testing.T) {
-	for _, want := range []string{
-		"WRITE the endpoint_id and endpoint_secret TO A FILE ON DISK",
-		"context compaction is routine and silent",
-		"ask your human to rotate that endpoint's secret",
+// The old text said "KEEP the endpoint_id and endpoint_secret". That is advice a human client
+// follows by writing a config file and an AI client follows by remembering — and remembering is
+// precisely the thing that fails, silently and by design. The instruction is only useful if it
+// names the DESTINATION.
+//
+// *** IT NOW ASSERTS ON WHAT IS DELIVERED, AND ACROSS BOTH PLACES THE RULE LIVES. ***
+//
+// The previous version matched three exact phrases against the `instructions` const. That const
+// was 7042 characters against a delivery budget of 2048, so the test was green while two thirds
+// of the block — including, depending on where the edit landed, this very rule — reached no
+// session at all. **A test that asserts on a fragment of a truncated value cannot see the
+// truncation.** It now checks the string the client actually receives, and follows the recovery
+// half to comm_register's description, where the refit put it.
+//
+// Wording is deliberately not pinned; the PROPERTY is. Each check names the thing a session must
+// end up knowing, so a rewrite that keeps the meaning passes and a rewrite that drops it does not.
+func TestTheModelIsToldWhereToKeepTheSecret(t *testing.T) {
+	delivered := version.InstructionStamp() + instructions
+	if n := len([]rune(delivered)); n > version.InstructionBudget {
+		t.Fatalf("the instructions are %d characters against a %d budget, so what this test reads is "+
+			"not what a session receives", n, version.InstructionBudget)
+	}
+
+	for _, c := range []struct {
+		what  string
+		frags []string
+	}{
+		{"that the secret goes to a FILE, not into context", []string{"0600 file", "on disk", "ON DISK"}},
+		{"WHY memory is not a destination", []string{"compaction is routine and silent"}},
+		{"that it happens immediately after registering", []string{"comm_register"}},
 	} {
-		if !strings.Contains(instructions, want) {
-			t.Errorf("connect-time instructions no longer carry %q — a session that loses its\n"+
-				"secret cannot reconnect at all, so this guidance is load-bearing", want)
+		if !anyOf(delivered, c.frags) {
+			t.Errorf("the DELIVERED instructions no longer say %s — a session that loses its secret "+
+				"cannot reconnect at all, so this is load-bearing:\n%s", c.what, delivered)
 		}
 	}
+
+	// The recovery path moved to comm_register, which is the tool a session calls when it is
+	// thinking about its endpoint credentials. Only a human can rotate a lost secret, so a
+	// session that does not know to ask will sit stuck instead of asking.
+	if !anyOf(registerDescription(t), []string{"rotates a lost secret", "rotate", "/comm"}) {
+		t.Error("comm_register's description no longer points at the console that rotates a lost " +
+			"secret; a session that loses one has no way to learn that asking its human is the fix")
+	}
+}
+
+func anyOf(hay string, needles []string) bool {
+	for _, n := range needles {
+		if strings.Contains(hay, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// registerDescription reads comm_register's shipped description out of the source, so the test
+// follows the rule to wherever it actually lives rather than to where it used to.
+func registerDescription(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("commserver.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`Name:\s*"comm_register"[^}]*?Description:\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)`).FindSubmatch(b)
+	if m == nil {
+		t.Fatal("comm_register is not registered with a parseable description")
+	}
+	var sb strings.Builder
+	for _, p := range regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`).FindAllSubmatch(m[1], -1) {
+		sb.Write(p[1])
+	}
+	return sb.String()
 }
 
 // Registration mints a secret shown exactly once, and nothing in the call may put
@@ -471,14 +527,16 @@ func TestTheWaitAdviceNamesTheFieldsThatContradictIt(t *testing.T) {
 // comm_channels stopped being channel-only, so "a pending count per channel" understated
 // what the caller can see in exactly the surface that exists to stop hasty sends.
 func TestInstructionsDescribeTheMechanismsThatActuallyExist(t *testing.T) {
+	corpus := deliveredCorpus(t)
 	for _, want := range []string{
 		"pending_total", // the number that covers rooms and broadcast, not just channels
 		"'notices' array",
 		"reason='expired'",
 		"nothing to ack",
 	} {
-		if !strings.Contains(instructions, want) {
-			t.Errorf("connect-time instructions do not mention %q", want)
+		if !strings.Contains(corpus, want) {
+			t.Errorf("nothing a session receives mentions %q — not the connect-time block and not any "+
+				"tool description", want)
 		}
 	}
 	// AND THE RETIRED CLAIMS ARE GONE. Asserting only the presence of the new text would
@@ -488,14 +546,14 @@ func TestInstructionsDescribeTheMechanismsThatActuallyExist(t *testing.T) {
 		"comm_channels reports a pending count per channel",
 		`Treat it as the answer to "why is my peer silent" rather than waiting further. Ack it like any other message.`,
 	} {
-		if strings.Contains(instructions, gone) {
-			t.Errorf("connect-time instructions still carry a retired mechanism: %q.\n"+
+		if strings.Contains(corpus, gone) {
+			t.Errorf("a session is still told about a retired mechanism: %q.\n"+
 				"A session captures this once and cannot be corrected — it will act on it all conversation.", gone)
 		}
 	}
 	// The legacy note must SURVIVE, though: an upgraded database still holds pre-3.4.0
 	// status rows, and they are still pollable mail somebody may not have read.
-	if !strings.Contains(instructions, "kind='status'") {
+	if !strings.Contains(corpus, "kind='status'") {
 		t.Error("the instructions no longer mention kind='status' at all — an upgraded deployment " +
 			"still holds those rows and a session that meets one has no idea what it is")
 	}
@@ -529,4 +587,41 @@ func TestConsoleTextDoesNotDescribeRemovedOrReplacedBehaviour(t *testing.T) {
 			}
 		}
 	}
+}
+
+// deliveredCorpus is EVERYTHING a session receives from this surface: the connect-time block that
+// survives truncation, plus every tool description, which the client delivers intact.
+//
+// WHY TESTS ASSERT AGAINST THE UNION NOW. Several of them pinned wording against the
+// `instructions` const while that const was 7042 characters and the client delivered 2048 — so
+// they were green about text no session had ever read, which is the exact defect they existed to
+// prevent. The refit moved per-tool rules into the descriptions of the tools they govern, and a
+// test that still looked only at the block would now fail for the rules that moved and pass for
+// the ones still buried.
+//
+// The property was never "this const contains the sentence". It is "a session is told." The union
+// is where that is true, and the budget test beside it is what keeps the block half honest.
+func deliveredCorpus(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("commserver.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sb strings.Builder
+	sb.WriteString(version.InstructionStamp())
+	sb.WriteString(instructions)
+	desc := regexp.MustCompile(`Description:\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)`)
+	lit := regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+	n := 0
+	for _, m := range desc.FindAllSubmatch(b, -1) {
+		for _, p := range lit.FindAllSubmatch(m[1], -1) {
+			sb.Write(p[1])
+			sb.WriteString(" ")
+		}
+		n++
+	}
+	if n < 10 {
+		t.Fatalf("only %d tool descriptions parsed from commserver.go; the scanner is broken, not the text", n)
+	}
+	return sb.String()
 }

@@ -48,7 +48,30 @@ func deliveredCommInstructions(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sess.Close() })
-	return sess.InitializeResult().Instructions
+
+	// EVERYTHING THE CLIENT ACTUALLY RECEIVES: the connect-time block plus every tool
+	// description, read off the live session rather than out of the source.
+	//
+	// The block alone stopped being the right corpus when the instructions were refitted under
+	// version.InstructionBudget: per-tool rules moved into the descriptions of the tools they
+	// govern, because the client truncates the instructions field and does not truncate these.
+	// A test that kept reading only the block would fail for every rule that moved — and, worse,
+	// would keep passing for any rule left sitting past the cut, which is the state this whole
+	// refit existed to end.
+	var sb strings.Builder
+	sb.WriteString(sess.InitializeResult().Instructions)
+	tools, err := sess.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tools.Tools) < 10 {
+		t.Fatalf("only %d tools listed; the corpus is broken, not the text", len(tools.Tools))
+	}
+	for _, tl := range tools.Tools {
+		sb.WriteString("\n")
+		sb.WriteString(tl.Description)
+	}
+	return sb.String()
 }
 
 // THE HEARSAY RULE MUST NAME THE IDENTITY THAT OUTLIVES THE CONVERSATION.
@@ -72,16 +95,40 @@ func TestTheHearsayRuleNamesTheDurableIdentity(t *testing.T) {
 			"\"must not contain\" check in this test.", len(got))
 	}
 
-	for _, want := range []string{
-		"attribute it to the identity that will still exist when someone reads the entry — the STATION",
-		"Take from_station_name and from_station_id off the polled message",
-		"WHEN from_station_id IS EMPTY the sender holds no station, and from_endpoint_id is all there is",
-		"never record an outcome or assert verification on another session's behalf",
+	// EACH CHECK NAMES A PROPERTY AND ACCEPTS ANY WORDING THAT CARRIES IT.
+	//
+	// These were four exact sentences, pinned against the connect-time block. Three of them now
+	// live in comm_directory's and comm_bind's descriptions, because the block is truncated at
+	// version.InstructionBudget and per-tool rules were moved to where they arrive intact. Pinning
+	// the SENTENCE would have forced the text back into the field that cuts it — the test would
+	// have been the reason the defect returned.
+	//
+	// So the contract is the meaning, and the corpus is everything the client receives. A rewrite
+	// that keeps the rule passes; one that drops it does not.
+	for _, c := range []struct {
+		property string
+		anyOf    []string
+	}{
+		{"that the durable identity is the STATION, not the endpoint",
+			[]string{"the STATION", "sending STATION", "not an endpoint"}},
+		{"which fields carry it off a polled message",
+			[]string{"from_station_name and from_station_id"}},
+		{"what to do when the sender has no station at all",
+			[]string{"from_station_id is empty", "from_station_id IS EMPTY", "holds no station"}},
+		{"that a session never records an outcome for a peer",
+			[]string{"never record an outcome or assert verification on another session's behalf"}},
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the connect-time block no longer carries %q.\n"+
+		found := false
+		for _, w := range c.anyOf {
+			if strings.Contains(got, w) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("nothing a session receives says %s.\n"+
 				"A session captures this once, at conversation start, and can never be sent a "+
-				"correction — it will attribute peer knowledge this way for the whole conversation.", want)
+				"correction — it will attribute peer knowledge this way for the whole conversation.", c.property)
 		}
 	}
 

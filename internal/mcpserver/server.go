@@ -380,34 +380,45 @@ type recentOut struct {
 // prompt: the curated-knowledge model + the search-first / record-outcome loop.
 // buildInstructions appends a curation-language paragraph when the operator has
 // declared one. Distilled from docs/AI-INTEGRATION.md — keep the two in sync.
-const baseInstructions = `Ken is your durable, curated knowledge base, reached over these kb_* tools. You (the AI) are the sole author; a human curates. Everything you write lands as a PROPOSED revision — usable this session, but the curated head advances ONLY when the human promotes it. You capture, enhance, flag stale, and record outcomes; you NEVER curate or assert freshness.
+const baseInstructions = `Ken is your durable, curated knowledge base, reached over these kb_* tools. KEN SERVES THREE SURFACES, each a SEPARATE MCP entry your human configures: /mcp (kb_*, this one), /comm/mcp (comm_*, messaging with other AI sessions), /station/mcp (station_*, a durable identity outliving this session). One tells you nothing about the others. ken_version names the ones this deployment serves; if you lack one you need, ask your human for it BY NAME.
 
-The loop:
-- Warm up (fresh session, no specific problem yet): kb_recent_context for a briefing of recently-curated entries.
-- Search FIRST — your default first move before debugging an error or solving anything non-trivial: kb_search with natural language PLUS the exact symptoms/error text you see. It returns token-light summaries and a dedup_check_token — KEEP that token (kb_save requires it). Prefer 'mature' entries; distrust a 'staleness' badge; has_provisional means a proposal is already pending.
-- Fetch the few that matter: kb_get by slug (concise by default; 'detailed' adds provenance).
-- Act, then close the loop EVERY time: kb_record_outcome (helped | didnt-apply | was-wrong). 'was-wrong' also flags the entry stale. This is how Ken self-curates — do not skip it. IF kb_record_outcome IS NOT IN YOUR TOOL LIST, some clients filter what they show you: say so to your human in words, naming the entry and what happened, so the loop closes through them instead of silently not closing.
-- Save vs enhance what you learned: same problem with a better answer → kb_propose_enhancement (a new rev on the same slug). A different problem that merely shares vocabulary → kb_save (needs a fresh dedup_check_token) plus a 'relates' link. Write triggers (symptoms a future agent would type) and applies_to well; give an honest confidence.
-- Flag stale (kb_flag_stale) when a dependency moved or a fact changed. You can flag; you can never assert freshness.
+Belongs in Ken: durable, reusable knowledge — solved problems, pitfalls, caveats, decisions and their rationale. NOT session state, NOT secrets, NOT chatter.
 
-You have no clock. STOP before any claim about time — how long it took, how old it is, how far back it goes, whether it is still current — and read one: 'date -u', or the timestamp already in front of you (created_at, an mtime, the value your own query keyed on). Wall time between tool calls registers as nothing, so an unread duration was not estimated, it was generated, drifting toward whatever the sentence wanted; the errors run UPWARD, so calibration cannot fix this — only reading. 'Recently' and 'long-standing' are the same claim with the number hidden. A measured endpoint does not license a claim about the span. Write absolute times: Ken cannot tell a measured figure from a generated one, and neither can your curator.
+You are the sole author; a human curates. Your writes land as PROPOSED revisions — usable now, promoted only by the human. You never curate, never assert freshness.
 
-Belongs in Ken: durable, reusable knowledge — solved problems, pitfalls/gotchas, caveats, design decisions with rationale and trade-offs, verified facts. NOT transient session state, secrets, or chatter.`
+THE LOOP; each tool's description carries its own rules.
+- SEARCH FIRST, before debugging an error or solving anything non-trivial: kb_search, then kb_get the few that matter.
+- Act, then close the loop EVERY time: kb_record_outcome. The only evidence Ken collects, skipped six times in seven. IF IT IS NOT IN YOUR TOOL LIST — some clients hide tools — say so to your human in words, naming the entry and what happened.
+- Record what you learned: kb_propose_enhancement (same problem, better answer), kb_save (a different one), kb_flag_stale (a dependency moved).
+
+You have no clock. Before any claim about time — how long, how old, still current — read one: date -u, or a timestamp in front of you. An unread duration was not estimated, it was generated, and the errors run upward. 'Recently' and 'long-standing' are the same claim with the number hidden. A measured endpoint does not license a claim about the span. Write absolute times: Ken cannot tell a measured figure from a generated one, and neither can your curator.`
 
 // buildInstructions returns the AI-facing instructions, appending a curation-
 // language paragraph when the operator has declared the language(s) they curate in
 // (settings.curation_langs). With none declared the base guide is returned
 // unchanged, so a single-language KB sees no difference.
-func buildInstructions(curationLangs []string) string {
+func buildInstructions(curationLangs []string) string { return baseInstructions }
+
+// curationSentence is the curation-language rule, addressed to the tools that WRITE.
+//
+// IT USED TO BE APPENDED TO THE INSTRUCTIONS, which put it past the client's 2048-character cut
+// on any deployment that declared a curation language — so the operator who configured the
+// feature was the only one whose sessions were guaranteed never to be told about it. Delivered
+// now on kb_save and kb_propose_enhancement, which are the only two calls it can change.
+//
+// Returns "" when no language is declared, so a single-language KB sees no text at all.
+func curationSentence(curationLangs []string) string {
 	if len(curationLangs) == 0 {
-		return baseInstructions
+		return ""
 	}
 	names := make([]string, len(curationLangs))
 	for i, l := range curationLangs {
 		names[i] = langLabel(l)
 	}
-	return baseInstructions + "\n\nAuthor in the curation language(s): this KB is curated in " + strings.Join(names, ", ") +
-		". Write every human-readable field — title, summary, problem, solution, rationale, caveats — in one of those, so the human curator can read and PROMOTE it; a proposal the curator cannot read is stranded and can never be promoted. Keep triggers, code, identifiers and verbatim error text in their original form — they are language-neutral retrieval keys; never translate them. If kb_search surfaces an entry whose pending proposal is in a language you were not asked to use, propose a re-authored revision in a curation language."
+	return " CURATION LANGUAGE: this KB is curated in " + strings.Join(names, ", ") +
+		". Write every human-readable field — title, summary, problem, solution, rationale, caveats — in one of those; " +
+		"a proposal the curator cannot read is stranded and can never be promoted. Keep triggers, code, identifiers and " +
+		"verbatim error text in their original form: they are language-neutral retrieval keys, so never translate them."
 }
 
 // langLabel renders a BCP-47 primary subtag as "Name (code)" for the common
@@ -459,7 +470,12 @@ func NewServer(d Deps) *mcp.Server {
 		Name:    "ken",
 		Title:   "Ken knowledge base",
 		Version: version.Version,
-	}, &mcp.ServerOptions{Instructions: buildInstructions(d.CurationLangs) + version.InstructionStamp(), KeepAlive: mcpKeepAlive})
+	}, &mcp.ServerOptions{Instructions: version.InstructionStamp() + buildInstructions(d.CurationLangs), KeepAlive: mcpKeepAlive})
+
+	// THE CURATION SENTENCE RIDES ON THE TWO TOOLS THAT WRITE, not on the instructions.
+	// Built here rather than at the const, because the language list is per deployment and
+	// SetCurationLangs rebuilds this server when the operator changes it.
+	curation := curationSentence(d.CurationLangs)
 
 	addTool(s, d, &mcp.Tool{
 		Name: "kb_search",
@@ -520,8 +536,12 @@ func NewServer(d Deps) *mcp.Server {
 	})
 
 	addTool(s, d, &mcp.Tool{
-		Name:        "kb_save",
-		Description: "Create a NEW draft entry. Requires a dedup_check_token from a recent kb_search (enforces search-before-save). If a close match already exists, prefer kb_propose_enhancement instead.",
+		Name: "kb_save",
+		Description: "Create a NEW draft entry. Requires a dedup_check_token from a recent kb_search (enforces search-before-save). " +
+			"If a close match already exists, prefer kb_propose_enhancement instead. Use kb_save for a genuinely different problem that " +
+			"merely shares vocabulary, and add a `relates` link to the entry it resembles. Write `triggers` as the symptoms a future agent " +
+			"would actually type, fill `applies_to`, and give an HONEST confidence — an inflated one costs the next session more than a low " +
+			"one costs you. NOT FOR: transient session state, secrets or credentials of any kind, or chatter." + curation,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in saveIn) (*mcp.CallToolResult, saveOut, error) {
 		if err := requireScope(ctx, scopeWriteDraft); err != nil {
 			return nil, saveOut{}, err
@@ -550,8 +570,10 @@ func NewServer(d Deps) *mcp.Server {
 	})
 
 	addTool(s, d, &mcp.Tool{
-		Name:        "kb_propose_enhancement",
-		Description: "Append an enhancement (a new immutable version) to an existing entry. Never overwrites the curated head; a human promotes it later.",
+		Name: "kb_propose_enhancement",
+		Description: "Append an enhancement (a new immutable version) to an existing entry. Never overwrites the curated head; a human promotes it later. " +
+			"Use it when the problem is the SAME and your answer is better. If a search surfaced an entry whose pending proposal is written in a " +
+			"language you were not asked to use, propose a re-authored revision rather than adding a second one alongside it." + curation,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in proposeIn) (*mcp.CallToolResult, proposeOut, error) {
 		if err := requireScope(ctx, scopePropose); err != nil {
 			return nil, proposeOut{}, err

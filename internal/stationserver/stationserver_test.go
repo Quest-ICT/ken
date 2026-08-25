@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -138,6 +140,10 @@ func TestRetiredKeyIsRefusedLikeAnUnknownOne(t *testing.T) {
 // makes the feature work rather than merely exist. A briefing the model reads and does
 // not relay is the original failure with extra steps (§11.9).
 func TestInstructionsCarryTheRelaySentence(t *testing.T) {
+	// The corpus is the block PLUS every tool description: the block is truncated at
+	// version.InstructionBudget and per-tool rules were moved to where they arrive intact, so
+	// asserting on the block alone would force text back into the field that cuts it.
+	corpus := stationCorpus(t)
 	for _, want := range []string{
 		"TELL YOUR HUMAN IN WORDS", // the relay duty
 		"blocked_on is required",   // the enum, defined where it is used
@@ -146,8 +152,9 @@ func TestInstructionsCarryTheRelaySentence(t *testing.T) {
 		"handoff",                          // the continuity convention
 		"NEVER a token, key or password",   // the locker rule Ken cannot enforce
 	} {
-		if !strings.Contains(instructions, want) {
-			t.Errorf("connect-time instructions are missing %q", want)
+		if !strings.Contains(corpus, want) {
+			t.Errorf("nothing a session receives carries %q — not the connect-time block and not any "+
+				"tool description", want)
 		}
 	}
 }
@@ -273,4 +280,30 @@ func TestUsingAStationKeyRecordsThatItWasUsed(t *testing.T) {
 		t.Fatal("using a station key left NO trace — a leaked key would be undetectable after the fact, " +
 			"and the console's last-used column would stay permanently blank")
 	}
+}
+
+// stationCorpus is everything a session receives from /station/mcp: the connect-time block plus
+// every tool description. See the identical helper in internal/commserver for why the union, not
+// the block, is the honest place to assert that a session was told something.
+func stationCorpus(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("stationserver.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sb strings.Builder
+	sb.WriteString(instructions)
+	lit := regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+	n := 0
+	for _, m := range regexp.MustCompile(`Description:\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)`).FindAllSubmatch(b, -1) {
+		for _, pp := range lit.FindAllSubmatch(m[1], -1) {
+			sb.Write(pp[1])
+			sb.WriteString(" ")
+		}
+		n++
+	}
+	if n < 10 {
+		t.Fatalf("only %d tool descriptions parsed; the scanner is broken, not the text", n)
+	}
+	return sb.String()
 }
