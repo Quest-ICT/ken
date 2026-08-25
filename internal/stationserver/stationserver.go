@@ -854,9 +854,18 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 			Head:           taskViews(b.Head),
 		},
 	}
-	// WHICH COMM ENDPOINT IS MINE. Absent when COMM is unavailable — the field is omitted, not
-	// emptied, because "COMM is not running here" and "you are bound to no endpoint" would
-	// otherwise look identical and only one of them is a problem to chase.
+	// WHICH COMM ENDPOINT IS MINE. Absent when COMM is unavailable.
+	//
+	// THE ORIGINAL NOTE HERE CLAIMED A DISTINCTION THIS CODE DOES NOT MAKE, and ken-prod-ops
+	// caught it by noticing the field in their own briefing and not in a station-only session's.
+	// It said the field is "omitted, not emptied, because 'COMM is not running here' and 'you are
+	// bound to no endpoint' would otherwise look identical". They serialize identically anyway:
+	// the json tag is `omitempty`, which drops an empty slice as readily as a nil one, so a
+	// station with zero endpoints and a server with COMM off produce the same absent field.
+	//
+	// Left as-is deliberately, with the reasoning corrected rather than the behaviour: neither
+	// state asserts anything false, and "no endpoint to tell you about" is the honest reading of
+	// both. What was wrong was the comment claiming a signal the wire never carried.
 	//
 	// A lookup failure is NOT fatal: this briefing carries open tasks and what is waiting on
 	// a human, and losing all of that because a secondary lookup failed would be a poor
