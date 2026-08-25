@@ -42,7 +42,7 @@ type Deps struct {
 	//
 	// A FUNCTION rather than a *comm.Store on purpose: this package must not import
 	// the optional subsystem — the knowledge base's hot path stays free of it, and
-	// the two databases stay decoupled behind a boolean. Nil (COMM off) means no
+	// the two databases stay decoupled behind a boolean. Nil (COMM unavailable — a fault, not a setting) means no
 	// marking, which reads as "no signal", never "known first-hand".
 	// Keyed on the actor rather than the token because a COMM token must be
 	// dedicated — the token that receives messages is never the one that authors an

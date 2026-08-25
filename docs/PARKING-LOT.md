@@ -884,7 +884,21 @@ Slice 7's H4 blocker is dissolved. Worth keeping the history on this one: it sur
 
 `internal/stationserver/stationserver.go:369 (station_directory's description) and :47/:52/:794; internal/i18n/locales/messages.properties:602 + es:680 + fr:685 (flash.station_link_revoked_comm_off); cmd/ken/main.go:516-542`
 
-**Outstanding.** Relabel, and carry a degraded marker on the briefing. Rewiring is not available — the degraded state is deliberate.
+**CLOSED 2026-08-25 in 3.24.0** — relabelled at every site, found again by an audit rather than by
+re-reading this entry. The two propagating sites are the ones that mattered: `station_directory`'s
+SHIPPED description told sessions *"'staffed' is absent when this deployment has COMM off"*, and the
+revoke flash told operators to *"Re-check from the Comm console once COMM is on"* — in exactly the
+state where `/comm` is unrouted and 404s. All three console strings are corrected in all three
+locales and now name the fault and point at the `COMM: DEGRADED` line; the tool description and the
+Go comments that seeded the phrase say **unavailable** rather than **off**.
+
+`TestNoStringClaimsAFeatureIsSwitchedOff` reads the PROSE, which is the part this entry got right in
+advance: the 3.10.0 sweep grepped for retired variable names and could never have found text that
+describes the vanished switch without naming it. Verified by reintroducing the exact shipped string.
+
+**What is NOT done, and stays out of scope deliberately:** the briefing still drops
+`comm_endpoint_ids` with no reason a session can act on, for two causes it cannot tell apart. That
+is a marker on the briefing, not a relabelling, and it belongs with the identity work.
 
 **Evidence.** Hearsay, Staffing and CommEndpoints are decided once at boot inside `if commStore != nil`, and the only remaining route to nil is comm.db failing to open — which main.go already calls DEGRADED. Two sites are the propagating kind: station_directory tells sessions "'staffed' is absent when this deployment has COMM off", and the flash tells the operator that channels "may still be open" and to "Re-check from the Comm console once COMM is on" — in exactly the state where /comm 404s and its nav entry is hidden. Meanwhile the real fault is named nowhere: the briefing drops comm_endpoint_ids with no reason for two different causes a session cannot tell apart.
 

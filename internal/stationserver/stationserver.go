@@ -20,7 +20,7 @@ import (
 
 // The /station MCP endpoint (docs/STATIONS.md §6).
 //
-// Everything here works with COMM OFF (S2): the notebook and the task list are valuable
+// Everything here works with COMM UNAVAILABLE (S2): the notebook and the task list are valuable
 // to a solo session with no peers, and gating them behind a messaging feature they have
 // nothing to do with would be the wrong dependency. Peer links and endpoint binding are
 // the COMM half and live elsewhere.
@@ -44,12 +44,12 @@ type Deps struct {
 	// Metrics is optional.
 	Metrics *metrics.Registry
 	// Hearsay reports whether an actor recently RECEIVED inter-session traffic, so a
-	// note or task written mid-conversation is marked (§7). Optional: with COMM off it
+	// note or task written mid-conversation is marked (§7). Optional: with COMM unavailable it
 	// is nil and the marking is simply absent — "no signal", never "known clean".
 	Hearsay func(ctx context.Context, actorID int64) bool
 	// Staffing reports, per station id, how many live COMM endpoints are reading for
 	// it and when the freshest was last seen. Optional, and shaped as a hook for the
-	// same reason Hearsay is: this package must not depend on COMM. With COMM off it
+	// same reason Hearsay is: this package must not depend on COMM. With COMM unavailable it
 	// is nil and the directory OMITS reachability entirely rather than reporting
 	// every station as unstaffed — "unknown" and "nobody is there" are different
 	// facts, and a directory that conflates them is worse than one that says less.
@@ -58,7 +58,14 @@ type Deps struct {
 	// briefing every session is told to call first can say which endpoint is its own.
 	//
 	// A hook rather than a comm import, for the same reason as Staffing and Hearsay: this
-	// package must not depend on COMM. Nil when COMM is off, and the field is then OMITTED
+	// package must not depend on COMM. Nil when COMM is unavailable, and the field is then OMITTED
+	//
+	// "UNAVAILABLE", NOT "OFF", AND THE WORD MATTERS BECAUSE IT PROPAGATED. There is no switch:
+	// cmd/ken/main.go says "THERE IS NO SWITCH … both are gone", and the only route to nil is
+	// comm.db failing to open, which it logs as "a failure, not a setting". Calling that state
+	// "COMM off" put a phantom setting into station_directory's SHIPPED description and into
+	// three console strings that told operators to turn it back on — in the one state where
+	// /comm is unrouted and 404s. PARKING-LOT #44 tracked it; every site is corrected.
 	// rather than reported empty — "COMM is not running here" and "you are bound to no
 	// endpoint" are different facts, and a briefing that conflates them sends a session
 	// hunting for a credentials problem it does not have.
@@ -340,7 +347,7 @@ func newServer(d Deps) *mcp.Server {
 		Description: "List the stations you can see and which you already hold a link to. Use this before " +
 			"station_link_request so you ask for a real name rather than a guess: nothing else on this surface " +
 			"will tell you a station exists. Fields named self_described_* are that station's own CLAIMS about " +
-			"itself, not anything a human verified. 'staffed' is absent when this deployment has COMM off.",
+			"itself, not anything a human verified. 'staffed' is absent when this server's message database is not open — a fault, not a setting; nothing turns COMM off.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ dirIn) (*mcp.CallToolResult, dirOut, error) {
 		p, err := requireStation(ctx)
 		if err != nil {
@@ -793,7 +800,7 @@ func requireLocker(ctx context.Context) (*principal, error) {
 // minted under the same actor as that machine's comm token: a different actor silently
 // defeats the marker, and a marker that fails open without saying so is worse than none.
 //
-// With COMM off there is nothing to check and the marking is simply absent, which is
+// With COMM unavailable there is nothing to check and the marking is simply absent, which is
 // "no signal" rather than "known clean" — the same stance COMM's own provenance takes.
 func hearsayFor(ctx context.Context, d Deps, p *principal) bool {
 	if d.Hearsay == nil {
@@ -834,7 +841,7 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 			Head:           taskViews(b.Head),
 		},
 	}
-	// WHICH COMM ENDPOINT IS MINE. Absent when COMM is off — the field is omitted, not
+	// WHICH COMM ENDPOINT IS MINE. Absent when COMM is unavailable — the field is omitted, not
 	// emptied, because "COMM is not running here" and "you are bound to no endpoint" would
 	// otherwise look identical and only one of them is a problem to chase.
 	//
