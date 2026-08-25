@@ -420,6 +420,25 @@ credentials retire, or mail is stranded with no error.
    > And `curate` is on no path at all. Four mutations pin it: legacy widening, `curate` appended,
    > the consent form ignoring the untick, and the picker rendering unticked.
 3. **Then delete the voucher chain**, in one change, with its tests, saying why.
+
+   > **HALF DONE 2026-08-25, and the half that is done is the half that can be done safely.**
+   > `comm_bind` no longer requires a voucher: a session that declares `X-Ken-Workspace` binds with
+   > nothing handed across, which is the condition §9.2 states — *"the voucher exists solely so a
+   > station key never crosses to the comm surface as a tool argument."* There is no key to keep
+   > off this surface any more.
+   >
+   > **The endpoint is bound with NO authorising key, and that is deliberate.**
+   > `bound_by_station_key_id` is the second weld: checked at use on every call, with a **missing**
+   > row treated as revoked. An endpoint bound this way names no key, so the check skips it — no
+   > key authorised it, so none can sever it. Revocation moves to the credential that OWNS the
+   > endpoint, re-pointable since 3.19.0. **One credential, one revocation, instead of two welds on
+   > one row.** Stuffing anything into that column would sever the endpoint on its very next call,
+   > for a key that never existed; a test asserts it stays empty.
+   >
+   > **THE DELETION ITSELF WAITS FOR ken-prod-ops.** Eight live endpoints on the estate are bound
+   > the old way, and the voucher path still serves them untouched. Removing the chain is a
+   > separate change after they have verified this one — Rule 3, and this is the half where their
+   > measurement is worth more than my tests.
 4. **Then the workspace id in config**, and auto-naming for unknown folders (§5). Existing stations
    keep their `station_id` and become workspaces; §8 covers the estate.
 

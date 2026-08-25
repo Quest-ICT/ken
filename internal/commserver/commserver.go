@@ -258,13 +258,15 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_bind",
-		Description: "Bind the endpoint you ALREADY have to a station, without re-registering. Use this when " +
-			"your human has just set stations up and you are a session that was already running: you keep your " +
-			"endpoint_id, your secret and every channel you are in, and your station gains your inbox — so a " +
-			"later session can take over from you. Get the voucher from station_binding_voucher on /station, " +
-			"and redeem it HERE — comm_register does not take a voucher and registration never binds." +
+		Description: "Bind the endpoint you ALREADY have to a workspace, without re-registering. You keep your " +
+			"endpoint_id, your secret and every channel you are in, and the workspace gains your inbox — so a " +
+			"later session can take over from you. NO VOUCHER NEEDED: if this connection sends the " +
+			"X-Ken-Workspace header (your human puts it in this folder's Ken MCP entry, and station_me hands " +
+			"you the id if you have none yet), just call this with no arguments. A binding_voucher from " +
+			"station_binding_voucher still works if you hold a station key — but if that tool is not in your " +
+			"list, you do not need it and never did. comm_register does not bind; registration never binds." +
 			" STATION vs ENDPOINT, the distinction you need when you record what a peer told you: a station is a DURABLE post, the same correspondent next month and across every session that staffs it, while an endpoint is ONE connection whose row is DELETED once it has been idle for the retention window (7 days by default). A knowledge-base entry has no expiry, so an endpoint id written into one names a row that does not exist, and three conversations with one correspondent read as three unrelated strangers.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, in bindIn) (*mcp.CallToolResult, bindOut, error) {
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in bindIn) (*mcp.CallToolResult, bindOut, error) {
 		ep, err := auth(ctx, d, in.EndpointID, in.EndpointSecret)
 		if err != nil {
 			return nil, bindOut{}, err
@@ -302,9 +304,50 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 				"(Your old station's unread mail does NOT come with you; it stays filed under that station.) " +
 				"Register a new endpoint instead if you need a second station, and ask your human if you are unsure")
 		}
-		sid, keyID, err := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID, ep.Owner.ActorID)
-		if err != nil {
-			return nil, bindOut{}, err
+		// *** THE VOUCHER IS NO LONGER REQUIRED — docs/IDENTITY.md §10 step 3. ***
+		//
+		// The chain exists for ONE reason, §9.2: "The voucher exists solely so a station key never
+		// crosses to the comm surface as a tool argument. Nothing to hand across, nothing to hand
+		// it with." Since step 2 one identity spans both surfaces and since step 4 a session
+		// declares its workspace in a header that authorises nothing — so there is no key to keep
+		// off this surface, and nothing left for a voucher to carry.
+		//
+		// THE HEADER PATH BINDS WITH NO AUTHORISING KEY, and that is deliberate rather than a gap.
+		// `bound_by_station_key_id` is the second weld: checked at USE on every call, with a
+		// MISSING row treated as revoked. An endpoint bound this way names no key, so the check
+		// below skips it entirely (`ep.BoundByStationKeyID != ""`) — correct, because no key
+		// authorised it and therefore no key can sever it. Revocation moves to the credential that
+		// OWNS the endpoint, which is the first weld and is re-pointable since 3.19.0. One
+		// credential, one revocation, instead of two welds on one row.
+		//
+		// THE VOUCHER PATH STAYS for now. Production holds eight endpoints bound the old way and
+		// they keep working untouched; deleting the chain is a separate change, after prod has
+		// verified this one. Rule 3, and the deletion is the half where their measurement is worth
+		// more than my tests.
+		var sid, keyID string
+		if in.BindingVoucher == "" {
+			sid = workspaceFrom(req)
+			if sid == "" {
+				return nil, bindOut{}, errors.New("no workspace declared and no binding voucher supplied. " +
+					"Send the X-Ken-Workspace header on this connection — your human puts it in this folder's " +
+					"Ken MCP entry, and station_me hands you the id if you do not have one yet. " +
+					"(A binding voucher still works if you hold a station key, but you almost certainly do not need one.)")
+			}
+			ok, verr := d.Store.StationExists(ctx, sid)
+			if verr != nil {
+				return nil, bindOut{}, verr
+			}
+			if !ok {
+				// Same opaque answer an unknown credential gets: a workspace id is not a secret,
+				// but "does this one exist" must not become a way to enumerate them either.
+				return nil, bindOut{}, errors.New("that workspace is not one this server knows, or it has been archived")
+			}
+		} else {
+			var verr error
+			sid, keyID, verr = d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID, ep.Owner.ActorID)
+			if verr != nil {
+				return nil, bindOut{}, verr
+			}
 		}
 		if err := d.Comm.BindEndpointToStation(ctx, ep.EndpointID, sid, keyID); err != nil {
 			return nil, bindOut{}, commError(err)
@@ -1267,4 +1310,23 @@ func stationLabel(ctx context.Context, d Deps, stationID string) string {
 		return st.Name
 	}
 	return stationID
+}
+
+// WorkspaceHeader is the same header /station/mcp reads: the stable opaque workspace id a folder's
+// MCP entry declares. Duplicated as a const rather than imported so this package keeps its own
+// dependency shape (S7's pointer rule runs comm -> store, and stationserver is neither).
+const WorkspaceHeader = "X-Ken-Workspace"
+
+// workspaceFrom lifts the declared workspace off the tool call's headers.
+//
+// READ FROM THE REQUEST, NOT FROM THE CONTEXT, and that is not a style choice: the SDK does not
+// hand a tool handler the HTTP request's context. It hands it the request, with Extra.Header on it
+// — the same mechanism withEndpointCred above has used since this package shipped. Resolving it in
+// a middleware and writing it onto the principal looks right, runs, logs, and never reaches the
+// handler; that cost an hour on the station surface before it was measured rather than assumed.
+func workspaceFrom(req *mcp.CallToolRequest) string {
+	if req == nil || req.Extra == nil || req.Extra.Header == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Extra.Header.Get(WorkspaceHeader))
 }
