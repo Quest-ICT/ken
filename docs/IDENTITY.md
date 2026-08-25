@@ -477,6 +477,35 @@ credentials retire, or mail is stranded with no error.
 5. **`space_id` last**, with its test, as one deliberate change (§9.1) — it blocks nothing, and
    doing it early is churn that makes the remaining plumbing look intentional.
 
+   > **DEFERRED by Vlad, 2026-08-25, after the scope was measured rather than estimated.** Steps
+   > 1–4 shipped the same day; this one did not, on purpose.
+   >
+   > **What it actually touches — 11 tables across BOTH databases, 5 indexes, 160 non-test Go
+   > references:**
+   >
+   > ```
+   > ken.db   actor · entry · station · station_link · station_link_denial ·
+   >          station_request · comm_room
+   >          idx_station_name(space_id,name) UNIQUE · idx_comm_room_name(space_id,name) UNIQUE
+   >          idx_station_state(space_id,state) · idx_station_request_pending(space_id,state,created_at)
+   > comm.db  channel · endpoint · message_new · pairing_code
+   >          idx_endpoint_owner(space_id,actor_id)
+   > ```
+   >
+   > **Why it waited, and none of the reasons is timidity:** it is the only step that delivers no
+   > capability — §9.1 says so itself — while being the only one that rewrites schema, in two live
+   > databases, under Rule 4. It would have stacked a migration on top of a same-day deletion
+   > (step 3) that ken-prod-ops had not yet verified, which is exactly what Rule 3 forbids. And the
+   > decision in front of Vlad is whether Ken is worth keeping: steps 1–4 each gave him something
+   > he can use, and this one gives him tidier internals he will never see.
+   >
+   > **When it is taken up, §9.1's instruction is the load-bearing part:** `TestPairingCodeIsSpaceScoped`
+   > (`internal/comm/comm_test.go`) fabricates a second space and asserts the denial — the refuter
+   > deleted the three-line check and watched CI go red in seconds. So the check IS exercised, in
+   > the suite and never in production. **Whoever removes it deletes that test in the same commit,
+   > deliberately and reviewably, and says why.** Removing the check first and the test later leaves
+   > a live control that nothing exercises, which is the state this whole document exists to avoid.
+
 **Two constraints on every step.** The **MCP freeze** (§11) means a running session holds the old
 story and cannot be told otherwise, so each step must work for a session connecting fresh with no
 prior state. And **Rule 4** — a release carrying schema change carries nothing else — applies to
