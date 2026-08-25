@@ -70,7 +70,7 @@ with row counts identical on both databases (2581 / 1624). They tested the "this
 nothing" claim by hashing table CONTENTS rather than counting rows, and this time no session polled
 during the window, so there was no drift to attribute.
 
-**Six items remain open across Batches 1–4** — the list is in those batches and nothing rounds it
+**Four items remain open across Batches 1–4** — the list is in those batches and nothing rounds it
 up. Batch 6 is CLOSED; its last item, the endpoint migration, closed at **ep 6 only** by Vlad's
 scope decision on 2026-08-19.
 
@@ -491,7 +491,7 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
 
 ### Raised by the Batch 3 sweep, not fixed in it
 
-- [ ] **The "an endpoint cannot move between stations" invariant is one boolean on a column
+- [x] **The "an endpoint cannot move between stations" invariant is one boolean on a column
       another tool clears.** `comm_bind` refuses when `station_id` is set; `comm_unbind` clears it
       and its own success note says "You can bind again later". So unbind-then-bind moves an
       endpoint between stations, and the tool performing the bypass advertises it. **The stated
@@ -500,6 +500,17 @@ instead, each found and fixed separately: `Poll`, `Ack`, the pending counters,
       and no delivery row moves. What actually moves is channel MEMBERSHIP, because the seat is
       re-derived from the live binding. Enforce the invariant or delete the claim; leaving both is
       how the next reader concludes the live join is safe. Belongs with the credential model.
+
+      **DONE 2026-08-25 — the claim is deleted, because enforcing it needs history this schema does
+      not keep.** `comm_unbind` clears BOTH `station_id` and `bound_by_station_key_id`, so after an
+      unbind nothing records where the endpoint has been; a real invariant is a schema change, it
+      ships alone under Rule 4, and the identity work may delete the mechanism first. The refusal
+      now states what actually happens — a channel seat is re-derived from the live binding, so
+      rebinding elsewhere hands the new station the old one's seats — says plainly that the mail
+      does NOT travel, and stops asserting a prevention it cannot deliver. `comm_unbind`'s
+      "You can bind again later" is qualified in the same change, since one tool forbidding what
+      the other offers was half the defect. Pinned by `TestTheRebindRefusalDoesNotClaimAnInvariant`,
+      which fails on either old sentence returning.
 - [~] **Backfill `channel.station_a` / `station_b`, then make the snapshot authoritative** —
       **THE ITEM AS WRITTEN IS WRONG, and an analysis on 2026-08-21 established why.** Split into
       three; the first has shipped.
@@ -697,7 +708,14 @@ were refuted on details — one would not have compiled — which is the argumen
       children, `entry` three). Verified that applying all nineteen with enforcement off yields an
       identical schema and a clean `foreign_key_check`. No migration; nothing under `migrations/`
       was touched.
-- [ ] **The nightly backup does not cover `comm.db` at all.** `cli_backup.go` and
+- [-] **The nightly backup does not cover `comm.db` at all.** **DECIDED by Vlad, 2026-08-24: not
+      doing it** — *"probably we don't need this given the restructuring of the login we are trying
+      to finalize."* Recorded rather than closed, because the reasoning is conditional: comm.db is
+      the expendable database by design (`BACKUP.md` says outright **"Do not add `data/comm/` to
+      either tier"**), and if the identity work ever makes a comm.db row unrecoverable rather than
+      re-derivable, this comes back. Left visible for that reason.
+
+      *Original finding:* `cli_backup.go` and
       `scripts/ken-snapshot.sh` both target `ken.db` only. Not a duplicated generation and not in
       this batch's scope — but comm.db holds the delivery ledger, and finding it while proving that
       nothing enumerates columns is exactly the kind of thing that gets lost if it is not written

@@ -15,6 +15,28 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **`comm_bind`'s refusal claimed an invariant Ken does not hold, and named a harm that cannot
+  happen.** It said *"an endpoint cannot move between stations, because it would carry the first
+  station's unread mail into the second."* Both halves were false, in opposite directions:
+  `comm_unbind` clears `station_id` and its own success note ends *"You can bind again later"*, so
+  unbind-then-bind performs the move and the tool doing the bypass advertises it; and the mail
+  cannot travel, because `delivery.party_key` is stamped at write time and no delivery row is ever
+  moved.
+
+  What actually moves is **channel membership** — a seat is re-derived from the live binding, so
+  rebinding elsewhere hands the new station the old one's seats. The refusal says that now, says
+  plainly that the mail stays behind, and stops asserting a prevention it cannot deliver. A false
+  invariant is worse than an honest guard: it is what persuades the next reader the bypass is
+  blessed. `comm_unbind`'s note is qualified in the same change, since one tool forbidding what the
+  other offers was half the defect.
+
+  Enforcing it properly needs history this schema does not keep — unbind clears both `station_id`
+  and `bound_by_station_key_id`, so nothing afterwards records where an endpoint has been. That is
+  a schema change, it ships alone under Rule 4, and the identity work may retire the mechanism
+  first.
+
 ## [3.22.0] — 2026-08-25
 
 ### Fixed

@@ -269,14 +269,38 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		if err != nil {
 			return nil, bindOut{}, err
 		}
-		// Already bound is refused rather than re-pointed. Moving an endpoint BETWEEN
-		// stations would carry the first station's unread mail into the second — the
-		// shared-inbox accident in a new costume. Binding one that has NO station
-		// carries nothing across, which is why that direction is allowed and this one
-		// is not.
+		// A BOUND ENDPOINT IS REFUSED, AND THIS IS NOT AN INVARIANT — it is a guard against
+		// doing it by accident, and it now says so.
+		//
+		// THE OLD TEXT CLAIMED "an endpoint cannot move between stations" AND NAMED A HARM THAT
+		// CANNOT HAPPEN. Both halves were wrong, in opposite directions:
+		//
+		//   - It is not prevented. comm_unbind clears `station_id` and its own success note ends
+		//     "You can bind again later", so unbind-then-bind moves an endpoint between stations
+		//     and the tool performing the bypass advertises it. One boolean on a column another
+		//     tool clears is not an invariant.
+		//   - The stated harm was the first station's UNREAD MAIL crossing over. It cannot:
+		//     `delivery.party_key` is stamped at write time and no delivery row is ever moved, so
+		//     the old station's mail stays filed under the old party and this endpoint simply
+		//     stops matching it. That is the shared-inbox accident it was written to fear, and it
+		//     was already designed out.
+		//
+		// WHAT ACTUALLY MOVES IS CHANNEL MEMBERSHIP, because a seat is re-derived from the LIVE
+		// binding: rebinding elsewhere silently hands the new station the old one's seats. That
+		// is the real reason to stop and think, so it is the reason the message gives.
+		//
+		// Enforcing it properly needs history this schema does not keep — unbind clears both
+		// `station_id` and `bound_by_station_key_id`, so nothing afterwards records where the
+		// endpoint has been. That is a schema change, it ships alone (Rule 4), and the identity
+		// work may delete the mechanism first. Until then: an honest guard beats a false
+		// invariant, because the false one is how the next reader concludes the unbind-then-bind
+		// route is safe.
 		if ep.StationID != "" {
-			return nil, bindOut{}, errors.New("this endpoint is already bound to a station — an endpoint cannot move between stations, " +
-				"because it would carry the first station's unread mail into the second. Register a new endpoint if you need a different station")
+			return nil, bindOut{}, errors.New("this endpoint is already bound to a station. Rebinding it elsewhere is not " +
+				"blocked — comm_unbind first and this call will succeed — but it is very rarely what you want: a channel seat is " +
+				"re-derived from the live binding, so the new station silently inherits this one's seats in every channel. " +
+				"(Your old station's unread mail does NOT come with you; it stays filed under that station.) " +
+				"Register a new endpoint instead if you need a second station, and ask your human if you are unsure")
 		}
 		sid, keyID, err := d.Store.RedeemBindingVoucher(ctx, in.BindingVoucher, ep.EndpointID, ep.Owner.ActorID)
 		if err != nil {
@@ -311,7 +335,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		}
 		return nil, unbindOut{
 			Note: "Unbound. Your endpoint and channels are unchanged. Mail already delivered to the station's " +
-				"other readers stays with them; anything addressed to you is still yours. You can bind again later.",
+				"other readers stays with them; anything addressed to you is still yours. You can bind again later — to the SAME station freely, and to a different one only if you mean to move this endpoint's channel seats there too.",
 		}, nil
 	})
 
