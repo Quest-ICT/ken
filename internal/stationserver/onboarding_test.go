@@ -271,3 +271,104 @@ func TestStationMeMintsAWorkspaceForASessionThatHasNone(t *testing.T) {
 			"session in this folder would mint another")
 	}
 }
+
+// *** A PLAIN ken_ TOKEN ONBOARDS, BECAUSE THE CLIENT THAT REPORTED THIS CANNOT RUN OAUTH. ***
+//
+// 3.25.0 let an OAuth grant reach this surface and 3.26.0 let a session mint its own workspace.
+// Both were true and both were unreachable for the session that reported the deadlock:
+// ken-prod-ops measured that Vlad runs Claude Code inside the desktop app, where sessions are
+// NON-INTERACTIVE and cannot perform an OAuth sign-in at all. The client's own message to him:
+// "This session is non-interactive, so Claude cannot run the OAuth flow here."
+//
+// **The fix that unlocked everything for an OAuth client unlocked nothing for his**, and the wall
+// was upstream of every check in this package — the flow never reached discovery, never reached
+// the scope check, never reached anything. A `ken_` token is the credential such a session already
+// holds and can be handed by hand.
+//
+// This is the fourth wall in a row on one feature: the tool needed a credential nobody could get,
+// then the surface refused the credential, then nothing advertised that it had stopped refusing,
+// and then the client could not perform the flow being advertised.
+func TestAPlainAPITokenCanOnboard(t *testing.T) {
+	st, srv, _, _ := harness(t)
+	ctx := context.Background()
+
+	actor, err := st.FindOrCreateActor(ctx, "ai", "desktop-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "non-interactive client")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := meOverTransport(t, connectWS(t, srv, tok, ""), map[string]any{"workspace_name": "m600"})
+	if !out.JustCreated || out.StationID == "" {
+		t.Fatalf("a plain ken_ token could not onboard: %+v\nEvery other path needs a browser the "+
+			"reporting session does not have", out)
+	}
+	if out.Name != "m600" {
+		t.Errorf("name = %q, want the folder name", out.Name)
+	}
+
+	// AND THE SCOPE STILL GATES IT. A comm-only token gains nothing by arriving here — the
+	// credential is a different door, not a weaker one.
+	commOnly, err := st.IssueToken(ctx, actor, []string{"comm"}, "comm only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	if _, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             srv.URL,
+		HTTPClient:           &http.Client{Transport: wsRT{token: commOnly, base: http.DefaultTransport}},
+		DisableStandaloneSSE: true,
+	}, nil); err == nil {
+		t.Error("a token without the station scope reached /station/mcp — the new door is a door, " +
+			"not a hole")
+	}
+}
+
+// *** THE 401 CARRIES THE DISCOVERY CHALLENGE. ***
+//
+// ken-prod-ops measured this against the live server: `POST /mcp` answered 401 with
+// `www-authenticate: Bearer resource_metadata="…"`, and `/station/mcp` answered 401 with three
+// headers, none of them that. A client had literally nothing to follow.
+//
+// ASSERTED OVER HTTP, not on the URL builder, because that is where it failed: the builder was
+// fine and the header was never sent. Mutation confirmed the gap — disabling the emission left
+// every other test green, including the one that checks the builder produces the right string.
+//
+// The session on the far side cannot report this. Its words to Vlad: "a 401-without-
+// WWW-Authenticate is indistinguishable from a 401 with one: both render as the same 'needs
+// authorization' notice." So the only place it can be caught is here.
+func TestTheUnauthorized401CarriesTheDiscoveryChallenge(t *testing.T) {
+	_, srv, _, _ := harness(t)
+	SetResourceMetadata(func(*http.Request) string {
+		return "https://kb.example/.well-known/oauth-protected-resource/station/mcp"
+	})
+	t.Cleanup(func() { SetResourceMetadata(nil) })
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 — the fixture is not exercising the refusal", resp.StatusCode)
+	}
+	got := resp.Header.Get("WWW-Authenticate")
+	if got == "" {
+		t.Fatal("the 401 carries no WWW-Authenticate, so a client has nothing to follow and no way " +
+			"to see that anything is missing — this is the wall measured on the live deployment")
+	}
+	if !strings.Contains(got, "oauth-protected-resource/station/mcp") {
+		t.Errorf("the challenge points somewhere other than this surface's metadata: %q", got)
+	}
+	// Cross-origin clients must be able to READ it, or the header exists and is invisible.
+	if exp := resp.Header.Get("Access-Control-Expose-Headers"); !strings.Contains(exp, "WWW-Authenticate") {
+		t.Errorf("WWW-Authenticate is not exposed to cross-origin clients (%q); a browser-based "+
+			"client sees a bare 401", exp)
+	}
+}

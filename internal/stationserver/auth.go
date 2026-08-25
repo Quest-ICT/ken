@@ -143,7 +143,7 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 
 		tok := bearerToken(r)
 		if tok == "" {
-			authFail(w, reg, "missing bearer token")
+			authFailReq(w, r, reg, "missing bearer token")
 			return
 		}
 		// *** EITHER A `kens_` STATION KEY OR AN OAUTH ACCESS TOKEN, AS OF §10 STEP 2. ***
@@ -164,7 +164,14 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 		// `kens_` key already met; nothing about it is new or weaker.
 		sp, err := st.AuthenticateStationKey(r.Context(), tok)
 		if err != nil {
-			if op, oerr := st.ValidateOAuthAccessToken(r.Context(), tok); oerr == nil {
+			if ap, aerr := st.AuthenticateAPITokenForStation(r.Context(), tok); aerr == nil {
+				// A plain `ken_` token carrying the station scope. The door for a client that
+				// CANNOT run an OAuth flow — Claude Code inside the desktop app is
+				// non-interactive, so every other path here was unreachable for exactly the
+				// session that reported the deadlock. It arrives with no station, like an
+				// OAuth grant, and station_me turns that into a workspace.
+				sp = ap
+			} else if op, oerr := st.ValidateOAuthAccessToken(r.Context(), tok); oerr == nil {
 				sp = &store.StationPrincipal{
 					ActorID: op.ActorID,
 					TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
@@ -176,12 +183,12 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 				// COMM's unprobeability rule. A caller learns WHY only after its own
 				// credential has verified, which informs a holder and tells a prober
 				// nothing. An unknown OAuth token joins that same answer.
-				authFail(w, reg, "invalid station key")
+				authFailReq(w, r, reg, "invalid station key")
 				return
 			}
 		}
 		if !hasScope(sp.Scopes, ScopeStation) {
-			authFail(w, reg, "this token does not carry the station scope")
+			authFailReq(w, r, reg, "this token does not carry the station scope")
 			return
 		}
 
@@ -211,14 +218,14 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			if ws := strings.TrimSpace(r.Header.Get(WorkspaceHeader)); ws != "" {
 				ok, err := st.StationExists(r.Context(), ws)
 				if err != nil {
-					authFail(w, reg, "invalid station key")
+					authFailReq(w, r, reg, "invalid station key")
 					return
 				}
 				if !ok {
 					// Same opaque answer as an unknown credential. A workspace id is not a
 					// secret, but "does this id exist" must not become a probe either — the
 					// unprobeability rule is about what an unproven caller can enumerate.
-					authFail(w, reg, "invalid station key")
+					authFailReq(w, r, reg, "invalid station key")
 					return
 				}
 				sp.StationID = ws
@@ -279,6 +286,22 @@ func bearerFromHeader(h http.Header) string {
 		return strings.TrimSpace(v[len(prefix):])
 	}
 	return ""
+}
+
+// resourceMetaFor is set at construction so a 401 here carries the RFC 9728 discovery challenge,
+// exactly as /mcp's does. See internal/oauth.ResourceMetadataURLFor for why the server has to
+// advertise this rather than the client investigate: the absent header is invisible to the caller.
+var resourceMetaFor func(*http.Request) string
+
+// SetResourceMetadata wires the discovery challenge for this surface.
+func SetResourceMetadata(f func(*http.Request) string) { resourceMetaFor = f }
+
+func authFailReq(w http.ResponseWriter, r *http.Request, reg *metrics.Registry, msg string) {
+	if resourceMetaFor != nil && r != nil {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+resourceMetaFor(r)+`"`)
+		w.Header().Set("Access-Control-Expose-Headers", "WWW-Authenticate, Mcp-Session-Id")
+	}
+	authFail(w, reg, msg)
 }
 
 func authFail(w http.ResponseWriter, reg *metrics.Registry, msg string) {

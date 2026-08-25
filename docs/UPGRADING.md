@@ -34,6 +34,32 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.27.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### If 3.25.0 or 3.26.0 looked like they did nothing, this is why
+
+Those releases let one identity reach all three MCP surfaces and let a session mint its own
+workspace. **Nothing advertised either**, so no client could get there:
+
+- `/comm/mcp` and `/station/mcp` answered 401 with no `WWW-Authenticate`, so discovery never started
+- their `.well-known` metadata 404'd
+- `scopes_supported` never offered `ken:kb`, `ken:comm` or `ken:station`, so every grant was
+  knowledge-base-only **by construction**
+
+All fixed. **Existing connectors are still knowledge-base-only** — re-approve one to widen it, and
+the consent screen can now actually offer the other surfaces.
+
+**If your Claude Code runs inside the desktop app, it cannot perform an OAuth sign-in at all** —
+those sessions are non-interactive. Give it a plain `ken_` token carrying the `station` scope
+instead (`ken token add`), point its MCP entry at `/station/mcp`, and it can call `station_me` and
+get a workspace. That path needs no browser.
+
+### Nothing to do
+
+No action on upgrade. No migration runs.
+
 ## 3.26.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.

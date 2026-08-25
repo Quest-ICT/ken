@@ -42,11 +42,25 @@ type Server struct {
 	cfg     Config
 }
 
-// scopesSupported is what the AS advertises. These are the OAuth-level scope
-// tokens claude.ai understands ("offline_access" makes it request a refresh
-// token); Ken maps any granted connector to the fixed read/write-draft/propose
-// capability set internally, so the exact strings here are cosmetic to Ken.
-var scopesSupported = []string{"read", "write", "offline_access"}
+// scopesSupported is what the AS advertises, and since 3.25.0 it is LOAD-BEARING.
+//
+// *** THIS COMMENT USED TO END "so the exact strings here are cosmetic to Ken", AND THAT SENTENCE
+// SURVIVED THE RELEASE THAT MADE IT FALSE. *** Ken did map every connector to a fixed
+// read/write-draft/propose set; §10 step 2 replaced that with store.GrantedCapabilities(scope),
+// which reads these strings. The advertisement was left behind.
+//
+// ken-prod-ops measured the consequence on the live deployment: **8 grants, every one
+// `read write offline_access`, because that is all any document ever offered.** A client doing
+// everything correctly asks for exactly what is advertised, lands in the legacy branch by
+// construction, and is refused at the end of a flow that could never have produced anything else.
+// The capability was implemented, tested and unreachable.
+//
+// So the ken: scopes are advertised here. `read` and `write` stay because claude.ai and other
+// clients send them, and `offline_access` is what makes a client request a refresh token.
+var scopesSupported = []string{
+	"read", "write", "offline_access",
+	store.ScopeKB, store.ScopeCommSet, store.ScopeStation,
+}
 
 // New builds a Server. baseURL must return the canonical https origin for a
 // request (used verbatim as the issuer and to build every endpoint URL).
@@ -68,6 +82,24 @@ func New(st *store.Store, baseURL func(*http.Request) string, cfg Config) *Serve
 // header so a client can discover this authorization server.
 func (s *Server) ResourceMetadataURL(r *http.Request) string {
 	return s.baseURL(r) + "/.well-known/oauth-protected-resource/mcp"
+}
+
+// ResourceMetadataURLFor builds the discovery challenge target for one MCP surface.
+//
+// Every protected surface must answer its 401 with a WWW-Authenticate naming ITS OWN metadata.
+// /mcp did; /comm/mcp and /station/mcp returned a bare "missing bearer token" with no challenge at
+// all, so a client had nothing to follow — measured on the live deployment, and the first of three
+// walls between a correct client and a workspace.
+//
+// Worth keeping from that measurement, because it decides where fixes for this class belong: the
+// session on the other side could not see the difference. Its own words — "a 401-without-
+// WWW-Authenticate is indistinguishable from a 401 with one: both render as the same 'needs
+// authorization' notice. The diagnostic detail that would let someone fix the server is not
+// propagated to me at all." **A client can never diagnose this. The server has to advertise.**
+func (s *Server) ResourceMetadataURLFor(surface string) func(*http.Request) string {
+	return func(r *http.Request) string {
+		return s.baseURL(r) + "/.well-known/oauth-protected-resource" + surface
+	}
 }
 
 // --- CORS (claude.ai fetches discovery/registration/token from the browser) ---
@@ -140,11 +172,33 @@ func (s *Server) HandlePRMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.baseURL(r)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resource":                 base + "/mcp",
+		// RESOURCE MUST BE THE MCP URL THE CLIENT IS TALKING TO, not always /mcp.
+		//
+		// Ken serves three MCP surfaces and this document described exactly one of them, so
+		// /.well-known/oauth-protected-resource/comm/mcp and .../station/mcp were 404s. A client
+		// that guessed the RFC 9728 location for the surface it wanted found nothing, which is
+		// one of the three walls ken-prod-ops measured between a correct client and a station.
+		"resource":                 base + resourceFor(r),
 		"authorization_servers":    []string{base},
 		"scopes_supported":         scopesSupported,
 		"bearer_methods_supported": []string{"header"},
 	})
+}
+
+// resourceFor maps a protected-resource metadata request to the MCP surface it describes.
+//
+// RFC 9728 puts the resource's path after the well-known prefix, so
+// /.well-known/oauth-protected-resource/station/mcp describes /station/mcp. The bare form has no
+// suffix and answers for /mcp, which is what it has always meant and what existing clients expect.
+func resourceFor(r *http.Request) string {
+	const prefix = "/.well-known/oauth-protected-resource"
+	suffix := strings.TrimPrefix(r.URL.Path, prefix)
+	switch suffix {
+	case "/comm/mcp", "/station/mcp":
+		return suffix
+	default:
+		return "/mcp"
+	}
 }
 
 // --- dynamic client registration (RFC 7591) ---

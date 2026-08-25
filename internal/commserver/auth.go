@@ -101,12 +101,12 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 
 		tok := bearerToken(r)
 		if tok == "" {
-			authFail(w, reg, "missing bearer token")
+			authFailReq(w, r, reg, "missing bearer token")
 			return
 		}
 		p, err := authenticate(r.Context(), st, tok, ScopeComm)
 		if err != nil {
-			authFail(w, reg, "invalid token")
+			authFailReq(w, r, reg, "invalid token")
 			return
 		}
 
@@ -212,9 +212,26 @@ func bearerToken(r *http.Request) string {
 	return ""
 }
 
+// resourceMetaFor is set at construction so a 401 here carries the RFC 9728 discovery challenge,
+// exactly as /mcp's does. Without it a client is told "unauthorized" and given nowhere to go.
+var resourceMetaFor func(*http.Request) string
+
+// SetResourceMetadata wires the discovery challenge for this surface.
+func SetResourceMetadata(f func(*http.Request) string) { resourceMetaFor = f }
+
 func authFail(w http.ResponseWriter, reg *metrics.Registry, msg string) {
+	authFailReq(w, nil, reg, msg)
+}
+
+func authFailReq(w http.ResponseWriter, r *http.Request, reg *metrics.Registry, msg string) {
 	if reg != nil {
 		reg.AuthFailure("comm")
+	}
+	if resourceMetaFor != nil && r != nil {
+		// Same header /mcp sends, pointing at THIS surface's metadata. It is what turns a bare
+		// 401 into something a client can act on, and its absence is invisible to the caller.
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+resourceMetaFor(r)+`"`)
+		w.Header().Set("Access-Control-Expose-Headers", "WWW-Authenticate, Mcp-Session-Id")
 	}
 	httpError(w, http.StatusUnauthorized, msg)
 }

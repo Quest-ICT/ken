@@ -15,6 +15,51 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.27.0] — 2026-08-25
+
+### Fixed
+
+- **3.25.0 and 3.26.0 were unreachable by the clients they were built for. Four walls, each
+  sufficient alone, measured against the live deployment by ken-prod-ops.**
+
+  ```
+  POST /mcp          401  www-authenticate: Bearer resource_metadata="…"
+  POST /comm/mcp     401  (no www-authenticate at all)
+  POST /station/mcp  401  (no www-authenticate at all)
+
+  /.well-known/oauth-protected-resource/mcp          200
+  /.well-known/oauth-protected-resource/station/mcp  404
+  scopes_supported: ["read","write","offline_access"]     ← no ken: scope anywhere
+  ```
+
+  1. **No discovery challenge on the two new surfaces.** `/mcp` answered its 401 with the RFC 9728
+     `WWW-Authenticate` header; the others answered with three headers and none of them that. A
+     client had nothing to follow.
+  2. **No per-resource metadata for either.** The path-suffixed document was served for `/mcp` and
+     404'd for the rest, so a client that followed the spec found nothing.
+  3. **`scopes_supported` never named `ken:kb`, `ken:comm` or `ken:station`** — so a client asking
+     for exactly what was advertised landed in the legacy branch **by construction**, and was
+     refused, correctly, at the end of a flow that could never have produced anything else. Their
+     estate proves it: **8 grants, every one `read write offline_access`.**
+  4. **And the client that reported the deadlock cannot run an OAuth flow at all.** Claude Code
+     inside the desktop app is non-interactive: *"This session is non-interactive, so Claude cannot
+     run the OAuth flow here."* Every fix above unlocks an OAuth client and unlocks nothing for it.
+     A plain `ken_` API token carrying the `station` scope now reaches `/station/mcp` — the
+     credential such a session already holds, through a door that needs no browser. **The scope
+     still gates it: a comm-only token gains nothing.**
+
+  **The comment on `scopesSupported` said the strings were "cosmetic to Ken", and survived the
+  release that made them load-bearing.** That is the same defect one layer out: a capability fully
+  implemented, fully tested, and never announced. As prod put it — *"there is no button to add and
+  no text to shorten. The advertisement IS the interface."*
+
+  **A session can never diagnose this class.** The reporting session's own words: *"a
+  401-without-`WWW-Authenticate` is indistinguishable from a 401 with one — both render as the same
+  'needs authorization' notice. The diagnostic detail that would let someone fix the server is not
+  propagated to me at all."* So all four are pinned by tests that assert over HTTP rather than on
+  the helpers, which is exactly where the third one hid: the URL builder was correct and the header
+  was never sent.
+
 ## [3.26.0] — 2026-08-25
 
 ### Added

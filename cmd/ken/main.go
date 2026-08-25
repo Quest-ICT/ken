@@ -400,6 +400,11 @@ func runServe(args []string) {
 	}
 	if oauthSrv != nil {
 		mcpDeps.ResourceMetadataURL = oauthSrv.ResourceMetadataURL // 401 → discovery challenge
+		// AND THE SAME FOR THE OTHER TWO SURFACES. They answered 401 with no challenge at all, so
+		// a client had nothing to follow and no way to see that anything was missing — the header
+		// is discarded before it reaches a session, so the fault can only be fixed here.
+		commserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/comm/mcp"))
+		stationserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/station/mcp"))
 	}
 	mcpHandler := mcpserver.NewHTTPHandler(mcpDeps)
 	mux.Handle("/mcp", mcpHandler)
@@ -549,7 +554,13 @@ func runServe(args []string) {
 	if oauthSrv != nil {
 		mux.HandleFunc("/.well-known/oauth-authorization-server", oauthSrv.HandleASMetadata)
 		mux.HandleFunc("/.well-known/oauth-protected-resource", oauthSrv.HandlePRMetadata)
+		// ONE DOCUMENT PER MCP SURFACE. Ken serves three and advertised one, so a client that
+		// followed RFC 9728 to the metadata for /comm/mcp or /station/mcp got a 404 — measured
+		// against the live deployment by ken-prod-ops, and one of three walls between a correct
+		// client and a workspace. The handler derives which surface it is answering for.
 		mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", oauthSrv.HandlePRMetadata)
+		mux.HandleFunc("/.well-known/oauth-protected-resource/comm/mcp", oauthSrv.HandlePRMetadata)
+		mux.HandleFunc("/.well-known/oauth-protected-resource/station/mcp", oauthSrv.HandlePRMetadata)
 		mux.HandleFunc("/oauth/register", oauthSrv.HandleRegister)
 		mux.HandleFunc("/oauth/token", oauthSrv.HandleToken)
 	}

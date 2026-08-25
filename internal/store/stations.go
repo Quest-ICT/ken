@@ -751,3 +751,55 @@ func (s *Store) CreateStationAutoNamed(ctx context.Context, spaceID int64, name 
 	}
 	return nil, fmt.Errorf("could not find a free name based on %q after 50 tries", base)
 }
+
+// AuthenticateAPITokenForStation verifies a `ken_<id>_<secret>` API token and returns it as a
+// station principal — with NO station, which is the state station_me turns into a workspace.
+//
+// *** WHY A PLAIN API TOKEN REACHES /station/mcp AT ALL. ***
+//
+// §10 step 2 made an OAuth grant span the three surfaces, and step 4 let a session mint its own
+// workspace. Both are true and both were unreachable for the session that reported the deadlock:
+// ken-prod-ops measured that Vlad runs Claude Code inside the desktop app, where **sessions are
+// non-interactive and cannot perform an OAuth sign-in at all.** The client's own words to him:
+// "This session is non-interactive, so Claude cannot run the OAuth flow here."
+//
+// So the fix that unlocked everything for an OAuth client unlocked nothing for his, and the wall
+// was upstream of every check I had written. A `ken_` token is the credential such a session
+// already holds and can be given by hand; it proves the same thing an OAuth grant proves — this is
+// the human's own session — through a door that does not require a browser.
+//
+// THE SCOPE IS STILL REQUIRED. This returns whatever the token carries; the middleware refuses it
+// unless `station` is among them, exactly as it refuses a station key without it. A comm-only
+// token gains nothing here.
+func (s *Store) AuthenticateAPITokenForStation(ctx context.Context, tok string) (*StationPrincipal, error) {
+	parts := strings.SplitN(tok, "_", 3)
+	if len(parts) != 3 || parts[0] != "ken" {
+		return nil, ErrNotFound
+	}
+	tokenID, secret := parts[1], parts[2]
+	var (
+		actorID    int64
+		secretHash string
+		scopesJSON string
+		revoked    sql.NullString
+	)
+	err := s.R.QueryRowContext(ctx,
+		`SELECT actor_id, secret_sha256, scopes, revoked_at FROM api_token WHERE token_id=?`, tokenID).
+		Scan(&actorID, &secretHash, &scopesJSON, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if revoked.Valid {
+		return nil, ErrNotFound
+	}
+	sum := sha256.Sum256([]byte(secret))
+	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(secretHash)) != 1 {
+		return nil, ErrNotFound
+	}
+	var scopes []string
+	_ = json.Unmarshal([]byte(scopesJSON), &scopes)
+	return &StationPrincipal{TokenID: tokenID, ActorID: actorID, Scopes: scopes}, nil
+}
