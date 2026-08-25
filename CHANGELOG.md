@@ -15,6 +15,37 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.23.0] — 2026-08-25
+
+### Added
+
+- **`ken_instructions` — a session can re-read its own instructions, current and in full.**
+  Vlad's suggestion, made hours after 3.22.0 shipped, and it closes the half of the problem that
+  release could not: **fitting the instructions under the client's cap protects a session that
+  connects today, and reaches nothing that connected before.** A tool RESULT is neither pinned nor
+  truncated, so it is the only channel that can carry the current text to a session that already
+  exists. Registered on all three surfaces; the answer also names every surface the deployment
+  serves, so a session holding one endpoint learns what the others do and can ask for them by name.
+
+- **`ken_version` gains an optional `include_instructions`, and it is not a duplicate of that
+  tool.** **Whole tools do not travel across the freeze** — `ken_instructions` will never appear in
+  a conversation that began before it existed, which is exactly the population that needs it.
+  **Parameters do travel**: the server validates what ARRIVES, not the client's captured schema, as
+  ken-prod-ops proved by passing `to_room` to a `comm_send` schema that has no such property. So a
+  frozen session can ask through a tool it already holds. Two doors, two populations, neither
+  covering both — a test pins that reasoning so the argument is not later deleted as redundant.
+
+  **Found the hard way the same day.** An MCP registration on two separate machines was serving
+  pre-3.22.0 instructions *and* pre-3.22.0 tool descriptions against a fully patched 3.22.0 server,
+  in conversations that began AFTER the upgrade — while its `ken_version` result came back
+  completely current. No Ken release can reach that captured text. A result can.
+
+### Changed
+
+- **The version stamp now says the field is truncated and names the way out.** It is the one piece
+  of text every session reads first, and it was telling sessions their manual might be *old* while
+  saying nothing about it being *short*. The three blocks each gave up a clause to pay for it.
+
 ### Fixed
 
 - **`comm_bind`'s refusal claimed an invariant Ken does not hold, and named a harm that cannot

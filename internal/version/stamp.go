@@ -41,9 +41,10 @@ import "fmt"
 // which is read at the moment a session calls ken_version — the moment the discrepancy is in front
 // of it — and which the client delivers intact.
 func InstructionStamp() string {
-	return fmt.Sprintf("KEN %s WROTE THIS TEXT. Call ken_version for what runs NOW; if it differs, this and "+
-		"every tool description you hold are older — they pin when a conversation begins and never refresh, "+
-		"not even on reconnect. Trust tool results: always current.\n\n", Version)
+	return fmt.Sprintf("KEN %s WROTE THIS TEXT. It and every tool description you hold pin when a conversation "+
+		"begins and never refresh, not even on reconnect — and your client TRUNCATES this field, so it may "+
+		"be old, short, or both. ken_instructions returns it current and whole; ken_version says what runs. "+
+		"Trust tool results: always current.\n\n", Version)
 }
 
 // InstructionBudget is the number of CHARACTERS an MCP client delivers of the instructions field.

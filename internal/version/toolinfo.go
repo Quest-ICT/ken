@@ -48,6 +48,10 @@ type Info struct {
 	// the shape of the server has to arrive through the one channel that is never stale and
 	// never truncated.
 	Surfaces []string `json:"surfaces"`
+	// Instructions is present only when the caller passed include_instructions. Omitted
+	// otherwise: ken_version is called often and cheaply, and a couple of kilobytes on every
+	// call would make sessions stop calling the one tool that tells them they are stale.
+	Instructions *InstructionsInfo `json:"instructions,omitempty"`
 }
 
 // Surfaces is set once at startup by the process that decides which endpoints to serve.
@@ -92,3 +96,73 @@ const ToolDescription = "What version of Ken you are actually talking to, comput
 	"/comm/mcp (comm_*, messaging between AI sessions), /station/mcp (station_*, a durable working " +
 	"identity) — each a SEPARATE MCP server entry your human configures. Holding one tells you nothing " +
 	"about the others, so if you need a surface you do not have, ask your human for it by name."
+
+// --- re-fetching the instructions, which is the one thing the freeze cannot block ---
+
+// InstructionsIn is ken_version's optional argument, and the reason it lives THERE rather than
+// only on a dedicated tool.
+//
+// WHOLE TOOLS DO NOT TRAVEL: a tool added after a conversation began is absent from that
+// conversation's list forever, so `ken_instructions` cannot reach the sessions that need it most.
+// PARAMETERS DO travel — the server validates what ARRIVES, not the client's captured copy of the
+// schema. ken-prod-ops proved it by passing `to_room` to a comm_send schema that has no such
+// property and watching it work.
+//
+// So a session whose tool list froze before `ken_instructions` existed can still ask for the
+// current text, through a tool it already holds, by passing an argument its schema does not
+// mention. That is not a trick; it is the documented shape of the freeze, used deliberately.
+//
+// FOUND THE HARD WAY, 2026-08-25: an MCP registration on two separate machines was serving
+// pre-3.22.0 instructions and pre-3.22.0 tool descriptions against a fully patched 3.22.0 server,
+// in conversations that began AFTER the upgrade — while its ken_version RESULT came back
+// completely current. No Ken release can reach that captured text. A result can.
+type InstructionsIn struct {
+	IncludeInstructions bool `json:"include_instructions,omitempty" jsonschema:"return this surface's CURRENT connect-time instructions in full. Use it when your captured text may be older than the running server, or when it looks truncated: the client cuts the instructions field, and a result is never cut"`
+}
+
+// InstructionsInfo is what ken_instructions returns, and what ken_version returns alongside the
+// version when asked.
+type InstructionsInfo struct {
+	// Surface is which endpoint this text belongs to, so a session holding several can tell
+	// them apart without guessing from the content.
+	Surface string `json:"surface"`
+	// Version wrote the text below. Compare it with the version your connect-time copy names.
+	Version string `json:"version"`
+	// Instructions is the CURRENT text, in full and never truncated.
+	//
+	// The connect-time copy of this is cut at InstructionBudget characters by the client. That
+	// is why the blocks are written to fit, and why this exists anyway: fitting protects a
+	// session that connects today, and only a RESULT reaches one that connected before.
+	Instructions string `json:"instructions"`
+	// Surfaces names every endpoint this deployment serves, repeated here so a session that
+	// asked only for instructions still learns what else it could be given.
+	Surfaces []string `json:"surfaces"`
+	// Note says what to do with a difference, because a session that finds one and is told
+	// nothing will reconnect — which does not help.
+	Note string `json:"note"`
+}
+
+// InstructionsFor builds the answer for one surface.
+func InstructionsFor(surface, text string) InstructionsInfo {
+	return InstructionsInfo{
+		Surface:      surface,
+		Version:      Version,
+		Instructions: text,
+		Surfaces:     append([]string(nil), Surfaces...),
+		Note: "This is the CURRENT text, in full. Your connect-time copy pins when the conversation " +
+			"begins, never refreshes, and is truncated by the client — so if it differs from this, this " +
+			"is the one to follow. Reconnecting does not update it; calling this does.",
+	}
+}
+
+// InstructionsToolDescription is shared by all three registrations, like ToolDescription, so the
+// wording cannot drift between surfaces.
+const InstructionsToolDescription = "Re-fetch this surface's connect-time instructions, CURRENT and in full. " +
+	"Call it when your instructions look truncated or cut off mid-sentence, when ken_version reports a version " +
+	"different from the one your instructions name, when you are unsure whether a rule you remember still applies, " +
+	"or at the start of a long session that may outlive its own manual. " +
+	"WHY IT EXISTS: the connect-time instructions field is captured by your client when the CONVERSATION begins and " +
+	"never refreshes — and the client also TRUNCATES it, so what you were given may be both old and incomplete. " +
+	"A tool result is neither: it is computed per call and is not cut. " +
+	"The answer also names every MCP surface this deployment serves, so a session holding one endpoint can learn " +
+	"what the others do and ask its human for them by name."

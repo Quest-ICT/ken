@@ -380,18 +380,18 @@ type recentOut struct {
 // prompt: the curated-knowledge model + the search-first / record-outcome loop.
 // buildInstructions appends a curation-language paragraph when the operator has
 // declared one. Distilled from docs/AI-INTEGRATION.md — keep the two in sync.
-const baseInstructions = `Ken is your durable, curated knowledge base, reached over these kb_* tools. KEN SERVES THREE SURFACES, each a SEPARATE MCP entry your human configures: /mcp (kb_*, this one), /comm/mcp (comm_*, messaging with other AI sessions), /station/mcp (station_*, a durable identity outliving this session). One tells you nothing about the others. ken_version names the ones this deployment serves; if you lack one you need, ask your human for it BY NAME.
+const baseInstructions = `Ken is your durable, curated knowledge base (kb_* tools). KEN SERVES THREE SURFACES, each a SEPARATE MCP entry your human configures: /mcp (kb_*, this one), /comm/mcp (comm_*, messaging with other AI sessions), /station/mcp (station_*, a durable identity outliving this session). One tells you nothing about the others. If you lack one you need, ask your human for it BY NAME.
 
-Belongs in Ken: durable, reusable knowledge — solved problems, pitfalls, caveats, decisions and their rationale. NOT session state, NOT secrets, NOT chatter.
+Belongs in Ken: durable, reusable knowledge — solved problems, pitfalls, caveats, decisions and their rationale. NOT session state, secrets, or chatter.
 
-You are the sole author; a human curates. Your writes land as PROPOSED revisions — usable now, promoted only by the human. You never curate, never assert freshness.
+You are the sole author; a human curates. Your writes land as PROPOSED revisions, usable now and promoted only by the human. You never curate, never assert freshness.
 
 THE LOOP; each tool's description carries its own rules.
 - SEARCH FIRST, before debugging an error or solving anything non-trivial: kb_search, then kb_get the few that matter.
 - Act, then close the loop EVERY time: kb_record_outcome. The only evidence Ken collects, skipped six times in seven. IF IT IS NOT IN YOUR TOOL LIST — some clients hide tools — say so to your human in words, naming the entry and what happened.
 - Record what you learned: kb_propose_enhancement (same problem, better answer), kb_save (a different one), kb_flag_stale (a dependency moved).
 
-You have no clock. Before any claim about time — how long, how old, still current — read one: date -u, or a timestamp in front of you. An unread duration was not estimated, it was generated, and the errors run upward. 'Recently' and 'long-standing' are the same claim with the number hidden. A measured endpoint does not license a claim about the span. Write absolute times: Ken cannot tell a measured figure from a generated one, and neither can your curator.`
+You have no clock. Before any claim about time — how long, how old, still current — read one: date -u, or a timestamp in view. An unread duration was not estimated, it was generated, and the errors run upward. 'Recently' and 'long-standing' are the same claim with the number hidden. A measured endpoint does not license a claim about the span. Write absolute times: Ken cannot tell a measured figure from a generated one, and neither can your curator.`
 
 // buildInstructions returns the AI-facing instructions, appending a curation-
 // language paragraph when the operator has declared the language(s) they curate in
@@ -681,8 +681,24 @@ func NewServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "ken_version",
 		Description: version.ToolDescription,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.Info, error) {
-		return nil, version.Current(), nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in version.InstructionsIn) (*mcp.CallToolResult, version.Info, error) {
+		out := version.Current()
+		// THE ARGUMENT IS THE ESCAPE HATCH FOR SESSIONS THAT CANNOT SEE ken_instructions.
+		// Whole tools do not travel across the freeze; parameters do, because the server
+		// validates what ARRIVES rather than the client's captured schema. So a session
+		// frozen before ken_instructions existed can still ask for the current text here.
+		if in.IncludeInstructions {
+			i := version.InstructionsFor("/mcp", buildInstructions(d.CurationLangs))
+			out.Instructions = &i
+		}
+		return nil, out, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name:        "ken_instructions",
+		Description: version.InstructionsToolDescription,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.InstructionsInfo, error) {
+		return nil, version.InstructionsFor("/mcp", buildInstructions(d.CurationLangs)), nil
 	})
 
 	return s

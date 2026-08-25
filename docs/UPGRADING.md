@@ -34,6 +34,30 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 3.23.0
+
+**MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.
+
+### What you get
+
+**Sessions can re-read their instructions instead of living with whatever they were handed.**
+`ken_instructions` returns the current text in full, on any of the three surfaces. `ken_version`
+takes an optional `include_instructions` for the same thing.
+
+**Why both:** a tool added today never appears in a conversation that began yesterday, so
+`ken_instructions` cannot reach the sessions most likely to hold stale text. An *argument* does
+reach them — the server validates what arrives, not the client's captured schema — so a long-lived
+session can ask through the `ken_version` it already has.
+
+**This matters more than it sounds.** 3.22.0 made the instructions fit the client's 2048-character
+cap, which fixes every session that connects from now on and nothing that connected before. This is
+the part that reaches the rest — including an MCP registration found the same day that was serving
+pre-3.22.0 text against a fully patched server in a conversation started after the upgrade.
+
+### Nothing to do
+
+No action on upgrade. No migration runs.
+
 ## 3.22.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17.

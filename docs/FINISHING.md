@@ -61,8 +61,11 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.22.0** (2026-08-25) — the instruction-delivery refit; **production is on 3.21.0**
-and has not been offered it yet. 3.21.0 was verified by ken-prod-ops at
+**Released: 3.23.0** (2026-08-25) — instruction re-fetch, on top of 3.22.0's delivery refit.
+**Production is on 3.22.0**, verified by ken-prod-ops at 2026-08-25T17:05Z with both databases
+row-identical and the whole `endpoint` table byte-identical; the fresh-session test passed on the
+m600 machine, which named all three surfaces from its instructions alone before calling anything.
+3.21.0 was verified at
 2026-08-25T15:32Z against the live databases: healthz reports `Ken 3.21.0 linux/amd64`, both
 `applied_at` timestamps unchanged, schema band clean on both, and — the strongest form this check
 has taken — **the whole `endpoint` table byte-identical before and after, `last_seen_at` included**,

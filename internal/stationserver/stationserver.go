@@ -184,9 +184,9 @@ func NewHTTPHandler(d Deps) *Handler {
 // having, and the design says plainly where it stops.
 const instructions = `Ken stations — a durable working identity you STAFF: a post that outlives this conversation.
 
-THREE MCP SURFACES: /station/mcp (station_*, this post), /mcp (kb_*, the knowledge base), /comm/mcp (comm_*, messaging with other AI sessions). Each is a SEPARATE entry your human configures; you hold only the ones they set up, so ask for the others BY NAME. ken_version names the surfaces this deployment serves.
+THREE MCP SURFACES: /station/mcp (station_*, this post), /mcp (kb_*, the knowledge base), /comm/mcp (comm_*, messaging with other AI sessions). Each is a SEPARATE entry your human configures; you hold only the ones they set up, so ask for the others BY NAME.
 
-Your station owns a notebook, a task list, a locker and a vault. They are all still here next time.
+Your station owns a notebook, a task list, a locker and a vault; all still here next time.
 
 FIRST, EVERY SESSION: call station_me. Then, IN YOUR FIRST MESSAGE, TELL YOUR HUMAN IN WORDS every task blocked on them and everything past its date. The briefing is a tool result; it reaches nobody unless you say it. This is the point of the whole feature.
 
@@ -196,9 +196,9 @@ TASKS: add the moment you say "we should"; adding late means not adding. blocked
 
 NOTEBOOK is working state: keep the handoff current AS YOU GO with mode='replace', not append. Would a session on a DIFFERENT station want it months from now? Then it is kb_save, not a note.
 
-Credentials go in the vault: NEVER a token, key or password in the locker or a note.
+Credentials go in the vault: NEVER a token, key or password in a locker or a note.
 
-Your human reads all of it; nothing here is private from them.`
+Your human reads all of it; none of it is private from them.`
 
 // mcpKeepAlive matches the interval on the other MCP surfaces. The measurement behind the 30s,
 // and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
@@ -742,8 +742,24 @@ func newServer(d Deps) *mcp.Server {
 	addTool(s, d, &mcp.Tool{
 		Name:        "ken_version",
 		Description: version.ToolDescription,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.Info, error) {
-		return nil, version.Current(), nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in version.InstructionsIn) (*mcp.CallToolResult, version.Info, error) {
+		out := version.Current()
+		// THE ARGUMENT IS THE ESCAPE HATCH FOR SESSIONS THAT CANNOT SEE ken_instructions.
+		// Whole tools do not travel across the freeze; parameters do, because the server
+		// validates what ARRIVES rather than the client's captured schema. So a session
+		// frozen before ken_instructions existed can still ask for the current text here.
+		if in.IncludeInstructions {
+			i := version.InstructionsFor("/station/mcp", instructions)
+			out.Instructions = &i
+		}
+		return nil, out, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name:        "ken_instructions",
+		Description: version.InstructionsToolDescription,
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.InstructionsInfo, error) {
+		return nil, version.InstructionsFor("/station/mcp", instructions), nil
 	})
 
 	return s
