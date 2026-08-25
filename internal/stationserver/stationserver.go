@@ -299,24 +299,30 @@ func newServer(d Deps) *mcp.Server {
 		// The naming pays for itself later rather than being a setup chore (§5): the link-approval
 		// screen reads "ken-public wants to talk to ken-prod", which is the one moment a bad name
 		// is actually in front of the human.
-		if p := principalFrom(ctx); p != nil && p.StationID == "" && workspaceFrom(req) == "" {
-			out, err := claimWorkspace(ctx, d, p, in.WorkspaceName)
-			if err != nil {
-				return nil, meOut{}, err
-			}
-			return nil, out, nil
-		}
-		p, err := requireStation(ctx, req)
+		out, err := stationMe(ctx, d, req, in)
 		if err != nil {
 			return nil, meOut{}, err
 		}
-		if in.SelfDescribedAbout != "" || in.SelfDescribedTags != nil {
-			if err := d.Store.SetStationSelfDescription(ctx, p.StationID, in.SelfDescribedAbout, in.SelfDescribedTags); err != nil {
-				return nil, meOut{}, err
-			}
-		}
-		out, err := buildBriefing(ctx, d, p)
-		return nil, out, err
+		// THE VERSION IS STAMPED AT THIS ONE EXIT AND NOWHERE ELSE, and that is the whole point.
+		//
+		// It used to be set inside buildBriefing, which is only ONE of the two paths through this
+		// tool. The other — claimWorkspace — built its own meOut from scratch and never carried it,
+		// so `ken_version` and `ken_version_note` came back EMPTY on the workspace-CREATION call.
+		//
+		// THAT IS THE WORST PLACE IN THE WHOLE SURFACE FOR IT TO BE MISSING. The field exists so a
+		// session can tell its manual is stale, and the session most likely to be holding stale
+		// text — and least equipped to suspect it — is a brand-new one calling station_me as its
+		// first act. The one call where the version signal matters most was the one call that
+		// omitted it. ken-prod-ops found it by calling the tool from both a new and an established
+		// workspace and diffing the two results, which is the only way it was ever going to show.
+		//
+		// Setting the two fields on the second path would have fixed this instance and left the
+		// shape intact for the third path. Stamping after the handler returns means a future path
+		// cannot omit it without deleting this line, and TestEveryStationMePathCarriesTheVersion
+		// fails if anyone does.
+		out.KenVersion = version.Version
+		out.VersionNote = versionNote
+		return nil, out, nil
 	})
 
 	addTool(s, d, &mcp.Tool{
@@ -789,6 +795,37 @@ func hearsayFor(ctx context.Context, d Deps, p *principal) bool {
 	return d.Hearsay(ctx, p.ActorID)
 }
 
+// versionNote travels with every station_me result and explains what the number is FOR, because a
+// bare version in a briefing is a fact with no instruction attached.
+//
+// It says the thing this project keeps re-learning: instructions and tool descriptions pin at
+// CONNECT time and never refresh, so a running session's manual can be arbitrarily old while its
+// tool RESULTS are always current. Parameters cross that freeze; whole tools do not.
+const versionNote = "This is the version RUNNING NOW. Your connect-time instructions state the version that " +
+	"wrote them; if they differ, that text and every tool description you hold are older — they were " +
+	"captured when this conversation began and never refresh. New PARAMETERS still work if you learn " +
+	"about them; new TOOLS are not in your list at all and cannot be called. Results like this one are " +
+	"always current."
+
+// stationMe resolves the caller to a workspace and returns their briefing, MINTING the workspace
+// when the caller has none — the two paths the version stamp must cover, kept in one function so
+// the handler above has a single success exit to stamp.
+func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (meOut, error) {
+	if p := principalFrom(ctx); p != nil && p.StationID == "" && workspaceFrom(req) == "" {
+		return claimWorkspace(ctx, d, p, in.WorkspaceName)
+	}
+	p, err := requireStation(ctx, req)
+	if err != nil {
+		return meOut{}, err
+	}
+	if in.SelfDescribedAbout != "" || in.SelfDescribedTags != nil {
+		if err := d.Store.SetStationSelfDescription(ctx, p.StationID, in.SelfDescribedAbout, in.SelfDescribedTags); err != nil {
+			return meOut{}, err
+		}
+	}
+	return buildBriefing(ctx, d, p)
+}
+
 func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 	st, err := d.Store.StationByID(ctx, p.StationID)
 	if err != nil {
@@ -802,13 +839,9 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 	if err != nil {
 		return meOut{}, err
 	}
+	// KenVersion/VersionNote are NOT set here — the station_me handler stamps them on every path,
+	// including the workspace-creation one this function is not on. See the comment there.
 	out := meOut{
-		KenVersion: version.Version,
-		VersionNote: "This is the version RUNNING NOW. Your connect-time instructions state the version that " +
-			"wrote them; if they differ, that text and every tool description you hold are older — they were " +
-			"captured when this conversation began and never refresh. New PARAMETERS still work if you learn " +
-			"about them; new TOOLS are not in your list at all and cannot be called. Results like this one are " +
-			"always current.",
 		StationID: st.StationID, Name: st.Name, NameSource: "human", Purpose: st.Purpose,
 		SelfDescribedAbout: st.SelfDescribedAbout, SelfDescribedTags: st.SelfDescribedTags,
 		Tasks: briefingView{

@@ -1,6 +1,7 @@
 package version
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -179,10 +180,52 @@ func TestTheRunningVersionRidesInResultsOnEverySurface(t *testing.T) {
 		// Matched on the ASSIGNMENT, not a mention: the identifier appears in comments
 		// explaining why the field exists, and a test that cannot tell a use from an
 		// explanation eventually forces the explanation out.
-		if !regexp.MustCompile(`KenVersion:\s+version\.Version`).Match(body) {
+		//
+		// BOTH FORMS COUNT — a struct-literal field and a plain assignment. Requiring the
+		// literal form alone would have failed the stations surface for stamping at its single
+		// handler exit, which is STRICTER than what this file was asking for.
+		if !regexp.MustCompile(`KenVersion:\s+version\.Version|\.KenVersion\s+=\s+version\.Version`).Match(body) {
 			t.Errorf("%s does not report the running version in its RESULT.\n"+
 				"A session on that surface whose conversation predates the ken_version tool cannot "+
 				"call it and has no other way to learn what it is talking to.", name)
 		}
+	}
+}
+
+// *** WHAT THE GATE ABOVE CANNOT SEE, WRITTEN DOWN BECAUSE IT ALREADY COST US ONE. ***
+//
+// It greps a FILE for a stamp. It cannot see how many paths return that result, so one stamped
+// path satisfies it on behalf of every unstamped one.
+//
+// THAT IS NOT HYPOTHETICAL. On v3.29.0 this gate was GREEN while station_me returned an EMPTY
+// ken_version on the workspace-CREATION path: meOut was built at two sites, the briefing one
+// stamped and the minting one did not, and a file-level grep cannot tell those apart. It shipped,
+// and ken-prod-ops found it by calling the tool from a new workspace and an established one and
+// diffing the results — which is the only instrument that was ever going to see it.
+//
+// So this gate's real claim is narrow and worth stating: IT CATCHES WHOLESALE REMOVAL OF A
+// SURFACE'S STAMP, AND NOTHING FINER. Per-path proof lives where the paths do, over the transport:
+// stationserver's TestEveryStationMePathCarriesTheVersion drives both paths through the real MCP
+// client and asserts the version on each. A surface that grows a second way to return its result
+// needs that kind of test, not another line here.
+func TestTheStampGateDoesNotOverclaim(t *testing.T) {
+	body, err := os.ReadFile("stamp_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The narrowness above is load-bearing documentation: without it the next reader treats a
+	// green grep as proof that every path stamps, which is exactly the reading that shipped 3.29.0.
+	if !bytes.Contains(body, []byte("IT CATCHES WHOLESALE REMOVAL OF A")) {
+		t.Error("the note recording what the stamp gate cannot see has been removed; it is the " +
+			"only thing standing between a green grep and the belief that every path stamps")
+	}
+	perPath := filepath.Join("..", "stationserver", "onboarding_test.go")
+	ot, err := os.ReadFile(perPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(ot, []byte("TestEveryStationMePathCarriesTheVersion")) {
+		t.Error("the per-path wire test this gate defers to is gone, so nothing now proves the " +
+			"workspace-creation path carries a version — the exact defect that shipped in 3.29.0")
 	}
 }

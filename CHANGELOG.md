@@ -15,6 +15,38 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.29.1] — 2026-08-25
+
+### Fixed
+
+- **`station_me` returned an empty `ken_version` and `ken_version_note` on the
+  workspace-CREATION path**, and the correct values on every established workspace.
+  `meOut` was constructed at two sites and only the briefing one stamped the version.
+
+  **It was missing from the one call that needs it most.** That field exists so a session
+  can discover that the instructions it is holding are older than the server answering it
+  — and the session most likely to hold stale text, and least equipped to suspect it, is a
+  brand-new one calling `station_me` as its first act. The signal was present on every
+  call except the first.
+
+  The stamp now happens **once, after the handler returns**, so a future path through this
+  tool cannot omit it. Found by ken-prod-ops on the first real onboarding auto-provisioning
+  ever served, and located before it was reported: same tool, new workspace versus
+  established, both on the same version.
+
+### Changed
+
+- **`TestTheRunningVersionRidesInResultsOnEverySurface` no longer overclaims.** It was
+  green on 3.29.0 while the defect above was live, because it greps a source file for a
+  stamp and one stamped path satisfies it on behalf of every unstamped one. It now accepts
+  both stamp forms and states its real claim — *it catches wholesale removal of a surface's
+  stamp and nothing finer*. Per-path proof lives over the transport instead, where the
+  paths do.
+
+  The other two surfaces were audited the same way, per construction site rather than per
+  file: comm's `pollOut`/`channelsOut` and the knowledge base's `searchOut` stamp at every
+  site. Stations was the only instance.
+
 ## [3.29.0] — 2026-08-25
 
 ### Removed

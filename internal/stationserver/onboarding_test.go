@@ -3,6 +3,7 @@ package stationserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/Quest-ICT/ken/internal/version"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -370,5 +371,64 @@ func TestTheUnauthorized401CarriesTheDiscoveryChallenge(t *testing.T) {
 	if exp := resp.Header.Get("Access-Control-Expose-Headers"); !strings.Contains(exp, "WWW-Authenticate") {
 		t.Errorf("WWW-Authenticate is not exposed to cross-origin clients (%q); a browser-based "+
 			"client sees a bare 401", exp)
+	}
+}
+
+// *** EVERY station_me PATH CARRIES THE VERSION — INCLUDING THE ONE THAT MINTS. ***
+//
+// ken-prod-ops found this live on 2026-08-25, on the first real onboarding this feature ever
+// served: `ken_version` and `ken_version_note` came back EMPTY on the workspace-CREATION call and
+// correct on every established one. Two meOut construction sites, one of them stamping.
+//
+// THE MISS LANDS IN THE WORST AVAILABLE PLACE. That field exists so a session can discover its
+// manual is stale — and the session most likely to hold stale text, and least able to suspect it,
+// is a brand-new one calling station_me as its first act. The single call where the signal matters
+// most was the single call that dropped it.
+//
+// WHY NO EXISTING TEST SAW IT: every other test here calls claimWorkspace DIRECTLY, and the stamp
+// lives in the handler above it. That is this project's most expensive recurring mistake — a fix
+// tested one layer BELOW its defect — so this asserts over the real transport, on both paths, the
+// way prod discovered it: call the tool from a new workspace and an established one, and diff.
+func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
+	st, srv, _, station := harness(t)
+	ctx := context.Background()
+
+	actor, err := st.FindOrCreateActor(ctx, "ai", "version-probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	minting, err := st.IssueStationKey(ctx, actor, "", "minting-key", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	established, err := st.IssueStationKey(ctx, actor, "", "established-key", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created := meOverTransport(t, connectWS(t, srv, minting, ""), map[string]any{"workspace_name": "brand-new"})
+	briefed := meOverTransport(t, connectWS(t, srv, established, station.StationID), map[string]any{})
+
+	// The fixture must actually cover both paths, or this passes by testing one thing twice.
+	if !created.JustCreated {
+		t.Fatal("the minting key did not mint; the fixture never exercises the creation path")
+	}
+	if briefed.JustCreated {
+		t.Fatal("the established key minted a new workspace; the fixture never exercises the briefing path")
+	}
+
+	for _, c := range []struct {
+		path string
+		out  meOut
+	}{{"workspace-creation", created}, {"existing-workspace briefing", briefed}} {
+		if c.out.KenVersion != version.Version {
+			t.Errorf("%s path: ken_version = %q, want %q — a session on this path cannot tell whether "+
+				"the instructions it is holding are older than the server answering it",
+				c.path, c.out.KenVersion, version.Version)
+		}
+		if c.out.VersionNote == "" {
+			t.Errorf("%s path: ken_version_note is empty — the number arrives with no instruction "+
+				"attached, and a bare version tells a session nothing about what to do with it", c.path)
+		}
 	}
 }
