@@ -477,34 +477,31 @@ credentials retire, or mail is stranded with no error.
 5. **`space_id` last**, with its test, as one deliberate change (§9.1) — it blocks nothing, and
    doing it early is churn that makes the remaining plumbing look intentional.
 
-   > **DEFERRED by Vlad, 2026-08-25, after the scope was measured rather than estimated.** Steps
-   > 1–4 shipped the same day; this one did not, on purpose.
+   > **DONE 2026-08-26, in v3.30.0, shipping alone under Rule 4.** Deferred by Vlad on
+   > 2026-08-25 and taken the next day once ken-prod-ops had verified 3.29.0 and 3.29.1 —
+   > the precondition was never the calendar, it was Rule 3.
    >
-   > **What it actually touches — 11 tables across BOTH databases, 5 indexes, 160 non-test Go
-   > references:**
+   > **THE SCOPE WAS MEASURED TWICE AND THE FIRST MEASUREMENT WAS WRONG.** Reading the
+   > MIGRATION TEXT gave "11 tables, 5 indexes". Reading `sqlite_master` on a migrated
+   > database gave **10 tables** — comm.db's `message_new` is a transitional table an old
+   > migration created, copied into and renamed, so it was real for one transaction years
+   > ago and has never existed in a live schema. The migration text also hid that
+   > `idx_comm_room_name` is a **PARTIAL** unique index (`WHERE kind='topic'`), which had to
+   > be carried across verbatim or the rebuild would have silently widened a uniqueness
+   > constraint across every room kind. **Read the schema, not the history of the schema.**
    >
-   > ```
-   > ken.db   actor · entry · station · station_link · station_link_denial ·
-   >          station_request · comm_room
-   >          idx_station_name(space_id,name) UNIQUE · idx_comm_room_name(space_id,name) UNIQUE
-   >          idx_station_state(space_id,state) · idx_station_request_pending(space_id,state,created_at)
-   > comm.db  channel · endpoint · message_new · pairing_code
-   >          idx_endpoint_owner(space_id,actor_id)
-   > ```
+   > What actually went: `space_id` from 7 tables in ken.db and 3 in comm.db, 5 indexes
+   > rebuilt without their dead leading column, `idx_entry_space` dropped outright (it
+   > indexed nothing else), the `space` table itself, and 160 non-test Go references.
    >
-   > **Why it waited, and none of the reasons is timidity:** it is the only step that delivers no
-   > capability — §9.1 says so itself — while being the only one that rewrites schema, in two live
-   > databases, under Rule 4. It would have stacked a migration on top of a same-day deletion
-   > (step 3) that ken-prod-ops had not yet verified, which is exactly what Rule 3 forbids. And the
-   > decision in front of Vlad is whether Ken is worth keeping: steps 1–4 each gave him something
-   > he can use, and this one gives him tidier internals he will never see.
-   >
-   > **When it is taken up, §9.1's instruction is the load-bearing part:** `TestPairingCodeIsSpaceScoped`
-   > (`internal/comm/comm_test.go`) fabricates a second space and asserts the denial — the refuter
-   > deleted the three-line check and watched CI go red in seconds. So the check IS exercised, in
-   > the suite and never in production. **Whoever removes it deletes that test in the same commit,
-   > deliberately and reviewably, and says why.** Removing the check first and the test later leaves
-   > a live control that nothing exercises, which is the state this whole document exists to avoid.
+   > **§9.1's instruction was the load-bearing part, and it under-counted.** It named
+   > `TestPairingCodeIsSpaceScoped`. There were four such tests plus a fifth assertion
+   > inside an unrelated one — found by grepping the CONCEPT rather than the name the plan
+   > supplied. Three deleted, one clause removed, and `TestStationNameUniquePerSpace` KEPT
+   > and renamed: station-name uniqueness is real and `CreateStationAutoNamed`'s collision
+   > retry depends on `ErrStationNameTaken`, so deleting it by keyword would have removed a
+   > live control on a live feature. **A plan that names one instance is a sample, not an
+   > inventory.**
 
 **Two constraints on every step.** The **MCP freeze** (§11) means a running session holds the old
 story and cannot be told otherwise, so each step must work for a session connecting fresh with no

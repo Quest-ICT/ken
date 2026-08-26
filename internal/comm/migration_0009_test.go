@@ -69,8 +69,8 @@ func TestDeliverySplitMigratesALiveDatabaseWithoutLosingAnything(t *testing.T) {
 	// derive, 's:' and 'e:'.
 	exec(`INSERT INTO endpoint(id, endpoint_id, secret_sha256, token_id, actor_id, label, station_id)
 	      VALUES(1,'epA','h','tok',1,'a','st-alpha'), (2,'epB','h','tok',1,'b',NULL)`)
-	exec(`INSERT INTO channel(id, channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state)
-	      VALUES(1,'chan1',1,1,1,2,'open')`)
+	exec(`INSERT INTO channel(id, channel_id, owner_actor_id, endpoint_a, endpoint_b, state)
+	      VALUES(1,'chan1',1,1,2,'open')`)
 
 	// Four messages covering every state a real database holds, including an acked
 	// one whose body the retention sweep already blanked.

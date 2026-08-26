@@ -54,7 +54,6 @@ const maxCommBody = 1 << 20 // 1 MiB
 type principal struct {
 	ActorID int64
 	TokenID string
-	SpaceID int64
 	// Scopes carries the token's full comm-family scope set: the transport
 	// middleware requires `comm`, but the file tools additionally require
 	// `comm-file`, and that second check happens per tool against this set.
@@ -168,16 +167,15 @@ func authenticate(ctx context.Context, st *store.Store, tok, requiredScope strin
 
 	var (
 		actorID    int64
-		spaceID    int64
 		secretHash string
 		scopesJSON string
 		revoked    sql.NullString
 	)
 	err := st.R.QueryRowContext(ctx, `
-SELECT t.actor_id, a.space_id, t.secret_sha256, t.scopes, t.revoked_at
-FROM api_token t JOIN actor a ON a.id = t.actor_id
+SELECT t.actor_id, t.secret_sha256, t.scopes, t.revoked_at
+FROM api_token t
 WHERE t.token_id = ?`, tokenID).
-		Scan(&actorID, &spaceID, &secretHash, &scopesJSON, &revoked)
+		Scan(&actorID, &secretHash, &scopesJSON, &revoked)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +198,7 @@ WHERE t.token_id = ?`, tokenID).
 	if !set[requiredScope] {
 		return nil, errors.New("token is missing the '" + requiredScope + "' scope")
 	}
-	return &principal{ActorID: actorID, TokenID: tokenID, SpaceID: spaceID, Scopes: set}, nil
+	return &principal{ActorID: actorID, TokenID: tokenID, Scopes: set}, nil
 }
 
 func bearerToken(r *http.Request) string {
@@ -253,10 +251,6 @@ func authenticateOAuth(ctx context.Context, st *store.Store, tok, requiredScope 
 	if err != nil {
 		return nil, err
 	}
-	var spaceID int64
-	if err := st.R.QueryRowContext(ctx, `SELECT space_id FROM actor WHERE id=?`, op.ActorID).Scan(&spaceID); err != nil {
-		return nil, err
-	}
 	set := map[string]bool{}
 	for _, sc := range store.GrantedCapabilities(op.Scope) {
 		set[sc] = true
@@ -270,7 +264,6 @@ func authenticateOAuth(ctx context.Context, st *store.Store, tok, requiredScope 
 		// across surfaces. It is deliberately not an api_token id: TouchToken finds no row
 		// and does nothing, which is correct — an OAuth grant's use is not an api_token's.
 		TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
-		SpaceID: spaceID,
 		Scopes:  set,
 	}, nil
 }

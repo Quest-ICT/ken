@@ -46,11 +46,11 @@ func TestFileOfferWakesTheStationsLiveReaderNotTheFrozenSeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sender, err := st.CreateStation(ctx, 1, "sender", "", actor)
+	sender, err := st.CreateStation(ctx, "sender", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiver, err := st.CreateStation(ctx, 1, "receiver", "", actor)
+	receiver, err := st.CreateStation(ctx, "receiver", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestFileOfferWakesTheStationsLiveReaderNotTheFrozenSeat(t *testing.T) {
 			t.Fatal(err)
 		}
 		ep, secret, err := cs.RegisterEndpoint(ctx,
-			comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID, SpaceID: prin.SpaceID}, name, "")
+			comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID}, name, "")
 		if err != nil {
 			t.Fatal(err)
 		}

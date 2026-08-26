@@ -59,10 +59,9 @@ func (s *Store) ApproveStationRequest(ctx context.Context, requestID, name strin
 	defer func() { _ = tx.Rollback() }()
 
 	var kind, purpose string
-	var spaceID int64
 	err = tx.QueryRowContext(ctx,
-		`SELECT kind, space_id, COALESCE(purpose,'') FROM station_request WHERE request_id=? AND state='pending'`,
-		requestID).Scan(&kind, &spaceID, &purpose)
+		`SELECT kind, COALESCE(purpose,'') FROM station_request WHERE request_id=? AND state='pending'`,
+		requestID).Scan(&kind, &purpose)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrRequestNotPending
 	}
@@ -78,8 +77,8 @@ func (s *Store) ApproveStationRequest(ctx context.Context, requestID, name strin
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO station(station_id, space_id, name, purpose, created_by_actor_id) VALUES(?,?,?,?,?)`,
-		stationID, spaceID, name, purpose, actorID); err != nil {
+		`INSERT INTO station(station_id, name, purpose, created_by_actor_id) VALUES(?,?,?,?)`,
+		stationID, name, purpose, actorID); err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrStationNameTaken
 		}
@@ -114,11 +113,10 @@ func (s *Store) DenyStationRequest(ctx context.Context, requestID, reason string
 	defer func() { _ = tx.Rollback() }()
 
 	var kind string
-	var spaceID int64
 	var fromStation, toStation *string
 	err = tx.QueryRowContext(ctx,
-		`SELECT kind, space_id, from_station, to_station FROM station_request WHERE request_id=? AND state='pending'`,
-		requestID).Scan(&kind, &spaceID, &fromStation, &toStation)
+		`SELECT kind, from_station, to_station FROM station_request WHERE request_id=? AND state='pending'`,
+		requestID).Scan(&kind, &fromStation, &toStation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrRequestNotPending
 	}
@@ -139,8 +137,8 @@ UPDATE station_request
 	if kind == "link" && fromStation != nil && toStation != nil {
 		a, b := orderPair(*fromStation, *toStation)
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO station_link_denial(space_id, station_a, station_b, denial_count, muted_until, last_denied_at)
-VALUES(?,?,?,1, strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 hour'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+INSERT INTO station_link_denial(station_a, station_b, denial_count, muted_until, last_denied_at)
+VALUES(?,?,1, strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 hour'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 ON CONFLICT(station_a, station_b) DO UPDATE SET
   denial_count   = station_link_denial.denial_count + 1,
   last_denied_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
@@ -149,7 +147,7 @@ ON CONFLICT(station_a, station_b) DO UPDATE SET
                        WHEN 1 THEN '+6 hours'
                        WHEN 2 THEN '+24 hours'
                        ELSE '+7 days'
-                     END)`, spaceID, a, b); err != nil {
+                     END)`, a, b); err != nil {
 			return err
 		}
 	}
@@ -180,7 +178,7 @@ type StationUsage struct {
 }
 
 // StationAssetUsage counts what a station is holding. Reported per station rather
-// than per space because the caps are per station, and a total across stations would
+// than per instance because the caps are per station, and a total across stations would
 // hide the one that is actually full.
 // OCTET_LENGTH, not LENGTH: SQLite's LENGTH() on TEXT counts CHARACTERS, so a field named
 // NoteBytes fed by it under-reports by however much non-ASCII a notebook holds — and this
@@ -343,9 +341,9 @@ type StationLink struct {
 	ApprovedAt string
 }
 
-// ListStationLinks returns the space's links with both station names resolved, so the
+// ListStationLinks returns the instance's links with both station names resolved, so the
 // console never has to show an opaque id to a human.
-func (s *Store) ListStationLinks(ctx context.Context, spaceID int64) ([]StationLink, error) {
+func (s *Store) ListStationLinks(ctx context.Context) ([]StationLink, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT l.link_id, l.station_a, l.station_b,
        COALESCE(a.name,'(deleted)'), COALESCE(b.name,'(deleted)'),
@@ -353,8 +351,8 @@ SELECT l.link_id, l.station_a, l.station_b,
   FROM station_link l
   LEFT JOIN station a ON a.station_id = l.station_a
   LEFT JOIN station b ON b.station_id = l.station_b
- WHERE l.space_id=?
- ORDER BY l.approved_at DESC`, spaceID)
+
+ ORDER BY l.approved_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +394,7 @@ SELECT l.link_id, l.station_a, l.station_b,
 //
 // Returns the request id, or ("", nil) when it was silently dropped — the caller must
 // report success either way.
-func (s *Store) CreateStationLinkRequest(ctx context.Context, spaceID int64, tokenID, fromStation, toStation, reason string, hearsay bool) (string, error) {
+func (s *Store) CreateStationLinkRequest(ctx context.Context, tokenID, fromStation, toStation, reason string, hearsay bool) (string, error) {
 	if fromStation == "" || toStation == "" {
 		return "", errors.New("a link request needs both stations")
 	}
@@ -446,10 +444,10 @@ SELECT request_id FROM station_request
 		return "", err
 	}
 	if _, err := s.W.ExecContext(ctx, `
-INSERT INTO station_request(request_id, space_id, kind, from_station, to_station,
+INSERT INTO station_request(request_id, kind, from_station, to_station,
                             from_token_id, reason, prompted_by_peer_traffic)
-VALUES(?,?,'link',?,?,?,?,?)`,
-		id, spaceID, fromStation, toStation, tokenID, reason, boolOrNilStore(hearsay)); err != nil {
+VALUES(?,'link',?,?,?,?,?)`,
+		id, fromStation, toStation, tokenID, reason, boolOrNilStore(hearsay)); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -475,11 +473,10 @@ func (s *Store) ApproveLinkRequest(ctx context.Context, requestID string, actorI
 	defer func() { _ = tx.Rollback() }()
 
 	var kind string
-	var spaceID int64
 	var from, to *string
 	err = tx.QueryRowContext(ctx,
-		`SELECT kind, space_id, from_station, to_station FROM station_request
-		  WHERE request_id=? AND state='pending'`, requestID).Scan(&kind, &spaceID, &from, &to)
+		`SELECT kind, from_station, to_station FROM station_request
+		  WHERE request_id=? AND state='pending'`, requestID).Scan(&kind, &from, &to)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrRequestNotPending
 	}
@@ -503,9 +500,9 @@ func (s *Store) ApproveLinkRequest(ctx context.Context, requestID string, actorI
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO station_link(link_id, space_id, station_a, station_b, approved_by_actor_id)
-VALUES(?,?,?,?,?)
-ON CONFLICT DO NOTHING`, linkID, spaceID, a, b, actorID); err != nil {
+INSERT INTO station_link(link_id, station_a, station_b, approved_by_actor_id)
+VALUES(?,?,?,?)
+ON CONFLICT DO NOTHING`, linkID, a, b, actorID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `

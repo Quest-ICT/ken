@@ -29,8 +29,8 @@ func TestMigration0017UpgradesRowsWrittenBeforeIt(t *testing.T) {
 
 	// Rebuild the world as 0016 left it: a channel attachment whose scope was never written.
 	ex(`ALTER TABLE attachment ALTER COLUMN scope_id DROP NOT NULL`)
-	ex(`INSERT INTO channel(channel_id, space_id, owner_actor_id, state, endpoint_a)
-	    VALUES('chOLD', 1, 1, 'open', ?)`, ep.ID)
+	ex(`INSERT INTO channel(channel_id, owner_actor_id, state, endpoint_a)
+	    VALUES('chOLD', 1, 'open', ?)`, ep.ID)
 	ex(`INSERT INTO attachment(attachment_id, channel_id, sender_endpoint, recipient_endpoint,
 	                          name, size_bytes, sha256, transfer, expires_at, scope_id)
 	    VALUES('attOLD',(SELECT id FROM channel WHERE channel_id='chOLD'),?,?,'old.txt',5,'x','upload','2030-01-01',NULL)`,

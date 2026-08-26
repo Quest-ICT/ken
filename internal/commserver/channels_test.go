@@ -244,7 +244,7 @@ func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := dirComm.MintPairingCode(ctx, 1, 42, "me<->sender")
+	code, err := dirComm.MintPairingCode(ctx, 42, "me<->sender")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func stationBoundEndpoint(t *testing.T, stationID string) *comm.Endpoint {
 	t.Helper()
 	ctx := context.Background()
 	ep, secret, err := dirComm.RegisterEndpoint(ctx,
-		comm.Owner{TokenID: "tok-other", ActorID: 9, SpaceID: 1}, stationID, "")
+		comm.Owner{TokenID: "tok-other", ActorID: 9}, stationID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

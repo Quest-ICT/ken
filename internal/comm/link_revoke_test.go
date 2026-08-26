@@ -296,7 +296,7 @@ func TestASecondEndpointOfOneStationCannotTakeBothSeats(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 
 	first := stationEndpoint(t, st, "tok-1", "st-solo")
-	code, err := st.MintPairingCode(ctx, 1, 42, "solo<->peer")
+	code, err := st.MintPairingCode(ctx, 42, "solo<->peer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestASuccessorSeesTheRequestsItsPredecessorIsStillOwed(t *testing.T) {
 
 	asker := stationEndpoint(t, st, "tok-ask", "st-asker")
 	peer := stationEndpoint(t, st, "tok-peer", "st-peer")
-	code, err := st.MintPairingCode(ctx, 1, 42, "asker<->peer")
+	code, err := st.MintPairingCode(ctx, 42, "asker<->peer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestAnUnboundPredecessorDoesNotCostItsStationTheChannel(t *testing.T) {
 
 	first := stationEndpoint(t, st, "tok-1", "st-home")
 	peer := stationEndpoint(t, st, "tok-peer", "st-away")
-	code, err := st.MintPairingCode(ctx, 1, 42, "home<->away")
+	code, err := st.MintPairingCode(ctx, 42, "home<->away")
 	if err != nil {
 		t.Fatal(err)
 	}

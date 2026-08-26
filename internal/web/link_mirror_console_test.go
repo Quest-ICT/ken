@@ -51,15 +51,15 @@ func TestConsoleLinkDecisionsReachTheCommMirror(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := st.CreateStation(ctx, spaceForSession, "alpha", "", actorID)
+	a, err := st.CreateStation(ctx, "alpha", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, spaceForSession, "beta", "", actorID)
+	b, err := st.CreateStation(ctx, "beta", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID, err := st.CreateStationLinkRequest(ctx, spaceForSession, "tok", a.StationID, b.StationID, "work together", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", a.StationID, b.StationID, "work together", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestConsoleLinkDecisionsReachTheCommMirror(t *testing.T) {
 	// AND THE OTHER EDGE, which is the one that matters more: a revoked link must stop
 	// authorising. This is why the refresh sits before every early return in the revoke
 	// handler rather than after the channel sweep that can fail.
-	links, err := st.ListStationLinks(ctx, spaceForSession)
+	links, err := st.ListStationLinks(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestLinkMirrorRowsExcludesRevokedLinksAndArchivedStations(t *testing.T) {
 
 	mk := func(name string) *store.Station {
 		t.Helper()
-		s, err := st.CreateStation(ctx, spaceForSession, name, "", actorID)
+		s, err := st.CreateStation(ctx, name, "", actorID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +137,7 @@ func TestLinkMirrorRowsExcludesRevokedLinksAndArchivedStations(t *testing.T) {
 	}
 	link := func(x, y *store.Station) *store.StationLink {
 		t.Helper()
-		reqID, err := st.CreateStationLinkRequest(ctx, spaceForSession, "tok", x.StationID, y.StationID, "r", false)
+		reqID, err := st.CreateStationLinkRequest(ctx, "tok", x.StationID, y.StationID, "r", false)
 		if err != nil {
 			t.Fatal(err)
 		}

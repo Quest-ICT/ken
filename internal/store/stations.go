@@ -23,15 +23,14 @@ import (
 // function here lets an agent create, name, publish, rename or archive a station. An
 // agent may only file a request; a human decides and types the name (S3).
 
-// ErrStationNameTaken is returned when a name collides within a space. Names are
-// display-only and unique per space; routing is always by the opaque station_id, so a
+// ErrStationNameTaken is returned when a name collides within this instance. Names are
+// display-only and unique per instance; routing is always by the opaque station_id, so a
 // collision is a human-facing inconvenience rather than an addressing failure.
 var ErrStationNameTaken = errors.New("station name already in use in this space")
 
 // Station is a durable working identity.
 type Station struct {
 	StationID          string
-	SpaceID            int64
 	Name               string // human-typed; never agent-supplied
 	Purpose            string
 	SelfDescribedAbout string   // a CLAIM (S8) — the field name carries that
@@ -46,7 +45,7 @@ type Station struct {
 // CreateStation creates a station with a HUMAN-supplied name. There is deliberately no
 // agent-reachable path to this function: an agent files a station request and a human
 // approves it, typing the name at that moment (S3).
-func (s *Store) CreateStation(ctx context.Context, spaceID int64, name, purpose string, actorID int64) (*Station, error) {
+func (s *Store) CreateStation(ctx context.Context, name, purpose string, actorID int64) (*Station, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("a station needs a name")
@@ -56,8 +55,8 @@ func (s *Store) CreateStation(ctx context.Context, spaceID int64, name, purpose 
 		return nil, err
 	}
 	_, err = s.W.ExecContext(ctx,
-		`INSERT INTO station(station_id, space_id, name, purpose, created_by_actor_id) VALUES(?,?,?,?,?)`,
-		stationID, spaceID, name, purpose, actorID)
+		`INSERT INTO station(station_id, name, purpose, created_by_actor_id) VALUES(?,?,?,?)`,
+		stationID, name, purpose, actorID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrStationNameTaken
@@ -73,23 +72,23 @@ func (s *Store) StationByID(ctx context.Context, stationID string) (*Station, er
 	return s.stationWhere(ctx, `station_id=?`, stationID)
 }
 
-// StationByName resolves a display name within a space. For CONSOLE and CLI use only:
+// StationByName resolves a display name within this instance. For CONSOLE and CLI use only:
 // a name is not an address, and no agent-facing path may route by it (S3).
 //
 // THAT CONTRACT WAS VIOLATED BY A CALLER IN THIS REPO. station_link_request resolved its
 // to_station argument through here (stationserver.go), and this query filters on nothing but
-// space and name — no `published`, no `state`. So an agent could hand it any string and read
+// name — no `published`, no `state`. So an agent could hand it any string and read
 // the answer: a name that exists produced a filed request, a name that did not produced a
 // refusal. Two distinguishable outcomes is an enumeration oracle over every station name in
-// the space, including the ones deliberately withheld from station_directory — and worse than
+// this instance, including the ones deliberately withheld from station_directory — and worse than
 // reading, a correct guess FILED A REQUEST, putting an agent-authored ask for an unpublished
 // post in front of its human. Found by sweep and confirmed by execution on 2026-08-19.
 //
 // The remedy is StationByNameVisibleTo below, not a filter here: the console legitimately
-// resolves any name in its space, including archived and unpublished ones, and narrowing this
+// resolves any name in this instance, including archived and unpublished ones, and narrowing this
 // would break the surface the rule reserves it for.
-func (s *Store) StationByName(ctx context.Context, spaceID int64, name string) (*Station, error) {
-	return s.stationWhere(ctx, `space_id=? AND name=?`, spaceID, name)
+func (s *Store) StationByName(ctx context.Context, name string) (*Station, error) {
+	return s.stationWhere(ctx, `name=?`, name)
 }
 
 // StationByNameVisibleTo resolves a name ONLY among the stations the asker may already see —
@@ -106,26 +105,26 @@ func (s *Store) StationByName(ctx context.Context, spaceID int64, name string) (
 // appears this pair is what should be factored — but a shared helper today would have to
 // serve one query returning a list and one returning a row, and the duplication is currently
 // the honest cost of keeping both readable.
-func (s *Store) StationByNameVisibleTo(ctx context.Context, spaceID int64, fromStation, name string) (*Station, error) {
-	return s.stationWhere(ctx, `space_id=?1 AND name=?2
+func (s *Store) StationByNameVisibleTo(ctx context.Context, fromStation, name string) (*Station, error) {
+	return s.stationWhere(ctx, `name=?1
    AND state <> 'archived'
-   AND station_id <> ?3
+   AND station_id <> ?2
    AND (published=1 OR EXISTS(
          SELECT 1 FROM station_link l
           WHERE l.state='active'
-            AND ((l.station_a=?3 AND l.station_b=station.station_id)
-              OR (l.station_b=?3 AND l.station_a=station.station_id))))`,
-		spaceID, name, fromStation)
+            AND ((l.station_a=?2 AND l.station_b=station.station_id)
+              OR (l.station_b=?2 AND l.station_a=station.station_id))))`,
+		name, fromStation)
 }
 
 func (s *Store) stationWhere(ctx context.Context, where string, args ...any) (*Station, error) {
 	var st Station
 	var tags, advertised, lastAct sql.NullString
 	err := s.R.QueryRowContext(ctx, `
-SELECT station_id, space_id, name, purpose, self_described_about, self_described_tags,
+SELECT station_id, name, purpose, self_described_about, self_described_tags,
        published, state, created_at, advertised_at, last_activity_at
 FROM station WHERE `+where, args...).
-		Scan(&st.StationID, &st.SpaceID, &st.Name, &st.Purpose, &st.SelfDescribedAbout, &tags,
+		Scan(&st.StationID, &st.Name, &st.Purpose, &st.SelfDescribedAbout, &tags,
 			&st.Published, &st.State, &st.CreatedAt, &advertised, &lastAct)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -140,14 +139,14 @@ FROM station WHERE `+where, args...).
 	return &st, nil
 }
 
-// ListStations returns every station in a space, newest activity first. Console-facing:
+// ListStations returns every station in this instance, newest activity first. Console-facing:
 // what an AGENT may see is narrower (published stations plus its own links, §5).
-func (s *Store) ListStations(ctx context.Context, spaceID int64) ([]Station, error) {
+func (s *Store) ListStations(ctx context.Context) ([]Station, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT station_id, space_id, name, purpose, self_described_about, self_described_tags,
+SELECT station_id, name, purpose, self_described_about, self_described_tags,
        published, state, created_at, advertised_at, last_activity_at
-FROM station WHERE space_id=?
-ORDER BY COALESCE(last_activity_at, created_at) DESC`, spaceID)
+FROM station
+ORDER BY COALESCE(last_activity_at, created_at) DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +155,7 @@ ORDER BY COALESCE(last_activity_at, created_at) DESC`, spaceID)
 	for rows.Next() {
 		var st Station
 		var tags, advertised, lastAct sql.NullString
-		if err := rows.Scan(&st.StationID, &st.SpaceID, &st.Name, &st.Purpose, &st.SelfDescribedAbout,
+		if err := rows.Scan(&st.StationID, &st.Name, &st.Purpose, &st.SelfDescribedAbout,
 			&tags, &st.Published, &st.State, &st.CreatedAt, &advertised, &lastAct); err != nil {
 			return nil, err
 		}
@@ -526,15 +525,15 @@ func isUniqueViolation(err error) bool {
 // purpose are shown ONLY to the human: nothing here is delivered to a target station
 // before approval, because a request that reached its target would be a one-shot
 // unauthorized message channel.
-func (s *Store) CreateStationRequest(ctx context.Context, spaceID int64, tokenID, fromStation, nameHint, purpose string) (string, error) {
+func (s *Store) CreateStationRequest(ctx context.Context, tokenID, fromStation, nameHint, purpose string) (string, error) {
 	id, err := randBase62(12)
 	if err != nil {
 		return "", err
 	}
 	if _, err := s.W.ExecContext(ctx, `
-INSERT INTO station_request(request_id, space_id, kind, from_station, from_token_id, name_hint, purpose)
-VALUES(?,?,'station',?,?,?,?)`,
-		id, spaceID, nullStr(fromStation), tokenID, nullStr(nameHint), purpose); err != nil {
+INSERT INTO station_request(request_id, kind, from_station, from_token_id, name_hint, purpose)
+VALUES(?,'station',?,?,?,?)`,
+		id, nullStr(fromStation), tokenID, nullStr(nameHint), purpose); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -556,7 +555,7 @@ type StationRequestRow struct {
 }
 
 // PendingStationRequests lists what is waiting on the human.
-func (s *Store) PendingStationRequests(ctx context.Context, spaceID int64) ([]StationRequestRow, error) {
+func (s *Store) PendingStationRequests(ctx context.Context) ([]StationRequestRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT r.request_id, r.kind, COALESCE(r.name_hint,''), r.purpose, r.reason, r.created_at,
        COALESCE(r.prompted_by_peer_traffic,0),
@@ -564,7 +563,7 @@ SELECT r.request_id, r.kind, COALESCE(r.name_hint,''), r.purpose, r.reason, r.cr
 FROM station_request r
 LEFT JOIN station sf  ON sf.station_id  = r.from_station
 LEFT JOIN station st2 ON st2.station_id = r.to_station
-WHERE r.space_id=? AND r.state='pending' ORDER BY r.created_at`, spaceID)
+WHERE r.state='pending' ORDER BY r.created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -620,21 +619,20 @@ type DirectoryEntry struct {
 //
 // The caller supplies liveness separately (comm.StaffingByStation); this package must
 // not reach into the expendable database (S7).
-func (s *Store) ListStationsVisibleTo(ctx context.Context, spaceID int64, fromStation string) ([]DirectoryEntry, error) {
+func (s *Store) ListStationsVisibleTo(ctx context.Context, fromStation string) ([]DirectoryEntry, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT st.station_id, st.space_id, st.name, st.purpose,
+SELECT st.station_id, st.name, st.purpose,
        st.self_described_about, st.self_described_tags,
        st.published, st.state, st.created_at, st.advertised_at, st.last_activity_at,
        EXISTS(SELECT 1 FROM station_link l
                WHERE l.state='active'
-                 AND ((l.station_a=st.station_id AND l.station_b=?2)
-                   OR (l.station_b=st.station_id AND l.station_a=?2))) AS linked
+                 AND ((l.station_a=st.station_id AND l.station_b=?1)
+                   OR (l.station_b=st.station_id AND l.station_a=?1))) AS linked
   FROM station st
- WHERE st.space_id=?1
-   AND st.state <> 'archived'
-   AND st.station_id <> ?2
+ WHERE st.state <> 'archived'
+   AND st.station_id <> ?1
    AND (st.published=1 OR linked)
- ORDER BY COALESCE(st.last_activity_at, st.created_at) DESC`, spaceID, fromStation)
+ ORDER BY COALESCE(st.last_activity_at, st.created_at) DESC`, fromStation)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +641,7 @@ SELECT st.station_id, st.space_id, st.name, st.purpose,
 	for rows.Next() {
 		var e DirectoryEntry
 		var tags, advertised, lastAct sql.NullString
-		if err := rows.Scan(&e.StationID, &e.SpaceID, &e.Name, &e.Purpose, &e.SelfDescribedAbout,
+		if err := rows.Scan(&e.StationID, &e.Name, &e.Purpose, &e.SelfDescribedAbout,
 			&tags, &e.Published, &e.State, &e.CreatedAt, &advertised, &lastAct, &e.Linked); err != nil {
 			return nil, err
 		}
@@ -711,7 +709,7 @@ func (s *Store) StationExists(ctx context.Context, stationID string) (bool, erro
 // collision instead of refusing.
 //
 // docs/IDENTITY.md §5: "Ken mints a workspace id and an auto-name from the folder's basename,
-// disambiguated on collision — names are unique per space (idx_station_name)."
+// disambiguated on collision — names are unique per instance (idx_station_name)."
 //
 // REFUSING ON COLLISION WOULD REBUILD THE DEADLOCK IN MINIATURE. Two folders called `ken-public`
 // on one machine is ordinary, and a session that cannot start because another folder took the name
@@ -720,7 +718,7 @@ func (s *Store) StationExists(ctx context.Context, stationID string) (bool, erro
 //
 // The suffix is a plain counter rather than a random tag, because a human reads these on the
 // link-approval screen: `ken-public (2)` tells them there are two, which is the useful fact.
-func (s *Store) CreateStationAutoNamed(ctx context.Context, spaceID int64, name string, actorID int64) (*Station, error) {
+func (s *Store) CreateStationAutoNamed(ctx context.Context, name string, actorID int64) (*Station, error) {
 	base := strings.TrimSpace(name)
 	if base == "" {
 		base = "workspace"
@@ -732,7 +730,7 @@ func (s *Store) CreateStationAutoNamed(ctx context.Context, spaceID int64, name 
 		if n > 1 {
 			try = fmt.Sprintf("%s (%d)", base, n)
 		}
-		st, err := s.CreateStation(ctx, spaceID, try, purpose, actorID)
+		st, err := s.CreateStation(ctx, try, purpose, actorID)
 		if err == nil {
 			return st, nil
 		}

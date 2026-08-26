@@ -65,7 +65,7 @@ func TestRebindingAnEndpointFromTheConsole(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRebindingAnEndpointFromTheConsole(t *testing.T) {
 	}
 	ownerID := strings.SplitN(strings.TrimPrefix(ownerTok, "ken_"), "_", 2)[0]
 
-	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: ownerID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: ownerID, ActorID: actor}, "session", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,11 +172,11 @@ func TestRebindRefusesAKeyFromAnotherStation(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	a, err := st.CreateStation(ctx, spaceForSession, "station-a", "", actor)
+	a, err := st.CreateStation(ctx, "station-a", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, spaceForSession, "station-b", "", actor)
+	b, err := st.CreateStation(ctx, "station-b", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestRebindRefusesAKeyFromAnotherStation(t *testing.T) {
 	bKey, _ := st.IssueStationKey(ctx, actor, b.StationID, "b-key", []string{"station"})
 	aID, bID := keyIDOf(aKey), keyIDOf(bKey)
 
-	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: aID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: aID, ActorID: actor}, "session", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestTheCredentialBlockOffersBothBulkMoves(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestTheCredentialBlockOffersBothBulkMoves(t *testing.T) {
 
 	var eps []string
 	for i := 0; i < 3; i++ {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: fromTokID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: fromTokID, ActorID: actor}, "session", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -319,7 +319,7 @@ func TestTheCredentialBlockOffersBothBulkMoves(t *testing.T) {
 	//
 	// This is the assertion the block exists for. The count is what an operator weighs before
 	// clicking a move they cannot undo, and comm.go takes it from the store precisely because
-	// the rendered row list is space-scoped while the verb is not. Asserting the store against
+	// the rendered row list is instance-wide while the verb is not. Asserting the store against
 	// the fixture — which is what this test did — checks the fixture, not the page: the block
 	// could render 0 beside every credential with the suite green.
 	n, err := cs.CountEndpointsBoundBy(ctx, oldID)
@@ -379,7 +379,7 @@ func TestRebindRepairsASessionSeveredByACliRevoke(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestRebindRepairsASessionSeveredByACliRevoke(t *testing.T) {
 	newKey, _ := st.IssueStationKey(ctx, actor, s.StationID, "replacement", []string{"station"})
 	oldID, newID := keyIDOf(oldKey), keyIDOf(newKey)
 
-	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: oldID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: oldID, ActorID: actor}, "session", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,11 +442,11 @@ func TestBulkRebindRefusesAKeyFromAnotherStation(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	a, err := st.CreateStation(ctx, spaceForSession, "station-a", "", actor)
+	a, err := st.CreateStation(ctx, "station-a", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, spaceForSession, "station-b", "", actor)
+	b, err := st.CreateStation(ctx, "station-b", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestBulkRebindRefusesAKeyFromAnotherStation(t *testing.T) {
 
 	var eps []string
 	for i := 0; i < 2; i++ {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: aID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: aID, ActorID: actor}, "session", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -511,7 +511,7 @@ func TestRebindRefusesAStaleFromKey(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +520,7 @@ func TestRebindRefusesAStaleFromKey(t *testing.T) {
 	k3, _ := st.IssueStationKey(ctx, actor, s.StationID, "three", []string{"station"})
 	id1, id2, id3 := keyIDOf(k1), keyIDOf(k2), keyIDOf(k3)
 
-	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: id1, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: id1, ActorID: actor}, "session", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func TestBulkRebindDoesNotMoveRevokedEndpoints(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +568,7 @@ func TestBulkRebindDoesNotMoveRevokedEndpoints(t *testing.T) {
 
 	var live, dead string
 	for i := 0; i < 2; i++ {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: oldID, ActorID: actor, SpaceID: spaceForSession}, "session", "")
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: oldID, ActorID: actor}, "session", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -641,7 +641,7 @@ func TestTheBulkConfirmNamesEverySessionItWillMove(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +660,7 @@ func TestTheBulkConfirmNamesEverySessionItWillMove(t *testing.T) {
 	// it hangs off the comm token exactly as the bound ones do, and revoking that token ends it.
 	labels := []string{"runway-prod-admin", "rb5009-config", "collector-proxy-dev"}
 	for i, label := range labels {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: tokID, ActorID: actor, SpaceID: spaceForSession}, label, "")
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: tokID, ActorID: actor}, label, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -706,7 +706,7 @@ func TestTheBlastRadiusListAndCountCannotDisagree(t *testing.T) {
 	st, ctx, _, _, actor := stationsHarnessWithComm(t)
 	cs := commOf(t)
 
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -717,7 +717,7 @@ func TestTheBlastRadiusListAndCountCannotDisagree(t *testing.T) {
 
 	var revoked string
 	for i := 0; i < 4; i++ {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: tokID, ActorID: actor, SpaceID: spaceForSession}, "s", "")
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: tokID, ActorID: actor}, "s", "")
 		if err != nil {
 			t.Fatal(err)
 		}

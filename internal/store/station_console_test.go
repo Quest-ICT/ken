@@ -13,7 +13,7 @@ import (
 func TestApproveStationRequestTakesTheHumansNameAndResolvesAtomically(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
 
-	reqID, err := st.CreateStationRequest(ctx, 1, "tok_abc", "", "please-call-me-this", "run the deploys")
+	reqID, err := st.CreateStationRequest(ctx, "tok_abc", "", "please-call-me-this", "run the deploys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestApproveStationRequestTakesTheHumansNameAndResolvesAtomically(t *testing
 	}
 	// The request must be gone from the queue in the same breath. If it were not, the
 	// operator would see a pending request whose station already exists and approve twice.
-	pending, err := st.PendingStationRequests(ctx, 1)
+	pending, err := st.PendingStationRequests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestApproveStationRequestTakesTheHumansNameAndResolvesAtomically(t *testing
 // agent's hint or a generated string, and both would quietly undo the human-names-it rule.
 func TestApproveRefusesAnEmptyName(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	reqID, err := st.CreateStationRequest(ctx, 1, "tok_abc", "", "hint", "purpose")
+	reqID, err := st.CreateStationRequest(ctx, "tok_abc", "", "hint", "purpose")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestApproveRefusesAnEmptyName(t *testing.T) {
 // to re-decide blind.
 func TestDenyRequiresAReasonAndClearsTheQueue(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	reqID, err := st.CreateStationRequest(ctx, 1, "tok_abc", "", "hint", "purpose")
+	reqID, err := st.CreateStationRequest(ctx, "tok_abc", "", "hint", "purpose")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestDenyRequiresAReasonAndClearsTheQueue(t *testing.T) {
 	if err := st.DenyStationRequest(ctx, reqID, "not needed, use prod-ops", actorID); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := st.PendingStationRequests(ctx, 1)
+	pending, err := st.PendingStationRequests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +86,11 @@ func TestDenyRequiresAReasonAndClearsTheQueue(t *testing.T) {
 // would destroy exactly the page a human reaches for when reconstructing a session.
 func TestTransferRefusesNameCollisionsAndMovesNothing(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	from, err := st.CreateStation(ctx, 1, "old-box", "", actorID)
+	from, err := st.CreateStation(ctx, "old-box", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	to, err := st.CreateStation(ctx, 1, "new-box", "", actorID)
+	to, err := st.CreateStation(ctx, "new-box", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,11 +134,11 @@ func TestTransferRefusesNameCollisionsAndMovesNothing(t *testing.T) {
 // name — always move because they cannot collide.
 func TestTransferMovesAssetsWhenNamesAreDistinct(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	from, err := st.CreateStation(ctx, 1, "old-box", "", actorID)
+	from, err := st.CreateStation(ctx, "old-box", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	to, err := st.CreateStation(ctx, 1, "new-box", "", actorID)
+	to, err := st.CreateStation(ctx, "new-box", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,11 +188,11 @@ func TestTransferMovesAssetsWhenNamesAreDistinct(t *testing.T) {
 // assets and no one else's — the failure that would make a full station look empty.
 func TestAssetUsageCountsOnlyThisStation(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	mine, err := st.CreateStation(ctx, 1, "mine", "", actorID)
+	mine, err := st.CreateStation(ctx, "mine", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := st.CreateStation(ctx, 1, "other", "", actorID)
+	other, err := st.CreateStation(ctx, "other", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,16 +230,16 @@ func TestAssetUsageCountsOnlyThisStation(t *testing.T) {
 // re-asking until a tired human says yes.
 func TestADeniedLinkIsMutedAndTheMuteCannotBeProbed(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	a, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	a, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, 1, "promo", "", actorID)
+	b, err := st.CreateStation(ctx, "promo", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	first, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "we need to coordinate the launch", false)
+	first, err := st.CreateStationLinkRequest(ctx, "kens_1", a.StationID, b.StationID, "we need to coordinate the launch", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,14 +251,14 @@ func TestADeniedLinkIsMutedAndTheMuteCannotBeProbed(t *testing.T) {
 	}
 
 	// Re-asking must SUCCEED at the API level and file nothing.
-	second, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "asking again", false)
+	second, err := st.CreateStationLinkRequest(ctx, "kens_1", a.StationID, b.StationID, "asking again", false)
 	if err != nil {
 		t.Fatalf("a muted re-request returned an error, which is exactly the signal that must not exist: %v", err)
 	}
 	if second != "" {
 		t.Fatal("a muted re-request was filed — the human's refusal should hold without them re-deciding")
 	}
-	pending, err := st.PendingStationRequests(ctx, 1)
+	pending, err := st.PendingStationRequests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestADeniedLinkIsMutedAndTheMuteCannotBeProbed(t *testing.T) {
 
 	// And the mute is on the UNORDERED pair: asking from the other side must not
 	// reset it, or the relationship is simply re-asked in the opposite direction.
-	reverse, err := st.CreateStationLinkRequest(ctx, 1, "kens_2", b.StationID, a.StationID, "from the other side", false)
+	reverse, err := st.CreateStationLinkRequest(ctx, "kens_2", b.StationID, a.StationID, "from the other side", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,27 +285,27 @@ func TestADeniedLinkIsMutedAndTheMuteCannotBeProbed(t *testing.T) {
 // known, and a 0 would claim knowledge the server does not have.
 func TestLinkRequestsRecordWhetherTheAskerWasMidConversation(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	a, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	a, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, 1, "promo", "", actorID)
+	b, err := st.CreateStation(ctx, "promo", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := st.CreateStation(ctx, 1, "infra", "", actorID)
+	c, err := st.CreateStation(ctx, "infra", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "prompted", true); err != nil {
+	if _, err := st.CreateStationLinkRequest(ctx, "kens_1", a.StationID, b.StationID, "prompted", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, c.StationID, "own idea", false); err != nil {
+	if _, err := st.CreateStationLinkRequest(ctx, "kens_1", a.StationID, c.StationID, "own idea", false); err != nil {
 		t.Fatal(err)
 	}
 
-	rows, err := st.PendingStationRequests(ctx, 1)
+	rows, err := st.PendingStationRequests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,15 +329,15 @@ func TestLinkRequestsRecordWhetherTheAskerWasMidConversation(t *testing.T) {
 // place would silently drop the next request for a relationship they just allowed.
 func TestApprovingALinkClearsAnEarlierDenial(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	a, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	a, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, 1, "promo", "", actorID)
+	b, err := st.CreateStation(ctx, "promo", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "please", false)
+	first, err := st.CreateStationLinkRequest(ctx, "kens_1", a.StationID, b.StationID, "please", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,8 +361,8 @@ func TestApprovingALinkClearsAnEarlierDenial(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.W.ExecContext(ctx, `
-INSERT INTO station_request(request_id, space_id, kind, from_station, to_station, from_token_id, reason)
-VALUES(?,1,'link',?,?,'kens_1','second thoughts')`, id, a.StationID, b.StationID); err != nil {
+INSERT INTO station_request(request_id, kind, from_station, to_station, from_token_id, reason)
+VALUES(?,'link',?,?,'kens_1','second thoughts')`, id, a.StationID, b.StationID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.ApproveLinkRequest(ctx, id, actorID); err != nil {
@@ -377,7 +377,7 @@ VALUES(?,1,'link',?,?,'kens_1','second thoughts')`, id, a.StationID, b.StationID
 	}
 	// The mute must be gone, or the next request for a now-allowed relationship is
 	// silently dropped.
-	again, err := st.CreateStationLinkRequest(ctx, 1, "kens_1", a.StationID, b.StationID, "third", false)
+	again, err := st.CreateStationLinkRequest(ctx, "kens_1", a.StationID, b.StationID, "third", false)
 	if err != nil {
 		t.Fatal(err)
 	}

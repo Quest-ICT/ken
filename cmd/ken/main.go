@@ -1065,7 +1065,7 @@ func registerCommCollectors(reg *metrics.Registry, cs *comm.Store, h *commserver
 			}
 		}()
 		add := func(name, help string, v float64) { fam = append(fam, metrics.Gauge(name, help, v)) }
-		if s, err := cs.StatsFor(ctx, 1); err == nil {
+		if s, err := cs.StatsFor(ctx); err == nil {
 			add("ken_comm_endpoints", "Registered inter-session endpoints (sessions).", float64(s.Endpoints))
 			add("ken_comm_channels_open", "Open inter-session channels.", float64(s.OpenChannels))
 			// THE UNIT IS STATED, because since rooms these two numbers differ and neither

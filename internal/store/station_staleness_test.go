@@ -233,7 +233,7 @@ func staleHarness(t *testing.T) (*Store, context.Context, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := st.CreateStation(ctx, 1, "staleness", "", actor)
+	s, err := st.CreateStation(ctx, "staleness", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

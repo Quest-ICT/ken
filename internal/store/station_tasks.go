@@ -541,9 +541,9 @@ WHERE station_id=? AND state='open'
 // for?" — which per-station lists do not (§11.8). Ordered by the same §11.5 contract
 // applied across stations, never by recent station activity: ordering the whole-pile
 // view by recency would sink the old items on the one surface built to stop that.
-func (s *Store) CrossStationHumanTasks(ctx context.Context, spaceID int64, blockedOn string, limit int) ([]StationTask, error) {
-	where := `s.space_id=? AND t.state='open'`
-	args := []any{spaceID}
+func (s *Store) CrossStationHumanTasks(ctx context.Context, blockedOn string, limit int) ([]StationTask, error) {
+	where := `t.state='open'`
+	args := []any{}
 	if blockedOn != "" {
 		where += ` AND t.blocked_on=?`
 		args = append(args, blockedOn)
@@ -592,9 +592,9 @@ LIMIT ?`, append(args, limit)...)
 //
 // SAME PREDICATE AS THE LIST, deliberately — if the two drift, the page says "showing 200 of N"
 // with an N that counts something else, which is worse than no count at all.
-func (s *Store) CountCrossStationTasks(ctx context.Context, spaceID int64, blockedOn string) (int, error) {
-	where := `s.space_id=? AND t.state='open'`
-	args := []any{spaceID}
+func (s *Store) CountCrossStationTasks(ctx context.Context, blockedOn string) (int, error) {
+	where := `t.state='open'`
+	args := []any{}
 	if blockedOn != "" {
 		where += ` AND t.blocked_on=?`
 		args = append(args, blockedOn)
@@ -624,12 +624,12 @@ WHERE `+where, args...).Scan(&n)
 // what is owed. `blocked_on` is written once at creation and nothing revisits it, so a task whose
 // condition was satisfied last week still counts here. A session relaying this must point at the
 // console rather than assert the debt — the human can check; the caller cannot.
-func (s *Store) HumanBlockedElsewhere(ctx context.Context, spaceID int64, exceptStation string) (tasks int, stations int, err error) {
+func (s *Store) HumanBlockedElsewhere(ctx context.Context, exceptStation string) (tasks int, stations int, err error) {
 	err = s.R.QueryRowContext(ctx, `
 SELECT COUNT(*), COUNT(DISTINCT t.station_id)
 FROM station_task t JOIN station s ON s.station_id=t.station_id
-WHERE s.space_id=?1 AND t.state='open' AND t.blocked_on='human' AND t.station_id<>?2`,
-		spaceID, exceptStation).Scan(&tasks, &stations)
+WHERE t.state='open' AND t.blocked_on='human' AND t.station_id<>?1`,
+		exceptStation).Scan(&tasks, &stations)
 	return tasks, stations, err
 }
 

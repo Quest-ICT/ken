@@ -41,7 +41,7 @@ import (
 // Each clears the bar at comm.go:94-96 — the text reveals nothing the caller could not already
 // establish. Three are facts about the CALLER's own state. ErrUnknownStation is the one that needed
 // thought: it is raised only for an id absent from the link mirror, which projects links in the
-// caller's own space, and it separates "you typed an id nobody here is linked to" from "you are not
+// caller's own instance, and it separates "you typed an id nobody here is linked to" from "you are not
 // linked to it" — a typo the session fixes in one call versus a human approval it cannot retry into
 // existence.
 

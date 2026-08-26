@@ -92,8 +92,8 @@ var ErrNotACommToken = errors.New("that token cannot own a comm endpoint — it 
 // CommTokenOwner resolves a token to the owner tuple a COMM endpoint carries, and refuses any
 // token that could not authenticate one.
 //
-// THE SAME QUERY THE COMM SURFACE ITSELF USES to build a principal — actor from the token, space
-// from the ACTOR, never a hardcoded space — so a re-point cannot produce an owner tuple that
+// THE SAME QUERY THE COMM SURFACE ITSELF USES to build a principal — actor from the token — so a
+// re-point cannot produce an owner tuple that
 // differs from what authentication would compute for the same token. Two resolutions of one
 // question is how they drift, and the drift here would be silent: the endpoint would simply stop
 // authenticating, indistinguishably from a leaked secret.
@@ -106,32 +106,32 @@ var ErrNotACommToken = errors.New("that token cannot own a comm endpoint — it 
 // REFUSING A REVOKED OR NON-COMM TARGET IS PART OF THE OPERATION, not a nicety: re-pointing onto
 // one produces an endpoint that authenticates NOWHERE and fails exactly like a compromised one.
 // A control that manufactures the defect class it exists to cure is worse than no control.
-func (s *Store) CommTokenOwner(ctx context.Context, tokenID string) (actorID, spaceID int64, err error) {
+func (s *Store) CommTokenOwner(ctx context.Context, tokenID string) (actorID int64, err error) {
 	var scopesJSON string
 	var revoked sql.NullString
 	err = s.R.QueryRowContext(ctx, `
-SELECT t.actor_id, a.space_id, t.scopes, t.revoked_at
-FROM api_token t JOIN actor a ON a.id = t.actor_id
-WHERE t.token_id = ?`, tokenID).Scan(&actorID, &spaceID, &scopesJSON, &revoked)
+SELECT t.actor_id, t.scopes, t.revoked_at
+FROM api_token t
+WHERE t.token_id = ?`, tokenID).Scan(&actorID, &scopesJSON, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, ErrNotACommToken
+		return 0, ErrNotACommToken
 	}
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	if revoked.Valid {
-		return 0, 0, ErrNotACommToken
+		return 0, ErrNotACommToken
 	}
 	var scopes []string
 	if err := json.Unmarshal([]byte(scopesJSON), &scopes); err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	for _, sc := range scopes {
 		if sc == "comm" {
-			return actorID, spaceID, nil
+			return actorID, nil
 		}
 	}
-	return 0, 0, ErrNotACommToken
+	return 0, ErrNotACommToken
 }
 
 // ErrNotAStationKey refuses a re-point target that cannot have authorised a binding.

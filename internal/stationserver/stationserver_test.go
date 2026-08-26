@@ -38,7 +38,7 @@ func harness(t *testing.T, scopes ...string) (*store.Store, *httptest.Server, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "production operations", actorID)
+	station, err := st.CreateStation(ctx, "prod-ops", "production operations", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 	}
 }
 
-// A session with no workspace still cannot reach workspace-scoped tools — and the refusal must
+// A session with no workspace still cannot reach workinstance-wide tools — and the refusal must
 // now point at something it can do BY ITSELF.
 //
 // IT USED TO POINT AT station_request, AND THAT WAS THE DEADLOCK IN ONE SENTENCE. The tool's own

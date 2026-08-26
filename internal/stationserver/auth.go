@@ -45,7 +45,6 @@ const maxStationBody = 1 << 20 // 1 MiB
 type principal struct {
 	ActorID int64
 	TokenID string
-	SpaceID int64
 	// StationID is empty for a station-less key. Such a key may call exactly one tool,
 	// station_request, which is how a session with no station asks for one (S3).
 	StationID string
@@ -259,8 +258,7 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			scopes[s] = true
 		}
 		p := &principal{
-			ActorID: sp.ActorID, TokenID: sp.TokenID, SpaceID: 1,
-			StationID: sp.StationID, Scopes: scopes,
+			ActorID: sp.ActorID, TokenID: sp.TokenID, StationID: sp.StationID, Scopes: scopes,
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
 	})

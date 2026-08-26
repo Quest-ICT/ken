@@ -18,7 +18,7 @@ import (
 // appears once you have already navigated to the page is not a prompt to navigate there.
 func TestTheStationPileShowsInTheNavAndDashboard(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
-	s, err := st.CreateStation(ctx, spaceForSession, "quiet-post", "", actor)
+	s, err := st.CreateStation(ctx, "quiet-post", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestTheStationPileShowsInTheNavAndDashboard(t *testing.T) {
 // of 2,318" for exactly this reason.
 func TestTheTaskListSaysWhenItIsShowingASample(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
-	s, err := st.CreateStation(ctx, spaceForSession, "busy-post", "", actor)
+	s, err := st.CreateStation(ctx, "busy-post", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,18 +61,18 @@ func TestTheTaskListSaysWhenItIsShowingASample(t *testing.T) {
 
 	// The count and the list must disagree only because the CAP bit, so assert through the
 	// store rather than manufacturing 200 tasks in a console test.
-	total, err := st.CountCrossStationTasks(ctx, spaceForSession, "human")
+	total, err := st.CountCrossStationTasks(ctx, "human")
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, err := st.CrossStationHumanTasks(ctx, spaceForSession, "human", 1000)
+	list, err := st.CrossStationHumanTasks(ctx, "human", 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if total != len(list) {
 		t.Fatalf("uncapped, count=%d and list=%d must agree or the page's 'of N' is a different N", total, len(list))
 	}
-	capped, err := st.CrossStationHumanTasks(ctx, spaceForSession, "human", 0)
+	capped, err := st.CrossStationHumanTasks(ctx, "human", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,15 +99,15 @@ func addTask(t *testing.T, st *store.Store, ctx context.Context, sid, text, bloc
 // and the template threw that distinction away one line after it was made.
 func TestTheRevokeConfirmSaysUnknownRatherThanZero(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t) // no comm handle: KnownLive is false
-	a, err := st.CreateStation(ctx, spaceForSession, "alpha", "", actor)
+	a, err := st.CreateStation(ctx, "alpha", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, spaceForSession, "beta", "", actor)
+	b, err := st.CreateStation(ctx, "beta", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID, err := st.CreateStationLinkRequest(ctx, spaceForSession, "tok", a.StationID, b.StationID, "testing", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", a.StationID, b.StationID, "testing", false)
 	if err != nil {
 		t.Fatal(err)
 	}

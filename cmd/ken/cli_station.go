@@ -38,7 +38,7 @@ func runStation(args []string) {
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
 		defer st.Close()
 		actorID := mustHumanActor(ctx, st, *actor)
-		s, err := st.CreateStation(ctx, 1, *name, *purpose, actorID)
+		s, err := st.CreateStation(ctx, *name, *purpose, actorID)
 		if errors.Is(err, store.ErrStationNameTaken) {
 			die(fmt.Sprintf("a station named %q already exists in this space", *name))
 		}
@@ -61,7 +61,7 @@ func runStation(args []string) {
 		}
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
 		defer st.Close()
-		s, err := st.StationByName(ctx, 1, *from)
+		s, err := st.StationByName(ctx, *from)
 		if errors.Is(err, store.ErrNotFound) {
 			die(fmt.Sprintf("no station named %q", *from))
 		}
@@ -78,7 +78,7 @@ func runStation(args []string) {
 	case "list":
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
 		defer st.Close()
-		ss, err := st.ListStations(ctx, 1)
+		ss, err := st.ListStations(ctx)
 		must(err)
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "NAME\tSTATE\tPUBLISHED\tID\tPURPOSE")
@@ -104,7 +104,7 @@ func runStation(args []string) {
 		}
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
 		defer st.Close()
-		s, err := st.StationByName(ctx, 1, *name)
+		s, err := st.StationByName(ctx, *name)
 		if errors.Is(err, store.ErrNotFound) {
 			die(fmt.Sprintf("no station named %q — create it first: ken station add --name %s", *name, *name))
 		}
@@ -132,7 +132,7 @@ func runStation(args []string) {
 	case "requests":
 		st := mustOpenStore(envOr("KEN_DB", "./data/ken.db"))
 		defer st.Close()
-		rs, err := st.PendingStationRequests(ctx, 1)
+		rs, err := st.PendingStationRequests(ctx)
 		must(err)
 		if len(rs) == 0 {
 			fmt.Println("no pending requests")

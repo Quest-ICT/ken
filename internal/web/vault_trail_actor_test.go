@@ -20,7 +20,7 @@ func TestTheVaultTrailNamesWhoReadTheSecret(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 	lim := store.DefaultStationVaultLimits()
 
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

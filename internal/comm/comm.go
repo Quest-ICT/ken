@@ -385,7 +385,6 @@ func (s *Store) Migrate() error {
 type Owner struct {
 	TokenID string
 	ActorID int64
-	SpaceID int64
 }
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"

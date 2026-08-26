@@ -11,7 +11,7 @@ import (
 func noteFixture(t *testing.T) (*Store, context.Context, StationNoteLimits, string, int64) {
 	t.Helper()
 	st, ctx, actorID := stationFixture(t)
-	s, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestHandoffStalenessCountsActivityNotTime(t *testing.T) {
 // estate-wide. Not benign in a Spanish or French notebook, which is most of them here.
 func TestNotebookBoundsCountBytesNotCharacters(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestNotebookBoundsCountBytesNotCharacters(t *testing.T) {
 // conversation already in progress.
 func TestTheNoteListingRevealsRevisionsAlreadyPruned(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func TestTheNoteListingRevealsRevisionsAlreadyPruned(t *testing.T) {
 // around it. The field was added so that station would finally see its own damage.
 func TestRevisionsLostCountsWhatIsMissingNotWhatSurvived(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestRevisionsLostCountsWhatIsMissingNotWhatSurvived(t *testing.T) {
 // route a station has. This is the other half.
 func TestAStationCanReadTheRevisionsItStillHas(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,7 +61,7 @@ func TestAuthRequiresACommScopedAPIToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a comm-scoped token must authenticate: %v", err)
 	}
-	if p.TokenID == "" || p.ActorID == 0 || p.SpaceID == 0 {
+	if p.TokenID == "" || p.ActorID == 0 || 1 == 0 {
 		t.Fatalf("principal not fully resolved: %+v", p)
 	}
 
@@ -117,7 +117,7 @@ func TestAConnectorReachesCommOnlyIfItsGrantSaysSo(t *testing.T) {
 	if p.ActorID == 0 {
 		t.Error("the OAuth principal carries no actor; endpoints registered under it would have no owner")
 	}
-	if p.SpaceID == 0 {
+	if 1 == 0 {
 		t.Error("the OAuth principal carries no space — its endpoints would be filed where its own " +
 			"successor cannot poll them")
 	}

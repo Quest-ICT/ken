@@ -398,7 +398,7 @@ type PendingPromotion struct {
 // promotion is requested, and a human converting stale material into durable knowledge
 // is exactly the outcome the curation gate exists to prevent. The console can then say
 // so rather than silently showing the latest text under an older request.
-func (s *Store) ListPendingPromotions(ctx context.Context, spaceID int64) ([]PendingPromotion, error) {
+func (s *Store) ListPendingPromotions(ctx context.Context) ([]PendingPromotion, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT p.promotion_id, p.station_id, st.name, p.note_key, p.note_rev,
        COALESCE(n.title,''), COALESCE(n.body,''), COALESCE(n.rev,0),
@@ -406,8 +406,8 @@ SELECT p.promotion_id, p.station_id, st.name, p.note_key, p.note_rev,
   FROM station_promotion p
   JOIN station st ON st.station_id = p.station_id
   LEFT JOIN station_note n ON n.station_id = p.station_id AND n.key = p.note_key
- WHERE p.state='pending' AND st.space_id=?
- ORDER BY p.created_at ASC`, spaceID)
+ WHERE p.state='pending'
+ ORDER BY p.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -451,11 +451,11 @@ UPDATE station_promotion
 }
 
 // CountPendingPromotions is the console's badge source.
-func (s *Store) CountPendingPromotions(ctx context.Context, spaceID int64) (int, error) {
+func (s *Store) CountPendingPromotions(ctx context.Context) (int, error) {
 	var n int
 	err := s.R.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM station_promotion p JOIN station st ON st.station_id=p.station_id
- WHERE p.state='pending' AND st.space_id=?`, spaceID).Scan(&n)
+ WHERE p.state='pending'`).Scan(&n)
 	return n, err
 }
 

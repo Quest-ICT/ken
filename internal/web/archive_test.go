@@ -23,24 +23,24 @@ import (
 // page that stops listing something proves nothing about routing.
 func TestArchivingAStationStopsRoomDelivery(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
-	live, err := st.CreateStation(ctx, spaceForSession, "still-here", "", actor)
+	live, err := st.CreateStation(ctx, "still-here", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retired, err := st.CreateStation(ctx, spaceForSession, "retiring", "", actor)
+	retired, err := st.CreateStation(ctx, "retiring", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A THIRD, LIVE member. Without it, archiving the only other member makes the room
 	// unsendable and the send fails before it can demonstrate anything about routing —
 	// which is a real behaviour, tested separately below, but not the one under test here.
-	third, err := st.CreateStation(ctx, spaceForSession, "also-here", "", actor)
+	third, err := st.CreateStation(ctx, "also-here", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/rooms", url.Values{"csrf": {csrf}, "name": {"ops"}})
-	rooms, _ := st.ListRooms(ctx, spaceForSession)
+	rooms, _ := st.ListRooms(ctx)
 	roomID := rooms[0].RoomID
 	for _, s := range []string{live.StationID, retired.StationID, third.StationID} {
 		csrf = extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
@@ -105,7 +105,7 @@ func TestArchivingAStationStopsRoomDelivery(t *testing.T) {
 // membership change in all but name — and one nothing can detect is one nobody is told about.
 func TestArchivingAStationMovesTheRosterEpoch(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
-	s1, err := st.CreateStation(ctx, spaceForSession, "s1", "", actor)
+	s1, err := st.CreateStation(ctx, "s1", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func commOf(t *testing.T) *comm.Store {
 func boundEndpoint(t *testing.T, cs *comm.Store, stationID string) *comm.Endpoint {
 	t.Helper()
 	ctx := context.Background()
-	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-" + stationID, ActorID: 7, SpaceID: 1}, stationID, "")
+	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-" + stationID, ActorID: 7}, stationID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +183,11 @@ SELECT COUNT(*) FROM delivery d JOIN message m ON m.id = d.message_row
 // silence.
 func TestSendingIntoARoomOfArchivedStationsExplainsItself(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
-	live, _ := st.CreateStation(ctx, spaceForSession, "still-here", "", actor)
-	retired, _ := st.CreateStation(ctx, spaceForSession, "retiring", "", actor)
+	live, _ := st.CreateStation(ctx, "still-here", "", actor)
+	retired, _ := st.CreateStation(ctx, "retiring", "", actor)
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/rooms", url.Values{"csrf": {csrf}, "name": {"ops"}})
-	rooms, _ := st.ListRooms(ctx, spaceForSession)
+	rooms, _ := st.ListRooms(ctx)
 	roomID := rooms[0].RoomID
 	for _, s := range []string{live.StationID, retired.StationID} {
 		csrf = extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)

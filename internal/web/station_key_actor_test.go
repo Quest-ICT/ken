@@ -20,7 +20,7 @@ import (
 func TestStationsConsoleShowsKeyActorAndFlagsTheOneThatCannotBind(t *testing.T) {
 	st, ctx, cli, base, curator := stationsHarness(t)
 
-	station, err := st.CreateStation(ctx, spaceForSession, "dev", "", curator)
+	station, err := st.CreateStation(ctx, "dev", "", curator)
 	if err != nil {
 		t.Fatal(err)
 	}

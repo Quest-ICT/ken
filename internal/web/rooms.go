@@ -92,7 +92,7 @@ func (a *app) handleRoomCreate(w http.ResponseWriter, r *http.Request, sess *sto
 		flashRedirect(w, r, "/stations", "flash.room_name_required", "")
 		return
 	}
-	if _, err := a.store.CreateRoom(r.Context(), spaceForSession, name,
+	if _, err := a.store.CreateRoom(r.Context(), name,
 		strings.TrimSpace(r.FormValue("purpose")), sess.ActorID); err != nil {
 		flashRedirect(w, r, "/stations", "flash.room_create_failed", err.Error())
 		return

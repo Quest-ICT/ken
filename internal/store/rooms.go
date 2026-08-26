@@ -50,13 +50,13 @@ type RoomMember struct {
 	AddedAt     string
 }
 
-// ErrRoomNameTaken keeps two rooms from sharing a name in one space. The name is how a
+// ErrRoomNameTaken keeps two rooms from sharing a name in this instance. The name is how a
 // human refers to a room and how a session addresses one, so a duplicate is not a
 // cosmetic problem — it makes `to_room: "ops"` ambiguous at the moment it matters.
 var ErrRoomNameTaken = errors.New("a room with that name already exists")
 
 // CreateRoom makes a room. Named by a human, always.
-func (s *Store) CreateRoom(ctx context.Context, spaceID int64, name, purpose string, actorID int64) (*Room, error) {
+func (s *Store) CreateRoom(ctx context.Context, name, purpose string, actorID int64) (*Room, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("a room needs a name — it is how sessions address it")
@@ -66,8 +66,8 @@ func (s *Store) CreateRoom(ctx context.Context, spaceID int64, name, purpose str
 		return nil, err
 	}
 	if _, err := s.W.ExecContext(ctx, `
-INSERT INTO comm_room(room_id, space_id, name, kind, purpose, created_by_actor_id)
-VALUES(?,?,?,'topic',?,?)`, roomID, spaceID, name, purpose, actorID); err != nil {
+INSERT INTO comm_room(room_id, name, kind, purpose, created_by_actor_id)
+VALUES(?,?,'topic',?,?)`, roomID, name, purpose, actorID); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrRoomNameTaken
 		}
@@ -122,12 +122,12 @@ UPDATE comm_room SET state=?,
 	return s.bumpRosterEpoch(ctx)
 }
 
-// ListRooms returns every room in a space with its member count.
-func (s *Store) ListRooms(ctx context.Context, spaceID int64) ([]Room, error) {
+// ListRooms returns every room in this instance with its member count.
+func (s *Store) ListRooms(ctx context.Context) ([]Room, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT r.room_id, r.name, r.kind, r.purpose, r.state, r.created_at,
        (SELECT COUNT(*) FROM comm_room_member m WHERE m.room_id = r.room_id)
-  FROM comm_room r WHERE r.space_id=? ORDER BY r.state, r.name`, spaceID)
+  FROM comm_room r ORDER BY r.state, r.name`)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,42 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.30.0] — 2026-08-26
+
+### Removed
+
+- **`space_id` is gone from both databases, and so is the `space` table.** IDENTITY.md §10
+  step 5 — the last step of the identity work. Ships alone under Rule 4 with migrations
+  `0021` (ken.db) and `0018` (comm.db).
+
+  **It only ever held one value.** `0001_init.sql` inserts `space(1, 'personal')` and
+  nothing anywhere else ever inserts a space — no `CreateSpace`, no console route, no CLI
+  subcommand, no MCP tool — while every column was `NOT NULL DEFAULT 1`. It was the SHAPE
+  of a tenancy model rather than one, and §9.1's decision is that a second user is another
+  INSTANCE federated over COMM, not another row-set behind a predicate.
+
+  What went: the column from 7 tables in ken.db (`actor`, `entry`, `comm_room`, `station`,
+  `station_link`, `station_link_denial`, `station_request`) and 3 in comm.db (`channel`,
+  `endpoint`, `pairing_code`); 5 indexes rebuilt without their dead leading column;
+  `idx_entry_space` dropped outright; the `space` table; and 160 non-test Go references.
+  `ListChannelsForSpace` is now `ListChannelsForConsole`, which is what it was always for.
+
+  **The cost, stated plainly:** Ken can no longer become multi-tenant by filling in a
+  column. That door is closed on purpose.
+
+### Fixed
+
+- **Four space-scoping tests and a fifth assertion went with the column, deliberately**
+  (§9.1: *"deletes that test in the same commit, deliberately and reviewably, and says
+  why"*). §9.1 named one; there were five. They were REAL checks — a refuter deleted the
+  predicate and CI went red in seconds — but each asserted a state no deployment could
+  reach, exercised only by a fixture that wrote a second space row by hand.
+
+  **`TestStationNameUniquePerSpace` was KEPT** and renamed
+  `TestStationNameIsUniqueAndCollisionIsNamed`: name uniqueness is real, and
+  `CreateStationAutoNamed`'s collision retry depends on `ErrStationNameTaken`. Deleting it
+  by keyword would have removed a live control on a live feature.
+
 ## [3.29.1] — 2026-08-25
 
 ### Fixed

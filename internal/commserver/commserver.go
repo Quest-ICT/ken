@@ -241,7 +241,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 			return nil, registerOut{}, errors.New("unauthenticated")
 		}
 		ep, secret, err := d.Comm.RegisterEndpoint(ctx,
-			comm.Owner{TokenID: p.TokenID, ActorID: p.ActorID, SpaceID: p.SpaceID}, in.Label, in.HostHint)
+			comm.Owner{TokenID: p.TokenID, ActorID: p.ActorID}, in.Label, in.HostHint)
 		if err != nil {
 			return nil, registerOut{}, commError(err)
 		}
@@ -403,8 +403,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 				"from which to see one — the directory answers 'who may I see', and an unbound endpoint is not a 'who'. " +
 				"Set the X-Ken-Workspace header on this connection and call comm_bind — there is no voucher to fetch")
 		}
-		p := principalFrom(ctx)
-		list, err := d.Store.ListStationsVisibleTo(ctx, p.SpaceID, ep.StationID)
+		list, err := d.Store.ListStationsVisibleTo(ctx, ep.StationID)
 		if err != nil {
 			return nil, directoryOut{}, err
 		}
@@ -550,7 +549,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		// Every early return below uses errStationUnavailable, which is a package
 		// const precisely so the three paths CANNOT drift apart: a single divergent
 		// message reopens the oracle, and the test compares them byte for byte.
-		target, err := d.Store.StationByName(ctx, p.SpaceID, strings.TrimSpace(in.ToStation))
+		target, err := d.Store.StationByName(ctx, strings.TrimSpace(in.ToStation))
 		if err != nil {
 			return nil, openLinkedOut{}, errors.New(errStationUnavailable)
 		}

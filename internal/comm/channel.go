@@ -15,7 +15,6 @@ import (
 type Channel struct {
 	ID           int64 // internal rowid
 	ChannelID    string
-	SpaceID      int64
 	OwnerActorID int64 // the human who authorized the pairing
 	EndpointA    int64
 	EndpointB    int64 // 0 until the second endpoint joins
@@ -35,15 +34,15 @@ func (c *Channel) Open() bool { return c.State == "open" }
 // same move that makes the curation gate trustworthy — withhold the capability
 // rather than instruct the model not to use it — applied at the one place in COMM
 // where it is available.
-func (s *Store) MintPairingCode(ctx context.Context, spaceID, humanActorID int64, label string) (string, error) {
+func (s *Store) MintPairingCode(ctx context.Context, humanActorID int64, label string) (string, error) {
 	code, err := randBase62(10)
 	if err != nil {
 		return "", err
 	}
 	_, err = s.W.ExecContext(ctx, `
-INSERT INTO pairing_code(code_sha256, space_id, human_actor_id, label, expires_at)
-VALUES(?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
-		sha256Hex(code), spaceID, humanActorID, nullStr(label),
+INSERT INTO pairing_code(code_sha256, human_actor_id, label, expires_at)
+VALUES(?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
+		sha256Hex(code), humanActorID, nullStr(label),
 		nowExpr(s.lim().PairingCodeTTLSeconds))
 	if err != nil {
 		return "", err
@@ -66,17 +65,16 @@ func (s *Store) JoinChannel(ctx context.Context, ep *Endpoint, code string) (*Ch
 	err := s.tx(ctx, func(t *sql.Tx) error {
 		var (
 			pcID     int64
-			spaceID  int64
 			humanID  int64
 			chanID   sql.NullInt64
 			consumed sql.NullString
 			pcLabel  sql.NullString
 		)
 		err := t.QueryRowContext(ctx, `
-SELECT id, space_id, human_actor_id, channel_id, consumed_at, label
+SELECT id, human_actor_id, channel_id, consumed_at, label
 FROM pairing_code
 WHERE code_sha256=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-			sha256Hex(code)).Scan(&pcID, &spaceID, &humanID, &chanID, &consumed, &pcLabel)
+			sha256Hex(code)).Scan(&pcID, &humanID, &chanID, &consumed, &pcLabel)
 		if errors.Is(err, sql.ErrNoRows) {
 			// Expired and unknown are indistinguishable on purpose: a caller must
 			// not be able to probe which codes exist or existed.
@@ -84,13 +82,6 @@ WHERE code_sha256=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 		}
 		if err != nil {
 			return err
-		}
-
-		// A code may only pair endpoints within its own space. Today there is one
-		// space, so this cannot fire; it is here because it must be true before a
-		// second human exists, not after.
-		if spaceID != ep.Owner.SpaceID {
-			return ErrDenied
 		}
 
 		// First redeem: create the pending channel and bind the code to it.
@@ -112,8 +103,8 @@ WHERE code_sha256=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
 			// no station whose link could authorise it, so there is nothing for a link
 			// revocation to reach.
 			res, err := t.ExecContext(ctx, `
-INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, state, label, station_a)
-VALUES(?,?,?,?, 'pending', ?, ?)`, channelID, spaceID, humanID, ep.ID, nullStr(pcLabel.String), nullStr(ep.StationID))
+INSERT INTO channel(channel_id, owner_actor_id, endpoint_a, state, label, station_a)
+VALUES(?,?,?, 'pending', ?, ?)`, channelID, humanID, ep.ID, nullStr(pcLabel.String), nullStr(ep.StationID))
 			if err != nil {
 				return err
 			}
@@ -212,7 +203,7 @@ func (s *Store) ChannelFor(ctx context.Context, ep *Endpoint, channelID string) 
 	var stnA, stnB string
 	var snapA, snapB string
 	err := s.R.QueryRowContext(ctx, `
-SELECT c.id, c.channel_id, c.space_id, c.owner_actor_id, c.endpoint_a, c.endpoint_b,
+SELECT c.id, c.channel_id, c.owner_actor_id, c.endpoint_a, c.endpoint_b,
        c.state, c.created_at, c.opened_at,
        COALESCE(ea.station_id,''), COALESCE(eb.station_id,''),
        COALESCE(c.station_a,''), COALESCE(c.station_b,'')
@@ -220,7 +211,7 @@ FROM channel c
 LEFT JOIN endpoint ea ON ea.id = c.endpoint_a
 LEFT JOIN endpoint eb ON eb.id = c.endpoint_b
 WHERE c.channel_id=?`, channelID).
-		Scan(&ch.ID, &ch.ChannelID, &ch.SpaceID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn,
+		Scan(&ch.ID, &ch.ChannelID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn,
 			&stnA, &stnB, &snapA, &snapB)
 	if errors.Is(err, sql.ErrNoRows) {
 		// D2. A ROOM ID PASSED AS channel_id LANDS HERE, and a bare "not found" is what
@@ -329,7 +320,7 @@ func (s *Store) ListChannels(ctx context.Context, ep *Endpoint) ([]Channel, erro
 		args = append(args, ep.StationID)
 	}
 	rows, err := s.R.QueryContext(ctx, `
-SELECT id, channel_id, space_id, owner_actor_id, endpoint_a, COALESCE(endpoint_b,0), state,
+SELECT id, channel_id, owner_actor_id, endpoint_a, COALESCE(endpoint_b,0), state,
        created_at, COALESCE(opened_at,'')
 FROM channel WHERE `+seatQ+` ORDER BY created_at DESC`, args...)
 	if err != nil {
@@ -339,7 +330,7 @@ FROM channel WHERE `+seatQ+` ORDER BY created_at DESC`, args...)
 	var out []Channel
 	for rows.Next() {
 		var c Channel
-		if err := rows.Scan(&c.ID, &c.ChannelID, &c.SpaceID, &c.OwnerActorID, &c.EndpointA, &c.EndpointB,
+		if err := rows.Scan(&c.ID, &c.ChannelID, &c.OwnerActorID, &c.EndpointA, &c.EndpointB,
 			&c.State, &c.CreatedAt, &c.OpenedAt); err != nil {
 			return nil, err
 		}
@@ -442,9 +433,9 @@ func channelByRowID(ctx context.Context, t *sql.Tx, id int64) (*Channel, error) 
 		opn sql.NullString
 	)
 	err := t.QueryRowContext(ctx, `
-SELECT id, channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, created_at, opened_at
+SELECT id, channel_id, owner_actor_id, endpoint_a, endpoint_b, state, created_at, opened_at
 FROM channel WHERE id=?`, id).
-		Scan(&c.ID, &c.ChannelID, &c.SpaceID, &c.OwnerActorID, &c.EndpointA, &bID, &c.State, &c.CreatedAt, &opn)
+		Scan(&c.ID, &c.ChannelID, &c.OwnerActorID, &c.EndpointA, &bID, &c.State, &c.CreatedAt, &opn)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -505,10 +496,10 @@ SELECT c.channel_id`+openChannelsBetweenStations+`
 			return err
 		}
 		res, err := t.ExecContext(ctx, `
-INSERT INTO channel(channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, opened_at, label,
+INSERT INTO channel(channel_id, owner_actor_id, endpoint_a, endpoint_b, state, opened_at, label,
                     station_a, station_b)
-VALUES(?,?,?,?,?, 'open', strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?)`,
-			channelID, a.Owner.SpaceID, ownerActorID, a.ID, b.ID, nullStr(label),
+VALUES(?,?,?,?, 'open', strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?, ?, ?)`,
+			channelID, ownerActorID, a.ID, b.ID, nullStr(label),
 			a.StationID, b.StationID)
 		if err != nil {
 			return err
@@ -531,9 +522,9 @@ func (s *Store) channelByPublicID(ctx context.Context, t *sql.Tx, channelID stri
 		opn sql.NullString
 	)
 	err := t.QueryRowContext(ctx, `
-SELECT id, channel_id, space_id, owner_actor_id, endpoint_a, endpoint_b, state, created_at, opened_at
+SELECT id, channel_id, owner_actor_id, endpoint_a, endpoint_b, state, created_at, opened_at
 FROM channel WHERE channel_id=?`, channelID).
-		Scan(&ch.ID, &ch.ChannelID, &ch.SpaceID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn)
+		Scan(&ch.ID, &ch.ChannelID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, 0, ErrNotFound
 	}

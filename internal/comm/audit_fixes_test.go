@@ -20,7 +20,7 @@ func TestRevokedPendingChannelCannotBeReopened(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "")
+	code, err := st.MintPairingCode(ctx, 42, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestRevokedPendingChannelCannotBeReopened(t *testing.T) {
 	if _, err := st.JoinChannel(ctx, b, code); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second join on a revoked channel: want ErrNotFound, got %v", err)
 	}
-	list, err := st.ListChannelsForSpace(ctx, 1)
+	list, err := st.ListChannelsForConsole(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestSweepRemovesIdleEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if eps, _ := st.ListEndpoints(ctx, 1); len(eps) != 1 {
+	if eps, _ := st.ListEndpoints(ctx); len(eps) != 1 {
 		t.Fatalf("setup: %d endpoints", len(eps))
 	}
 	// Backdate last_seen well past the window — this is what makes it "idle".
@@ -452,7 +452,7 @@ func TestSweepRemovesIdleEndpoints(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	eps, err := st.ListEndpoints(ctx, 1)
+	eps, err := st.ListEndpoints(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +474,7 @@ func TestSweepKeepsEndpointsWithTraffic(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if eps, _ := st.ListEndpoints(ctx, 1); len(eps) != 2 {
+	if eps, _ := st.ListEndpoints(ctx); len(eps) != 2 {
 		t.Fatalf("endpoints with traffic were swept: %d remain", len(eps))
 	}
 }
@@ -527,7 +527,7 @@ func TestEndpointSweepFailsSafeOnZeroWindow(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	eps, err := st.ListEndpoints(ctx, 1)
+	eps, err := st.ListEndpoints(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func TestChannelCarriesPairingLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "Ken dev <-> prod")
+	code, err := st.MintPairingCode(ctx, 42, "Ken dev <-> prod")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func TestChannelCarriesPairingLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := st.ListChannelsForSpace(ctx, 1)
+	rows, err := st.ListChannelsForConsole(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +588,7 @@ func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "") // no label
+	code, err := st.MintPairingCode(ctx, 42, "") // no label
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +598,7 @@ func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
 	if _, err := st.JoinChannel(ctx, d, code); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := st.ListChannelsForSpace(ctx, 1)
+	rows, err := st.ListChannelsForConsole(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -646,7 +646,7 @@ func TestSweepDoesNotDeleteAChannelByCollectingItsIdleSeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pendingCode, err := st.MintPairingCode(ctx, 1, 42, "never-completed")
+	pendingCode, err := st.MintPairingCode(ctx, 42, "never-completed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -696,7 +696,7 @@ func TestSweepDoesNotDeleteAChannelByCollectingItsIdleSeat(t *testing.T) {
 	// CONTROL: the sweep must still do its job. Without this, a guard that accidentally
 	// matched everything — a NULL in either NOT IN set does exactly that — would read as a
 	// pass.
-	eps, err := st.ListEndpoints(ctx, 1)
+	eps, err := st.ListEndpoints(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -51,7 +51,7 @@ func newFileFixture(t *testing.T) *fileFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := comm.Owner{TokenID: p.TokenID, ActorID: p.ActorID, SpaceID: p.SpaceID}
+	owner := comm.Owner{TokenID: p.TokenID, ActorID: p.ActorID}
 	a, _, err := cs.RegisterEndpoint(ctx, owner, "sender", "")
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func newFileFixture(t *testing.T) *fileFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := cs.MintPairingCode(ctx, 1, 1, "t")
+	code, err := cs.MintPairingCode(ctx, 1, "t")
 	if err != nil {
 		t.Fatal(err)
 	}

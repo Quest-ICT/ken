@@ -34,7 +34,7 @@ func TestPollScopeFilterDrainsOneConversationAndHidesTheRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := dirComm.MintPairingCode(ctx, 1, 42, "hub<->sender")
+	code, err := dirComm.MintPairingCode(ctx, 42, "hub<->sender")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -49,7 +49,7 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 	}
 	mk := func(name string, published bool) *store.Station {
 		t.Helper()
-		s, err := st.CreateStation(ctx, 1, name, "", actor)
+		s, err := st.CreateStation(ctx, name, "", actor)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,7 +65,7 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 	peer := mk("linked-peer", false)
 	mk("unpublished-stranger", false)
 
-	reqID, err := st.CreateStationLinkRequest(ctx, 1, "tok", mine.StationID, peer.StationID, "r", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", mine.StationID, peer.StationID, "r", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 	if err != nil {
 		t.Fatal(err)
 	}
-	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID, SpaceID: prin.SpaceID}, "me", "")
+	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID}, "me", "")
 	if err != nil {
 		t.Fatal(err)
 	}

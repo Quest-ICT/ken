@@ -94,7 +94,7 @@ func TestAWorkspaceIsMintedEvenWithNoFolderName(t *testing.T) {
 
 // TWO FOLDERS WITH THE SAME NAME BOTH WORK.
 //
-// Names are unique per space, so a collision must decorate rather than refuse — a second
+// Names are unique per instance, so a collision must decorate rather than refuse — a second
 // `ken-public` on one machine is ordinary, and a session that cannot start because another folder
 // took the name first is a session waiting on a human again. The IDS are what differ, which is
 // COMM.md §3's rule: "a human-chosen name is never an address."

@@ -65,9 +65,9 @@ func (s *Store) RegisterEndpoint(ctx context.Context, owner Owner, label, hostHi
 	var id int64
 	err = s.tx(ctx, func(t *sql.Tx) error {
 		res, err := t.ExecContext(ctx, `
-INSERT INTO endpoint(endpoint_id, secret_sha256, token_id, actor_id, space_id, label, host_hint)
-VALUES(?,?,?,?,?,?,?)`,
-			endpointID, sha256Hex(secret), owner.TokenID, owner.ActorID, owner.SpaceID,
+INSERT INTO endpoint(endpoint_id, secret_sha256, token_id, actor_id, label, host_hint)
+VALUES(?,?,?,?,?,?)`,
+			endpointID, sha256Hex(secret), owner.TokenID, owner.ActorID,
 			nullStr(label), nullStr(hostHint))
 		if err != nil {
 			return err
@@ -101,12 +101,11 @@ func (s *Store) AuthenticateEndpoint(ctx context.Context, endpointID, secret str
 		hint    sql.NullString
 	)
 	err := s.R.QueryRowContext(ctx, `
-SELECT id, endpoint_id, secret_sha256, token_id, actor_id, space_id, label, host_hint,
+SELECT id, endpoint_id, secret_sha256, token_id, actor_id, label, host_hint,
        created_at, last_seen_at, revoked_at,
        COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,'')
 FROM endpoint WHERE endpoint_id=?`, endpointID).
-		Scan(&ep.ID, &ep.EndpointID, &hash, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Owner.SpaceID,
-			&label, &hint, &ep.CreatedAt, &ep.LastSeenAt, &revoked,
+		Scan(&ep.ID, &ep.EndpointID, &hash, &ep.Owner.TokenID, &ep.Owner.ActorID, &label, &hint, &ep.CreatedAt, &ep.LastSeenAt, &revoked,
 			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -196,9 +195,9 @@ WHERE id=? AND last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-60 seconds')
 // with a leaked secret, which is the defect class this control exists to cure.
 func (s *Store) RepointEndpointOwner(ctx context.Context, endpointID, fromTokenID string, to Owner) error {
 	res, err := s.W.ExecContext(ctx, `
-UPDATE endpoint SET token_id=?, actor_id=?, space_id=?
+UPDATE endpoint SET token_id=?, actor_id=?
  WHERE endpoint_id=? AND token_id=? AND revoked_at IS NULL`,
-		to.TokenID, to.ActorID, to.SpaceID, endpointID, fromTokenID)
+		to.TokenID, to.ActorID, endpointID, fromTokenID)
 	if err != nil {
 		return err
 	}
@@ -219,9 +218,9 @@ UPDATE endpoint SET token_id=?, actor_id=?, space_id=?
 // estate cannot end up half-moved, which is the state nobody has a recovery story for.
 func (s *Store) RepointEndpointsOfToken(ctx context.Context, fromTokenID string, to Owner) (int, error) {
 	res, err := s.W.ExecContext(ctx, `
-UPDATE endpoint SET token_id=?, actor_id=?, space_id=?
+UPDATE endpoint SET token_id=?, actor_id=?
  WHERE token_id=? AND revoked_at IS NULL`,
-		to.TokenID, to.ActorID, to.SpaceID, fromTokenID)
+		to.TokenID, to.ActorID, fromTokenID)
 	if err != nil {
 		return 0, err
 	}
@@ -268,7 +267,7 @@ type EndpointRef struct {
 //
 // THE PREDICATE IS THE VERB'S OWN, deliberately character-identical to the UPDATE beside it and
 // to the COUNT that /tokens renders — no `space_id`, because the verbs have none either. A list
-// derived from the space-scoped console listing would be SHORTER than what the button moves,
+// derived from the instance-wide console listing would be SHORTER than what the button moves,
 // which is the failure this pair exists to prevent rather than to introduce.
 // TestTheBlastRadiusListAndCountCannotDisagree pins the two together.
 func (s *Store) EndpointsOwnedBy(ctx context.Context, tokenID string) ([]EndpointRef, error) {
@@ -657,16 +656,16 @@ WHERE endpoint_id=? AND revoked_at IS NULL`, endpointID)
 	return nil
 }
 
-// ListEndpoints returns the endpoints owned by one space, newest first. Scoped by
+// ListEndpoints returns the endpoints owned by this instance, newest first. Scoped by
 // space from day 1 even though only one exists today: an unscoped listing would be
 // the enumeration surface in a multi-human future, and scoping it later would be a
 // behavioural break for anything that relied on the full list.
-func (s *Store) ListEndpoints(ctx context.Context, spaceID int64) ([]Endpoint, error) {
+func (s *Store) ListEndpoints(ctx context.Context) ([]Endpoint, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT id, endpoint_id, token_id, actor_id, space_id, COALESCE(label,''), COALESCE(host_hint,''),
+SELECT id, endpoint_id, token_id, actor_id, COALESCE(label,''), COALESCE(host_hint,''),
        created_at, last_seen_at, COALESCE(secret_rotated_at,''), COALESCE(rotate_count,0),
        COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,'')
-FROM endpoint WHERE space_id=? AND revoked_at IS NULL ORDER BY created_at DESC`, spaceID)
+FROM endpoint WHERE revoked_at IS NULL ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -674,8 +673,7 @@ FROM endpoint WHERE space_id=? AND revoked_at IS NULL ORDER BY created_at DESC`,
 	var out []Endpoint
 	for rows.Next() {
 		var ep Endpoint
-		if err := rows.Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Owner.SpaceID,
-			&ep.Label, &ep.HostHint, &ep.CreatedAt, &ep.LastSeenAt,
+		if err := rows.Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Label, &ep.HostHint, &ep.CreatedAt, &ep.LastSeenAt,
 			&ep.RotatedAt, &ep.RotateCount,
 			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt); err != nil {
 			return nil, err
@@ -693,11 +691,10 @@ func (s *Store) endpointByRowID(ctx context.Context, id int64) (*Endpoint, error
 		hint  sql.NullString
 	)
 	err := s.R.QueryRowContext(ctx, `
-SELECT id, endpoint_id, token_id, actor_id, space_id, label, host_hint, created_at, last_seen_at,
+SELECT id, endpoint_id, token_id, actor_id, label, host_hint, created_at, last_seen_at,
        COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,'')
 FROM endpoint WHERE id=?`, id).
-		Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Owner.SpaceID,
-			&label, &hint, &ep.CreatedAt, &ep.LastSeenAt,
+		Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &label, &hint, &ep.CreatedAt, &ep.LastSeenAt,
 			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

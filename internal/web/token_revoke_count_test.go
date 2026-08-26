@@ -18,7 +18,7 @@ import (
 // assert a zero nobody measured — the same defect fed8838 repaired one page over.
 func TestRevokingAStationKeySaysTheCountIsUnknownWhenCommIsOff(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t) // no comm handle
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestRevokingAStationKeySaysTheCountIsUnknownWhenCommIsOff(t *testing.T) {
 // AND WITH COMM ON IT STATES THE REAL NUMBER, matched to what revoking would actually sever.
 func TestRevokingAStationKeyStatesHowManySessionsItSevers(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestRevokingAStationKeyStatesHowManySessionsItSevers(t *testing.T) {
 	keyID := strings.Split(strings.TrimPrefix(secret, "kens_"), "_")[0]
 	cs := commOf(t)
 	for i := 0; i < 2; i++ {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: keyID, ActorID: actor, SpaceID: 1}, s.StationID, "")
+		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: keyID, ActorID: actor}, s.StationID, "")
 		if err != nil {
 			t.Fatal(err)
 		}

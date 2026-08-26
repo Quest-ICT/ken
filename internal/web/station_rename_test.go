@@ -15,7 +15,7 @@ import (
 // to make the route's absence a failure rather than a silence.
 func TestRenamingAStationFromTheConsole(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
-	s, err := st.CreateStation(ctx, spaceForSession, "before", "", actor)
+	s, err := st.CreateStation(ctx, "before", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,21 +42,21 @@ func TestRenamingAStationFromTheConsole(t *testing.T) {
 // thing a rename could plausibly break.
 func TestRenamingAStationLeavesItsMailWorking(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
-	a, err := st.CreateStation(ctx, spaceForSession, "sender", "", actor)
+	a, err := st.CreateStation(ctx, "sender", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, spaceForSession, "old-name", "", actor)
+	b, err := st.CreateStation(ctx, "old-name", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := st.CreateStation(ctx, spaceForSession, "bystander", "", actor)
+	third, err := st.CreateStation(ctx, "bystander", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/rooms", url.Values{"csrf": {csrf}, "name": {"ops"}})
-	rooms, _ := st.ListRooms(ctx, spaceForSession)
+	rooms, _ := st.ListRooms(ctx)
 	roomID := rooms[0].RoomID
 	for _, id := range []string{a.StationID, b.StationID, third.StationID} {
 		csrf = extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
@@ -98,10 +98,10 @@ func TestRenamingAStationLeavesItsMailWorking(t *testing.T) {
 // operator has something to act on.
 func TestRenameCollisionRefusesAndKeepsTheOldName(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
-	if _, err := st.CreateStation(ctx, spaceForSession, "taken", "", actor); err != nil {
+	if _, err := st.CreateStation(ctx, "taken", "", actor); err != nil {
 		t.Fatal(err)
 	}
-	s, err := st.CreateStation(ctx, spaceForSession, "mine", "", actor)
+	s, err := st.CreateStation(ctx, "mine", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestRenameCollisionRefusesAndKeepsTheOldName(t *testing.T) {
 // from the operation. Store-level, because the handler's own blank check would mask the first.
 func TestRenameStationRejectsBlankAndUnknown(t *testing.T) {
 	st, ctx, _, _, actor := stationsHarness(t)
-	s, err := st.CreateStation(ctx, spaceForSession, "keeps-its-name", "", actor)
+	s, err := st.CreateStation(ctx, "keeps-its-name", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

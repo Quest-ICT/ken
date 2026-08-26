@@ -33,7 +33,7 @@ func TestOnePairMessageDoesNotDisableTheRevokedChannelPurge(t *testing.T) {
 		b := stationEndpoint(t, st, "tok-b", "st-beta")
 
 		// A channel that is revoked and aged well past the metadata TTL, referenced by nothing.
-		code, err := st.MintPairingCode(ctx, 1, 1, "")
+		code, err := st.MintPairingCode(ctx, 1, "")
 		if err != nil {
 			t.Fatal(err)
 		}

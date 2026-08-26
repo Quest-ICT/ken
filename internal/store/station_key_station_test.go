@@ -25,7 +25,7 @@ func TestStationKeyStationRefusesEverythingThatCouldNotHaveBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

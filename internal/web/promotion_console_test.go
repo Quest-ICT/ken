@@ -22,7 +22,7 @@ import (
 func TestAPromotionRequestReachesTheConsoleAndCanBeResolved(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestAPromotionRequestReachesTheConsoleAndCanBeResolved(t *testing.T) {
 func TestResolvingAPromotionTwiceIsRefused(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 
-	station, err := st.CreateStation(ctx, spaceForSession, "dev", "", actor)
+	station, err := st.CreateStation(ctx, "dev", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

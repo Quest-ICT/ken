@@ -47,11 +47,11 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	alpha, err := st.CreateStation(ctx, 1, "alpha", "", actor)
+	alpha, err := st.CreateStation(ctx, "alpha", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := st.CreateStation(ctx, 1, "beta", "", actor)
+	beta, err := st.CreateStation(ctx, "beta", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 			t.Fatal(err)
 		}
 		ep, secret, err := cs.RegisterEndpoint(ctx,
-			comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID, SpaceID: prin.SpaceID}, name, "")
+			comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID}, name, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +88,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	// SEPARATE construction site from linked stations (the D4 catch-up path), and a
 	// mutation run proved that site could drop the address while every other test stayed
 	// green. Two paths, two chances to ship an entry nobody can address.
-	gamma, err := st.CreateStation(ctx, 1, "gamma", "", actor)
+	gamma, err := st.CreateStation(ctx, "gamma", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, err := st.CreateStationLinkRequest(ctx, 1, "tok", alpha.StationID, beta.StationID, "because", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", alpha.StationID, beta.StationID, "because", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,11 +108,11 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	// "unknown station" cannot be told apart in a test, and telling them apart is the
 	// entire reason there are two errors: a typo the session fixes in one call versus a
 	// human approval it cannot retry into existence.
-	delta, err := st.CreateStation(ctx, 1, "delta", "", actor)
+	delta, err := st.CreateStation(ctx, "delta", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqBD, err := st.CreateStationLinkRequest(ctx, 1, "tok", beta.StationID, delta.StationID, "because", false)
+	reqBD, err := st.CreateStationLinkRequest(ctx, "tok", beta.StationID, delta.StationID, "because", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	epU, secretU, err := cs.RegisterEndpoint(ctx,
-		comm.Owner{TokenID: prinU.TokenID, ActorID: prinU.ActorID, SpaceID: prinU.SpaceID}, "unbound", "")
+		comm.Owner{TokenID: prinU.TokenID, ActorID: prinU.ActorID}, "unbound", "")
 	if err != nil {
 		t.Fatal(err)
 	}

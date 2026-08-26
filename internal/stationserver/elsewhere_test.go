@@ -54,11 +54,11 @@ func TestBriefingReportsWhatIsWaitingOnOtherStations(t *testing.T) {
 	ctx := context.Background()
 	lim := store.DefaultStationTaskLimits()
 
-	other, err := st.CreateStation(ctx, 1, "other-post", "", 1)
+	other, err := st.CreateStation(ctx, "other-post", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := st.CreateStation(ctx, 1, "third-post", "", 1)
+	third, err := st.CreateStation(ctx, "third-post", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}

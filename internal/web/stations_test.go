@@ -87,7 +87,7 @@ func TestStationsConsoleIsAbsentWhenTheFlagIsOff(t *testing.T) {
 func TestApprovingARequestUsesTheTypedNameNotTheAgentsHint(t *testing.T) {
 	st, ctx, cli, base, _ := stationsHarness(t)
 
-	reqID, err := st.CreateStationRequest(ctx, 1, "tok_abc", "", "agent-picked-name", "run the deploys")
+	reqID, err := st.CreateStationRequest(ctx, "tok_abc", "", "agent-picked-name", "run the deploys")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestApprovingARequestUsesTheTypedNameNotTheAgentsHint(t *testing.T) {
 	postForm(t, cli, base+"/stations/requests/"+reqID+"/approve",
 		url.Values{"csrf": {csrf}, "name": {"prod-ops"}})
 
-	stations, err := st.ListStations(ctx, 1)
+	stations, err := st.ListStations(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestApprovingARequestUsesTheTypedNameNotTheAgentsHint(t *testing.T) {
 	if stations[0].Name != "prod-ops" {
 		t.Fatalf("station named %q — the human typed prod-ops and the agent's hint must carry no weight", stations[0].Name)
 	}
-	pending, err := st.PendingStationRequests(ctx, 1)
+	pending, err := st.PendingStationRequests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestApprovingARequestUsesTheTypedNameNotTheAgentsHint(t *testing.T) {
 // identity — so a forged POST must not be able to bring a station into existence.
 func TestStationWritesRequireCSRF(t *testing.T) {
 	st, ctx, cli, base, _ := stationsHarness(t)
-	reqID, err := st.CreateStationRequest(ctx, 1, "tok_abc", "", "hint", "purpose")
+	reqID, err := st.CreateStationRequest(ctx, "tok_abc", "", "hint", "purpose")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestStationWritesRequireCSRF(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("approve with a bad CSRF token = HTTP %d, want 403", resp.StatusCode)
 	}
-	stations, err := st.ListStations(ctx, 1)
+	stations, err := st.ListStations(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +149,11 @@ func TestStationWritesRequireCSRF(t *testing.T) {
 func TestCrossStationViewShowsWhatIsWaitingOnTheHuman(t *testing.T) {
 	st, ctx, cli, base, actorID := stationsHarness(t)
 
-	a, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	a, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, 1, "promo", "", actorID)
+	b, err := st.CreateStation(ctx, "promo", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,11 +198,11 @@ func TestCrossStationViewShowsWhatIsWaitingOnTheHuman(t *testing.T) {
 // handoff-on-handoff clash is the common case rather than the exotic one.
 func TestTransferCollisionIsReportedWithTheCollidingNames(t *testing.T) {
 	st, ctx, cli, base, actorID := stationsHarness(t)
-	from, err := st.CreateStation(ctx, 1, "old-box", "", actorID)
+	from, err := st.CreateStation(ctx, "old-box", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	to, err := st.CreateStation(ctx, 1, "new-box", "", actorID)
+	to, err := st.CreateStation(ctx, "new-box", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestTransferCollisionIsReportedWithTheCollidingNames(t *testing.T) {
 // did not render it, the operator would be holding a credential nobody can read.
 func TestMintedStationKeyIsShownOnceAndCarriesThePrefix(t *testing.T) {
 	st, ctx, cli, base, actorID := stationsHarness(t)
-	s, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestEndpointRotationIsReachableOnlyByAnAuthenticatedCurator(t *testing.T) {
 	if _, err := st.CreateHumanUser(ctx, "admin", hash); err != nil {
 		t.Fatal(err)
 	}
-	ep, epSecret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok", ActorID: 7, SpaceID: 1}, "dev", "")
+	ep, epSecret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok", ActorID: 7}, "dev", "")
 	if err != nil {
 		t.Fatal(err)
 	}

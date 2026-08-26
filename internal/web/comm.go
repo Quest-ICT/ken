@@ -26,7 +26,7 @@ import (
 // spaceForSession is the space whose COMM objects the console shows.
 //
 // Hardcoded to the single space that exists today, matching DESIGN.md §7's stance:
-// build the seams, defer the machinery. Every query below is already space-scoped,
+// build the seams, defer the machinery. Every query below is already instance-wide,
 // so making this per-user later is a change of one expression rather than a
 // rewrite of the page.
 const spaceForSession = int64(1)
@@ -53,25 +53,25 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	}
 	ctx := r.Context()
 
-	endpoints, err := a.comm.ListEndpoints(ctx, spaceForSession)
+	endpoints, err := a.comm.ListEndpoints(ctx)
 	if err != nil {
 		log.Printf("web: comm endpoints: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	channels, err := a.comm.ListChannelsForSpace(ctx, spaceForSession)
+	channels, err := a.comm.ListChannelsForConsole(ctx)
 	if err != nil {
 		log.Printf("web: comm channels: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	codes, err := a.comm.ListPendingCodes(ctx, spaceForSession)
+	codes, err := a.comm.ListPendingCodes(ctx)
 	if err != nil {
 		log.Printf("web: comm codes: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	stats, err := a.comm.StatsFor(ctx, spaceForSession)
+	stats, err := a.comm.StatsFor(ctx)
 	if err != nil {
 		log.Printf("web: comm stats: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -80,7 +80,7 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	// The value the live-refresh poller compares against: the page reloads when
 	// /comm/count later reports a different number. Rendered here so the marker and
 	// the poll answer come from the same source of truth.
-	fp, err := a.comm.ConsoleFingerprint(ctx, spaceForSession)
+	fp, err := a.comm.ConsoleFingerprint(ctx)
 	if err != nil {
 		log.Printf("web: comm fingerprint: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -213,7 +213,7 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	// turns that into a repair the operator can make.
 	//
 	// THE BLAST RADIUS IS A NAMED LIST, NOT A NUMBER, and it comes from the verb's own
-	// predicate rather than from the rendered rows. `ListEndpoints` above is space-scoped
+	// predicate rather than from the rendered rows. `ListEndpoints` above is instance-wide
 	// while the bulk verbs and the revoke that makes them urgent are NOT, so a population
 	// derived from the page would be SHORTER than what the button moves.
 	//
@@ -301,7 +301,7 @@ func (a *app) handleCommCount(w http.ResponseWriter, r *http.Request, _ *store.S
 		http.NotFound(w, r)
 		return
 	}
-	n, err := a.comm.ConsoleFingerprint(r.Context(), spaceForSession)
+	n, err := a.comm.ConsoleFingerprint(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -330,7 +330,7 @@ func (a *app) handleCommPair(w http.ResponseWriter, r *http.Request, sess *store
 		flashRedirect(w, r, "/comm", "flash.comm_label_too_long", "")
 		return
 	}
-	code, err := a.comm.MintPairingCode(r.Context(), spaceForSession, sess.ActorID, label)
+	code, err := a.comm.MintPairingCode(r.Context(), sess.ActorID, label)
 	if err != nil {
 		flashRedirect(w, r, "/comm", "flash.comm_pair_failed", err.Error())
 		return
@@ -417,7 +417,7 @@ func (a *app) repointTargets(ctx context.Context) []repointTarget {
 		if t.RevokedAt != "" {
 			continue
 		}
-		if _, _, err := a.store.CommTokenOwner(ctx, t.TokenID); err != nil {
+		if _, err := a.store.CommTokenOwner(ctx, t.TokenID); err != nil {
 			continue
 		}
 		out = append(out, repointTarget{TokenID: t.TokenID, Label: t.Label, Actor: t.ActorName})
@@ -649,11 +649,11 @@ func (a *app) repointBinder(w http.ResponseWriter, r *http.Request, sess *store.
 // second resolution here would be a second answer to "who owns this token", and the drift
 // would be silent — the endpoint would simply stop authenticating.
 func (a *app) commTokenOwner(ctx context.Context, tokenID string) (comm.Owner, bool) {
-	actorID, spaceID, err := a.store.CommTokenOwner(ctx, tokenID)
+	actorID, err := a.store.CommTokenOwner(ctx, tokenID)
 	if err != nil {
 		return comm.Owner{}, false
 	}
-	return comm.Owner{TokenID: tokenID, ActorID: actorID, SpaceID: spaceID}, true
+	return comm.Owner{TokenID: tokenID, ActorID: actorID}, true
 }
 
 // handleCommRevokeEndpoint revokes one session's endpoint, denying it further use.

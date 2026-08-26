@@ -20,7 +20,7 @@ func newStore(t *testing.T, l Limits) *Store {
 	return st
 }
 
-func owner(token string) Owner { return Owner{TokenID: token, ActorID: 7, SpaceID: 1} }
+func owner(token string) Owner { return Owner{TokenID: token, ActorID: 7} }
 
 // pair registers two endpoints and joins them through one human-minted code,
 // returning both endpoints and the open channel id.
@@ -35,7 +35,7 @@ func pair(t *testing.T, st *Store) (*Endpoint, *Endpoint, string) {
 	if err != nil {
 		t.Fatalf("register b: %v", err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "dev<->test")
+	code, err := st.MintPairingCode(ctx, 42, "dev<->test")
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestPairingCodeIsSingleUseByTwoEndpoints(t *testing.T) {
 
 	// Re-joining from a member is idempotent, so a retried call after a lost
 	// response cannot wedge the pairing.
-	code, err := st.MintPairingCode(ctx, 1, 42, "second")
+	code, err := st.MintPairingCode(ctx, 42, "second")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestUnknownOrExpiredCodeIsIndistinguishable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st2.MintPairingCode(ctx, 1, 42, "")
+	code, err := st2.MintPairingCode(ctx, 42, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,45 +631,28 @@ func TestSweepPurgesSettledMetadata(t *testing.T) {
 	}
 }
 
-// Ownership is scoped by space from day 1, even though only one space exists —
-// scoping it later would be a behavioural break.
-func TestListEndpointsIsScopedBySpace(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-
-	if _, _, err := st.RegisterEndpoint(ctx, Owner{TokenID: "t1", ActorID: 1, SpaceID: 1}, "mine", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.RegisterEndpoint(ctx, Owner{TokenID: "t2", ActorID: 2, SpaceID: 2}, "theirs", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := st.ListEndpoints(ctx, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Label != "mine" {
-		t.Fatalf("space scoping leaked: %+v", got)
-	}
-}
-
-// A pairing code may not join endpoints from another space.
-func TestPairingCodeIsSpaceScoped(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-
-	other, _, err := st.RegisterEndpoint(ctx, Owner{TokenID: "t", ActorID: 9, SpaceID: 2}, "other-space", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "space-1 code")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, other, code); !errors.Is(err, ErrDenied) {
-		t.Fatalf("cross-space join: want ErrDenied, got %v", err)
-	}
-}
+// *** TWO SPACE-SCOPING TESTS WERE DELETED HERE, DELIBERATELY, WITH `space_id` ITSELF. ***
+//
+// `TestListEndpointsIsScopedBySpace` and `TestPairingCodeIsSpaceScoped`. IDENTITY.md §9.1
+// required this: "Whoever removes it deletes that test in the same commit, deliberately and
+// reviewably, and says why." This is the why.
+//
+// THEY WERE REAL CHECKS, NOT DEAD ONES — that is the whole reason the rule exists. A refuter
+// deleted the three-line predicate in JoinChannel and CI went red in seconds. But the state
+// they asserted was unreachable: only this instance has ever existed, `0001_init.sql` inserts it
+// and nothing anywhere creates a second, so both tests had to FABRICATE a second space by
+// hand to have anything to test. A control exercised solely by a fixture that manufactures
+// its own precondition is a control over a hypothetical.
+//
+// Removing the predicate and leaving the tests would have left them failing; removing the
+// tests first and the predicate later would have left a live control nothing exercises,
+// which is the exact condition this project keeps paying for. Both halves left together.
+//
+// §9.1 named ONE test. There were FOUR — the other two were `TestStatsStillScopeToOneSpace`
+// (deleted, same reasoning) and `TestStationNameUniquePerSpace` (KEPT and renamed: station
+// names really are unique, and CreateStationAutoNamed's collision retry depends on
+// ErrStationNameTaken; only its "another space may reuse it" clause was a space claim).
+// A plan that names one instance is a sample, not an inventory.
 
 // The hearsay guard keys on DELIVERY, not arrival: a message sitting un-polled in
 // the queue has influenced nothing, so it must not mark an authored version.
@@ -755,19 +738,19 @@ func TestReceivedSinceWindowAndUnknownActors(t *testing.T) {
 // The console fingerprint backs the /comm page's live auto-refresh: the page
 // reloads when it diverges. So it must be 0 for an empty space, STABLE across
 // repeat reads (or the page would reload in a loop), MOVE on every console-visible
-// change, and stay isolated per space.
+// change, and stay isolated per instance.
 func TestConsoleFingerprint(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 
-	base, err := st.ConsoleFingerprint(ctx, 1)
+	base, err := st.ConsoleFingerprint(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if base != 0 {
 		t.Fatalf("empty space fingerprint = %d, want 0", base)
 	}
-	if again, _ := st.ConsoleFingerprint(ctx, 1); again != base {
+	if again, _ := st.ConsoleFingerprint(ctx); again != base {
 		t.Fatalf("fingerprint not stable across reads: %d != %d (would loop-reload)", again, base)
 	}
 
@@ -775,22 +758,22 @@ func TestConsoleFingerprint(t *testing.T) {
 	if _, _, err := st.RegisterEndpoint(ctx, owner("tok-x"), "solo", ""); err != nil {
 		t.Fatal(err)
 	}
-	afterReg, _ := st.ConsoleFingerprint(ctx, 1)
+	afterReg, _ := st.ConsoleFingerprint(ctx)
 	if afterReg == base {
 		t.Fatal("registering an endpoint did not move the fingerprint")
 	}
 
 	// A full pairing (two more endpoints + an open channel) moves it again.
 	pair(t, st)
-	afterPair, _ := st.ConsoleFingerprint(ctx, 1)
+	afterPair, _ := st.ConsoleFingerprint(ctx)
 	if afterPair == afterReg {
 		t.Fatal("pairing did not move the fingerprint")
 	}
 
-	// Another space is untouched — the fingerprint is space-scoped, like the console.
-	if other, _ := st.ConsoleFingerprint(ctx, 2); other != 0 {
-		t.Fatalf("space 2 fingerprint = %d, want 0 (space isolation)", other)
-	}
+	// The space-isolation clause that stood here went with space_id (§9.1). It asserted a
+	// SECOND space's fingerprint was 0 — a fixture-manufactured state no deployment reached.
+	// What the test is actually for, that console-visible changes move the number, is above
+	// and untouched.
 }
 
 // Rotation is the incident-response primitive COMM was missing: until it existed,
@@ -814,7 +797,7 @@ func TestRotatingASecretKeepsTheEndpointAndItsChannels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "dev<->prod")
+	code, err := st.MintPairingCode(ctx, 42, "dev<->prod")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -926,7 +909,7 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 		t.Fatal(err)
 	}
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 1, 42, "dev<->peer")
+	code, err := st.MintPairingCode(ctx, 42, "dev<->peer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -989,7 +972,7 @@ func TestTwoReadersOfOneStationDoNotBothGetTheSameMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	code, err := st.MintPairingCode(ctx, 42, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1113,7 +1096,7 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 		t.Fatal(err)
 	}
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	code, err := st.MintPairingCode(ctx, 42, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1178,7 +1161,7 @@ func TestRevokingAnEndpointReleasesItsClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	code, err := st.MintPairingCode(ctx, 42, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1379,7 +1362,7 @@ func TestNumberingIsIndependentOfWhoIsSending(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	code, err := st.MintPairingCode(ctx, 42, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1451,7 +1434,7 @@ func TestAnAlreadyRunningEndpointCanAdoptAStationAndKeepItsChannels(t *testing.T
 		t.Fatal(err)
 	}
 	// It has been talking to a peer for a while, over an ordinary pairing code.
-	code, err := st.MintPairingCode(ctx, 1, 42, "old channel")
+	code, err := st.MintPairingCode(ctx, 42, "old channel")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1533,7 +1516,7 @@ func TestUnbindReturnsAnEndpointToStandingAloneWithoutLosingAnything(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "x")
+	code, err := st.MintPairingCode(ctx, 42, "x")
 	if err != nil {
 		t.Fatal(err)
 	}

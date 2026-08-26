@@ -16,7 +16,6 @@ type AdminChannel struct {
 	// identifier a human recognizes — the opaque ChannelID is for machines.
 	Label        string
 	State        string
-	SpaceID      int64
 	OwnerActorID int64
 	EndpointA    string // endpoint_id of the first party
 	LabelA       string
@@ -34,14 +33,14 @@ type AdminChannel struct {
 	OpenedAt  string
 }
 
-// ListChannelsForSpace returns every channel owned by one space, newest first.
+// ListChannels returns every channel owned by this instance, newest first.
 //
 // Scoped by space even though only one exists today, for the same reason
 // ListEndpoints is: an unscoped listing becomes the enumeration surface the moment
 // a second human exists, and narrowing it later would be a behavioural break.
-func (s *Store) ListChannelsForSpace(ctx context.Context, spaceID int64) ([]AdminChannel, error) {
+func (s *Store) ListChannelsForConsole(ctx context.Context) ([]AdminChannel, error) {
 	rows, err := s.R.QueryContext(ctx, `
-SELECT c.channel_id, COALESCE(c.label,''), c.state, c.space_id, c.owner_actor_id,
+SELECT c.channel_id, COALESCE(c.label,''), c.state, c.owner_actor_id,
        ea.endpoint_id, COALESCE(ea.label,''),
        COALESCE(eb.endpoint_id,''), COALESCE(eb.label,''),
        COALESCE(c.station_a, ea.station_id, ''), COALESCE(c.station_b, eb.station_id, ''),
@@ -52,8 +51,7 @@ SELECT c.channel_id, COALESCE(c.label,''), c.state, c.space_id, c.owner_actor_id
 FROM channel c
 JOIN endpoint ea ON ea.id = c.endpoint_a
 LEFT JOIN endpoint eb ON eb.id = c.endpoint_b
-WHERE c.space_id = ?
-ORDER BY c.created_at DESC`, spaceID)
+ORDER BY c.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +59,7 @@ ORDER BY c.created_at DESC`, spaceID)
 	var out []AdminChannel
 	for rows.Next() {
 		var c AdminChannel
-		if err := rows.Scan(&c.ChannelID, &c.Label, &c.State, &c.SpaceID, &c.OwnerActorID,
+		if err := rows.Scan(&c.ChannelID, &c.Label, &c.State, &c.OwnerActorID,
 			&c.EndpointA, &c.LabelA, &c.EndpointB, &c.LabelB,
 			&c.StationA, &c.StationB,
 			&c.Unacked, &c.CreatedAt, &c.OpenedAt); err != nil {
@@ -84,16 +82,15 @@ type PendingCode struct {
 
 // ListPendingCodes returns codes that are minted, unexpired, and not yet fully
 // consumed.
-func (s *Store) ListPendingCodes(ctx context.Context, spaceID int64) ([]PendingCode, error) {
+func (s *Store) ListPendingCodes(ctx context.Context) ([]PendingCode, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT COALESCE(p.label,''),
        CASE WHEN p.channel_id IS NULL THEN 0 ELSE 1 END,
        p.expires_at, p.created_at
 FROM pairing_code p
-WHERE p.space_id = ?
-  AND p.consumed_at IS NULL
+ WHERE p.consumed_at IS NULL
   AND p.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-ORDER BY p.created_at DESC`, spaceID)
+ORDER BY p.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +130,7 @@ type Stats struct {
 	FileBytes         int64 // relay bytes currently held on disk
 }
 
-// StatsFor reports counters for one space.
+// StatsFor reports counters for this instance.
 //
 // MESSAGE COUNTERS SCOPE BY THE SENDER'S ENDPOINT, NOT BY A CHANNEL. They used to say
 // `FROM message m JOIN channel c ON c.id=m.channel_id`, and a room or broadcast message has
@@ -172,7 +169,7 @@ type Stats struct {
 // ATTACHMENT COUNTERS KEEP THE CHANNEL JOIN, deliberately. A file offer still binds a
 // channel rowid, so there are no room-scoped attachment rows to miss. They become the same
 // bug the moment file exchange learns about scopes, and not before.
-func (s *Store) StatsFor(ctx context.Context, spaceID int64) (Stats, error) {
+func (s *Store) StatsFor(ctx context.Context) (Stats, error) {
 	var st Stats
 	// THE TWO FILE COUNTERS ARE SCOPED THROUGH THE SENDER, NOT THROUGH THE CHANNEL.
 	// They INNER JOINed the channel table, so an attachment belonging to a room or a pair —
@@ -182,22 +179,21 @@ func (s *Store) StatsFor(ctx context.Context, spaceID int64) (Stats, error) {
 	// all four scope kinds and matches how the message counters above resolve the same thing.
 	err := s.R.QueryRowContext(ctx, `
 SELECT
-  (SELECT COUNT(*) FROM endpoint WHERE space_id=? AND revoked_at IS NULL),
-  (SELECT COUNT(*) FROM channel  WHERE space_id=? AND state='open'),
+  (SELECT COUNT(*) FROM endpoint WHERE revoked_at IS NULL),
+  (SELECT COUNT(*) FROM channel  WHERE state='open'),
   (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
-     WHERE e.space_id=? AND EXISTS (SELECT 1 FROM delivery d
+     WHERE EXISTS (SELECT 1 FROM delivery d
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
   (SELECT COUNT(*) FROM delivery d
      JOIN message m ON m.id = d.message_row
      JOIN endpoint e ON e.id = m.sender_endpoint
-     WHERE e.space_id=? AND d.state IN ('queued','delivered')),
+     WHERE d.state IN ('queued','delivered')),
   (SELECT COALESCE(SUM(m.body_bytes),0) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
-     WHERE e.space_id=? AND m.body IS NOT NULL),
+     WHERE m.body IS NOT NULL),
   (SELECT COUNT(*) FROM attachment a JOIN endpoint e ON e.id=a.sender_endpoint
-     WHERE e.space_id=? AND a.state IN ('offered','ready')),
+     WHERE a.state IN ('offered','ready')),
   (SELECT COALESCE(SUM(a.stored_bytes),0) FROM attachment a JOIN endpoint e ON e.id=a.sender_endpoint
-     WHERE e.space_id=? AND a.state IN ('offered','ready'))`,
-		spaceID, spaceID, spaceID, spaceID, spaceID, spaceID, spaceID).
+     WHERE a.state IN ('offered','ready'))`).
 		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.DeliveriesUnacked,
 			&st.BodyBytes, &st.Files, &st.FileBytes)
 	return st, err
@@ -218,18 +214,17 @@ SELECT
 // joined `channel` before, so room and broadcast traffic moved this number not at all — the
 // page's live auto-refresh never fired for a room, and an operator watching /comm during
 // active room traffic saw a static screen.
-func (s *Store) ConsoleFingerprint(ctx context.Context, spaceID int64) (int64, error) {
+func (s *Store) ConsoleFingerprint(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.R.QueryRowContext(ctx, `
 SELECT
-  (SELECT COUNT(*) FROM endpoint WHERE space_id=? AND revoked_at IS NULL) * 2
-+ (SELECT COUNT(*) FROM channel  WHERE space_id=?) * 3
-+ (SELECT COUNT(*) FROM channel  WHERE space_id=? AND state='open') * 5
-+ (SELECT COUNT(*) FROM pairing_code WHERE space_id=? AND consumed_at IS NULL
+  (SELECT COUNT(*) FROM endpoint WHERE revoked_at IS NULL) * 2
++ (SELECT COUNT(*) FROM channel) * 3
++ (SELECT COUNT(*) FROM channel  WHERE state='open') * 5
++ (SELECT COUNT(*) FROM pairing_code WHERE consumed_at IS NULL
      AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')) * 7
 + (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
-     WHERE e.space_id=? AND EXISTS (SELECT 1 FROM delivery d
-            WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))) * 11`,
-		spaceID, spaceID, spaceID, spaceID, spaceID).Scan(&n)
+     WHERE EXISTS (SELECT 1 FROM delivery d
+            WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))) * 11`).Scan(&n)
 	return n, err
 }

@@ -9,11 +9,11 @@ import (
 // counts something else — a completeness claim that is wrong, which is worse than no claim.
 func TestCrossStationCountMatchesTheListItCaps(t *testing.T) {
 	st, ctx, actor := stationFixture(t)
-	a, err := st.CreateStation(ctx, 1, "alpha", "", actor)
+	a, err := st.CreateStation(ctx, "alpha", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := st.CreateStation(ctx, 1, "beta", "", actor)
+	b, err := st.CreateStation(ctx, "beta", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestCrossStationCountMatchesTheListItCaps(t *testing.T) {
 		filter string
 		want   int
 	}{{"human", 2}, {"self", 1}, {"peer", 1}, {"", 4}} {
-		list, err := st.CrossStationHumanTasks(ctx, 1, f.filter, 1000)
+		list, err := st.CrossStationHumanTasks(ctx, f.filter, 1000)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,11 +50,11 @@ func TestCrossStationCountMatchesTheListItCaps(t *testing.T) {
 	// AND THE COUNT MUST EXCEED THE LIST WHEN THE CAP BITES — that is the case the
 	// "showing X of Y" line exists for, and a count that silently obeyed the same limit
 	// would report X of X and say nothing at all.
-	capped, err := st.CrossStationHumanTasks(ctx, 1, "", 2)
+	capped, err := st.CrossStationHumanTasks(ctx, "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	total, err := st.CountCrossStationTasks(ctx, 1, "")
+	total, err := st.CountCrossStationTasks(ctx, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestCrossStationCountMatchesTheListItCaps(t *testing.T) {
 
 func CountOrFail(t *testing.T, st *Store, ctx context.Context, filter string) (int, error) {
 	t.Helper()
-	return st.CountCrossStationTasks(ctx, 1, filter)
+	return st.CountCrossStationTasks(ctx, filter)
 }
 
 // HumanBlockedElsewhere EXCLUDES THE CALLER'S OWN STATION. If it did not, every session
@@ -73,15 +73,15 @@ func CountOrFail(t *testing.T, st *Store, ctx context.Context, filter string) (i
 // the briefing already reports the local count separately, right beside it.
 func TestHumanBlockedElsewhereExcludesTheCaller(t *testing.T) {
 	st, ctx, actor := stationFixture(t)
-	mine, err := st.CreateStation(ctx, 1, "mine", "", actor)
+	mine, err := st.CreateStation(ctx, "mine", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := st.CreateStation(ctx, 1, "other", "", actor)
+	other, err := st.CreateStation(ctx, "other", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := st.CreateStation(ctx, 1, "third", "", actor)
+	third, err := st.CreateStation(ctx, "third", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestHumanBlockedElsewhereExcludesTheCaller(t *testing.T) {
 	add(third.StationID, "third B", "human")
 	add(third.StationID, "third self", "self") // must not be counted: not blocked on the human
 
-	tasks, stations, err := st.HumanBlockedElsewhere(ctx, 1, mine.StationID)
+	tasks, stations, err := st.HumanBlockedElsewhere(ctx, mine.StationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestHumanBlockedElsewhereExcludesTheCaller(t *testing.T) {
 
 	// CONTROL: from a station with nothing of its own, the answer still counts the others.
 	// Without this the test passes on a query that returns a constant.
-	tasks, stations, err = st.HumanBlockedElsewhere(ctx, 1, other.StationID)
+	tasks, stations, err = st.HumanBlockedElsewhere(ctx, other.StationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,11 +127,11 @@ func TestHumanBlockedElsewhereExcludesTheCaller(t *testing.T) {
 // a read path is invisible until someone notices a task stopped being raised.
 func TestHumanBlockedElsewhereStampsNothing(t *testing.T) {
 	st, ctx, actor := stationFixture(t)
-	mine, err := st.CreateStation(ctx, 1, "mine", "", actor)
+	mine, err := st.CreateStation(ctx, "mine", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := st.CreateStation(ctx, 1, "other", "", actor)
+	other, err := st.CreateStation(ctx, "other", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestHumanBlockedElsewhereStampsNothing(t *testing.T) {
 	beforeAt, beforeN := snapshot()
 
 	for i := 0; i < 3; i++ {
-		if _, _, err := st.HumanBlockedElsewhere(ctx, 1, mine.StationID); err != nil {
+		if _, _, err := st.HumanBlockedElsewhere(ctx, mine.StationID); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -406,14 +406,14 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 	// resolve it in one click, which no counter can.
 	sc := 0
 	if sess != nil && a.stationsEnabled {
-		if n, err := a.store.CountCrossStationTasks(r.Context(), spaceForSession, "human"); err == nil {
+		if n, err := a.store.CountCrossStationTasks(r.Context(), "human"); err == nil {
 			sc = n
 		}
 		// PENDING NOTEBOOK PROMOTIONS BELONG IN THE SAME BADGE. A session promotes a page and
 		// nothing in the chrome moved: `CountPendingPromotions` calls itself "the console's
 		// badge source" in its own doc and there was no badge. Both are things waiting on the
 		// human on /stations, and two adjacent numbers would ask them to add up two badges.
-		if n, err := a.store.CountPendingPromotions(r.Context(), spaceForSession); err == nil {
+		if n, err := a.store.CountPendingPromotions(r.Context()); err == nil {
 			sc += n
 		}
 	}

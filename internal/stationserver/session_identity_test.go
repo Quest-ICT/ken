@@ -40,11 +40,11 @@ func TestStationToolActsOnTheCallersStationNotTheOpeners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	alpha, err := st.CreateStation(ctx, 1, "alpha", "", actor)
+	alpha, err := st.CreateStation(ctx, "alpha", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := st.CreateStation(ctx, 1, "beta", "", actor)
+	beta, err := st.CreateStation(ctx, "beta", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

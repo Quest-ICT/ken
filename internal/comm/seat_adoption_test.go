@@ -34,7 +34,7 @@ func TestBindingAdoptsAChannelSeatJoinedWhileUnbound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 1, "test")
+	code, err := st.MintPairingCode(ctx, 1, "test")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ import (
 func taskFixture(t *testing.T) (*Store, context.Context, StationTaskLimits, string, int64) {
 	t.Helper()
 	st, ctx, actorID := stationFixture(t)
-	s, err := st.CreateStation(ctx, 1, "prod-ops", "", actorID)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestDeferralIsSurfacingNotMembership(t *testing.T) {
 // old items on the one surface built to stop that would defeat the feature (§11.8).
 func TestCrossStationViewOrdersByTheContract(t *testing.T) {
 	st, ctx, lim, sid, actorID := taskFixture(t)
-	other, _ := st.CreateStation(ctx, 1, "promo", "", actorID)
+	other, _ := st.CreateStation(ctx, "promo", "", actorID)
 
 	oldOne := add(t, st, ctx, lim, sid, "old owner decision", "human", actorID)
 	add(t, st, ctx, lim, other.StationID, "new owner decision", "human", actorID)
@@ -209,7 +209,7 @@ func TestCrossStationViewOrdersByTheContract(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := st.CrossStationHumanTasks(ctx, 1, "human", 0)
+	rows, err := st.CrossStationHumanTasks(ctx, "human", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

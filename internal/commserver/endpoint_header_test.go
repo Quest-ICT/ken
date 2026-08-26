@@ -118,7 +118,7 @@ func TestEndpointCredHeaderWorksEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	ep, secret, err := cs.RegisterEndpoint(ctx,
-		comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID, SpaceID: prin.SpaceID}, "hdr", "")
+		comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID}, "hdr", "")
 	if err != nil {
 		t.Fatal(err)
 	}

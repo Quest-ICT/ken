@@ -139,7 +139,7 @@ func TestASuccessorEndpointSeesTheCountOnTheChannelItInherited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "ops<->peer")
+	code, err := st.MintPairingCode(ctx, 42, "ops<->peer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestThePendingCountDoesNotLeakChannelsTheStationIsNotOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "mine<->peer")
+	code, err := st.MintPairingCode(ctx, 42, "mine<->peer")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestThePendingCountDoesNotLeakChannelsTheStationIsNotOn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code2, err := st.MintPairingCode(ctx, 1, 42, "x<->y")
+	code2, err := st.MintPairingCode(ctx, 42, "x<->y")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestPendingTotalSpansChannelRoomAndBroadcast(t *testing.T) {
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
 	// One channel message...
-	code, err := st.MintPairingCode(ctx, 1, 42, "a<->b")
+	code, err := st.MintPairingCode(ctx, 42, "a<->b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestWaitingForYouSeesRoomMailOnAChannelSend(t *testing.T) {
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
 	// A channel for alpha to send on, and room mail waiting for alpha meanwhile.
-	code, err := st.MintPairingCode(ctx, 1, 42, "a<->b")
+	code, err := st.MintPairingCode(ctx, 42, "a<->b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -828,7 +828,7 @@ func TestAPairingCodeChannelRecordsItsAuthorisingStations(t *testing.T) {
 	a := stationEndpoint(t, st, "tok-a", "st-alpha")
 	b := stationEndpoint(t, st, "tok-b", "st-beta")
 
-	code, err := st.MintPairingCode(ctx, 1, 42, "alpha<->beta")
+	code, err := st.MintPairingCode(ctx, 42, "alpha<->beta")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -861,7 +861,7 @@ func TestAnUnboundJoinerRecordsNoAuthorisingStation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := st.MintPairingCode(ctx, 1, 42, "alpha<->somebody")
+	code, err := st.MintPairingCode(ctx, 42, "alpha<->somebody")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -899,7 +899,7 @@ func TestStatsCountRoomAndBroadcastMail(t *testing.T) {
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
 	// CONTROL: nothing yet, so a non-zero below is this traffic and not a pre-existing row.
-	base, err := st.StatsFor(ctx, 1)
+	base, err := st.StatsFor(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -914,7 +914,7 @@ func TestStatsCountRoomAndBroadcastMail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := st.StatsFor(ctx, 1)
+	got, err := st.StatsFor(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -938,69 +938,20 @@ func TestConsoleFingerprintMovesOnRoomTraffic(t *testing.T) {
 	beta := stationEndpoint(t, st, "tok-b", "st-beta")
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
-	before, err := st.ConsoleFingerprint(ctx, 1)
+	before, err := st.ConsoleFingerprint(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.SendToRoom(ctx, beta, "ops", "does the page notice", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := st.ConsoleFingerprint(ctx, 1)
+	after, err := st.ConsoleFingerprint(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if after == before {
 		t.Fatalf("the fingerprint is unchanged at %d after a room message — the page never reloads "+
 			"for room traffic, so the operator's live view is stale exactly while something is happening", after)
-	}
-}
-
-// SPACE SCOPING SURVIVES THE REWRITE. Counting by the sender's endpoint instead of by the
-// channel must not turn a per-space counter into a global one — that would be a worse
-// defect than the one being fixed, because the number would look plausible and be wrong
-// for every multi-space deployment.
-func TestStatsStillScopeToOneSpace(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	// An endpoint in ANOTHER space, sending on its own channel.
-	other, _, err := st.RegisterEndpoint(ctx, Owner{TokenID: "tok-x", ActorID: 9, SpaceID: 2}, "elsewhere", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, _, err := st.RegisterEndpoint(ctx, Owner{TokenID: "tok-y", ActorID: 9, SpaceID: 2}, "elsewhere-peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := st.MintPairingCode(ctx, 2, 42, "space 2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, other, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Send(ctx, other, ch.ChannelID, "not space 1's business", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-
-	// CONTROL: space 2 sees it, so the zero below is scoping rather than an empty database.
-	two, err := st.StatsFor(ctx, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if two.Unacked != 1 {
-		t.Fatalf("space 2 reports %d unacked for its own message, want 1", two.Unacked)
-	}
-	one, err := st.StatsFor(ctx, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if one.Unacked != 0 {
-		t.Fatalf("space 1 reports %d unacked for a message sent entirely within space 2 — "+
-			"the rewrite dropped the space filter and every counter is now global", one.Unacked)
 	}
 }
 
@@ -1024,7 +975,7 @@ func TestUnackedCountsMessagesWhileDeliveriesCountsRecipients(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := st.StatsFor(ctx, 1)
+	got, err := st.StatsFor(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1055,7 +1006,7 @@ func TestUnackedCountsMessagesWhileDeliveriesCountsRecipients(t *testing.T) {
 	if n, err := st.Ack(ctx, beta, mid); err != nil || n != 1 {
 		t.Fatalf("setup ack: (%d, %v)", n, err)
 	}
-	after, err := st.StatsFor(ctx, 1)
+	after, err := st.StatsFor(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1095,7 +1046,7 @@ func TestBodyBytesCountsBytesNotCharacters(t *testing.T) {
 		t.Fatal("the fixture is pure ASCII, so characters and bytes agree and this test cannot fail")
 	}
 
-	got, err := st.StatsFor(ctx, 1)
+	got, err := st.StatsFor(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1124,7 +1075,7 @@ func TestBlankedBodiesAreNotCountedAsRetainedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := st.StatsFor(ctx, 1)
+	before, err := st.StatsFor(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1139,7 +1090,7 @@ func TestBlankedBodiesAreNotCountedAsRetainedBytes(t *testing.T) {
 		t.Fatalf("setup ack: (%d, %v)", n, err)
 	}
 
-	after, err := st.StatsFor(ctx, 1)
+	after, err := st.StatsFor(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1239,7 +1190,7 @@ func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
 	beta := stationEndpoint(t, st, "tok-b", "st-beta")
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
-	code, err := st.MintPairingCode(ctx, 1, 42, "a<->b")
+	code, err := st.MintPairingCode(ctx, 42, "a<->b")
 	if err != nil {
 		t.Fatal(err)
 	}

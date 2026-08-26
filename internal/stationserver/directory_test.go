@@ -36,7 +36,7 @@ func dirSession(t *testing.T, staffing func(context.Context) (map[string]Station
 	}
 	mk := func(name string, published bool) *store.Station {
 		t.Helper()
-		s, err := st.CreateStation(ctx, 1, name, "", actorID)
+		s, err := st.CreateStation(ctx, name, "", actorID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +55,7 @@ func dirSession(t *testing.T, staffing func(context.Context) (map[string]Station
 	ids["mine"], ids["published-stranger"] = mine.StationID, pub.StationID
 	ids["linked-peer"], ids["unpublished-stranger"] = peer.StationID, hidden.StationID
 
-	reqID, err := st.CreateStationLinkRequest(ctx, 1, "tok", mine.StationID, peer.StationID, "r", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", mine.StationID, peer.StationID, "r", false)
 	if err != nil {
 		t.Fatal(err)
 	}

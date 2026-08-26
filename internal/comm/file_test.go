@@ -403,7 +403,7 @@ func TestAReplacementSessionCanDownloadItsStationsAttachment(t *testing.T) {
 
 	sender := stationEndpoint(t, st, "tok-send", "st-sender")
 	first := stationEndpoint(t, st, "tok-1", "st-recv")
-	code, err := st.MintPairingCode(ctx, 1, 42, "sender<->recv")
+	code, err := st.MintPairingCode(ctx, 42, "sender<->recv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
 
 	sender := stationEndpoint(t, st, "tok-send", "st-sender")
 	recv := stationEndpoint(t, st, "tok-r", "st-recv")
-	code, err := st.MintPairingCode(ctx, 1, 42, "sender<->recv")
+	code, err := st.MintPairingCode(ctx, 42, "sender<->recv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +514,7 @@ func TestARevokedPredecessorDoesNotStrandItsStationsFiles(t *testing.T) {
 
 	sender := stationEndpoint(t, st, "tok-send", "st-sender")
 	first := stationEndpoint(t, st, "tok-1", "st-recv")
-	code, err := st.MintPairingCode(ctx, 1, 42, "sender<->recv")
+	code, err := st.MintPairingCode(ctx, 42, "sender<->recv")
 	if err != nil {
 		t.Fatal(err)
 	}

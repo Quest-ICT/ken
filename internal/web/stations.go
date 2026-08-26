@@ -47,19 +47,19 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	}
 	ctx := r.Context()
 
-	stations, err := a.store.ListStations(ctx, spaceForSession)
+	stations, err := a.store.ListStations(ctx)
 	if err != nil {
 		log.Printf("web: stations list: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	requests, err := a.store.PendingStationRequests(ctx, spaceForSession)
+	requests, err := a.store.PendingStationRequests(ctx)
 	if err != nil {
 		log.Printf("web: station requests: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	links, err := a.store.ListStationLinks(ctx, spaceForSession)
+	links, err := a.store.ListStationLinks(ctx)
 	if err != nil {
 		log.Printf("web: station links: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -70,7 +70,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	// NOTHING read them — no store function, no route, no template — so every request
 	// a session filed went into a drawer nobody could open, while the tool told the
 	// session it had asked.
-	promotions, err := a.store.ListPendingPromotions(ctx, spaceForSession)
+	promotions, err := a.store.ListPendingPromotions(ctx)
 	if err != nil {
 		log.Printf("web: pending promotions: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -86,7 +86,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	if blockedOn == "any" {
 		blockedOn = ""
 	}
-	tasks, err := a.store.CrossStationHumanTasks(ctx, spaceForSession, blockedOn, stationsPageSize)
+	tasks, err := a.store.CrossStationHumanTasks(ctx, blockedOn, stationsPageSize)
 	if err != nil {
 		log.Printf("web: cross-station tasks: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -96,7 +96,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	// with no total, which makes a truncated pile look exactly like a complete one — on
 	// the one page built so the human can see the whole pile. The vault trail on this same
 	// page already states "the last 20 of 2,318" for precisely this reason.
-	taskTotal, err := a.store.CountCrossStationTasks(ctx, spaceForSession, blockedOn)
+	taskTotal, err := a.store.CountCrossStationTasks(ctx, blockedOn)
 	if err != nil {
 		log.Printf("web: cross-station task count: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -216,7 +216,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	}
 
 	// Rooms and their members, for the section that is the ONLY way one comes to exist.
-	rooms, err := a.store.ListRooms(ctx, spaceForSession)
+	rooms, err := a.store.ListRooms(ctx)
 	if err != nil {
 		log.Printf("web: list rooms: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -692,11 +692,11 @@ func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess
 // Stations and rooms are operator-created, so this is the COMPLETE set of session-driven
 // arrivals here. A third one belongs in this sum and nowhere else.
 func (a *app) stationsLiveCount(ctx context.Context) (int, error) {
-	reqs, err := a.store.PendingStationRequests(ctx, spaceForSession)
+	reqs, err := a.store.PendingStationRequests(ctx)
 	if err != nil {
 		return 0, err
 	}
-	promos, err := a.store.CountPendingPromotions(ctx, spaceForSession)
+	promos, err := a.store.CountPendingPromotions(ctx)
 	if err != nil {
 		return 0, err
 	}

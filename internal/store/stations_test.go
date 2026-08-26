@@ -23,7 +23,7 @@ func stationFixture(t *testing.T) (*Store, context.Context, int64) {
 // retired/revoked keys are refused INDISTINGUISHABLY from unknown ones (S5, S6, §5).
 func TestStationKeyAuthAndRevocation(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "production operations", actorID)
+	station, err := st.CreateStation(ctx, "prod-ops", "production operations", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,19 +125,21 @@ func TestStationKeyRequiresStationScope(t *testing.T) {
 	}
 }
 
-// Names are unique per space and display-only. A collision is refused with a named
-// error so the console can offer a rename rather than failing opaquely.
-func TestStationNameUniquePerSpace(t *testing.T) {
+// Names are unique and display-only. A collision is refused with a NAMED error, which is
+// load-bearing rather than cosmetic: CreateStationAutoNamed retries on ErrStationNameTaken
+// to decorate an auto-chosen name, so a session onboarding into a folder whose name is
+// already taken still gets a workspace instead of an error.
+//
+// RENAMED from TestStationNameUniquePerSpace when space_id was removed (§9.1). The
+// uniqueness is real and survives; only the "per instance" half was a claim about a second
+// space that never existed. Its cross-space clause went with the column.
+func TestStationNameIsUniqueAndCollisionIsNamed(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	if _, err := st.CreateStation(ctx, 1, "promo", "", actorID); err != nil {
+	if _, err := st.CreateStation(ctx, "promo", "", actorID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateStation(ctx, 1, "promo", "", actorID); !errors.Is(err, ErrStationNameTaken) {
+	if _, err := st.CreateStation(ctx, "promo", "", actorID); !errors.Is(err, ErrStationNameTaken) {
 		t.Fatalf("duplicate name should be ErrStationNameTaken, got %v", err)
-	}
-	// Another space may reuse it — names are scoped, ids are global.
-	if _, err := st.CreateStation(ctx, 2, "promo", "", actorID); err != nil {
-		t.Fatalf("a different space should be able to reuse a name: %v", err)
 	}
 }
 
@@ -145,16 +147,16 @@ func TestStationNameUniquePerSpace(t *testing.T) {
 // revoked, so unarchiving restores them (S3, §10).
 func TestArchiveIsReversibleAndLinksGoDormant(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	a, _ := st.CreateStation(ctx, 1, "alpha", "", actorID)
-	b, _ := st.CreateStation(ctx, 1, "beta", "", actorID)
+	a, _ := st.CreateStation(ctx, "alpha", "", actorID)
+	b, _ := st.CreateStation(ctx, "beta", "", actorID)
 
 	lo, hi := a.StationID, b.StationID
 	if lo > hi {
 		lo, hi = hi, lo
 	}
 	if _, err := st.W.ExecContext(ctx, `
-INSERT INTO station_link(link_id, space_id, station_a, station_b, approved_by_actor_id)
-VALUES('lnk1',1,?,?,?)`, lo, hi, actorID); err != nil {
+INSERT INTO station_link(link_id, station_a, station_b, approved_by_actor_id)
+VALUES('lnk1',?,?,?)`, lo, hi, actorID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -188,7 +190,7 @@ VALUES('lnk1',1,?,?,?)`, lo, hi, actorID); err != nil {
 // would flatten away.
 func TestSelfDescriptionIsStoredInClaimNamedColumns(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
-	s1, _ := st.CreateStation(ctx, 1, "public-dev", "", actorID)
+	s1, _ := st.CreateStation(ctx, "public-dev", "", actorID)
 	if err := st.SetStationSelfDescription(ctx, s1.StationID, "I maintain the public repo", []string{"go", "release"}); err != nil {
 		t.Fatal(err)
 	}

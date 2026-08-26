@@ -22,7 +22,7 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 
 	mk := func(name string, published bool) *Station {
 		t.Helper()
-		st, err := s.CreateStation(ctx, 1, name, "", actor)
+		st, err := s.CreateStation(ctx, name, "", actor)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,7 +41,7 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 	arch := mk("archived-but-published", true)
 
 	// An active link between me and the unpublished peer.
-	reqID, err := s.CreateStationLinkRequest(ctx, 1, "tok", me.StationID, linked.StationID, "work", false)
+	reqID, err := s.CreateStationLinkRequest(ctx, "tok", me.StationID, linked.StationID, "work", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := s.ListStationsVisibleTo(ctx, 1, me.StationID)
+	got, err := s.ListStationsVisibleTo(ctx, me.StationID)
 	if err != nil {
 		t.Fatalf("the directory query failed to run: %v", err)
 	}
@@ -95,14 +95,14 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 
 	// Revoking the link must remove the unpublished peer, or visibility outlives the
 	// permission that granted it.
-	links, err := s.ListStationLinks(ctx, 1)
+	links, err := s.ListStationLinks(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RevokeStationLink(ctx, links[0].LinkID); err != nil {
 		t.Fatal(err)
 	}
-	after, err := s.ListStationsVisibleTo(ctx, 1, me.StationID)
+	after, err := s.ListStationsVisibleTo(ctx, me.StationID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestSelfDescriptionIsCappedBecauseItReachesOtherAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := s.CreateStation(ctx, 1, "verbose", "", actor)
+	st, err := s.CreateStation(ctx, "verbose", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

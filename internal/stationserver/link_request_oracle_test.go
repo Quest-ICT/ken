@@ -16,7 +16,7 @@ import (
 //
 // station_link_request resolved its to_station argument through StationByName, whose own
 // contract reserves it for the console and CLI — "a name is not an address, and no
-// agent-facing path may route by it (S3)". That query filters on space and name alone, so a
+// agent-facing path may route by it (S3)". That query filters on name alone, so a
 // name that existed produced a FILED REQUEST and one that did not produced a refusal. Two
 // distinguishable outcomes is an enumeration oracle over every station name in the space,
 // including the ones deliberately withheld from station_directory.
@@ -34,12 +34,12 @@ func TestLinkRequestCannotEnumerateHiddenStations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mine, err := st.CreateStation(ctx, 1, "mine", "", actor)
+	mine, err := st.CreateStation(ctx, "mine", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Published: the caller can see it, so asking for a link is legitimate.
-	visible, err := st.CreateStation(ctx, 1, "visible-peer", "", actor)
+	visible, err := st.CreateStation(ctx, "visible-peer", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,13 +47,13 @@ func TestLinkRequestCannotEnumerateHiddenStations(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Never published, never linked: absent from this caller's directory entirely.
-	hidden, err := st.CreateStation(ctx, 1, "hidden-peer", "", actor)
+	hidden, err := st.CreateStation(ctx, "hidden-peer", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	resolve := func(name string) error {
-		_, err := st.StationByNameVisibleTo(ctx, 1, mine.StationID, name)
+		_, err := st.StationByNameVisibleTo(ctx, mine.StationID, name)
 		return err
 	}
 
@@ -82,7 +82,7 @@ func TestLinkRequestCannotEnumerateHiddenStations(t *testing.T) {
 
 	// AND THE SIDE EFFECT THAT MATTERS MOST: no request row for a guess. The read being
 	// safe is only half of it; the old defect FILED something.
-	pending, err := st.PendingStationRequests(ctx, 1)
+	pending, err := st.PendingStationRequests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,23 +117,23 @@ func TestLinkRequestStillResolvesALinkedPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mine, err := st.CreateStation(ctx, 1, "mine", "", actor)
+	mine, err := st.CreateStation(ctx, "mine", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer, err := st.CreateStation(ctx, 1, "quiet-peer", "", actor)
+	peer, err := st.CreateStation(ctx, "quiet-peer", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Deliberately NOT published.
-	reqID, err := st.CreateStationLinkRequest(ctx, 1, "tok", mine.StationID, peer.StationID, "r", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", mine.StationID, peer.StationID, "r", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.ApproveLinkRequest(ctx, reqID, actor); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.StationByNameVisibleTo(ctx, 1, mine.StationID, "quiet-peer"); err != nil {
+	if _, err := st.StationByNameVisibleTo(ctx, mine.StationID, "quiet-peer"); err != nil {
 		t.Fatalf("an approved-linked peer no longer resolves: %v — the fix has narrowed past the defect", err)
 	}
 	var _ = store.Station{}
@@ -156,18 +156,18 @@ func TestLinkRequestToolCannotEnumerateHiddenStations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mine, err := st.CreateStation(ctx, 1, "asker", "", actor)
+	mine, err := st.CreateStation(ctx, "asker", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	visible, err := st.CreateStation(ctx, 1, "visible-peer", "", actor)
+	visible, err := st.CreateStation(ctx, "visible-peer", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetStationPublished(ctx, visible.StationID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateStation(ctx, 1, "hidden-peer", "", actor); err != nil {
+	if _, err := st.CreateStation(ctx, "hidden-peer", "", actor); err != nil {
 		t.Fatal(err)
 	}
 	key, err := st.IssueStationKey(ctx, actor, mine.StationID, "test", []string{ScopeStation})
@@ -227,7 +227,7 @@ func TestLinkRequestToolCannotEnumerateHiddenStations(t *testing.T) {
 	}
 
 	// NOTHING FILED for either guess — only the legitimate one.
-	pending, err := st.PendingStationRequests(ctx, 1)
+	pending, err := st.PendingStationRequests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -32,7 +32,7 @@ func TestStationWritesRefuseAnUnknownStation(t *testing.T) {
 
 	// POSITIVE CONTROL ON THE INSTRUMENT. Without it this test passes against a function
 	// that refuses EVERYTHING, which would be a worse defect than the one it replaces.
-	s, err := st.CreateStation(ctx, 1, "real-post", "", actor)
+	s, err := st.CreateStation(ctx, "real-post", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestStationWritesRefuseAnUnknownStation(t *testing.T) {
 // stale. A no-op that reports success is bad; one that propagates is worse.
 func TestArchivingAnUnknownStationDoesNotMoveTheRosterEpoch(t *testing.T) {
 	st, ctx, actor := stationFixture(t)
-	s, err := st.CreateStation(ctx, 1, "real-post", "", actor)
+	s, err := st.CreateStation(ctx, "real-post", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

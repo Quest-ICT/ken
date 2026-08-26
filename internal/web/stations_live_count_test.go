@@ -20,7 +20,7 @@ import (
 // things that arrive here for as long as it did.
 func TestTheLiveMarkerAndTheCountEndpointAgree(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
-	s, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestTheLiveMarkerAndTheCountEndpointAgree(t *testing.T) {
 	base0 := check("empty")
 
 	// A REQUEST ARRIVES — the thing the count already handled.
-	if _, err := st.CreateStationRequest(ctx, spaceForSession, "tok", "", "handoff", "a new post"); err != nil {
+	if _, err := st.CreateStationRequest(ctx, "tok", "", "handoff", "a new post"); err != nil {
 		t.Fatal(err)
 	}
 	if n := check("after a request"); n != base0+1 {

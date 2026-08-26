@@ -61,7 +61,7 @@ afterwards. **A human should be able to open this file and know exactly where we
 
 ## Where we are today
 
-**Released: 3.29.1** (2026-08-25) — the version stamp reaches station_me's workspace-creation path, which was the one call omitting it and the one call least able to notice. Previously 3.29.0 — IDENTITY.md §10 step 3: the binding-voucher chain is deleted. Previously 3.28.0 — the console can mint what the transports require. Previously 3.27.0 — the advertisement half of the identity work. Previously 3.26.0 — IDENTITY.md §10 steps 2 and 4: one identity across all three
+**Released: 3.30.0** (2026-08-26) — IDENTITY.md §10 step 5, the LAST identity step: `space_id` and the `space` table are gone from both databases. **§10 is complete.** Previously 3.29.1 — the version stamp reaches station_me's workspace-creation path, which was the one call omitting it and the one call least able to notice. Previously 3.29.0 — IDENTITY.md §10 step 3: the binding-voucher chain is deleted. Previously 3.28.0 — the console can mint what the transports require. Previously 3.27.0 — the advertisement half of the identity work. Previously 3.26.0 — IDENTITY.md §10 steps 2 and 4: one identity across all three
 surfaces, and a session that can get its own workspace. Previously 3.25.0 and 3.24.0 — the snapshot-encryption documentation defect, the
 instruction re-fetch, and the outcome prompt. **Production is on 3.23.0**, verified by ken-prod-ops at 2026-08-25T17:05Z with both databases
 row-identical and the whole `endpoint` table byte-identical; the fresh-session test passed on the

@@ -115,7 +115,7 @@ func TestBindWithAWorkspaceHeaderAndNoVoucher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	station, err := st.CreateStation(ctx, 1, "ken-public", "", actor)
+	station, err := st.CreateStation(ctx, "ken-public", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestBindWithAWorkspaceHeaderAndNoVoucher(t *testing.T) {
 		t.Fatal(err)
 	}
 	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{
-		TokenID: prin.TokenID, ActorID: prin.ActorID, SpaceID: prin.SpaceID}, "session", "")
+		TokenID: prin.TokenID, ActorID: prin.ActorID}, "session", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestBindWithAWorkspaceHeaderAndNoVoucher(t *testing.T) {
 	// workspace was never validated at all. Mutation caught it — deleting the existence check
 	// left the assertion green. A second endpoint is the only way to reach the branch.
 	ep2, secret2, err := cs.RegisterEndpoint(ctx, comm.Owner{
-		TokenID: prin.TokenID, ActorID: prin.ActorID, SpaceID: prin.SpaceID}, "second", "")
+		TokenID: prin.TokenID, ActorID: prin.ActorID}, "second", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestBindWithAWorkspaceHeaderAndNoVoucher(t *testing.T) {
 // endpointOf reads one endpoint back through the list the console renders.
 func endpointOf(t *testing.T, cs *comm.Store, id string) comm.Endpoint {
 	t.Helper()
-	eps, err := cs.ListEndpoints(context.Background(), 1)
+	eps, err := cs.ListEndpoints(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

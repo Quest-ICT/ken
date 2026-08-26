@@ -233,7 +233,7 @@ func newServer(d Deps) *mcp.Server {
 		//
 		// StationByName's own contract says "For CONSOLE and CLI use only: a name is not an
 		// address, and no agent-facing path may route by it (S3)" — and this line called it
-		// until 2026-08-19. Because that query filters on space and name alone, a name that
+		// until 2026-08-19. Because that query filters on name alone, a name that
 		// existed produced a filed request and one that did not produced a refusal: an
 		// enumeration oracle over every station name in the space, INCLUDING the ones
 		// withheld from station_directory. And the filed request was the worse half — a
@@ -244,7 +244,7 @@ func newServer(d Deps) *mcp.Server {
 		// exist: both arrive here as an error and both get the single refusal below. The
 		// discovery surface is station_directory, gated per asker, which is where finding
 		// out that a station exists is supposed to happen.
-		target, err := d.Store.StationByNameVisibleTo(ctx, p.SpaceID, p.StationID, strings.TrimSpace(in.ToStation))
+		target, err := d.Store.StationByNameVisibleTo(ctx, p.StationID, strings.TrimSpace(in.ToStation))
 		if err != nil {
 			return nil, linkRequestOut{}, errors.New("no such station is available to link to — ask your human for the exact name")
 		}
@@ -252,7 +252,7 @@ func newServer(d Deps) *mcp.Server {
 		// is the ONLY signal the human gets that the request may not be this session's
 		// own idea: a peer cannot open a channel, but it can talk this session into
 		// asking for one, and the request then arrives looking like its own.
-		if _, err := d.Store.CreateStationLinkRequest(ctx, p.SpaceID, p.TokenID,
+		if _, err := d.Store.CreateStationLinkRequest(ctx, p.TokenID,
 			p.StationID, target.StationID, in.Reason, hearsayFor(ctx, d, p)); err != nil {
 			return nil, linkRequestOut{}, err
 		}
@@ -336,7 +336,7 @@ func newServer(d Deps) *mcp.Server {
 		if err != nil {
 			return nil, dirOut{}, err
 		}
-		list, err := d.Store.ListStationsVisibleTo(ctx, p.SpaceID, p.StationID)
+		list, err := d.Store.ListStationsVisibleTo(ctx, p.StationID)
 		if err != nil {
 			return nil, dirOut{}, err
 		}
@@ -384,7 +384,7 @@ func newServer(d Deps) *mcp.Server {
 		if strings.TrimSpace(in.Purpose) == "" {
 			return nil, requestOut{}, errors.New("say what the station is for — your human approves on the purpose, not the name")
 		}
-		id, err := d.Store.CreateStationRequest(ctx, p.SpaceID, p.TokenID, p.StationID, in.NameHint, in.Purpose)
+		id, err := d.Store.CreateStationRequest(ctx, p.TokenID, p.StationID, in.NameHint, in.Purpose)
 		if err != nil {
 			return nil, requestOut{}, err
 		}
@@ -894,7 +894,7 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 	// Non-fatal, like the endpoint lookup above and for the same reason: losing a whole
 	// briefing because a secondary count failed is a bad trade, and an omitted field reads
 	// as "nothing elsewhere", which asserts nothing false.
-	if n, stations, err := d.Store.HumanBlockedElsewhere(ctx, p.SpaceID, p.StationID); err != nil {
+	if n, stations, err := d.Store.HumanBlockedElsewhere(ctx, p.StationID); err != nil {
 		log.Printf("stations: cross-station count for %s: %v", p.StationID, err)
 	} else if n > 0 {
 		out.Elsewhere = &elsewhereView{Tasks: n, Stations: stations,
@@ -1006,8 +1006,7 @@ func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) 
 		scopes[s] = true
 	}
 	return context.WithValue(ctx, ctxKey{}, &principal{
-		ActorID: sp.ActorID, TokenID: sp.TokenID, SpaceID: 1,
-		StationID: sp.StationID, Scopes: scopes,
+		ActorID: sp.ActorID, TokenID: sp.TokenID, StationID: sp.StationID, Scopes: scopes,
 	})
 }
 
@@ -1032,7 +1031,7 @@ func claimWorkspace(ctx context.Context, d Deps, p *principal, hint string) (meO
 	if len(name) > 60 {
 		name = name[:60]
 	}
-	st, err := d.Store.CreateStationAutoNamed(ctx, 1, name, p.ActorID)
+	st, err := d.Store.CreateStationAutoNamed(ctx, name, p.ActorID)
 	if err != nil {
 		return meOut{}, err
 	}

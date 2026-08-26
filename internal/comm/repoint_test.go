@@ -50,7 +50,7 @@ FROM endpoint WHERE endpoint_id=?`, a.EndpointID).Scan(&station, &boundKey, &bou
 	s0, k0, t0, sec0 := snap()
 
 	if err := st.RepointEndpointOwner(ctx, a.EndpointID, "tok-old",
-		Owner{TokenID: "tok-new", ActorID: 42, SpaceID: 1}); err != nil {
+		Owner{TokenID: "tok-new", ActorID: 42}); err != nil {
 		t.Fatalf("repoint: %v", err)
 	}
 
@@ -58,14 +58,14 @@ FROM endpoint WHERE endpoint_id=?`, a.EndpointID).Scan(&station, &boundKey, &bou
 	//    later binding voucher compares issued_to_actor against it — so the endpoint could
 	//    never be re-bound, failing forever with an error that blames the voucher.
 	var tok string
-	var actor, space int64
+	var actor int64
 	if err := st.R.QueryRowContext(ctx,
-		`SELECT token_id, actor_id, space_id FROM endpoint WHERE endpoint_id=?`, a.EndpointID).
-		Scan(&tok, &actor, &space); err != nil {
+		`SELECT token_id, actor_id FROM endpoint WHERE endpoint_id=?`, a.EndpointID).
+		Scan(&tok, &actor); err != nil {
 		t.Fatal(err)
 	}
 	if tok != "tok-new" || actor != 42 {
-		t.Fatalf("owner tuple = (%s, %d, %d), want (tok-new, 42, 1)", tok, actor, space)
+		t.Fatalf("owner tuple = (%s, %d), want (tok-new, 42)", tok, actor)
 	}
 
 	// 2. THE STATION BINDING IS BYTE-IDENTICAL. Clearing station_id would silently unbind a
@@ -108,7 +108,7 @@ func TestRepointIsConditionalAndRefusesRevoked(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 	ep := stationEndpoint(t, st, "tok-old", "st-alpha")
-	to := Owner{TokenID: "tok-new", ActorID: 42, SpaceID: 1}
+	to := Owner{TokenID: "tok-new", ActorID: 42}
 
 	// A wrong `from` is refused and changes nothing — the idempotency property.
 	if err := st.RepointEndpointOwner(ctx, ep.EndpointID, "tok-WRONG", to); !errors.Is(err, ErrNotFound) {
@@ -157,7 +157,7 @@ func TestRepointTokenMovesOnlyItsOwnLiveEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := st.RepointEndpointsOfToken(ctx, "tok-old", Owner{TokenID: "tok-new", ActorID: 7, SpaceID: 1})
+	n, err := st.RepointEndpointsOfToken(ctx, "tok-old", Owner{TokenID: "tok-new", ActorID: 7})
 	if err != nil {
 		t.Fatal(err)
 	}

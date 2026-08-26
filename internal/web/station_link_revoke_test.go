@@ -50,15 +50,15 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	}
 
 	// Two stations with an approved link between them.
-	devSt, err := st.CreateStation(ctx, spaceForSession, "dev", "", actorID)
+	devSt, err := st.CreateStation(ctx, "dev", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prodSt, err := st.CreateStation(ctx, spaceForSession, "prod", "", actorID)
+	prodSt, err := st.CreateStation(ctx, "prod", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID, err := st.CreateStationLinkRequest(ctx, spaceForSession, "tok", devSt.StationID, prodSt.StationID, "work together", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", devSt.StationID, prodSt.StationID, "work together", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,11 +68,11 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	}
 
 	// And a live channel between them, which is the thing the link authorised.
-	epA, secretA, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-a", ActorID: actorID, SpaceID: spaceForSession}, "dev", "")
+	epA, secretA, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-a", ActorID: actorID}, "dev", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	epB, secretB, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-b", ActorID: actorID, SpaceID: spaceForSession}, "prod", "")
+	epB, secretB, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-b", ActorID: actorID}, "prod", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,15 +141,15 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 func TestStationLinkRevokeWorksWithCommOff(t *testing.T) {
 	st, ctx, cli, base, actorID := stationsHarness(t)
 
-	devSt, err := st.CreateStation(ctx, spaceForSession, "dev", "", actorID)
+	devSt, err := st.CreateStation(ctx, "dev", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prodSt, err := st.CreateStation(ctx, spaceForSession, "prod", "", actorID)
+	prodSt, err := st.CreateStation(ctx, "prod", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID, err := st.CreateStationLinkRequest(ctx, spaceForSession, "tok", devSt.StationID, prodSt.StationID, "r", false)
+	reqID, err := st.CreateStationLinkRequest(ctx, "tok", devSt.StationID, prodSt.StationID, "r", false)
 	if err != nil {
 		t.Fatal(err)
 	}

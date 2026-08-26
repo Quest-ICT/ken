@@ -21,7 +21,7 @@ const vaultSecret = "sk-live-DO-NOT-RENDER-9f3c"
 func TestTheConsoleShowsTheVaultWithoutShowingSecrets(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestTheConsoleShowsTheVaultWithoutShowingSecrets(t *testing.T) {
 func TestRevealingASecretReturnsItAndIsRecorded(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestRevealingASecretReturnsItAndIsRecorded(t *testing.T) {
 func TestRevealRefusesWithoutTheCSRFToken(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestTheConsoleCanRestoreWhatASessionOverwrote(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 	lim := store.DefaultStationVaultLimits()
 
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestADeletedSecretIsShownAsRecoverableRatherThanVanishing(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 	lim := store.DefaultStationVaultLimits()
 
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}

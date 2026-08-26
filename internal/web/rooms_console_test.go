@@ -24,11 +24,11 @@ import (
 func TestAHumanCanCreateARoomAndFillIt(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
 
-	alpha, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	alpha, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	beta, err := st.CreateStation(ctx, spaceForSession, "infra", "", actor)
+	beta, err := st.CreateStation(ctx, "infra", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestAHumanCanCreateARoomAndFillIt(t *testing.T) {
 	postForm(t, cli, base+"/rooms", url.Values{
 		"csrf": {csrf}, "name": {"deploys"}, "purpose": {"release coordination"}})
 
-	rooms, err := st.ListRooms(ctx, spaceForSession)
+	rooms, err := st.ListRooms(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestAHumanCanCreateARoomAndFillIt(t *testing.T) {
 // told about is not the room that exists now.
 func TestEveryMembershipWriteAdvancesTheRosterEpoch(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestEveryMembershipWriteAdvancesTheRosterEpoch(t *testing.T) {
 
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/rooms", url.Values{"csrf": {csrf}, "name": {"ops"}})
-	rooms, _ := st.ListRooms(ctx, spaceForSession)
+	rooms, _ := st.ListRooms(ctx)
 	if len(rooms) != 1 {
 		t.Fatalf("expected one room, got %d", len(rooms))
 	}
@@ -124,13 +124,13 @@ func TestEveryMembershipWriteAdvancesTheRosterEpoch(t *testing.T) {
 // exact query the sync uses — testing the console's own filter rather than a paraphrase.
 func TestArchivingARoomTakesItOutOfWhatTheMirrorWillCarry(t *testing.T) {
 	st, ctx, cli, base, actor := stationsHarness(t)
-	station, err := st.CreateStation(ctx, spaceForSession, "prod-ops", "", actor)
+	station, err := st.CreateStation(ctx, "prod-ops", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/rooms", url.Values{"csrf": {csrf}, "name": {"ops"}})
-	rooms, _ := st.ListRooms(ctx, spaceForSession)
+	rooms, _ := st.ListRooms(ctx)
 	roomID := rooms[0].RoomID
 	csrf = extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/rooms/"+roomID+"/members",
@@ -189,13 +189,13 @@ func TestTheConsoleShowsAMemberThatCannotReceive(t *testing.T) {
 	// would assert a fact nobody checked. The first version of this test used the plain
 	// harness and failed for exactly that reason — which is the rule working, not a bug.
 	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
-	station, err := st.CreateStation(ctx, spaceForSession, "ken-promo", "", actor)
+	station, err := st.CreateStation(ctx, "ken-promo", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/rooms", url.Values{"csrf": {csrf}, "name": {"Ken management"}})
-	rooms, _ := st.ListRooms(ctx, spaceForSession)
+	rooms, _ := st.ListRooms(ctx)
 	if len(rooms) != 1 {
 		t.Fatalf("expected one room, got %d", len(rooms))
 	}

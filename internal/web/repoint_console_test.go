@@ -26,7 +26,7 @@ func TestRepointingAnEndpointFromTheConsole(t *testing.T) {
 	fromID := strings.SplitN(strings.TrimPrefix(from, "ken_"), "_", 2)[0]
 	toID := strings.SplitN(strings.TrimPrefix(to, "ken_"), "_", 2)[0]
 
-	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: fromID, ActorID: actor, SpaceID: spaceForSession}, "laptop", "")
+	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: fromID, ActorID: actor}, "laptop", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestRepointRefusesATargetThatCannotOwnAnEndpoint(t *testing.T) {
 
 	from, _ := st.IssueToken(ctx, actor, []string{"comm"}, "old")
 	fromID := strings.SplitN(strings.TrimPrefix(from, "ken_"), "_", 2)[0]
-	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: fromID, ActorID: actor, SpaceID: spaceForSession}, "laptop", "")
+	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: fromID, ActorID: actor}, "laptop", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestRepointRefusesATargetThatCannotOwnAnEndpoint(t *testing.T) {
 // observes what an operator would rather than a private lookup.
 func endpointOf(t *testing.T, cs *comm.Store, id string) comm.Endpoint {
 	t.Helper()
-	eps, err := cs.ListEndpoints(context.Background(), spaceForSession)
+	eps, err := cs.ListEndpoints(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestThePickerDoesNotOfferTheTokenTheEndpointIsAlreadyOn(t *testing.T) {
 	ownID := strings.SplitN(strings.TrimPrefix(own, "ken_"), "_", 2)[0]
 	otherID := strings.SplitN(strings.TrimPrefix(other, "ken_"), "_", 2)[0]
 
-	if _, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: ownID, ActorID: actor, SpaceID: spaceForSession}, "laptop", ""); err != nil {
+	if _, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: ownID, ActorID: actor}, "laptop", ""); err != nil {
 		t.Fatal(err)
 	}
 

@@ -11,7 +11,7 @@ import (
 func vaultFixture(t *testing.T) (*Store, context.Context, string, int64, StationVaultLimits) {
 	t.Helper()
 	st, ctx, actorID := stationFixture(t)
-	station, err := st.CreateStation(ctx, 1, "prod-ops", "production operations", actorID)
+	station, err := st.CreateStation(ctx, "prod-ops", "production operations", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
