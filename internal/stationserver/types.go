@@ -92,8 +92,31 @@ type meOut struct {
 	// only if the folder's MCP entry declares it — and a value that lives in one conversation is
 	// a value that dies with it. So the instruction rides in the RESULT, which is the channel that
 	// always arrives, rather than in connect-time text the session may never see.
-	JustCreated         bool         `json:"workspace_just_created,omitempty"`
+	// ALWAYS PRESENT, NEVER omitempty. It used to be omitted when false, so a reader could not
+	// tell "this workspace already existed" from "the server did not say" — the third instance of
+	// that shape found in one day (comm_endpoint_ids and the station briefing were the others).
+	// A boolean that disappears when false is a boolean that answers a different question than
+	// the one it is named for.
+	JustCreated         bool         `json:"workspace_just_created"`
 	PutThisInYourConfig string       `json:"put_this_in_your_config,omitempty"`
+
+	// *** HOW TO KEEP THIS WORKSPACE, DELIVERED IN THE RESULT BECAUSE THE SCHEMA CANNOT SAY IT. ***
+	//
+	// station_me gained `session_key` in 3.35.0, and a session whose tool list predates that
+	// version does not have the parameter in its schema. ken-prod-ops watched one reason its way
+	// to exactly the wrong conclusion: "There is no session_key parameter… I called it with no
+	// arguments rather than passing an unsupported field, which would have failed validation."
+	//
+	// That is CAREFUL reasoning reaching a false answer, and careful is what we want. So the
+	// mechanism has to announce itself somewhere the freeze cannot reach — and only RESULTS cross
+	// it. A tool description saying "send session_key" is invisible to precisely the sessions that
+	// need telling.
+	HowToKeepThisWorkspace string `json:"how_to_keep_this_workspace,omitempty"`
+
+	// SessionKeyEcho is the key this call actually arrived with, echoed back so a session can
+	// confirm Ken received what it sent — and so the guidance above can tell the two cases apart
+	// without guessing. Empty means the call carried no key, which is the case that needs telling.
+	SessionKeyEcho string `json:"session_key_received,omitempty"`
 	Purpose             string       `json:"purpose"`
 	SelfDescribedAbout  string       `json:"self_described_about"`
 	SelfDescribedTags   []string     `json:"self_described_tags,omitempty"`

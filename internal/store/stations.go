@@ -733,7 +733,7 @@ func (s *Store) StationBySessionKey(ctx context.Context, sessionKey string) (*St
 // `nameHint` only decorates the LABEL — Vlad: "what I need to be auto is the label that identifies
 // the new station so me (the human) can identify it (I won't identify a raw number or a UUID)".
 // The key is the identity; the label is for reading, and it stays renameable.
-func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint string, actorID int64) (*Station, bool, error) {
+func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint string, actorID int64, adoptIfUnclaimed string) (*Station, bool, error) {
 	if strings.TrimSpace(sessionKey) == "" {
 		return nil, false, errors.New("no session key given")
 	}
@@ -748,6 +748,29 @@ func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint
 		return existing, false, nil
 	case !errors.Is(err, ErrNotFound):
 		return nil, false, err
+	}
+
+	// ADOPT the workspace this connection already minted, if it is still unclaimed. Without this
+	// a session that called with no arguments and then with a key leaves the first one orphaned —
+	// which is precisely what the pre-3.35.0 tool text told sessions to do. The UPDATE's own
+	// `session_key IS NULL` clause is the guard: adopting a station that another conversation has
+	// already claimed is impossible rather than merely unlikely.
+	if adopt := strings.TrimSpace(adoptIfUnclaimed); adopt != "" {
+		res, err := s.W.ExecContext(ctx,
+			`UPDATE station SET session_key=? WHERE station_id=? AND session_key IS NULL AND state='active'`,
+			sessionKey, adopt)
+		if err != nil {
+			return nil, false, err
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			st, err := s.StationByID(ctx, adopt)
+			if err != nil {
+				return nil, false, err
+			}
+			// created=false: the workspace already existed, this call only claimed it. Reporting
+			// true would tell the session it had just been given a fresh one.
+			return st, false, nil
+		}
 	}
 
 	name := strings.TrimSpace(nameHint)

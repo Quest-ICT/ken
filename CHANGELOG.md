@@ -15,6 +15,38 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.35.1] — 2026-08-26
+
+### Fixed
+
+- **`station_me` now tells every session how to keep its workspace, in the RESULT.** 3.35.0's
+  `session_key` was unreachable by any session reasoning carefully about its own tool schema.
+  ken-prod-ops watched one conclude, correctly from what it could see: *"There is no `session_key`
+  parameter… I called it with no arguments rather than passing an unsupported field, which would
+  have failed validation."* Its schema was 3.33.0; the server was 3.35.0.
+
+  **A tool description cannot fix that** — descriptions pin at connect time, so text saying "send
+  `session_key`" is invisible to precisely the sessions that need telling. Only results cross the
+  freeze. Every `station_me` result now carries `how_to_keep_this_workspace`, which says to send
+  the parameter **even when the schema does not list it**, and `session_key_received` echoes what
+  actually arrived so a session can confirm it landed.
+
+- **A keyed call now ADOPTS the workspace the same connection just minted, instead of stranding
+  it.** The pre-3.35.0 tool text told sessions to call `station_me` with no arguments, so the real
+  sequence is no-arg then keyed — and on the clean VM that left an orphan station behind, because
+  Ken could not tell the two calls were one conversation. The connection binding does know, and
+  the `session_key IS NULL` guard makes adopting another conversation's workspace impossible
+  rather than unlikely.
+
+  The binding is now written at the tool's single exit, so **every** path leaves the connection
+  knowing what it resolved. Doing it only inside the keyed branch is what made the first version
+  of the adoption miss.
+
+- **`workspace_just_created` is always present, never omitted when false.** A reader could not
+  tell *"this workspace already existed"* from *"the server did not say"* — the third instance of
+  that `omitempty` shape found in one day, after `comm_endpoint_ids` and the station briefing. A
+  boolean that disappears when false answers a different question than the one it is named for.
+
 ## [3.35.0] — 2026-08-26
 
 ### Added

@@ -662,3 +662,88 @@ func TestDeclaringAConversationUnlocksToolsBehindRequireStation(t *testing.T) {
 			"%+v — mint works and nothing else does, which is the clean-VM failure unfixed", post.Content)
 	}
 }
+
+// *** EVERY station_me RESULT TELLS THE SESSION HOW TO KEEP ITS WORKSPACE. ***
+//
+// ken-prod-ops watched a session reason its way to exactly the wrong conclusion on the clean VM:
+// "There is no session_key parameter… I called it with no arguments rather than passing an
+// unsupported field, which would have failed validation." Its schema was 3.33.0; the server was
+// 3.35.0. That is CAREFUL reasoning reaching a false answer, and careful is what we want.
+//
+// A tool description cannot fix it — descriptions pin at connect time, so the text saying "send
+// session_key" is invisible to precisely the sessions that need telling. Only RESULTS cross the
+// freeze. So the guidance rides in the result, on every call.
+func TestEveryStationMeResultSaysHowToKeepTheWorkspace(t *testing.T) {
+	st, srv, _, station := harness(t)
+	ctx := context.Background()
+	actor, err := st.FindOrCreateActor(ctx, "ai", "guidance-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.IssueStationKey(ctx, actor, "", "guidance-key", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A session with NO key — the one that must be told, and the one whose schema does not
+	// mention the parameter.
+	noKey := meOverTransport(t, connectWS(t, srv, key, station.StationID), map[string]any{})
+	if noKey.HowToKeepThisWorkspace == "" {
+		t.Fatal("a result carries no guidance at all; a session whose schema predates session_key " +
+			"has nothing anywhere telling it the parameter exists")
+	}
+	for _, must := range []string{"session_key", "SEND IT ANYWAY"} {
+		if !strings.Contains(noKey.HowToKeepThisWorkspace, must) {
+			t.Errorf("the guidance omits %q, so a session that checked its schema and found nothing "+
+				"has no reason to try: %q", must, noKey.HowToKeepThisWorkspace)
+		}
+	}
+
+	// CONTROL: a session that DID send a key gets different, shorter guidance — otherwise the
+	// assertion above would pass against a constant string bolted on unconditionally.
+	withKey := meOverTransport(t, connectWS(t, srv, key, ""), map[string]any{"session_key": "guidance-conv"})
+	if withKey.SessionKeyEcho != "guidance-conv" {
+		t.Errorf("the key was not echoed back, so a session cannot confirm Ken received it: %q", withKey.SessionKeyEcho)
+	}
+	if withKey.HowToKeepThisWorkspace == noKey.HowToKeepThisWorkspace {
+		t.Error("the guidance is identical whether or not a key was sent; it is a constant rather " +
+			"than a response to what actually arrived")
+	}
+}
+
+// *** A SECOND CALL WITH A KEY ADOPTS THE WORKSPACE THE FIRST CALL MINTED. ***
+//
+// The pre-3.35.0 tool text told sessions to call station_me with no arguments, so the real-world
+// sequence is no-arg then keyed — and on the clean VM that left an orphan station behind, because
+// Ken had no way to know the two calls were the same conversation. The connection binding does
+// know.
+func TestAKeyedCallAdoptsTheWorkspaceThisConnectionJustMinted(t *testing.T) {
+	st, srv, _, _ := harness(t)
+	ctx := context.Background()
+	actor, err := st.FindOrCreateActor(ctx, "ai", "adopt-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.IssueStationKey(ctx, actor, "", "adopt-key", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := connectWS(t, srv, key, "")
+
+	first := meOverTransport(t, sess, map[string]any{"workspace_name": "adopt-me"})
+	if !first.JustCreated {
+		t.Fatal("the no-argument call did not mint; the fixture does not reproduce the sequence")
+	}
+
+	// SAME CONNECTION, now declaring a key. It must claim what it already has.
+	second := meOverTransport(t, sess, map[string]any{"session_key": "adopting-conversation"})
+	if second.StationID != first.StationID {
+		t.Errorf("the keyed call minted %q instead of adopting %q — the first workspace is now "+
+			"orphaned, which is exactly the sequence the old tool text produced",
+			second.StationID, first.StationID)
+	}
+	if second.JustCreated {
+		t.Error("workspace_just_created is true on an ADOPTION; the workspace already existed and " +
+			"saying otherwise tells the session it was handed a fresh one")
+	}
+}

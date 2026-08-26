@@ -320,8 +320,31 @@ func newServer(d Deps) *mcp.Server {
 		// shape intact for the third path. Stamping after the handler returns means a future path
 		// cannot omit it without deleting this line, and TestEveryStationMePathCarriesTheVersion
 		// fails if anyone does.
+		// BIND AT THE ONE EXIT, so EVERY path through this tool leaves the connection knowing
+		// which workspace it resolved — the keyed path, the header path, and the no-argument mint
+		// alike. Binding only inside the keyed branch is what made the adoption below miss: a
+		// session that minted with no arguments left nothing for its next call to adopt, and
+		// stranded the workspace it had just been given.
+		bindSession(req, out.StationID)
+
 		out.KenVersion = version.Version
 		out.VersionNote = versionNote
+		// SAME REASONING AS THE VERSION STAMP, ONE STEP FURTHER. The version tells a session its
+		// manual may be stale; this tells it the ONE thing that staleness is currently costing.
+		// It is unconditional rather than only-when-missing, because a session that already sends
+		// the key is exactly the session that should keep sending it.
+		if out.SessionKeyEcho == "" {
+			out.HowToKeepThisWorkspace = "TO COME BACK TO THIS WORKSPACE after a client restart, pass " +
+				"session_key on every station_me call in this conversation — a stable id for THIS " +
+				"conversation (in Claude Code, the UUID in your transcript or scratchpad path). " +
+				"IF YOUR TOOL SCHEMA DOES NOT LIST session_key, SEND IT ANYWAY: your schema was captured " +
+				"when this conversation began and never refreshes, while this result is current. New " +
+				"parameters are honoured even when your copy of the tool does not mention them. Without " +
+				"it, your next restart mints a NEW workspace and strands this one."
+		} else {
+			out.HowToKeepThisWorkspace = "Keep sending this same session_key on every station_me call in " +
+				"this conversation and you will return here after any restart."
+		}
 		return nil, out, nil
 	})
 
@@ -854,15 +877,34 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 	// When both are present the narrower one is the honest answer.
 	if key := strings.TrimSpace(in.SessionKey); key != "" {
 		if p := principalFrom(ctx); p != nil {
-			st, created, err := d.Store.ClaimStationForSession(ctx, key, in.WorkspaceName, p.ActorID)
+			// *** ADOPT WHAT THIS CONNECTION ALREADY MINTED, RATHER THAN STRANDING IT. ***
+			//
+			// A session that calls station_me with NO arguments gets a workspace, then calls again
+			// WITH a key — which is exactly the sequence the old tool text produced, and ken-prod-ops
+			// watched it leave an orphan station on the deployment. Ken had no way to know the two
+			// calls were the same conversation, because the first one did not say.
+			//
+			// The connection binding does know: this same MCP connection minted it moments ago. So
+			// if that workspace is still UNCLAIMED, the key claims it instead of minting a second.
+			// Scoped to the binding rather than to "any recent unclaimed station of this actor",
+			// which would let one conversation adopt another's.
+			st, created, err := d.Store.ClaimStationForSession(ctx, key, in.WorkspaceName, p.ActorID,
+				boundStation(req))
 			if err != nil {
 				return meOut{}, err
 			}
 			bindSession(req, st.StationID)
 			if created {
-				return claimedWorkspaceOut(st), nil
+				out := claimedWorkspaceOut(st)
+				out.SessionKeyEcho = key
+				return out, nil
 			}
-			return buildBriefing(ctx, d, p.withWorkspace(st.StationID))
+			out, err := buildBriefing(ctx, d, p.withWorkspace(st.StationID))
+			if err != nil {
+				return meOut{}, err
+			}
+			out.SessionKeyEcho = key
+			return out, nil
 		}
 	}
 	if p := principalFrom(ctx); p != nil && p.StationID == "" && workspaceFrom(req) == "" {
