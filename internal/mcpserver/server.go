@@ -492,6 +492,17 @@ const mcpKeepAlive = 30 * time.Second
 // Split from RegisterTools in 3.36.0 so the SAME tools can also be registered onto the unified
 // endpoint, which serves all three surfaces from one connector. Two servers, one set of tool
 // definitions — the alternative was a second copy that drifts.
+// AuthMiddleware exposes this surface's authentication so the UNIFIED endpoint can chain it.
+//
+// The unified endpoint serves all three surfaces from one connector, and each package reads its
+// own principal from its own private context key — so the only way one HTTP request can satisfy
+// all three is for all three middlewares to run. Chaining them means a credential reaching that
+// endpoint must carry EVERY capability, which is the honest rule for a surface that offers
+// everything: a narrower credential keeps using the specific endpoint it was minted for.
+func AuthMiddleware(d Deps, next http.Handler) http.Handler {
+	return authMiddleware(d.Store, newTouchThrottle(), d.TokenLimiter, d.Metrics, d.ResourceMetadataURL, next)
+}
+
 func NewServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "ken",

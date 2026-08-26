@@ -14,7 +14,6 @@ import (
 // The scope vocabulary and the one-family rule now live in internal/store, so that the
 // console's mint path enforces the same rule this one does. See internal/store/scopes.go.
 var validScopes = store.ValidScopes
-var stationScopes = store.StationScopes
 
 func runToken(args []string) {
 	if len(args) == 0 {
@@ -47,19 +46,22 @@ func runToken(args []string) {
 				die("unknown scope: " + s)
 			}
 		}
-		// Refuse to mint a station credential HERE, rather than let it fail at first
-		// use. This command issues a `ken_` token with no station binding, and
-		// /station/mcp requires a `kens_` key bound to one — so the token would
-		// authenticate nowhere while looking exactly like a working one. Fail at mint
-		// time, where the operator is still holding the command that can be corrected.
-		for _, s := range scopes {
-			if stationScopes[s] {
-				die("station scopes are not mintable here: /station/mcp requires a kens_ key BOUND to a station, " +
-					"and this command issues an unbound ken_ token.\n" +
-					"  ken station add --name <name>                         (a human names the station)\n" +
-					"  ken station key --station <name> --label <machine>    (mints the key it will present)")
-			}
-		}
+		// *** THIS REFUSAL WAS REMOVED IN 3.36.0 BECAUSE ITS REASON HAD BEEN FALSE SINCE 3.28.0. ***
+		//
+		// It said: "station scopes are not mintable here: /station/mcp requires a kens_ key BOUND
+		// to a station, and this command issues an unbound ken_ token." That was true when it was
+		// written. 3.27.0 taught /station/mcp to accept a plain `ken_` token carrying the station
+		// scope, and it was proven on the wire from a Windows machine the next day — a session
+		// with no key called station_me and got a workspace.
+		//
+		// THE CONSOLE'S IDENTICAL REFUSAL WAS FIXED IN 3.28.0 AND THIS ONE WAS NOT, which is the
+		// same half-fix the console itself had suffered: ken-prod-ops found `consoleCommScopes`
+		// still excluding station scopes with a comment citing THIS command as its authority, and
+		// the fix went to the console alone. The justification and the code parted company in two
+		// places and only one was repaired.
+		//
+		// Found by the unified endpoint's own first test, which could not mint a credential
+		// carrying all three families — the exact credential /all/mcp exists to serve.
 		actorID, err := st.FindOrCreateActor(ctx, *kind, *actor)
 		must(err)
 		tok, err := st.IssueToken(ctx, actorID, scopes, *label)

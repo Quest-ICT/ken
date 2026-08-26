@@ -223,6 +223,12 @@ const mcpKeepAlive = 30 * time.Second
 
 // newServer builds the COMM surface as its own MCP server. See mcpserver.NewServer for why
 // registration is separable.
+// AuthMiddleware exposes this surface's authentication for the unified endpoint. See
+// mcpserver.AuthMiddleware for why chaining is the mechanism.
+func AuthMiddleware(d Deps, next http.Handler) http.Handler {
+	return authMiddleware(d.Store, d.TokenLimiter, d.Metrics, next)
+}
+
 func newServer(d Deps, h *Handler) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-comm", Version: "1"},
 		&mcp.ServerOptions{Instructions: version.InstructionStamp() + instructions, KeepAlive: mcpKeepAlive})

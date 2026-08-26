@@ -15,6 +15,67 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.36.0] — 2026-08-26
+
+### Added
+
+- **`/all/mcp` — all three surfaces from ONE connector.** Vlad, on the acceptance run: *"Under
+  the, also absurd, current model, 3 connectors, one for each surface, while we could have only
+  one for the 3 surfaces."*
+
+  **The reason for the split had already been deleted.** The three endpoints existed because they
+  took mutually exclusive credential families, enforced by `store.CheckScopeMix` — removed in
+  3.31.0 — and a single OAuth grant has carried `ken:kb ken:comm ken:station` together since
+  3.25.0. The three-way URL split was vestigial, and its whole remaining cost landed on the user
+  as three connectors, three consents and three UUID prefixes in every tool list.
+
+  Verified end to end: **45 tools on one endpoint** — 8 `kb_`, 12 `comm_`, 23 `station_`, plus
+  `ken_version` and `ken_instructions` — matching the source count exactly.
+
+  **The three existing endpoints are unchanged and keep working.** This is additive on purpose:
+  production holds eight bound comm endpoints and other machines are configured against the
+  specific URLs, so nobody migrates on Ken's schedule.
+
+  **A credential reaching `/all/mcp` must carry every capability**, and is refused at the
+  transport otherwise. That falls out of the mechanism — each surface's middleware runs and each
+  fails closed — but it is also the right rule: this endpoint offers everything, and a narrower
+  credential should use the endpoint it was minted for, where the refusal is precise. Measured:
+  a comm-only token gets `401` here and `200` on `/comm/mcp`.
+
+  It also preserves the property `IDENTITY-CONTROLS.md` records as surviving — transport-level
+  scope enforcement fails closed, so an unusable surface is *unreachable* rather than
+  *reachable-and-erroring*. A collapse that admitted partial credentials and refused per tool
+  would have turned the tool list into a reconnaissance surface.
+
+  **The instruction budget is why the merged block is short, and it was measured rather than
+  assumed:** 2045 characters delivered on `/mcp` and 2046 on `/comm/mcp`, against a 2048 budget.
+  Concatenating three blocks would have sent ~6100 characters into a 2048 window and silently
+  destroyed two thirds of the guidance on every surface at once. The merged block is **1305
+  characters** and orients rather than instructs — it can, because per-tool rules already live in
+  tool descriptions (the 3.26.0 refit) and `ken_instructions` serves the full untruncated text of
+  any surface on demand. **The collapse is only affordable because that tool shipped first.**
+
+### Removed
+
+- **`ken token add` no longer refuses station scopes**, and its reason had been false since
+  3.28.0. It said *"/station/mcp requires a kens_ key BOUND to a station, and this command issues
+  an unbound ken_ token"* — true when written, and untrue from the moment 3.27.0 taught
+  `/station/mcp` to accept a plain `ken_` token carrying the station scope.
+
+  **The console's identical refusal was fixed in 3.28.0 and this one was not** — the same half-fix
+  the console had suffered, where `consoleCommScopes` excluded station scopes citing *this
+  command* as its authority. The justification and the code parted company in two places and only
+  one was repaired.
+
+  Found by the unified endpoint's own first test, which could not mint a credential carrying all
+  three families — the exact credential `/all/mcp` exists to serve.
+
+### Changed
+
+- **Tool registration is separable from server construction** on all three surfaces
+  (`RegisterTools`). The unified endpoint registers the *same* tool definitions rather than
+  copies, so a tool cannot say different things depending on which URL reached it.
+
 ## [3.35.1] — 2026-08-26
 
 ### Fixed

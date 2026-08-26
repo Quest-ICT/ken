@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Quest-ICT/ken/internal/allserver"
 	"github.com/Quest-ICT/ken/internal/clientip"
 	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/commserver"
@@ -431,6 +432,12 @@ func runServe(args []string) {
 	// wedged COMM sweeper would pull a healthy knowledge base out of rotation.
 	// COMM may fail; the KB stays UP.
 	var commHandler *commserver.Handler
+	// Hoisted so the UNIFIED endpoint can see all three surfaces' dependencies. They are built
+	// inside their own enabled-blocks; this only widens the scope, never the construction, so the
+	// unified endpoint and the specific ones are wired from the SAME values by construction.
+	var commDepsOut commserver.Deps
+	var stationDepsOut stationserver.Deps
+	var stationsOn bool
 	if commStore != nil {
 		// REBUILD THE ROOM MIRROR AT BOOT, before anything can send.
 		//
@@ -494,6 +501,7 @@ func runServe(args []string) {
 			Comm: commStore, Store: st, TokenLimiter: rlToken, Metrics: reg,
 			MaxPollWaitSeconds: live.Current().CommPollWaitMaxSec,
 		}
+		commDepsOut = commDeps
 		commHandler = commserver.NewHTTPHandler(commDeps)
 		// The byte relay: one-time-grant PUT/GET, gated on the comm-file scope and
 		// the live comm_files_enabled switch. Mounted as a prefix because the grant
@@ -627,6 +635,24 @@ func runServe(args []string) {
 		})
 		mux.Handle("/station/mcp", stationHandler)
 		log.Printf("STATIONS: enabled at /station/mcp — requires a kens_ key bound to a station (ken station add --name <n>, then ken station key --station <n> --label <machine>)")
+		stationDepsOut, stationsOn = sd, true
+	}
+
+	// *** THE UNIFIED ENDPOINT: ALL THREE SURFACES, ONE CONNECTOR. ***
+	//
+	// Mounted only when COMM and STATIONS are both live, because it offers everything and a
+	// credential reaching it must be able to use everything. With a surface missing there is
+	// nothing coherent to serve, so the endpoint is ABSENT rather than partial — a connector that
+	// silently covers two of three would be worse than one that does not exist.
+	//
+	// The three specific endpoints keep working, unchanged. This is additive: prod holds eight
+	// bound comm endpoints and other machines are configured against the specific URLs, so
+	// nobody migrates on Ken's schedule.
+	if commHandler != nil && stationsOn {
+		mux.Handle("/all/mcp", allserver.NewHTTPHandler(allserver.Deps{
+			KB: mcpDeps, Comm: commDepsOut, CommH: commHandler, Station: stationDepsOut,
+		}))
+		log.Printf("UNIFIED: all three surfaces at /all/mcp — ONE connector instead of three. The credential must carry every capability; the per-surface endpoints remain for narrower ones")
 	}
 
 	mux.Handle("/", reg.Counting("web", web.Handler(web.Deps{
