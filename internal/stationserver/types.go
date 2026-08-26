@@ -97,8 +97,8 @@ type meOut struct {
 	// that shape found in one day (comm_endpoint_ids and the station briefing were the others).
 	// A boolean that disappears when false is a boolean that answers a different question than
 	// the one it is named for.
-	JustCreated         bool         `json:"workspace_just_created"`
-	PutThisInYourConfig string       `json:"put_this_in_your_config,omitempty"`
+	JustCreated         bool   `json:"workspace_just_created"`
+	PutThisInYourConfig string `json:"put_this_in_your_config,omitempty"`
 
 	// *** HOW TO KEEP THIS WORKSPACE, DELIVERED IN THE RESULT BECAUSE THE SCHEMA CANNOT SAY IT. ***
 	//
@@ -116,12 +116,12 @@ type meOut struct {
 	// SessionKeyEcho is the key this call actually arrived with, echoed back so a session can
 	// confirm Ken received what it sent — and so the guidance above can tell the two cases apart
 	// without guessing. Empty means the call carried no key, which is the case that needs telling.
-	SessionKeyEcho string `json:"session_key_received,omitempty"`
-	Purpose             string       `json:"purpose"`
-	SelfDescribedAbout  string       `json:"self_described_about"`
-	SelfDescribedTags   []string     `json:"self_described_tags,omitempty"`
-	Tasks               briefingView `json:"tasks"`
-	Handoff             string       `json:"handoff"`
+	SessionKeyEcho     string       `json:"session_key_received,omitempty"`
+	Purpose            string       `json:"purpose"`
+	SelfDescribedAbout string       `json:"self_described_about"`
+	SelfDescribedTags  []string     `json:"self_described_tags,omitempty"`
+	Tasks              briefingView `json:"tasks"`
+	Handoff            string       `json:"handoff"`
 	// Elsewhere counts what is RECORDED as waiting on this human on OTHER stations. A
 	// count and a station count, never contents: a session staffs one post, and STATIONS.md
 	// S6 is that a station key does not let its holder read another station's assets — two
