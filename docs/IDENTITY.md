@@ -112,7 +112,33 @@ one moment a bad name is actually in front of them.
 | Log into claude.ai on a device | none — it *is* the approval |
 | Start work in a new folder | **none.** Auto-named, fully working |
 | Rename a workspace | none, and no side effects |
-| Two workspaces talking | **one, once per pair** |
+| Two workspaces talking | **one, once per pair** — plus publishing the TARGET once, see below |
+
+> **§6 UNDER-STATED THE CEREMONY, AND AN ACCEPTANCE TEST COUNTING AGAINST IT WOULD SCORE A
+> CORRECT SYSTEM AS OVER BUDGET.** Found 2026-08-26 by ken-prod-ops while planning the full-tool
+> run, against the shipped code rather than against this table.
+>
+> **A station cannot file a link request naming a station it cannot SEE**, and
+> `StationByNameVisibleTo` resolves only `published=1 OR <an active link already exists>`. Every
+> station is `published=0` by default — `0012_stations.sql:35`, *"human-only; an agent cannot
+> advertise itself"*. So before the first link to a given post, a human publishes it in the
+> console.
+>
+> **THIS IS DELIBERATE AND IT IS NOT A DEFECT.** `station_link_request`'s own comment states the
+> threat it closes: a correct guess would *"put an agent-authored ask for an unpublished post in
+> front of its human, which is exactly the unsolicited approach publication exists to prevent."*
+> Removing it would let any session cold-call any human by guessing a station name.
+>
+> **THE HONEST COUNT.** Publishing is **once per STATION**, not once per pair — amortised across
+> every future link to that post, and unnecessary forever after between two stations already
+> linked (the second half of the predicate keeps them visible to each other). So a first-ever link
+> between two unpublished stations costs a human **three** actions: publish the target, request,
+> approve. Every subsequent link to that same target costs the two this table promises.
+>
+> **It was verified by watching it refuse**, not by reading the predicate:
+> `TestAnUnpublishedUnlinkedStationCannotBeFoundByName` (internal/store) refuses the lookup, then
+> proves publication fixes it AND that an existing link keeps an unpublished station visible — so
+> the refusal cannot pass for the wrong reason.
 
 Against `TARGET-ARCHITECTURE.md` §3, where Vlad said he would accept one approval per device *and*
 one per session: this is fewer. The only surviving approval is the one he explicitly wants.
