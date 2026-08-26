@@ -172,20 +172,34 @@ func (a *app) handleOAuthAuthorizeDecision(w http.ResponseWriter, r *http.Reques
 	// should need one approval rather than a negotiation. The human narrows it by unticking a
 	// surface on the consent screen; the grant then records exactly what they agreed to, which is
 	// what makes narrowing possible and revocation legible.
+	// EVERY GRANT CARRIES EVERY SURFACE. The consent screen states them; it no longer offers to
+	// withhold them, and this no longer reads a `ken_surface` selection.
+	//
+	// The narrowing that stood here contradicted the requirement in the comment above it: a human
+	// could untick Messaging and mint a session with no way to reach its peers, or untick the
+	// knowledge base and mint a session that cannot read the thing Ken exists to hold. Vlad,
+	// having said it more than once: "no ken services (or surfaces) are optional. All sessions
+	// get everything (they can use)." A control whose only function is to build a forbidden state
+	// is not a safety feature.
 	granted := store.DefaultGrantScopes()
-	if picked := r.Form["ken_surface"]; len(picked) > 0 {
-		granted = nil
-		allowed := map[string]bool{}
-		for _, sc := range store.DefaultGrantScopes() {
-			allowed[sc] = true
+
+	// DEDUPED, because a correct client already asks for what Ken advertises in
+	// scopes_supported. Concatenating request and grant produced
+	// "... ken:kb ken:comm ken:station ken:kb ken:comm ken:station" on the first real consent
+	// ever performed, and that doubled string is what gets PERSISTED on the grant and shown
+	// wherever the grant is displayed — so the console misreported what the human agreed to.
+	// Authorization was never affected (GrantedCapabilities is a whitelist), which is exactly why
+	// it survived: it was invisible everywhere except the one place a human reads it.
+	seen := map[string]bool{}
+	var merged []string
+	for _, sc := range append(strings.Fields(scope), granted...) {
+		if sc == "" || seen[sc] {
+			continue
 		}
-		for _, sc := range picked {
-			if allowed[sc] {
-				granted = append(granted, sc)
-			}
-		}
+		seen[sc] = true
+		merged = append(merged, sc)
 	}
-	scope = strings.TrimSpace(scope + " " + strings.Join(granted, " "))
+	scope = strings.Join(merged, " ")
 	code, err := a.store.CreateOAuthGrantAndCode(r.Context(), store.NewAuthCode{
 		ClientID:            p.ClientID,
 		ConnectorActorID:    connActor,

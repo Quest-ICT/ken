@@ -16,8 +16,6 @@ import (
 var validScopes = store.ValidScopes
 var stationScopes = store.StationScopes
 
-func checkScopeMix(scopes []string) error { return store.CheckScopeMix(scopes) }
-
 func runToken(args []string) {
 	if len(args) == 0 {
 		die("usage: ken token add|list|revoke")
@@ -48,9 +46,6 @@ func runToken(args []string) {
 			if !validScopes[s] {
 				die("unknown scope: " + s)
 			}
-		}
-		if err := checkScopeMix(scopes); err != nil {
-			die(err.Error())
 		}
 		// Refuse to mint a station credential HERE, rather than let it fail at first
 		// use. This command issues a `ken_` token with no station binding, and

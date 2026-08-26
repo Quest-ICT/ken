@@ -15,6 +15,51 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.31.0] — 2026-08-26
+
+### Removed
+
+- **The consent screen no longer offers to withhold a surface.** Its per-surface checkboxes let a
+  human approve a connection with no messaging, or with no knowledge base — building exactly the
+  crippled session Ken's operating requirement forbids: *no Ken surface is optional; every session
+  gets everything it can use.* The template's own comment stated that rule and then implemented
+  the negotiation in the next clause.
+
+  The surfaces are still **listed** — a consent screen that does not say what it grants is worse
+  than one that does. Only the inputs are gone. `TestConsentStatesEverySurface` fails if either
+  the checkboxes come back or the disclosure disappears with them.
+
+- **`store.CheckScopeMix` is deleted**, with its tests, in the same commit.
+
+  It forced every token to be dedicated to one surface family, so minting a station token
+  **required unticking the knowledge base** — which is how a session onboarded on 2026-08-25
+  ended up holding a station and a locker and unable to read the thing Ken exists to hold.
+
+  **The property it claimed was already false.** Its rationale was *"a knowledge-base token cannot
+  send messages and a comm token cannot write knowledge"*, but it was never applied to OAuth
+  grants — its only callers were `ken token add` and the console's token-create — and
+  `GrantedCapabilities` hands a single OAuth bearer kb **and** comm **and** station. Verified on
+  the wire against 3.30.0: one grant, three surfaces, `200/200/200`. The same server already
+  issued the credential this function refused to mint.
+
+  **What it costs, stated rather than glossed:** a leaked token now reaches every surface rather
+  than one family, and API tokens have no expiry, only revocation. That is real. It is accepted
+  because the alternative was an asymmetry with no defensible line — OAuth already carried
+  everything — that bought no containment while guaranteeing crippled sessions.
+
+  The token form now ticks comm and station by default, like the knowledge-base scopes.
+  `TestATokenMayCarryEverySurface` is the inverse assertion; `TestCurateIsNeverMintable` keeps the
+  one exclusion that survives, which is not a surface but the curation gate.
+
+### Fixed
+
+- **OAuth grants recorded duplicated scopes.** The approval handler concatenated the client's
+  requested scope string with the granted surfaces and never deduped, so a correct client — one
+  that asks for what Ken advertises in `scopes_supported` — produced
+  `… ken:kb ken:comm ken:station ken:kb ken:comm ken:station` on the grant. Authorization was
+  never affected, which is why it survived: it was invisible everywhere except the one place a
+  human reads it. Found on the first real end-to-end consent ever performed against production.
+
 ## [3.30.0] — 2026-08-26
 
 ### Removed

@@ -51,16 +51,19 @@
       <li class="perm-no"><svg viewBox="0 0 24 24" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span><b>{{.T "consent.perm_never_lead"}}</b> {{.T "consent.perm_never_rest"}}</span></li>
     </ul>
 
-    <!-- WHICH SURFACES THIS APPROVAL COVERS. All ticked, because no Ken feature is optional or
-         off by default — untick one only to withhold it. Recording the choice on the grant is
-         the condition IDENTITY-CONTROLS.md put on consolidating the three authenticators: the
-         withholding has to be "an explicit per-surface capability decision at grant time". -->
+    <!-- WHICH SURFACES THIS APPROVAL COVERS. STATED, NOT OFFERED.
+         These used to be checkboxes so a human could withhold a surface. Vlad's standing
+         requirement is that no Ken surface is optional — every session gets everything it can
+         use — so a control that could produce a session with no knowledge base, or no messaging,
+         was building the state the requirement forbids. It also read as a decision the human had
+         to make on every approval, with no basis on which to make it: if everything is included,
+         there is nothing to choose. The list stays, because a consent screen that does not say
+         what it grants is worse than one that does; only the inputs are gone. -->
     <h2 class="h3" style="margin:var(--sp-5) 0 var(--sp-3)">{{.T "consent.surfaces_heading"}}</h2>
     <p class="help" style="margin-top:calc(var(--sp-3) * -1)">{{.T "consent.surfaces_help"}}</p>
     <ul class="perm-list">
       {{range .Data.Surfaces}}
-      <li><label><input type="checkbox" name="ken_surface" value="{{.Scope}}" checked>
-        <b>{{$.T .LabelKey}}</b> — {{$.T .HelpKey}}</label></li>
+      <li class="perm-yes"><svg viewBox="0 0 24 24" fill="none"><path d="M6 12.5l3.5 3.5L18 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span><b>{{$.T .LabelKey}}</b> — {{$.T .HelpKey}}</span></li>
       {{end}}
     </ul>
 

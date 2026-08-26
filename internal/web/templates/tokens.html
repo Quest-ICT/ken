@@ -31,10 +31,14 @@
           {{end}}
             <label class="check" style="opacity:.65;cursor:not-allowed"><input type="checkbox" disabled><span class="check__text"><b>curate</b><span>{{$.T "tokens.scope_curate_note"}} <code>curate</code></span></span></label>
           </div>
-          <p class="muted" style="margin:var(--sp-3) 0 var(--sp-2)">{{.T "tokens.scope_family_note"}}</p>
+          <!-- TICKED, like the knowledge-base scopes above. These were unticked while
+               CheckScopeMix forbade mixing families, so minting a station token REQUIRED
+               unticking the knowledge base — which is how a session ended up holding a station
+               and unable to read the thing Ken exists to hold. The rule is gone; so is the
+               asymmetry that made "everything" unreachable from this form. -->
           <div style="display:grid;gap:var(--sp-2)">
           {{range .Data.CommScopes}}
-            <label class="check"><input type="checkbox" name="scope" value="{{.}}"><span class="check__text"><b>{{.}}</b></span></label>
+            <label class="check"><input type="checkbox" name="scope" value="{{.}}" checked><span class="check__text"><b>{{.}}</b></span></label>
           {{end}}
           </div>
         </fieldset>

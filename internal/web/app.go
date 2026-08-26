@@ -1122,10 +1122,6 @@ func (a *app) handleTokenCreate(w http.ResponseWriter, r *http.Request, sess *st
 	// The SAME rule the CLI enforces, from the same place — a token is dedicated to one
 	// surface family. Before 3.10.0 this path could not violate it only because its menu was
 	// too narrow to express a violation, which is safety by accident rather than by rule.
-	if err := store.CheckScopeMix(scopes); err != nil {
-		flashRedirect(w, r, "/tokens", "flash.token_scope_mix", err.Error())
-		return
-	}
 	if len(name) > 190 || len(label) > 190 {
 		flashRedirect(w, r, "/tokens", "flash.token_fields_too_long", "")
 		return

@@ -10,25 +10,27 @@ import (
 	"testing"
 
 	"github.com/Quest-ICT/ken/internal/passwd"
-	"github.com/Quest-ICT/ken/internal/store"
 )
 
-// *** UNTICKING A SURFACE ON THE CONSENT SCREEN ACTUALLY WITHHOLDS IT. ***
+// *** TestUntickingASurfaceOnConsentWithholdsIt WAS DELETED HERE, 2026-08-26. ***
 //
-// §10 step 2 consolidates three authenticators into one OAuth identity, which removes the control
-// that said "/comm/mcp accepts a ken_ token and NOTHING else". docs/IDENTITY-CONTROLS.md permits
-// that on one condition, stated exactly: the withholding must be "re-expressed as an EXPLICIT
-// PER-SURFACE CAPABILITY DECISION AT GRANT TIME, not inherited from the fact that three files
-// exist."
+// It asserted that a human could untick a surface on the consent screen and get a grant without
+// it. The behaviour is gone, so the test goes with it, in the same commit — see the tombstone in
+// internal/store/scopes.go.
 //
-// So the checkbox is not a nicety — it IS the control. If it renders and does nothing, the
-// register's warning has come true in its worst form: "the removal is invisible; every surface
-// keeps working, better even, and the day a connector is compromised the blast radius has quietly
-// grown from the knowledge base to the message bus and the vault."
+// Vlad, having stated it more than once: "no ken services (or surfaces) are optional. All
+// sessions get everything (they can use)." The consent screen's checkboxes existed only to build
+// the state that requirement forbids — a session with no messaging, or no knowledge base — and
+// they asked the human to make a decision on every approval with no basis for making it. If
+// everything is included, there is nothing to choose.
 //
-// Mutation found this gap: making the handler ignore the posted selection left the whole suite
-// green, because nothing exercised the consent POST with a narrowed set.
-func TestUntickingASurfaceOnConsentWithholdsIt(t *testing.T) {
+// The list of surfaces REMAINS on the screen, stated rather than offered: a consent screen that
+// does not say what it grants is worse than one that does. TestConsentStatesEverySurface below
+// is the replacement, and it is the inverse assertion.
+
+// TestConsentStatesEverySurface locks the property that replaced the checkboxes: every surface is
+// NAMED on the consent screen, and none of them is presented as a choice.
+func TestConsentStatesEverySurface(t *testing.T) {
 	st := oauthTestStore(t)
 	ctx := context.Background()
 	hash, _ := passwd.Hash("supersecret", passwd.Standard)
@@ -52,59 +54,22 @@ func TestUntickingASurfaceOnConsentWithholdsIt(t *testing.T) {
 		"code_challenge": {"chal-xyz"}, "code_challenge_method": {"S256"},
 		"state": {"st4te"}, "scope": {"read write offline_access"},
 	}.Encode()
-
-	// THE SCREEN OFFERS EVERY SURFACE, TICKED. A human who reads nothing grants everything,
-	// because no Ken feature is optional or off by default.
 	page := get(t, cli, authURL)
-	for _, sc := range store.DefaultGrantScopes() {
-		if !strings.Contains(page, `value="`+sc+`" checked`) {
-			t.Errorf("the consent screen does not offer %q pre-ticked; a human who reads nothing must "+
-				"still grant everything", sc)
-		}
+
+	// NO SURFACE IS A CHECKBOX. Asserted on the input NAME rather than on prose, because the
+	// prose is translated and the input is what actually carries a choice to the server.
+	if strings.Contains(page, `name="ken_surface"`) {
+		t.Error("the consent screen still offers per-surface checkboxes; a human can withhold a " +
+			"surface, which builds exactly the session Vlad's standing requirement forbids")
 	}
 
-	// APPROVE WITH MESSAGING UNTICKED — the browser omits the unchecked box entirely.
-	csrf := extract(t, cli, authURL, `name="csrf" value="([^"]+)"`)
-	noRedir := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := noRedir.PostForm(srv.URL+"/oauth/authorize", url.Values{
-		"csrf": {csrf}, "decision": {"approve"},
-		"client_id": {clientID}, "redirect_uri": {redir}, "response_type": {"code"},
-		"code_challenge": {"chal-xyz"}, "code_challenge_method": {"S256"},
-		"state": {"st4te"}, "scope": {"read write offline_access"},
-		"ken_surface": {store.ScopeKB, store.ScopeStation}, // messaging deliberately absent
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("approve did not redirect: %d", resp.StatusCode)
-	}
-
-	// THE GRANT RECORDS WHAT THE HUMAN CHOSE, and the capability mapping honours it.
-	grants, err := st.ListOAuthGrants(ctx)
-	if err != nil || len(grants) != 1 {
-		t.Fatalf("want exactly one grant, got %d (%v)", len(grants), err)
-	}
-	scope := grants[0].Scope
-	if strings.Contains(scope, store.ScopeCommSet) {
-		t.Errorf("the grant records %q despite messaging being unticked: %q", store.ScopeCommSet, scope)
-	}
-	for _, want := range []string{store.ScopeKB, store.ScopeStation} {
-		if !strings.Contains(scope, want) {
-			t.Errorf("the grant does not record %q, which the human left ticked: %q", want, scope)
+	// AND EVERY SURFACE IS STILL NAMED. Removing the CHOICE must not remove the DISCLOSURE — a
+	// consent screen that does not say what it grants is worse than one that does, and deleting
+	// the inputs is one careless edit away from deleting the list with them.
+	for _, name := range []string{"Knowledge base", "Messaging", "Working identity"} {
+		if !strings.Contains(page, name) {
+			t.Errorf("the consent screen no longer names %q; the disclosure went out with the "+
+				"checkbox, which was not the intent", name)
 		}
-	}
-	caps := map[string]bool{}
-	for _, c := range store.GrantedCapabilities(scope) {
-		caps[c] = true
-	}
-	if caps["comm"] || caps["comm-file"] {
-		t.Error("a connector the human withheld messaging from can still reach COMM — the checkbox " +
-			"renders and does nothing, which is the invisible removal IDENTITY-CONTROLS.md warns about")
-	}
-	if !caps["read"] || !caps["station"] {
-		t.Errorf("the surfaces the human DID grant were lost too (%v) — this test would then be "+
-			"passing because nothing works, not because withholding works", caps)
 	}
 }

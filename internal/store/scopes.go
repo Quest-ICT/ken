@@ -1,7 +1,5 @@
 package store
 
-import "fmt"
-
 // Token scopes, and the rule that keeps a token dedicated to ONE surface.
 //
 // THIS LIVED IN `package main` UNTIL 3.10.0, reachable only from `ken token add`. The console
@@ -28,39 +26,34 @@ var CommScopes = map[string]bool{"comm": true, "comm-file": true}
 // StationScopes belong to /station/mcp.
 var StationScopes = map[string]bool{"station": true, "station-locker": true}
 
-// CheckScopeMix enforces that a token is DEDICATED to one surface family.
+// *** CheckScopeMix WAS DELETED HERE, 2026-08-26, DELIBERATELY. ***
 //
-// This is what makes the design's claim true rather than aspirational — "a knowledge-base token
-// cannot send messages and a comm token cannot write knowledge". Without it an operator could
-// quietly widen their everyday agent token, and since API tokens have no expiry (only
-// revocation), every already-copied instance of that token would gain the new capability
-// retroactively.
+// It enforced that a token was DEDICATED to one surface family: knowledge-base scopes could not
+// be combined with comm or station, and only `{station, comm}` was permitted. It was a real,
+// tested, enforced rule with a clear rationale, and it is gone for two reasons.
 //
-// THREE families, not two. An earlier shape bucketed everything that was not comm as
-// knowledge-base, so the moment `station` became a valid scope it would have been treated as a
-// KB scope: `read,write-draft,propose,station` would have minted silently while `comm,station`
-// was refused — exactly backwards, since a session legitimately staffs a post and talks from it,
-// while a token that can both read working notes and write knowledge is the mixing this function
-// exists to prevent.
+// FIRST, IT BUILT THE STATE VLAD FORBIDS. His standing requirement, stated more than once and
+// most recently in exasperation: "no ken services (or surfaces) are optional. All sessions get
+// everything (they can use)." This rule made that impossible on the token path — minting a
+// station token REQUIRED unticking the knowledge base, so the m600 session onboarded on
+// 2026-08-25 holds a station and a locker and cannot read the knowledge base at all. A rule that
+// makes the product's core unreachable from its newest surface is not containment.
 //
-// The one permitted pair is station+comm (docs/STATIONS.md §6).
-func CheckScopeMix(scopes []string) error {
-	var comm, station, kb []string
-	for _, s := range scopes {
-		switch {
-		case CommScopes[s]:
-			comm = append(comm, s)
-		case StationScopes[s]:
-			station = append(station, s)
-		default:
-			kb = append(kb, s)
-		}
-	}
-	if len(kb) > 0 && len(comm) > 0 {
-		return fmt.Errorf("a comm token must be dedicated: %v cannot be combined with %v — mint two tokens and register Ken twice", comm, kb)
-	}
-	if len(kb) > 0 && len(station) > 0 {
-		return fmt.Errorf("a station token must be dedicated: %v cannot be combined with %v — mint two tokens and register Ken twice", station, kb)
-	}
-	return nil
-}
+// SECOND, AND THIS IS WHAT SETTLED IT: THE PROPERTY IT CLAIMED WAS ALREADY FALSE. Its own comment
+// justified it as "a knowledge-base token cannot send messages and a comm token cannot write
+// knowledge". But it was never applied to OAuth grants — its only callers were `ken token add`
+// and the console's token-create — and `GrantedCapabilities` hands a single OAuth bearer kb AND
+// comm AND station. Verified on the wire 2026-08-26 against a 3.30.0 deployment: one grant, three
+// surfaces, 200/200/200. So the same server already issued the credential this function refused
+// to mint, and the rule constrained only the path a human uses by hand.
+//
+// WHAT WE GIVE UP, STATED RATHER THAN GLOSSED. The blast radius of a leaked token is now every
+// surface rather than one family, and api_tokens have no expiry — only revocation — so an
+// already-copied token gains nothing retroactively but is worth more when taken. That is a real
+// cost. It is accepted because the alternative was an asymmetry with no defensible line: OAuth
+// bearers already carry everything, and pretending otherwise for hand-minted tokens bought no
+// containment while guaranteeing crippled sessions.
+//
+// `TestCheckScopeMix` (internal/store) and its cli_token_test counterpart were deleted in this
+// same commit. Removing the rule and leaving the tests would have left them failing; removing the
+// tests and leaving the rule would have left a live control nothing exercises. Both went together.
