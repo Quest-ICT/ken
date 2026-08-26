@@ -516,12 +516,41 @@ unaffected, and this document remains design until Vlad says otherwise.
 - **The MCP freeze bounds the changeover.** Tool lists and instructions pin at conversation start,
   so during the transition a running session holds the old story and cannot be told otherwise. The
   design must work for a session that connects fresh with no prior state, every time.
-- **Encrypted secret sharing between sessions** — Vlad wants it, and it is the same primitive as
-  workspace identity rather than a separate feature. The vault deliberately does not encrypt today,
-  and its reason is sound: *"A key stored beside the ciphertext protects nobody who can read the
-  file."* A key that is **not** beside the ciphertext needs a source, and the only candidate is
-  something an authenticated session can derive and an attacker with the file cannot. **Design it
-  with identity or build the vault twice.**
+- **Encrypted secret sharing between sessions** — **DECIDED 2026-08-26 by Vlad: option A,
+  encryption AT REST under a server-held key stored OUTSIDE `ken.db` and excluded from backups.
+  Explicitly NOT end-to-end.**
+
+  > **What the question turned out to be.** §11 conflated two features. **A** — encryption at rest,
+  > server holds the key. **B** — end-to-end, the server cannot read. They have different threat
+  > models and only one of them is buildable here.
+  >
+  > **0016's argument survives, but only against a key stored IN the database.** Credentials are
+  > kept as `secret_sha256`, so the server never holds plaintext key material and a key derived
+  > from a PRESENTED credential genuinely is not in the file. That is what reopened the question.
+  >
+  > **B is not buildable as described.** Wrapping a secret for recipient B needs B's key material;
+  > the server has only `sha256(B's secret)`, and using that puts the key back in the database. So
+  > B needs the granting session online at grant time, or the recipient's plaintext credential.
+  > And an agent's bearer already sits in a `0600` file on the same host, so B's confidentiality is
+  > bounded by that file rather than by cryptography. It also breaks
+  > `POST /stations/{id}/vault/reveal` (console-first), breaks recovery, and makes credential
+  > rotation destroy every secret encrypted under it.
+  >
+  > **A defends the threat that actually materialised.** ken.db IS backed up and carries the vault
+  > in plaintext; ken-prod-ops reported plaintext `.db.gz` copies leaving the box over the tunnel
+  > to an archive host. A key outside the database and outside the backup makes those copies
+  > ciphertext-only, while console reveal, the read audit, restore and recovery all keep working.
+  >
+  > **THE CONDITION ON SHIPPING IT:** document it as *"protects copies that leave the host, not the
+  > host itself."* Without that sentence it becomes precisely the theatre 0016 warns against —
+  > and 0016 is right that theatre in a security store is worse than an honest absence.
+  >
+  > **Decided while it is free.** `station_vault`, `station_vault_history` and `station_vault_read`
+  > are all ZERO ROWS on production, so there is nothing to migrate or re-encrypt. That will not
+  > stay true, which is why the sequencing warning in the original entry was correct.
+  >
+  > Cross-session sharing is then an **ACL over A**, not cryptography — which is what "one human
+  > per instance, who owns every session and the host" actually needs.
 - **The 30-minute MCP session timeout** — `TARGET-ARCHITECTURE.md` §9.0, deferred here deliberately.
   Not "what number", but *which workload Ken is for*, now that a human-cadence client exists.
 - **Free disk space as a metric** — §9.2. Small, and it interacts with where shared code lives.
