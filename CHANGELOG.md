@@ -15,6 +15,51 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.33.0] — 2026-08-26
+
+### Added
+
+- **`station_vault_send` — hand a credential to a session on another machine without the value
+  ever leaving the server.** Ships with migration `0022` under Rule 4; the code writes a `via`
+  value the old CHECK constraint refuses, so the two cannot be separated.
+
+  **Why it exists: every other route was wrong in a different way.** Pasting a secret into a COMM
+  message body puts it in the message store under retention *and* in both sessions' transcripts.
+  Relaying it as a file writes plaintext bytes to the server's disk until the sweeper runs. Asking
+  the human to copy it by hand is exactly the credential tax the standing requirement exists to
+  remove — *"it should not require numerous keys, tokens, vouchers, approvals, etc."*
+
+  The value is decrypted from the sender's row and re-encrypted into the recipient's **inside the
+  process**. It never enters a message, a file, `data/comm/`, or either transcript. The sender
+  gets a receipt carrying the plaintext `sha256`, so both sides can confirm they hold the same
+  secret without either repeating it.
+
+  **Authorised by the existing station link** — the same approval that lets the two stations
+  message each other, so there is no second ceremony. Unlinked stations are refused; so is a
+  transfer to your own vault.
+
+  **It is a COPY, not a move.** The sender keeps theirs, because a transfer that emptied the
+  source would make a mistyped station id destructive, and every vault write is reversible.
+
+  **The recipient is not notified** — the tool says so and tells the sender to announce it by
+  name. Automatic notification would need a COMM handle the station surface deliberately does
+  not have.
+
+### Changed
+
+- **`station_vault_read.via` accepts `'transfer'`** (migration `0022`, a table rebuild since
+  SQLite cannot alter a CHECK in place). A session reading its own credential and a session
+  handing that credential to another station are materially different events; filing the second
+  as the first would make the log say a secret was *read* when it was *copied somewhere else*,
+  and the read log exists to answer exactly one question — who saw this secret.
+
+### Fixed
+
+- **`station_vault_put`'s tool description said the value is "stored unencrypted" and "travels in
+  EVERY backup".** Both became false in 3.32.0 and the description was not updated with them —
+  a tool description lying about a security property, in the one place a session reads to decide
+  whether a credential is safe to store.
+
 ## [3.32.0] — 2026-08-26
 
 ### Added

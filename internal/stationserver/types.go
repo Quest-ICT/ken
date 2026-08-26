@@ -319,6 +319,28 @@ type vaultPutOut struct {
 	// bound. Non-zero is worth repeating to your human: those values are gone.
 	HistoryDropped int `json:"history_dropped,omitempty"`
 }
+
+// vaultSendIn addresses a transfer by STATION ID, never by name: names are decoration and a
+// name collision would deliver a credential to the wrong post. station_directory is where a
+// session learns the id.
+type vaultSendIn struct {
+	Name      string `json:"name" jsonschema:"the secret in YOUR vault to hand over"`
+	ToStation string `json:"to_station" jsonschema:"the station id to give it to — from station_directory or comm_channels. An APPROVED LINK between you is required, the same one that lets you message them"`
+	AsName    string `json:"as_name,omitempty" jsonschema:"optional; the name it should have in THEIR vault. Defaults to the same name"`
+}
+
+// vaultSendOut is a RECEIPT, never the value. The sender already holds the secret; echoing it
+// back would put it in the transcript, which is the thing this tool exists to avoid.
+type vaultSendOut struct {
+	Name           string `json:"name"`
+	ToStation      string `json:"to_station"`
+	Bytes          int    `json:"bytes"`
+	SHA256         string `json:"sha256" jsonschema:"of the plaintext, so both sides can confirm they hold the same secret WITHOUT either repeating it"`
+	Rev            int    `json:"rev" jsonschema:"the revision in the RECIPIENT's vault"`
+	HistoryDropped int    `json:"history_dropped,omitempty"`
+	Note           string `json:"note" jsonschema:"what to do next — the recipient is not notified automatically"`
+}
+
 type vaultGetIn struct {
 	Name string `json:"name" jsonschema:"required"`
 }

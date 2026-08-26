@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,5 +147,125 @@ func TestAPlaintextRowWrittenBeforeEncryptionStillReads(t *testing.T) {
 	}
 	if got != "legacy-plaintext-value" {
 		t.Errorf("got %q, want the legacy value unchanged", got)
+	}
+}
+
+// *** A SECRET CROSSES TO ANOTHER STATION WITHOUT EVER BEING PLAINTEXT ANYWHERE BUT MEMORY. ***
+//
+// The feature exists because every other route was wrong: a message body is stored and retained,
+// a relayed file is written to disk, and asking the human to copy it by hand is the credential
+// tax the requirement exists to remove. So the test that matters is not "did it arrive" — it is
+// "did it arrive ENCRYPTED, and is the sender's copy still there".
+func TestASecretSentToAnotherStationLandsEncrypted(t *testing.T) {
+	st, ctx, from, actor, lim := vaultFixture(t)
+	to, err := st.CreateStation(ctx, "peer-ops", "the other machine", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "sk-cross-machine-DO-NOT-LEAK-11d4"
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from, "deploy-key", secret, "", "tok", actor); err != nil {
+		t.Fatal(err)
+	}
+	linkStations(t, st, ctx, from, to.StationID, actor)
+
+	got, _, err := st.SendStationVaultSecret(ctx, lim, from, to.StationID, "deploy-key", "", "tok", actor)
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if got.SHA256 == "" {
+		t.Error("the receipt carries no digest, so neither side can confirm they hold the same secret")
+	}
+
+	// IN THE RECIPIENT'S VAULT, AS CIPHERTEXT. Reading the raw column, because a round trip
+	// would pass even if the transfer wrote plaintext.
+	var stored string
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT secret FROM station_vault WHERE station_id=? AND name=?`, to.StationID, "deploy-key").Scan(&stored); err != nil {
+		t.Fatalf("nothing arrived in the recipient's vault: %v", err)
+	}
+	if strings.Contains(stored, secret) {
+		t.Fatal("the transferred secret is PLAINTEXT in the recipient's vault")
+	}
+	if !strings.HasPrefix(stored, vaultSealPrefix) {
+		t.Errorf("the recipient's copy is not marked encrypted: %q", stored)
+	}
+
+	// AND IT IS THE RIGHT SECRET — otherwise the assertion above passes against garbage.
+	back, err := st.GetStationVaultSecret(ctx, lim, to.StationID, "deploy-key", "station", "tok2", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Secret != secret {
+		t.Errorf("recipient read %q, want the original secret", back.Secret)
+	}
+
+	// THE SENDER KEEPS THEIRS. A transfer that emptied the source would make a mistyped station
+	// id destructive, and every vault write is supposed to be reversible.
+	mine, err := st.GetStationVaultSecret(ctx, lim, from, "deploy-key", "station", "tok", actor)
+	if err != nil {
+		t.Fatalf("the sender lost their own copy: %v", err)
+	}
+	if mine.Secret != secret {
+		t.Error("the sender's copy changed during a transfer")
+	}
+
+	// THE TRANSFER IS AUDITED AS A TRANSFER, not as an ordinary read — "who saw this secret"
+	// has to stay answerable, and a transfer is a materially different event.
+	var vias string
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COALESCE(GROUP_CONCAT(via),'') FROM station_vault_read WHERE station_id=? AND name=?`,
+		from, "deploy-key").Scan(&vias); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(vias, "transfer") {
+		t.Errorf("the sender's read log is %q — the transfer is not distinguishable from a normal read", vias)
+	}
+}
+
+// UNLINKED STATIONS CANNOT PASS SECRETS. The link is a human saying these two posts may talk;
+// without it a station id typed by a session would be enough to push a credential anywhere.
+func TestASecretCannotBeSentToAnUnlinkedStation(t *testing.T) {
+	st, ctx, from, actor, lim := vaultFixture(t)
+	to, err := st.CreateStation(ctx, "stranger", "not linked", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from, "k", "s3cret-value", "", "tok", actor); err != nil {
+		t.Fatal(err)
+	}
+
+	// CONTROL FIRST: the send fails for the RIGHT reason. Without this the test would pass
+	// against a station that does not exist, or a secret that was never stored.
+	_, _, err = st.SendStationVaultSecret(ctx, lim, from, to.StationID, "k", "", "tok", actor)
+	if !errors.Is(err, ErrStationsNotLinked) {
+		t.Fatalf("want ErrStationsNotLinked, got %v", err)
+	}
+	linkStations(t, st, ctx, from, to.StationID, actor)
+	if _, _, err := st.SendStationVaultSecret(ctx, lim, from, to.StationID, "k", "", "tok", actor); err != nil {
+		t.Fatalf("after linking, the same send must succeed — otherwise the refusal above proved nothing: %v", err)
+	}
+}
+
+// A TRANSFER TO YOURSELF IS REFUSED rather than quietly bumping a revision for nothing.
+func TestASecretCannotBeSentToTheSendersOwnVault(t *testing.T) {
+	st, ctx, from, actor, lim := vaultFixture(t)
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from, "k", "v", "", "tok", actor); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SendStationVaultSecret(ctx, lim, from, from, "k", "", "tok", actor); !errors.Is(err, ErrCannotSendToSelf) {
+		t.Errorf("want ErrCannotSendToSelf, got %v", err)
+	}
+}
+
+// linkStations approves a link the way the console does, so the tests above gate on the real
+// predicate rather than on a fixture that fakes it.
+func linkStations(t *testing.T, st *Store, ctx context.Context, a, b string, actor int64) {
+	t.Helper()
+	id, err := st.CreateStationLinkRequest(ctx, "tok", a, b, "test", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ApproveLinkRequest(ctx, id, actor); err != nil {
+		t.Fatal(err)
 	}
 }

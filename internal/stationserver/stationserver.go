@@ -683,9 +683,11 @@ func newServer(d Deps) *mcp.Server {
 		Name: "station_vault_put",
 		Description: "Store a credential against this station — a token, key, password or connection string. This is " +
 			"where those belong; the LOCKER is not. Two things to know rather than discover: your human can read " +
-			"anything here from the console, and it is stored unencrypted, so the protection is the machine and the " +
-			"backup rather than Ken. Writes are reversible — an overwrite keeps the previous value." +
-			" Unencrypted also means the value travels in EVERY backup. That is a deliberate decision rather than a gap — a key kept beside the ciphertext protects nobody who can read the file.",
+			"anything here from the console, and the value is ENCRYPTED AT REST under a key held outside the " +
+			"database and outside every backup — so a copy of the database that leaves the host is useless without " +
+			"it, while anyone with root on the host can still read both. Writes are reversible — an overwrite keeps " +
+			"the previous value. To hand a secret to a session on another machine, use station_vault_send rather " +
+			"than pasting it into a message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultPutIn) (*mcp.CallToolResult, vaultPutOut, error) {
 		p, err := requireLocker(ctx, req)
 		if err != nil {
@@ -718,6 +720,35 @@ func newServer(d Deps) *mcp.Server {
 		}
 		return nil, vaultGetOut{Name: e.Name, Secret: e.Secret, Note: e.Note,
 			Bytes: e.SizeBytes, SHA256: e.SHA256, ReadCount: e.ReadCount}, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
+		Name: "station_vault_send",
+		Description: "Hand one of your secrets to ANOTHER station's vault — the safe way to give a credential to a " +
+			"session on a different machine. THE VALUE NEVER LEAVES THE SERVER: it is re-encrypted straight into " +
+			"their vault, so it does not enter a message, a file, or either of our transcripts. NEVER paste a " +
+			"credential into comm_send instead; message bodies are stored, retained, and readable by anyone with " +
+			"the transcript. Requires an APPROVED LINK between the two stations — the same approval that lets you " +
+			"message them, so there is no second ceremony. You KEEP your copy; this is a copy, not a move. Both " +
+			"sides are logged: your read is recorded as a transfer, and their copy records who wrote it. " +
+			"THEY ARE NOT NOTIFIED — tell them over comm_send, by NAME, never with the value.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultSendIn) (*mcp.CallToolResult, vaultSendOut, error) {
+		p, err := requireLocker(ctx, req)
+		if err != nil {
+			return nil, vaultSendOut{}, err
+		}
+		e, dropped, err := d.Store.SendStationVaultSecret(ctx, d.vaultLim(), p.StationID,
+			strings.TrimSpace(in.ToStation), in.Name, in.AsName, p.TokenID, p.ActorID)
+		if err != nil {
+			return nil, vaultSendOut{}, err
+		}
+		return nil, vaultSendOut{
+			Name: e.Name, ToStation: strings.TrimSpace(in.ToStation), Bytes: e.SizeBytes,
+			SHA256: e.SHA256, Rev: e.Rev, HistoryDropped: dropped,
+			Note: "Delivered into their vault as \"" + e.Name + "\". They are NOT notified — tell them it is " +
+				"there and what it is for, by name. Do not repeat the value in that message; the sha256 above " +
+				"is how you both confirm you hold the same secret without either of you saying it.",
+		}, nil
 	})
 
 	addTool(s, d, &mcp.Tool{

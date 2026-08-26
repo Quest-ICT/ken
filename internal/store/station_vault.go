@@ -245,7 +245,10 @@ VALUES(?,?,?,?,?,?,1,?,?)`,
 // via is 'station' (a tool call) or 'console' (a human clicked reveal). Both are reads of
 // the same value and belong in one trail.
 func (s *Store) GetStationVaultSecret(ctx context.Context, lim StationVaultLimits, stationID, name, via, tokenID string, actorID int64) (*StationVaultEntry, error) {
-	if via != "station" && via != "console" {
+	// 'transfer' is the third provenance, added with SendStationVaultSecret: it records that a
+	// value left this vault for ANOTHER station's, which is a materially different event from a
+	// session reading its own secret and must not be filed as one.
+	if via != "station" && via != "console" && via != "transfer" {
 		return nil, fmt.Errorf("a vault read must say where it came from (got %q)", via)
 	}
 
@@ -527,4 +530,93 @@ func (s *Store) StationVaultRecoverableNames(ctx context.Context, stationID stri
 		out[n] = true
 	}
 	return out, rows.Err()
+}
+
+// ErrStationsNotLinked refuses a vault transfer between two stations a human has not connected.
+//
+// The SAME gate as comm_send{to_station}: an approved link is a human saying these two posts may
+// talk. Reusing it means secret transfer needs no second approval ceremony — which is the whole
+// point, since "numerous keys, tokens, vouchers, approvals" is the tax this is meant to remove —
+// while still being impossible between two stations nobody connected.
+var ErrStationsNotLinked = errors.New("those stations are not linked, so a secret cannot pass between them — ask your human to approve a link (station_link_request), the same approval that lets you message each other")
+
+// ErrCannotSendToSelf refuses a transfer whose source and destination are the same vault.
+var ErrCannotSendToSelf = errors.New("that is this station's own vault — a transfer to yourself would overwrite the secret with itself and bump its revision for nothing")
+
+// SendStationVaultSecret hands a secret from one station's vault into another's, WITHOUT the value
+// ever leaving the server.
+//
+// *** WHY THIS EXISTS: THERE WAS NO SAFE WAY TO GIVE A CREDENTIAL TO A SESSION ON ANOTHER
+// MACHINE. *** Every available route was wrong in a different way. Pasting it into a COMM message
+// body puts it in the message store under retention AND in both sessions' transcripts. Relaying it
+// as a file writes plaintext bytes to the server's disk until the sweeper runs. Asking the human to
+// copy it by hand is exactly the credential tax Vlad's standing requirement exists to remove:
+// "it should not require numerous keys, tokens, vouchers, approvals, etc."
+//
+// THE VALUE MOVES INSIDE THE SERVER AND NOWHERE ELSE. It is decrypted from the sender's row and
+// re-encrypted into the recipient's under the same key (vaultcrypt.go), in this process. It never
+// enters a message body, never touches data/comm/, never appears in a tool result on either side,
+// and never reaches either session's transcript. What the sender gets back is a receipt; what the
+// recipient gets is an entry in their own vault they must still read through the audited path.
+//
+// AUTHORISED BY THE LINK, NOT BY A NEW CEREMONY. AreStationsLinked is the same predicate
+// comm_send{to_station} uses, so a human who has already said "these two may talk" has said enough.
+//
+// AUDITED ON BOTH SIDES BY CONSTRUCTION: the read is logged against the SENDER with via='transfer'
+// — distinguishable from an ordinary read, so "who saw this secret" stays answerable — and the
+// write lands through PutStationVaultSecret, which gives the recipient's copy the same encryption,
+// history, caps and reversibility as anything they stored themselves.
+//
+// THE SENDER KEEPS THEIR COPY. This is a COPY, not a move: a transfer that emptied the sender's
+// vault would make a mistyped station id destructive, and the vault's founding rule is that every
+// write is reversible.
+func (s *Store) SendStationVaultSecret(ctx context.Context, lim StationVaultLimits,
+	fromStation, toStation, name, asName, tokenID string, actorID int64) (*StationVaultEntry, int, error) {
+
+	if strings.TrimSpace(toStation) == "" {
+		return nil, 0, errors.New("no destination station given")
+	}
+	if fromStation == toStation {
+		return nil, 0, ErrCannotSendToSelf
+	}
+	if strings.TrimSpace(asName) == "" {
+		asName = name
+	}
+
+	// The destination must exist before anything is read, so a typo cannot cost a read-audit
+	// entry against a secret that was never going anywhere.
+	ok, err := s.StationExists(ctx, toStation)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !ok {
+		return nil, 0, ErrNotFound
+	}
+	linked, err := s.AreStationsLinked(ctx, fromStation, toStation)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !linked {
+		return nil, 0, ErrStationsNotLinked
+	}
+
+	// Read through the ordinary audited path, so the transfer is recorded against the sender
+	// exactly as a read is — with via='transfer' marking what kind of read it was.
+	src, err := s.GetStationVaultSecret(ctx, lim, fromStation, name, "transfer", tokenID, actorID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	note := "received from station " + fromStation
+	if src.Note != "" {
+		note = src.Note + " (" + note + ")"
+	}
+	// The recipient's copy goes in through the normal write path: encrypted, capped, with the
+	// displaced value kept in history. Their caps apply, not the sender's — a station cannot be
+	// pushed past its own limits by someone else's generosity.
+	entry, dropped, err := s.PutStationVaultSecret(ctx, lim, toStation, asName, src.Secret, note, tokenID, actorID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return entry, dropped, nil
 }
