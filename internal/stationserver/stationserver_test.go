@@ -222,11 +222,50 @@ func TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone(t *testing.T) {
 	if !strings.Contains(err.Error(), "station_me") {
 		t.Errorf("the refusal does not name the call that fixes it, so the session waits: %v", err)
 	}
-	for _, stale := range []string{"station_request", "ask your human", "they give you"} {
+	// *** THIS LIST LOST "ask your human", DELIBERATELY, ON 2026-08-26. ***
+	//
+	// It forbade any mention of a human because §5 removed the deadlock where a session had to
+	// WAIT for one. That was right for the mint and it is still right: minting costs zero
+	// approvals and happens on the session's own next call.
+	//
+	// But the acceptance run on a clean Windows VM proved the promise cannot be kept for USE on
+	// the path Ken actually recommends. claude.ai connectors refuse custom header names —
+	// "Only approved header names are accepted" — so a session can mint a workspace and then
+	// reach nothing, and the only remedy is a human putting ?workspace=<id> in the connector URL.
+	//
+	// Forbidding the words does not remove the dependency; it only stops the refusal from
+	// MENTIONING it, which would leave the session to discover the same wall with less
+	// information. So the assertion changed from "never name a human" to what actually protects
+	// the session: never send it to the DELETED path, and never advise the LOOP.
+	for _, stale := range []string{"station_request", "they give you"} {
 		if strings.Contains(err.Error(), stale) {
-			t.Errorf("the refusal still routes through a human (%q) — that is the deadlock, and it is "+
-				"the thing §5 removed: %v", stale, err)
+			t.Errorf("the refusal routes through the deleted request-and-wait path (%q) — that is the "+
+				"deadlock §5 removed: %v", stale, err)
 		}
+	}
+
+	// *** AND THE ASSERTION THAT REPLACED IT: THE REFUSAL MUST NOT ADVISE A LOOP. ***
+	//
+	// Until 3.34.0 it said "call station_me" as the fix. A session that obeyed got a SECOND
+	// workspace, the same refusal, and one more orphan station — every time. The VM session
+	// spotted it and stopped: "The error's advice is a loop. It tells me to call station_me
+	// again, which would mint a second workspace and leave me in the same place, because the gap
+	// is the header, not the mint."
+	//
+	// The refusal must therefore say what actually closes the gap — DECLARING a workspace — and
+	// must warn against the re-mint rather than recommend it.
+	if !strings.Contains(err.Error(), "workspace") {
+		t.Errorf("the refusal does not say the connection failed to DECLARE a workspace, which is the "+
+			"actual gap: %v", err)
+	}
+	if !strings.Contains(err.Error(), "?workspace=") {
+		t.Errorf("the refusal does not name the URL form, which is the ONLY remedy available to a "+
+			"claude.ai connector: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not one") &&
+		!strings.Contains(strings.ToLower(err.Error()), "second workspace") {
+		t.Errorf("the refusal does not warn that re-calling station_me mints ANOTHER workspace; a "+
+			"session following it accumulates orphan stations: %v", err)
 	}
 }
 

@@ -15,6 +15,42 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.34.0] — 2026-08-26
+
+### Fixed
+
+- **The station surface was unreachable through claude.ai connectors — the onboarding path Ken
+  recommends.** Found by the acceptance run on a clean Windows 11 VM.
+
+  A session could call `station_me`, receive a workspace with zero approvals exactly as
+  `IDENTITY.md` §6 promises, and then have **every other station tool refuse it one call later**.
+  They all pass through `requireStation`, which needs the connection to declare its workspace, and
+  `station_me` is the only tool that does not.
+
+  The declaration was **header-only**, and claude.ai connectors enforce an allowlist of header
+  names: *"Only approved header names are accepted."* An already-created connector has no headers
+  field at all. So workspaces could be minted indefinitely and used never.
+
+  **`/station/mcp?workspace=<id>` is now accepted**, normalised into the same header everything
+  downstream already reads. A URL is the one thing a connector lets a user set freely, and
+  connectors are unique per URL — so `?workspace=A` and `?workspace=B` are two connectors, giving
+  per-workspace identity **and** account-level propagation, neither of which was possible before.
+  An explicit header still wins when both are present.
+
+  **Safe only because the workspace id authorises nothing** (§4). A URL is a worse place for a
+  secret than a header, so §9.2's condition governs unchanged: if that id ever gains authority,
+  this form goes with it.
+
+- **The no-workspace refusal advised a loop.** It said *"call station_me"* — which mints a
+  **second** workspace and returns the same refusal, leaving an orphan station behind each time.
+  It now says the connection has not declared a workspace, names both remedies, and warns
+  explicitly that re-calling `station_me` is not one of them.
+
+  `TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone` was rewritten rather than edited: it used to
+  forbid the refusal from mentioning a human at all, which after this finding would only have
+  stopped the message from disclosing a dependency that genuinely exists. It now forbids the
+  **deleted request-and-wait path** and the **loop**, which is what actually protects a session.
+
 ## [3.33.1] — 2026-08-26
 
 ### Fixed

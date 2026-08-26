@@ -432,3 +432,116 @@ func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
 		}
 	}
 }
+
+// qsRT sends the bearer and NO workspace header, driving the transport the way a claude.ai
+// connector does — which is the whole point: that client refuses custom header names.
+type qsRT struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (q qsRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	r.Header.Set("Authorization", "Bearer "+q.token)
+	r.Header.Del(WorkspaceHeader)
+	return q.base.RoundTrip(r)
+}
+
+// *** A WORKSPACE CAN BE DECLARED IN THE URL, BECAUSE A CONNECTOR CANNOT SEND A HEADER. ***
+//
+// The 2026-08-26 acceptance run on a clean VM found the station surface unreachable through
+// claude.ai connectors — the onboarding path Ken recommends and the one that propagates to every
+// device. The client enforces an allowlist of header names: "Only approved header names are
+// accepted." So `station_me` could mint a workspace with zero approvals, exactly as §6 promises,
+// and every other station tool refused it one call later.
+//
+// This drives the REAL transport with the header stripped, which is the only arrangement that
+// reproduces what a connector actually does.
+func TestAWorkspaceCanBeDeclaredInTheURLWhenTheClientCannotSendHeaders(t *testing.T) {
+	st, srv, _, station := harness(t)
+	ctx := context.Background()
+
+	actor, err := st.FindOrCreateActor(ctx, "ai", "connector-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.IssueStationKey(ctx, actor, "", "connector-key", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connect := func(url string) *mcp.ClientSession {
+		t.Helper()
+		cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+		sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
+			Endpoint:             url,
+			HTTPClient:           &http.Client{Transport: qsRT{token: key, base: http.DefaultTransport}},
+			DisableStandaloneSSE: true,
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { sess.Close() })
+		return sess
+	}
+
+	// CONTROL FIRST: with NO header and NO query, this credential has no workspace and mints one.
+	// Without this the success below could be caused by the credential carrying a station.
+	minted := meOverTransport(t, connect(srv.URL), map[string]any{"workspace_name": "nowhere"})
+	if !minted.JustCreated {
+		t.Fatal("the control did not mint; this key already carries a station and the test proves nothing")
+	}
+
+	// AND NOW THE PROPERTY: the same header-less client, with ?workspace= in the URL, resolves to
+	// the DECLARED workspace instead of minting another.
+	got := meOverTransport(t, connect(srv.URL+"?workspace="+station.StationID), map[string]any{})
+	if got.JustCreated {
+		t.Fatal("the URL-declared workspace was ignored and a NEW one was minted — a connector " +
+			"would accumulate an orphan station on every connection and never reach a working state")
+	}
+	if got.StationID != station.StationID {
+		t.Errorf("resolved to %q, want the declared %q", got.StationID, station.StationID)
+	}
+	if got.Name != station.Name {
+		t.Errorf("name = %q, want %q — the session is briefed on the wrong post", got.Name, station.Name)
+	}
+}
+
+// THE REST OF THE STATION SURFACE MUST WORK FROM A URL-DECLARED WORKSPACE, not just station_me.
+// station_me was always reachable — it is the one tool that does NOT go through requireStation,
+// which is exactly why the VM could mint a workspace and then use nothing. Asserting only on
+// station_me would re-pass the broken state.
+func TestURLDeclaredWorkspaceReachesToolsBehindRequireStation(t *testing.T) {
+	st, srv, _, station := harness(t)
+	ctx := context.Background()
+	actor, err := st.FindOrCreateActor(ctx, "ai", "connector-session-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.IssueStationKey(ctx, actor, "", "connector-key-2", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             srv.URL + "?workspace=" + station.StationID,
+		HTTPClient:           &http.Client{Transport: qsRT{token: key, base: http.DefaultTransport}},
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	// station_task_add goes through requireStation, like every station tool except station_me.
+	res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "station_task_add",
+		Arguments: map[string]any{"text": "reachable from a URL-declared workspace", "blocked_on": "self"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("a tool behind requireStation refused a URL-declared workspace: %+v — this is the "+
+			"VM failure, unfixed: mint works, everything else does not", res.Content)
+	}
+}

@@ -110,7 +110,37 @@ one moment a bad name is actually in front of them.
 | Event | Approval |
 |---|---|
 | Log into claude.ai on a device | none — it *is* the approval |
-| Start work in a new folder | **none.** Auto-named, fully working |
+| Start work in a new folder | **none to MINT.** See the correction below on "fully working" |
+
+> **"AUTO-NAMED, FULLY WORKING" WAS HALF TRUE, AND THE ACCEPTANCE RUN FOUND THE OTHER HALF.**
+> 2026-08-26, clean Windows VM, reported by ken-prod-ops.
+>
+> The mint is exactly as promised: `station_me` returns a workspace, zero approvals, immediately.
+> **Then every other station tool refused it one call later** — because they all pass through
+> `requireStation`, which needs the connection to SAY which workspace it is, and `station_me` is
+> the only tool that does not.
+>
+> **claude.ai CONNECTORS CANNOT SEND A CUSTOM HEADER.** Verbatim from the client: *"Only approved
+> header names are accepted."* An already-created connector has no headers field at all. So the
+> onboarding path Ken recommends — connectors added once on an account, propagating to every
+> device — could mint workspaces indefinitely and use none of them.
+>
+> **And the refusal advised a LOOP**: it said "call station_me", which mints a SECOND workspace and
+> returns the same refusal, accumulating an orphan station each time. The VM session spotted that
+> and stopped rather than obeying.
+>
+> **FIXED IN 3.34.0 by accepting the workspace in the URL** — `/station/mcp?workspace=<id>` — since
+> a URL is the one thing a connector lets a user set freely, and connectors are unique PER URL, so
+> `?workspace=A` and `?workspace=B` are two connectors. That gives per-workspace identity AND
+> account-level propagation, neither of which was achievable before.
+>
+> **Safe only because the id authorises nothing** (§4). A URL is a worse place for a secret than a
+> header — proxy logs, history, referrers — so §9.2's condition governs this unchanged: **if that
+> id ever gains authority, the query-string form goes with it.**
+>
+> **The honest cost:** a human still edits the connector URL once per workspace. That is one
+> config action, not an approval, and it is the same shape as the MCP-entry edit the header form
+> always needed. "Fully working" now means *fully working once the connection declares itself*.
 | Rename a workspace | none, and no side effects |
 | Two workspaces talking | **one, once per pair** — plus publishing the TARGET once, see below |
 

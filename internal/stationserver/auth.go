@@ -69,8 +69,17 @@ func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, 
 		p = p.withWorkspace(workspaceFrom(req))
 	}
 	if p.StationID == "" {
-		return nil, errors.New("no workspace yet — call station_me with workspace_name set to this folder's name " +
-			"and Ken will make you one immediately: nothing to approve and nothing to wait for")
+		// THIS USED TO SAY "call station_me" — WHICH IS A LOOP THAT MINTS A SECOND WORKSPACE.
+		// A session that followed it got another id, the same refusal, and one more orphan
+		// station each time. The gap is never the mint; it is that this connection does not
+		// SAY which workspace it is. So the advice has to be about declaring one, and it has to
+		// name both ways of declaring it, because a claude.ai connector cannot send a header.
+		return nil, errors.New("this connection has not said which workspace it is. Two ways to fix it, " +
+			"and calling station_me again is NOT one — that would mint a SECOND workspace and leave you " +
+			"here. (1) If you already have a workspace id, your human adds it to this connector's URL as " +
+			"?workspace=<id>, or sets the " + WorkspaceHeader + " header if the client allows custom " +
+			"headers. (2) If you have no workspace at all, call station_me ONCE to get an id, then ask " +
+			"your human to do (1) with it. Either way you reconnect afterwards and everything works")
 	}
 	return p, nil
 }
@@ -139,6 +148,39 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxStationBody)
+
+		// *** THE WORKSPACE MAY ALSO ARRIVE IN THE URL, BECAUSE A CONNECTOR CANNOT SEND A HEADER. ***
+		//
+		// Found by the 2026-08-26 acceptance run on a clean Windows VM, and it made the entire
+		// station surface unreachable by the onboarding path Ken actually recommends. claude.ai
+		// CONNECTORS — added once on the account, propagating to every device, which is the flow
+		// that finally worked for Vlad — enforce an allowlist of header names and refuse custom
+		// ones outright: "Only approved header names are accepted." An already-created connector
+		// has no headers field at all.
+		//
+		// So a session could call station_me, be given a workspace with zero approvals exactly as
+		// §6 promises, and then find every other station tool refusing it one call later. Worse,
+		// the refusal advised calling station_me again, which mints ANOTHER workspace — a loop
+		// that accumulates orphan stations and never reaches a working state.
+		//
+		// A URL is the one thing a connector lets a user set freely, and connectors are unique PER
+		// URL — so ?workspace=A and ?workspace=B are two connectors, which gives per-workspace
+		// identity AND account-level propagation at once. Neither was achievable before.
+		//
+		// SAFE ONLY BECAUSE THE ID AUTHORISES NOTHING. IDENTITY.md §4: "A stable opaque workspace
+		// id in an MCP header authorises nothing, so there is nothing to keep out of a transcript."
+		// A URL is a worse place for a secret than a header — it lands in proxy logs, browser
+		// history and referrers — so this is acceptable for a NAME TAG and would not be for a
+		// credential. §9.2's condition governs it unchanged: IF THAT ID EVER GAINS AUTHORITY, THIS
+		// GOES WITH IT.
+		//
+		// The header still WINS when both are present: an explicit per-request header is the more
+		// specific signal, and a stale query string on a saved connector must not override it.
+		if r.Header.Get(WorkspaceHeader) == "" {
+			if q := strings.TrimSpace(r.URL.Query().Get("workspace")); q != "" {
+				r.Header.Set(WorkspaceHeader, q)
+			}
+		}
 
 		tok := bearerToken(r)
 		if tok == "" {
