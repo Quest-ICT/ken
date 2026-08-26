@@ -487,12 +487,22 @@ var langNames = map[string]string{
 // also why it was never the cause of the teardowns.
 const mcpKeepAlive = 30 * time.Second
 
+// NewServer builds the knowledge-base surface as its own MCP server.
+//
+// Split from RegisterTools in 3.36.0 so the SAME tools can also be registered onto the unified
+// endpoint, which serves all three surfaces from one connector. Two servers, one set of tool
+// definitions — the alternative was a second copy that drifts.
 func NewServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "ken",
 		Title:   "Ken knowledge base",
 		Version: version.Version,
 	}, &mcp.ServerOptions{Instructions: version.InstructionStamp() + buildInstructions(d.CurationLangs), KeepAlive: mcpKeepAlive})
+	RegisterTools(s, d)
+	return s
+}
+
+func RegisterTools(s *mcp.Server, d Deps) {
 
 	// THE CURATION SENTENCE RIDES ON THE TWO TOOLS THAT WRITE, not on the instructions.
 	// Built here rather than at the const, because the language list is per deployment and
@@ -727,7 +737,6 @@ func NewServer(d Deps) *mcp.Server {
 		return nil, version.InstructionsFor("/mcp", buildInstructions(d.CurationLangs)), nil
 	})
 
-	return s
 }
 
 func toLinkInputs(ls []linkIn) []store.LinkInput {

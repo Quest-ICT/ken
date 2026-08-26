@@ -211,9 +211,16 @@ Your human reads all of it; none of it is private from them.`
 // and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
 const mcpKeepAlive = 30 * time.Second
 
+// newServer builds the STATION surface as its own MCP server. See mcpserver.NewServer for why
+// registration is separable.
 func newServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-station", Version: "1"},
 		&mcp.ServerOptions{Instructions: version.InstructionStamp() + instructions, KeepAlive: mcpKeepAlive})
+	RegisterTools(s, d)
+	return s
+}
+
+func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_link_request",
@@ -812,7 +819,6 @@ func newServer(d Deps) *mcp.Server {
 		return nil, version.InstructionsFor("/station/mcp", instructions), nil
 	})
 
-	return s
 }
 
 // requireLocker gates the locker on the STATION scope alone. The locker is part of

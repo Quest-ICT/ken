@@ -221,10 +221,17 @@ const errStationUnavailable = "no station by that name is available to you — c
 // and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
 const mcpKeepAlive = 30 * time.Second
 
+// newServer builds the COMM surface as its own MCP server. See mcpserver.NewServer for why
+// registration is separable.
 func newServer(d Deps, h *Handler) *mcp.Server {
-	w := h.w
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-comm", Version: "1"},
 		&mcp.ServerOptions{Instructions: version.InstructionStamp() + instructions, KeepAlive: mcpKeepAlive})
+	RegisterTools(s, d, h)
+	return s
+}
+
+func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
+	w := h.w
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_register",
@@ -1030,7 +1037,6 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 		return nil, version.InstructionsFor("/comm/mcp", instructions), nil
 	})
 
-	return s
 }
 
 // requireFileScope gates the file tools on comm-file. The transport middleware
