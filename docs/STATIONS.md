@@ -434,7 +434,17 @@ every off-box copy.
 
 ---
 
-### S13 — The vault is the credential store, and it does not pretend to be encrypted *(chosen: plaintext, audited, reversible)*
+### S13 — The vault is the credential store *(chosen: encrypted at rest, audited, reversible)*
+
+> **THIS SECTION SAID "does not pretend to be encrypted (chosen: plaintext…)" UNTIL 3.32.0**, and
+> that was the right decision for as long as it stood: migration 0016 refused encryption because a
+> key stored beside the ciphertext protects nobody who can read the file, and *"theatre in a
+> security store is worse than an honest absence."* What changed is not the argument but the KEY'S
+> LOCATION — `data/vault.key`, outside the database and outside every backup, so the copies that
+> leave the host carry ciphertext and the thing that opens them does not travel with them.
+> **It still does not protect against root on the host, and `docs/BACKUP.md` leads with the
+> failure mode: a snapshot restored without the key leaves every secret unreadable while the
+> restore looks entirely successful.**
 
 The locker's sibling, and the answer to what S11 forbids. A station may hold credentials — tokens, keys,
 passwords, connection strings — in `station_vault_*`, which is a different thing from the locker in every
@@ -613,7 +623,7 @@ transfer collides on it, and every station is expected to have one.
 | `station_note_promote` | Open a pending promotion for the human to convert (S10). |
 | `station_task_add` / `_list` / `_close` / `_drop` / `_defer` | §11.8. Closing is the cheapest verb, deliberately. |
 | `station_locker_*` | `list`, `put`, `get`, `delete`. Bounded; refuses over cap rather than evicting (S12). |
-| `station_vault_*` | `list`, `put`, `get`, `delete` — credentials, which the locker forbids (S13). Listing never returns a value; every `get` is logged; `delete` is reversible from the console. |
+| `station_vault_*` | `list`, `put`, `get`, `delete`, `send` — credentials, which the locker forbids (S13). Listing never returns a value; every read is logged; `delete` is reversible from the console. **`send` (3.33.0) hands a secret to another station's vault without the value entering a message, a file, or either transcript** — authorised by the same link that lets the two stations talk. |
 
 ### Scopes
 
@@ -686,7 +696,7 @@ multiplier from S12.
 | vault secret | 8 KiB | a PEM private key fits; anything larger is a file, and files go in the locker |
 | secrets per station | 64 | a vault this full is holding something that belongs elsewhere |
 | vault versions per secret | 16, pruned oldest-first, **and every write that drops one says so — including a restore** | what makes an overwrite reversible; at 0 an overwrite is final. **All 16 are individually restorable, by history row id.** Until 2026-08-24 only the newest was reachable and restoring twice oscillated between the newest two, because a restore is itself a write and the value it displaced went back into history at a higher rev — see the note on `RestoreStationVaultSecret` |
-| vault reads retained | 500 per station | the trail is bounded; the per-secret read COUNT is exact regardless, so the console can say "the last 20 of 2,318" |
+| vault reads retained | 500 per station | the trail is bounded; the per-secret read COUNT is exact regardless, so the console can say "the last 20 of 2,318". **`read_count` counts RETRIEVALS ONLY — a `station_vault_send` is written to the trail as `via='transfer'` but does NOT increment it**, because the console renders that number as how often a credential was retrieved and a transfer is a different event. The two answer different questions on purpose. |
 | open tasks per station | 500 | a longer list is not being worked |
 | task `text` / `resolution` | 512 B each | one line, by construction |
 | task `detail` + `context` | 4 KiB | a task needing more than this is a notebook page with a plan |
@@ -714,7 +724,8 @@ on, and it was never gated on COMM's state either, because stations work with CO
 - **name the station at approval**, and publish/unpublish;
 - per-station **asset usage against the caps**, with notebook, task and locker views (locker with
   download);
-- the **vault** (S13) — names, notes, sizes, revision and **read count**, never values. One reveal
+- the **vault** (S13) — names, notes, sizes, revision and **read count** (retrievals only; transfers
+  appear in the trail as `transfer` and are deliberately not counted here), never values. One reveal
   button per secret, which is a POST and shows the value once in the response rather than redirecting
   with it in a URL; the reveal lands in the same read trail a session's `station_vault_get` does,
   marked `console`. Deleted secrets stay listed as recoverable tombstones with a restore control, and

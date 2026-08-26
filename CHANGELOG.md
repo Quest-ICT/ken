@@ -15,6 +15,33 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.33.1] — 2026-08-26
+
+### Fixed
+
+- **`station_vault_send` no longer increments the sender's `read_count`.** The console renders
+  that number as *how often this credential was retrieved*, and a transfer is a different event —
+  which is exactly why it has its own `via` and its own migration. Counting it in both places
+  stated one act twice, once under a label meaning something else, so an operator auditing *"this
+  key was read 4 times"* would have been counting sends.
+
+  **The transfer is still fully audited**: the `station_vault_read` row is written for every
+  provenance including `transfer`. Only the counter — the one number carrying a specific English
+  meaning into the console — stays about retrievals. The two now answer different questions on
+  purpose.
+
+  Found by ken-prod-ops in the **first live transfer ever performed**: the sending session had
+  never called `station_vault_get`, and its own copy still showed `read_count` 1.
+
+### Changed
+
+- **`docs/STATIONS.md` S13 no longer says the vault "does not pretend to be encrypted".** That
+  heading, and its *(chosen: plaintext, audited, reversible)* subtitle, were correct until 3.32.0
+  and false after it. The decision that changed is not the argument — a key beside its ciphertext
+  is still theatre — but the key's **location**. The section now states what is protected (copies
+  that leave the host), what is not (root on the host), and points at the restore failure mode.
+  `station_vault_send` is added to the tool table, and the read-count row carries its exception.
+
 ## [3.33.0] — 2026-08-26
 
 ### Added

@@ -286,13 +286,33 @@ INSERT INTO station_vault_read(station_id, name, via, by_token_id, by_actor_id) 
 		stationID, name, via, nullStr(tokenID), actorID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE station_vault SET read_count=read_count+1 WHERE station_id=? AND name=?`,
-		stationID, name); err != nil {
-		return nil, err
+	// *** A TRANSFER DOES NOT COUNT AS A RETRIEVAL. ***
+	//
+	// The console renders read_count as "how often this credential was RETRIEVED", and a session
+	// handing a secret to another station is a different event — which is the entire reason it
+	// got its own `via` and its own migration. Counting it here as well would state the same act
+	// twice, once under a label that means something else, and an operator auditing "this key was
+	// read 4 times" would be reading a number that includes sends.
+	//
+	// The audit row above is written for EVERY provenance including 'transfer', so nothing is
+	// lost: the event is recorded, it is attributable, and it is distinguishable. Only the
+	// COUNTER — the one number that carries a specific English meaning into the console — stays
+	// about retrievals.
+	//
+	// Found by ken-prod-ops on 2026-08-26, in the first live transfer ever performed: m600 never
+	// called station_vault_get and its sender copy still showed read_count 1. Vlad's ruling: "I
+	// have no reason to go against your inclination. If anything, it should be documented so we
+	// don't chase after it later." This comment is that documentation.
+	if via != "transfer" {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE station_vault SET read_count=read_count+1 WHERE station_id=? AND name=?`,
+			stationID, name); err != nil {
+			return nil, err
+		}
 	}
-	// Bounded, but read_count above keeps the TRUE total, so a console can say "the last
-	// N of M" rather than implying M is N.
+	// Bounded, but read_count above keeps the TRUE total of RETRIEVALS, so a console can say
+	// "the last N of M" rather than implying M is N. Transfers are in this log and not in that
+	// counter, so the two answer different questions on purpose.
 	if _, err := tx.ExecContext(ctx, `
 DELETE FROM station_vault_read
 WHERE station_id=? AND id NOT IN (

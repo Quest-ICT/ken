@@ -269,3 +269,65 @@ func linkStations(t *testing.T, st *Store, ctx context.Context, a, b string, act
 		t.Fatal(err)
 	}
 }
+
+// *** A TRANSFER IS AUDITED BUT NOT COUNTED AS A RETRIEVAL. ***
+//
+// read_count renders in the console as "how often this credential was retrieved". A send is a
+// different event — that is why it has its own `via` and why migration 0022 exists — so counting
+// it there too would state one act twice, once under a label meaning something else.
+//
+// ken-prod-ops found the original behaviour in the first live transfer ever performed: m600 never
+// called station_vault_get and its sender copy still read 1.
+func TestASendIsLoggedButDoesNotCountAsARetrieval(t *testing.T) {
+	st, ctx, from, actor, lim := vaultFixture(t)
+	to, err := st.CreateStation(ctx, "counter-peer", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from, "k", "v-for-counting", "", "tok", actor); err != nil {
+		t.Fatal(err)
+	}
+	linkStations(t, st, ctx, from, to.StationID, actor)
+
+	readCount := func() int {
+		t.Helper()
+		var n int
+		if err := st.R.QueryRowContext(ctx,
+			`SELECT read_count FROM station_vault WHERE station_id=? AND name=?`, from, "k").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := readCount(); n != 0 {
+		t.Fatalf("a freshly stored secret reads %d; the fixture is wrong", n)
+	}
+
+	if _, _, err := st.SendStationVaultSecret(ctx, lim, from, to.StationID, "k", "", "tok", actor); err != nil {
+		t.Fatal(err)
+	}
+	if n := readCount(); n != 0 {
+		t.Errorf("read_count is %d after a SEND — the console renders that number as retrievals, "+
+			"and an operator auditing 'this key was read N times' would be counting transfers", n)
+	}
+
+	// BUT IT IS STILL AUDITED. Without this the test would pass against a transfer that vanished
+	// from the trail entirely, which is far worse than over-counting.
+	var n int
+	if err := st.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM station_vault_read WHERE station_id=? AND name=? AND via='transfer'`,
+		from, "k").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("the transfer left %d audit rows, want 1 — not counting it must not mean not recording it", n)
+	}
+
+	// CONTROL: a REAL retrieval still counts, so the change is scoped to transfers.
+	if _, err := st.GetStationVaultSecret(ctx, lim, from, "k", "station", "tok", actor); err != nil {
+		t.Fatal(err)
+	}
+	if n := readCount(); n != 1 {
+		t.Errorf("read_count is %d after a genuine station read; the fix has disabled counting "+
+			"altogether rather than excluding transfers", n)
+	}
+}
