@@ -518,7 +518,10 @@ unaffected, and this document remains design until Vlad says otherwise.
   design must work for a session that connects fresh with no prior state, every time.
 - **Encrypted secret sharing between sessions** — **DECIDED 2026-08-26 by Vlad: option A,
   encryption AT REST under a server-held key stored OUTSIDE `ken.db` and excluded from backups.
-  Explicitly NOT end-to-end.**
+  Explicitly NOT end-to-end. BUILT AND SHIPPED THE SAME DAY in 3.32.0** — `internal/store/vaultcrypt.go`,
+  AES-256-GCM, key at `data/vault.key` (`0600`), created by `Open`. The condition attached to the
+  decision is met: `docs/BACKUP.md` now leads with what it protects, what it does not, and that a
+  snapshot restored without the key leaves every secret unreadable while looking entirely successful.
 
   > **What the question turned out to be.** §11 conflated two features. **A** — encryption at rest,
   > server holds the key. **B** — end-to-end, the server cannot read. They have different threat

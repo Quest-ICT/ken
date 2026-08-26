@@ -19,6 +19,11 @@ type Store struct {
 	W *sql.DB // single-writer pool (MaxOpenConns == 1) — serializes all writes
 	R *sql.DB // reader pool
 
+	// vaultKey is the AES-256 key for station-vault values at rest (vaultcrypt.go).
+	// Loaded by Open from vault.key beside the database; SetVaultKey overrides it.
+	// A Store with no key REFUSES vault writes rather than storing plaintext.
+	vaultKey []byte
+
 	// detect auto-tags each new version's content_lang (curation-language
 	// guardrail). Set to the real detector by Open; SetDetector overrides it (tests).
 	// Never nil after Open — a nil detector would panic detectLang, so callers that
@@ -59,7 +64,18 @@ func Open(path string) (*Store, error) {
 	r.SetMaxOpenConns(4)
 	r.SetMaxIdleConns(4)
 
-	return &Store{W: w, R: r, detect: lang.New()}, nil
+	// THE VAULT KEY IS LOADED HERE so that every Store has one by construction. Loading it
+	// lazily at first vault write would leave a window in which the key file cannot be created
+	// (read-only mount, wrong owner) and the failure surfaces as a refused secret in the middle
+	// of somebody's work, rather than as a server that will not start.
+	key, err := loadOrCreateVaultKey(path)
+	if err != nil {
+		_ = w.Close()
+		_ = r.Close()
+		return nil, fmt.Errorf("vault key: %w", err)
+	}
+
+	return &Store{W: w, R: r, vaultKey: key, detect: lang.New()}, nil
 }
 
 // Close closes both connection pools.

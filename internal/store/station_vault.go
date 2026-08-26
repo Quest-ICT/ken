@@ -181,8 +181,22 @@ func (s *Store) PutStationVaultSecret(ctx context.Context, lim StationVaultLimit
 		}
 	}
 
+	// DIGEST AND SIZE ARE COMPUTED OVER THE PLAINTEXT, DELIBERATELY. The digest is what the
+	// console shows to identify a secret and what an operator compares against an external copy;
+	// hashing the ciphertext would make it change on every rewrite of an unchanged value and stop
+	// being comparable to anything. The cost is stated in vaultcrypt.go: a LOW-ENTROPY secret
+	// stays guessable from its digest, which travels in the same backup as the ciphertext.
 	sum := sha256.Sum256([]byte(secret))
 	digest := hex.EncodeToString(sum[:])
+
+	// Encrypted from here on. `sealed` goes to the database; `secret` is used only for the size
+	// and digest above — keeping them separate variables is what stops a later edit from
+	// accidentally storing the plaintext.
+	sealed, err := s.sealVaultSecret(secret)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	newRev := 1
 	if exists {
 		newRev = curRev + 1
@@ -201,14 +215,14 @@ UPDATE station_vault SET secret=?, note=?, size_bytes=?, sha256=?, rev=?, delete
        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
        updated_by_token_id=?, updated_by_actor_id=?
 WHERE station_id=? AND name=?`,
-			secret, note, len(secret), digest, newRev, nullStr(tokenID), actorID, stationID, name); err != nil {
+			sealed, note, len(secret), digest, newRev, nullStr(tokenID), actorID, stationID, name); err != nil {
 			return nil, 0, err
 		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO station_vault(station_id, name, secret, note, size_bytes, sha256, rev, updated_by_token_id, updated_by_actor_id)
 VALUES(?,?,?,?,?,?,1,?,?)`,
-			stationID, name, secret, note, len(secret), digest, nullStr(tokenID), actorID); err != nil {
+			stationID, name, sealed, note, len(secret), digest, nullStr(tokenID), actorID); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -251,6 +265,11 @@ FROM station_vault WHERE station_id=? AND name=?`, stationID, name).
 		return nil, ErrNotFound
 	}
 	if err != nil {
+		return nil, err
+	}
+	// Decrypt. A value with no `kv1:` prefix predates encryption and comes back unchanged, which
+	// is what lets an existing deployment upgrade without a migration — see openVaultSecret.
+	if e.Secret, err = s.openVaultSecret(e.Secret); err != nil {
 		return nil, err
 	}
 	// A tombstone does not hand out its value. It is recoverable, which is a different

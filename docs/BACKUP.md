@@ -63,6 +63,53 @@ durability path — so it is treated as non-negotiable, in three tiers.
 > **Never `cp` a live WAL database** — you get a torn file. Always use
 > `ken backup snapshot` (VACUUM INTO) or Litestream, which are WAL-safe.
 
+## THE VAULT KEY IS NOT IN THE BACKUP, AND A SNAPSHOT WITHOUT IT IS UNREADABLE
+
+**Since 3.32.0, station-vault secrets are ENCRYPTED in `ken.db`.** The key is a 32-byte file,
+`data/vault.key`, mode `0600`, sitting beside the database next to the existing `dedup.key`.
+
+**`scripts/ken-snapshot.sh` copies only `ken.db`, so the key is outside every snapshot by
+construction rather than by an exclusion rule someone has to remember.** That is the entire
+security argument for the scheme: the copies that leave this box carry ciphertext, and the thing
+that opens them does not travel with them.
+
+> ### *** IT IS ALSO THE ENTIRE FAILURE MODE. ***
+>
+> **Restore `ken.db` onto a machine without the matching `vault.key` and every vault secret is
+> gone.** Not corrupted, not recoverable with effort — the plaintext does not exist anywhere else.
+> The restore will otherwise look completely successful: the database opens, every entry, task,
+> note and message is intact, the row counts match, and `station_vault` still lists every secret
+> by name, size and digest. Only the values are unrecoverable, and only when something tries to
+> read one.
+>
+> **So back the key up SEPARATELY, and never into the same place as the snapshots.** A key stored
+> beside the ciphertext protects nobody who can read the file — that is the reasoning migration
+> 0016 used to refuse encryption in the first place, and putting `vault.key` into the backup set
+> re-creates exactly the situation it was refusing.
+>
+> ```
+> # copy it somewhere that is NOT the snapshot destination — a password manager,
+> # an offline medium, a different custodian. It never changes, so this is once.
+> sudo install -m 0600 /opt/ken/data/vault.key /path/to/somewhere/else/ken-vault.key
+> sudo sha256sum /opt/ken/data/vault.key      # record this; it is how you check a restored copy
+> ```
+>
+> **Verify the copy by its digest, not by its length.** A truncated key file is refused at
+> startup — Ken will not run rather than guess — but a *wrong* 32-byte key starts fine and fails
+> only when a secret is read, with an error naming `vault.key`.
+
+**What this protects, stated exactly, because overstating it is worse than not having it:** copies
+of the database that leave the host. It does **not** protect against someone with root here, who
+can read the key beside the database and can read the running process's memory regardless. And a
+**low-entropy** secret remains guessable from `station_vault.sha256`, which is computed over the
+plaintext so the console can identify a secret and travels in the same snapshot. The vault is for
+high-entropy credentials; a short passphrase stored here is protected far less than it appears.
+
+**Secrets written before 3.32.0 stay plaintext until they are next written.** A value with no
+`kv1:` prefix is read back as-is, which is what lets an existing deployment upgrade with no
+migration — and it means an older snapshot, or a row nobody has touched, is still readable without
+the key. Rewrite anything that matters.
+
 ## Tiers
 
 | Tier | Mechanism | RPO | Purpose |

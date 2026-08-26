@@ -15,6 +15,46 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.32.0] — 2026-08-26
+
+### Added
+
+- **Station-vault secrets are encrypted at rest.** AES-256-GCM, a fresh nonce per write, under a
+  32-byte key at `data/vault.key` (`0600`) created by `Open` — beside the database, next to the
+  existing `dedup.key`. IDENTITY.md §11 option A, decided by Vlad and built the same day, while
+  the vault still held zero rows on production so there was nothing to migrate or re-encrypt.
+
+  **What it protects, exactly:** copies of `ken.db` that leave the host. The nightly snapshot
+  copies only `ken.db`, so the key is outside every backup **by construction** rather than by an
+  exclusion rule someone has to remember. Before this, every vault secret travelled off-box in
+  plaintext.
+
+  **What it does not protect against:** root on this host, who can read the key beside the
+  database and the running process's memory regardless. Saying so is a condition of shipping it —
+  migration 0016 refused encryption on the grounds that a key travelling with its ciphertext is
+  theatre, and *"theatre in a security store is worse than an honest absence."* The only thing
+  separating this from that is the key's location.
+
+  **Residual weakness, stated because it is not obvious:** `sha256` and `size_bytes` are still
+  computed over the plaintext, deliberately — the digest is what the console shows to identify a
+  secret and what an operator compares against an external copy. So a **low-entropy** secret stays
+  guessable from its digest, which travels in the same snapshot. The vault is for high-entropy
+  credentials.
+
+  **`docs/BACKUP.md` now leads with the failure mode:** restore `ken.db` without the matching
+  `vault.key` and every secret is unreadable, while the restore looks entirely successful — the
+  database opens, row counts match, and `station_vault` still lists every secret by name, size and
+  digest. Only the values are gone. **Back the key up separately from the snapshots**, never into
+  the same place.
+
+  **No migration.** A stored value carries a `kv1:` prefix; anything without one predates this and
+  is read back unchanged, so an existing deployment upgrades with no schema change. The honest cost
+  is that pre-3.32.0 values stay plaintext until rewritten.
+
+  A wrong key fails loudly and names `vault.key` rather than returning garbage that a restore could
+  write over a real secret; a truncated key file is refused at startup rather than guessed at; and a
+  `Store` with no key **refuses vault writes** rather than silently falling back to plaintext.
+
 ## [3.31.0] — 2026-08-26
 
 ### Removed
