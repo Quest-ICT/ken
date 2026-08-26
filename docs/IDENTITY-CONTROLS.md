@@ -221,6 +221,59 @@ control can be, and telling them apart is the whole point of this document.
 - **Stated reason:** "This deliberately does NOT reuse internal/mcpserver's authentication, and the duplication is the point rather than an oversight. That path accepts three token shapes; this one accepts exactly ONE... The OAuth path is excluded because a cloud-hosted connector is the worst possible holder of 'reach into the sessions on my machines', and its scope set is hard-coded rather than operator-chosen, so an operator could not withhold comm from it even if they wanted to. The dev-token bypass is excluded because it is a single static credential with an empty token id, which also means it bypasses per-token rate accounting... Sharing the other package's authenticate() would mean a future token shape added there silently gains access here. Keeping them separate makes that impossible." (internal/commserver/auth.go:63-78)
 - **If removed:** This is the highest-value item for a design that intends OAuth as the only mechanism, because THIS CONTROL IS THE ONE THAT SAYS NO TO EXACTLY THAT. The reasoning is not about tenancy: it is that a credential living in someone else's cloud should not carry "reach into my running sessions". Consolidating three authenticators into one OAuth path removes it by construction, and the removal is invisible — every surface keeps working, better even, and the day a connector is compromised the blast radius has quietly grown from the knowledge base to the message bus and the vault. If the new design consolidates, the withholding has to be re-expressed as an explicit per-surface capability decision at grant time, not inherited from the fact that three files exist.
 
+  > **THIS CONDITION IS NO LONGER MET, AND IT WAS UN-MET IN TWO STEPS THAT NEITHER LOOKED LIKE A
+  > REMOVAL. Recorded 2026-08-26 after ken-prod-ops read this line against the shipped code.**
+  >
+  > **Step 1 — 3.25.0** removed the comm/station surfaces' refusal of the OAuth shape, and
+  > SATISFIED this condition as written: the consent screen grew a per-surface checkbox, so a
+  > human could withhold messaging from a cloud connector. The condition was quoted at the time
+  > and consciously met.
+  >
+  > **Step 2 — 3.31.0** removed the per-surface checkboxes, because they let a human approve a
+  > session with no messaging or no knowledge base, which Vlad's standing requirement forbids:
+  > *"no ken services (or surfaces) are optional. All sessions get everything (they can use)"*
+  > (2026-08-26; the same requirement as `t-XT1xcsGe`, 2026-08-13). `store.CheckScopeMix` went in
+  > the same change for the same reason.
+  >
+  > **Net position: the original control is gone and the compensating control that licensed its
+  > removal is gone too.** Neither commit was framed as removing this item, and until this note
+  > was written the document still asserted the condition had been met.
+  >
+  > **The paragraph above now describes the live system.** *"The removal is invisible — every
+  > surface keeps working, better even, and the day a connector is compromised the blast radius
+  > has quietly grown from the knowledge base to the message bus and the vault."* That is the
+  > current state, on purpose, and should be read as a statement of fact rather than a warning
+  > about a hypothetical.
+  >
+  > **WHAT THE ARGUMENT FOR STEP 2 DID NOT DO, stated because it was presented as stronger than it
+  > was.** The case made at the time was that the property was ALREADY false — `CheckScopeMix` was
+  > never applied to OAuth grants, and one bearer already carried all three families, measured on
+  > the wire. That establishes an INCONSISTENCY, not a DIRECTION: it resolves either by removing
+  > the control or by closing the bypass, and only the first was argued. The measurement forced a
+  > choice; it did not force this choice. ken-prod-ops made that point and it is correct.
+  >
+  > **VLAD RULED DIRECTLY, 2026-08-26, AND THE DELETION STANDS.** ken-prod-ops declined to upgrade
+  > and put the trade to him rather than settling it with me — correctly, since removing a control
+  > is the requirement-holder's call and two sessions agreeing between themselves is how a decision
+  > gets made by nobody. His answer, quoting his own standing requirement:
+  >
+  > > *"All sessions without exception must have full access to all Ken features and it should not
+  > > require numerous keys, tokens, vouchers, approvals, etc."*
+  >
+  > **So this entry's verdict is now DELETED-BY-DECISION rather than survived, and the blast radius
+  > above is an accepted cost with a name on it.** What made it decidable was prod stating the
+  > argument for the other side as strongly as they could while surfacing the requirement that cut
+  > against their own position.
+  >
+  > **WHAT IS STILL TRUE, AND WHAT REMAINS OPEN.** This control's stated reason
+  > is about *"a credential living in someone else's cloud"*. Vlad's requirement is about **his own
+  > sessions**, which are not the same population — a locally-held token and a cloud-hosted
+  > connector have very different threat profiles and were governed by one rule. A design that
+  > gives local credentials everything while treating a remote connector as its own case would
+  > satisfy both, and nothing here forecloses it. **Vlad's ruling settles the requirement; it does
+  > not by itself settle whether a remote connector deserves separate treatment, and that question
+  > is left open here rather than closed by omission.**
+
 ### Transport-level scope enforcement fails closed: a token lacking the required scope is refused at the middleware, not per tool
 
 - **Where:** `internal/commserver/auth.go:166-171; internal/stationserver/auth.go:98-101`

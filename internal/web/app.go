@@ -891,8 +891,11 @@ var agentScopes = []string{"read", "write-draft", "propose"}
 // TestConsoleCanMintEveryAgentScope now exists: the list is checked against the scopes the
 // surfaces actually accept, so the next family added to a transport cannot be silently unmintable.
 //
-// CheckScopeMix already permits `{station, comm}` — scopes_test.go calls it "THE PERMITTED PAIR: a
-// station that talks" — so offering both families together loosens nothing.
+// EVERY SCOPE IS OFFERED, AND ALL OF THEM ARE TICKED. This comment used to justify the list by
+// saying "CheckScopeMix already permits `{station, comm}`" — a claim about a function deleted in
+// 3.31.0, left behind in present tense by the very commit that deleted it. ken-prod-ops caught it.
+// A comment asserting the behaviour of code that no longer exists is the defect class this file
+// keeps documenting, produced while clearing it elsewhere.
 var consoleCommScopes = []string{"comm", "comm-file", "station", "station-locker"}
 
 func agentScopeOK(s string) bool {
