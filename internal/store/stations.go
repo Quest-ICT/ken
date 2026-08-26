@@ -40,6 +40,11 @@ type Station struct {
 	CreatedAt          string
 	AdvertisedAt       string
 	LastActivityAt     string
+	// SessionKey is the CONVERSATION that owns this workspace — empty for stations that
+	// predate migration 0023, and for any staffed by whichever session picks them up. It
+	// SELECTS and never authorises; see the migration for why that distinction is the whole
+	// safety argument.
+	SessionKey string
 }
 
 // CreateStation creates a station with a HUMAN-supplied name. There is deliberately no
@@ -122,10 +127,11 @@ func (s *Store) stationWhere(ctx context.Context, where string, args ...any) (*S
 	var tags, advertised, lastAct sql.NullString
 	err := s.R.QueryRowContext(ctx, `
 SELECT station_id, name, purpose, self_described_about, self_described_tags,
-       published, state, created_at, advertised_at, last_activity_at
+       published, state, created_at, advertised_at, last_activity_at,
+       COALESCE(session_key,'')
 FROM station WHERE `+where, args...).
 		Scan(&st.StationID, &st.Name, &st.Purpose, &st.SelfDescribedAbout, &tags,
-			&st.Published, &st.State, &st.CreatedAt, &advertised, &lastAct)
+			&st.Published, &st.State, &st.CreatedAt, &advertised, &lastAct, &st.SessionKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -703,6 +709,70 @@ func (s *Store) StationExists(ctx context.Context, stationID string) (bool, erro
 	err := s.R.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM station WHERE station_id=? AND archived_at IS NULL`, stationID).Scan(&n)
 	return n > 0, err
+}
+
+// StationBySessionKey returns the workspace a CONVERSATION already owns, or ErrNotFound.
+//
+// This is the lookup that makes "one existing session is always connected to the same workspace"
+// true across a client restart. The key is declared by the session itself (see migration 0023);
+// it SELECTS and never authorises, so this deliberately does not filter on actor — two callers
+// presenting the same conversation key are the same conversation, and forking them into separate
+// workspaces would be the silent-divergence failure rather than a safety measure.
+func (s *Store) StationBySessionKey(ctx context.Context, sessionKey string) (*Station, error) {
+	return s.stationWhere(ctx, `session_key=?1 AND state <> 'archived'`, sessionKey)
+}
+
+// ClaimStationForSession finds or creates the workspace belonging to one conversation.
+//
+// THE WHOLE POINT IS THAT IT IS IDEMPOTENT PER CONVERSATION. Called again by the same session
+// after a Claude Desktop restart it returns the SAME workspace, created=false, with its notebook,
+// tasks, locker and vault intact. Called by a new conversation it mints a fresh one. Neither case
+// costs a human anything, which is what §6 promised and could not deliver while identity lived in
+// the connector.
+//
+// `nameHint` only decorates the LABEL — Vlad: "what I need to be auto is the label that identifies
+// the new station so me (the human) can identify it (I won't identify a raw number or a UUID)".
+// The key is the identity; the label is for reading, and it stays renameable.
+func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint string, actorID int64) (*Station, bool, error) {
+	if strings.TrimSpace(sessionKey) == "" {
+		return nil, false, errors.New("no session key given")
+	}
+	// A switch rather than if/else-if, so there is no arrangement of these branches that can
+	// return (nil, nil). Mutation testing produced exactly that — a nil station with a nil error,
+	// which the caller then dereferenced — and while the shipped path could not reach it, a
+	// function whose contract allows "no result and no reason" is one edit away from a panic in a
+	// server. The switch makes the third case impossible rather than merely unreached.
+	existing, err := s.StationBySessionKey(ctx, sessionKey)
+	switch {
+	case err == nil:
+		return existing, false, nil
+	case !errors.Is(err, ErrNotFound):
+		return nil, false, err
+	}
+
+	name := strings.TrimSpace(nameHint)
+	if name == "" {
+		name = "workspace"
+	}
+	if len(name) > 60 {
+		name = name[:60]
+	}
+	st, err := s.CreateStationAutoNamed(ctx, name, actorID)
+	if err != nil {
+		return nil, false, err
+	}
+	// Claimed in a second statement rather than in the INSERT, because CreateStationAutoNamed
+	// owns the name-collision retry and threading a second column through it would couple two
+	// unrelated concerns. A failure here leaves an UNCLAIMED station rather than a wrongly-claimed
+	// one, which is the right direction to fail: the next call mints another instead of silently
+	// handing this conversation someone else's post.
+	if _, err := s.W.ExecContext(ctx,
+		`UPDATE station SET session_key=? WHERE station_id=? AND session_key IS NULL`,
+		sessionKey, st.StationID); err != nil {
+		return nil, false, err
+	}
+	st.SessionKey = sessionKey
+	return st, true, nil
 }
 
 // CreateStationAutoNamed mints a workspace whose NAME is derived from a folder, disambiguating on

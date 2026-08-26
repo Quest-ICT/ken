@@ -15,6 +15,36 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.35.0] — 2026-08-26
+
+### Added
+
+- **A conversation can tell Ken which workspace is its own — `station_me{session_key}`.** Ships
+  with migration `0023` under Rule 4.
+
+  **Identity was in the wrong layer.** It arrived from the connection — a header, briefly a URL —
+  and a claude.ai connector is added **once per account**, so any value carried there had exactly
+  one value for every machine and every session. The header could not be set at all (the client
+  refuses custom header names); the URL could be set and identified nothing.
+
+  Vlad: *"the communication between the Claude instances and the Ken instance is direct… so why
+  each session cannot tell it's Ken instance 'I'm XXXXX'?"* There was no reason.
+
+  A session now declares a stable id for **its own conversation** — in Claude Code, the UUID in
+  its transcript and scratchpad paths. Ken returns that conversation's workspace if it has one, or
+  mints and records it. The result binds to the MCP connection, so every other station tool works
+  with no argument and no header. **Onboarding a machine now costs the consent and nothing else,
+  ever.**
+
+  **It survives a client restart**, which is the case that defines it: the key is durable and the
+  connection binding is only a cache, so a restarted conversation comes back to its own workspace
+  rather than minting an orphan. It cannot be keyed on the MCP session id, which is reborn on
+  every reconnect.
+
+  The **label** is auto-generated so a human can recognise it and stays renameable; the **key** is
+  the identity, and renaming invalidates nothing. The key **selects and never authorises**, under
+  the same §9.2 condition as the workspace id.
+
 ## [3.34.0] — 2026-08-26
 
 ### Fixed

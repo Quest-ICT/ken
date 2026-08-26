@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/Quest-ICT/ken/internal/metrics"
 	"github.com/Quest-ICT/ken/internal/ratelimit"
@@ -68,6 +70,12 @@ func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, 
 	if p.StationID == "" {
 		p = p.withWorkspace(workspaceFrom(req))
 	}
+	// THE CONVERSATION'S OWN DECLARATION, made on its first station_me call. Checked AFTER the
+	// header so an explicit per-connection header still wins, and before the refusal so a session
+	// that has said who it is never sees one.
+	if p.StationID == "" {
+		p = p.withWorkspace(boundStation(req))
+	}
 	if p.StationID == "" {
 		// THIS USED TO SAY "call station_me" — WHICH IS A LOOP THAT MINTS A SECOND WORKSPACE.
 		// A session that followed it got another id, the same refusal, and one more orphan
@@ -102,6 +110,69 @@ func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, 
 // IT AUTHORISES NOTHING (docs/IDENTITY.md §9.2). The value only SELECTS which workspace; the
 // credential on the request is what authorises, and requireStation still refuses a principal that
 // has neither. A station key bound to its own station never consults this — see authMiddleware.
+// sessionBindings remembers, for the life of one MCP connection, which workspace this
+// conversation claimed. station_me writes it; every other station tool reads it.
+//
+// WHY THIS EXISTS: the workspace has to be declared ONCE per conversation, not threaded through
+// every tool call as an argument. A session says who it is on its first call — which the
+// instructions already require — and the rest of the surface just works.
+//
+// KEYED ON THE MCP SESSION ID, WHICH IS NOT THE CONVERSATION KEY, AND THE DIFFERENCE MATTERS.
+// The MCP session is reborn on every reconnect; the conversation outlives it. So this is a
+// per-connection CACHE of a decision made from the durable key, never the source of truth. After
+// a client restart the map is empty, the session calls station_me with the same session_key, and
+// the same workspace comes back out of the database. Losing this map costs one lookup, never an
+// identity.
+//
+// BOUNDED, because a map keyed on connections that never announce their end would otherwise grow
+// for the life of the process. At the cap it is cleared wholesale rather than evicted cleverly:
+// the recovery is that each session re-declares on its next station_me, which every session does
+// at the start of every conversation anyway. A silently-full cache that stopped accepting new
+// bindings would be far worse than one that occasionally makes sessions say who they are again.
+var sessionBindings sync.Map
+
+const maxSessionBindings = 4096
+
+var sessionBindingCount atomic.Int64
+
+// bindSession records the workspace this connection is working as.
+func bindSession(req *mcp.CallToolRequest, stationID string) {
+	if req == nil || req.Session == nil || stationID == "" {
+		return
+	}
+	id := req.Session.ID()
+	if id == "" {
+		// A transport with no session id (stateless mode). Nothing to key on, so the
+		// conversation declares its key on every call instead — correct, just chattier.
+		return
+	}
+	if _, loaded := sessionBindings.LoadOrStore(id, stationID); !loaded {
+		if sessionBindingCount.Add(1) > maxSessionBindings {
+			sessionBindings.Range(func(k, _ any) bool { sessionBindings.Delete(k); return true })
+			sessionBindingCount.Store(0)
+		}
+		return
+	}
+	sessionBindings.Store(id, stationID)
+}
+
+// boundStation returns the workspace this connection claimed, or "".
+func boundStation(req *mcp.CallToolRequest) string {
+	if req == nil || req.Session == nil {
+		return ""
+	}
+	id := req.Session.ID()
+	if id == "" {
+		return ""
+	}
+	if v, ok := sessionBindings.Load(id); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 func workspaceFrom(req *mcp.CallToolRequest) string {
 	if req == nil || req.Extra == nil || req.Extra.Header == nil {
 		return ""

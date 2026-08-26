@@ -842,6 +842,29 @@ const versionNote = "This is the version RUNNING NOW. Your connect-time instruct
 // when the caller has none — the two paths the version stamp must cover, kept in one function so
 // the handler above has a single success exit to stamp.
 func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (meOut, error) {
+	// *** A DECLARED CONVERSATION KEY WINS OVER EVERYTHING, INCLUDING THE HEADER. ***
+	//
+	// Identity used to arrive from the CONNECTION, and a connector is added once per ACCOUNT —
+	// so it had exactly one value for every machine and every session. Vlad: "once the connector
+	// is connected, the communication between the Claude instances and the Ken instance is
+	// direct… so why each session cannot tell it's Ken instance 'I'm XXXXX'?" There was no reason.
+	//
+	// It wins over the header because it is the MORE SPECIFIC signal: a header describes a
+	// connector shared by every conversation on the account; this describes THIS conversation.
+	// When both are present the narrower one is the honest answer.
+	if key := strings.TrimSpace(in.SessionKey); key != "" {
+		if p := principalFrom(ctx); p != nil {
+			st, created, err := d.Store.ClaimStationForSession(ctx, key, in.WorkspaceName, p.ActorID)
+			if err != nil {
+				return meOut{}, err
+			}
+			bindSession(req, st.StationID)
+			if created {
+				return claimedWorkspaceOut(st), nil
+			}
+			return buildBriefing(ctx, d, p.withWorkspace(st.StationID))
+		}
+	}
 	if p := principalFrom(ctx); p != nil && p.StationID == "" && workspaceFrom(req) == "" {
 		return claimWorkspace(ctx, d, p, in.WorkspaceName)
 	}
@@ -1039,6 +1062,26 @@ func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) 
 	return context.WithValue(ctx, ctxKey{}, &principal{
 		ActorID: sp.ActorID, TokenID: sp.TokenID, StationID: sp.StationID, Scopes: scopes,
 	})
+}
+
+// claimedWorkspaceOut is the first-contact result for a conversation that just claimed a
+// workspace by declaring its key. Unlike claimWorkspace's version it does NOT ask the human to
+// put anything in a config file — that was the whole cost this removes. The session simply sends
+// the same key next time.
+func claimedWorkspaceOut(st *store.Station) meOut {
+	return meOut{
+		StationID:   st.StationID,
+		Name:        st.Name,
+		NameSource:  "auto",
+		JustCreated: true,
+		PutThisInYourConfig: "Ken made you a workspace called " + st.Name + " and you are working in it NOW — " +
+			"notebook, tasks, locker and vault, nothing withheld and nothing to approve. NOTHING TO CONFIGURE: " +
+			"you claimed it with your session_key, so send that SAME value on every station_me call in this " +
+			"conversation and you will come back to this workspace after a restart. TELL YOUR HUMAN, in words, " +
+			"that you are working as " + st.Name + " — it is a LABEL, auto-generated so they can recognise it, " +
+			"and they can rename it in the console at any time without breaking anything. The name is what they " +
+			"will see when approving this workspace to talk to another, which is the one moment a bad name matters.",
+	}
 }
 
 // claimWorkspace mints a workspace for a session that has none, names it after the folder, and

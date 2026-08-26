@@ -39,7 +39,10 @@ type dirOut struct {
 type meIn struct {
 	SelfDescribedAbout string   `json:"self_described_about,omitempty" jsonschema:"optional; how YOU describe what you know and are responsible for. A CLAIM, shown to others as self-described"`
 	SelfDescribedTags  []string `json:"self_described_tags,omitempty" jsonschema:"optional; short self-declared topic tags"`
-	WorkspaceName      string   `json:"workspace_name,omitempty" jsonschema:"optional; the basename of the folder you are working in. Only used when you have NO workspace yet: Ken mints one, names it after the folder, and hands you back an id to put in your MCP config. Nothing to approve and nothing to wait for"`
+	WorkspaceName      string   `json:"workspace_name,omitempty" jsonschema:"optional; a LABEL for a workspace being created — the folder or project you are working in. Purely so your human can recognise it in the console; the identity is session_key, and the label stays renameable"`
+	// SessionKey is how a conversation says WHICH workspace is its own, and it is the whole
+	// mechanism now that identity has moved out of the connector. See migration 0023.
+	SessionKey string `json:"session_key,omitempty" jsonschema:"STRONGLY RECOMMENDED: a stable id for THIS CONVERSATION, so you return to the same workspace after a client restart instead of minting a new one. In Claude Code it is the conversation UUID that appears in your transcript path and your scratchpad path. Send the SAME value every time this conversation calls; a new conversation sends a new one and gets its own workspace. It selects a workspace and authorises nothing"`
 }
 
 type briefingView struct {

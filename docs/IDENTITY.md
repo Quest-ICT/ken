@@ -89,6 +89,58 @@ reading another's mail. It is mitigated by visibility rather than by credentials
 workspace each session claimed, every session states its workspace in its first message, and two
 live sessions claiming one workspace is a condition the console can surface.
 
+## 4b. A conversation says who it is — identity is IN-BAND, not in the connector
+
+**Added 2026-08-26 after a clean-VM acceptance run proved §4's mechanism unreachable, and after
+Vlad asked the question that dissolved it:**
+
+> *"once the connector is connected, the communication between the Claude instances and the Ken
+> instance is direct (e.g. each of my Claude clients can contact the Ken server without requiring
+> claude.ai) so why each session cannot tell it's Ken instance 'I'm XXXXX' or 'My folder is
+> XXXXX'?"*
+
+**There was no reason. That is the whole finding.** The workspace arrived from the CONNECTION — a
+header, briefly a URL — and a claude.ai connector is added **once per account**, so any value
+carried there has exactly one value for every machine and every session, forever. The header form
+could not be set at all (the client refuses custom header names); the URL form could be set and
+identified nothing. Identity was in the transport when it belongs in the conversation.
+
+**WHAT A SESSION IS, IN HIS WORDS, BECAUSE THE DATA MODEL TURNS ON IT:**
+
+> *"For me it is when I click 'New' in Claude Code. If I restart the Claude Desktop client, the CC
+> sessions that live within it should reconnect to the workspace they were connected before
+> (because they are not new, they just restarted)… one (existing) session is always connected to
+> the same workspace (unless explicitly reassigned by the human)."*
+
+So the binding is **CONVERSATION ↔ WORKSPACE**. A new conversation gets a new workspace; a
+restarted one returns to its own.
+
+**THE MECHANISM.** `station_me{session_key}` — a stable id for THIS conversation, which the
+session already owns (in Claude Code, the UUID in its transcript and scratchpad paths). Ken looks
+it up: found, return that workspace with its notebook, tasks, locker and vault intact; not found,
+mint one and record the key. The resolved workspace is then bound to the MCP connection, so every
+other station tool works with no argument and no header.
+
+    human actions to onboard a machine and start working:  ZERO beyond the consent
+    survives a client restart:                             yes — the key is durable, the
+                                                           connection binding is only a cache
+    two conversations in one folder:                       two workspaces, correctly
+    the same project on two machines:                      two workspaces, correctly
+
+**WHY IT CANNOT BE KEYED ON THE MCP SESSION ID:** that is reborn on every reconnect, and a restart
+is precisely the case that must keep working.
+
+**THE LABEL IS AUTO; THE IDENTITY IS THE KEY.** Vlad: *"what I need to be 'auto' is the label that
+identifies the new station so me (the human) can identify it (I won't identify a raw number or a
+UUID) and as I requested before, labels must be editable."* So `workspace_name` decorates the
+label only, and renaming stays free — the id is the identity and renaming invalidates nothing.
+
+**THE KEY SELECTS AND NEVER AUTHORISES**, exactly like the workspace id (§4) and under the same
+§9.2 condition. A session declaring another conversation's key lands in another workspace
+belonging to **the same human**, which it could already do by editing its own config. The security
+boundary is the OAuth grant — whose estate — never the key, which chooses which post inside it.
+**If that ever stops being true, this becomes a credential and must be treated as one.**
+
 ## 5. Starting work in an unknown folder
 
 Decided: **fully working, auto-named, no approval.**

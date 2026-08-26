@@ -545,3 +545,120 @@ func TestURLDeclaredWorkspaceReachesToolsBehindRequireStation(t *testing.T) {
 			"VM failure, unfixed: mint works, everything else does not", res.Content)
 	}
 }
+
+// *** A CONVERSATION DECLARES ITSELF AND COMES BACK TO THE SAME WORKSPACE. ***
+//
+// This is the property Vlad specified in his own words: "one (existing) session is always
+// connected to the same workspace (unless explicitly reassigned by the human)", and "if I restart
+// the Claude Desktop client, the CC sessions that live within it should reconnect to the workspace
+// they were connected before (because they are not new, they just restarted)."
+//
+// So the test does not merely call station_me twice on one connection — that would prove a cache.
+// It RECONNECTS, which is what a client restart does, and asserts the workspace survives it.
+// Driven with NO workspace header at all, because the claude.ai connector cannot send one.
+func TestAConversationReturnsToItsOwnWorkspaceAfterAReconnect(t *testing.T) {
+	st, srv, _, _ := harness(t)
+	ctx := context.Background()
+	actor, err := st.FindOrCreateActor(ctx, "ai", "conversation-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.IssueStationKey(ctx, actor, "", "conv-key", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connect := func() *mcp.ClientSession {
+		t.Helper()
+		cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+		sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
+			Endpoint:             srv.URL,
+			HTTPClient:           &http.Client{Transport: qsRT{token: key, base: http.DefaultTransport}},
+			DisableStandaloneSSE: true,
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { sess.Close() })
+		return sess
+	}
+
+	const conv = "conversation-uuid-2e415ff7"
+	first := meOverTransport(t, connect(), map[string]any{"session_key": conv, "workspace_name": "ken-public"})
+	if !first.JustCreated {
+		t.Fatal("the first declaration did not mint a workspace")
+	}
+	if first.StationID == "" {
+		t.Fatal("no workspace id came back")
+	}
+
+	// *** THE RESTART. A NEW CONNECTION, so the per-connection binding is empty and the answer
+	// must come from the database via the declared key. ***
+	again := meOverTransport(t, connect(), map[string]any{"session_key": conv})
+	if again.JustCreated {
+		t.Error("a restarted conversation MINTED A SECOND WORKSPACE — its notebook, tasks and vault " +
+			"are stranded on the first, which is the orphan-accumulation failure this replaces")
+	}
+	if again.StationID != first.StationID {
+		t.Errorf("came back as %q, want the same workspace %q", again.StationID, first.StationID)
+	}
+
+	// CONTROL: a DIFFERENT conversation gets a DIFFERENT workspace. Without this the test would
+	// pass against an implementation that ignored the key and returned one workspace to everyone.
+	other := meOverTransport(t, connect(), map[string]any{"session_key": "a-different-conversation", "workspace_name": "elsewhere"})
+	if !other.JustCreated {
+		t.Error("a new conversation did not get its own workspace")
+	}
+	if other.StationID == first.StationID {
+		t.Error("two different conversations landed on the SAME workspace — the key is being ignored")
+	}
+}
+
+// AND THE REST OF THE SURFACE WORKS AFTER THE DECLARATION, with no header and no argument.
+// station_me was always reachable; asserting only on it would re-pass the exact state the clean-VM
+// run found, where a workspace could be minted and nothing else could touch it.
+func TestDeclaringAConversationUnlocksToolsBehindRequireStation(t *testing.T) {
+	st, srv, _, _ := harness(t)
+	ctx := context.Background()
+	actor, err := st.FindOrCreateActor(ctx, "ai", "conversation-session-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := st.IssueStationKey(ctx, actor, "", "conv-key-2", []string{ScopeStation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
+	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             srv.URL,
+		HTTPClient:           &http.Client{Transport: qsRT{token: key, base: http.DefaultTransport}},
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	// CONTROL FIRST: before declaring, a tool behind requireStation must REFUSE. Otherwise the
+	// success below could be caused by the credential already carrying a station.
+	pre, err := sess.CallTool(ctx, &mcp.CallToolParams{
+		Name: "station_task_add", Arguments: map[string]any{"text": "too early", "blocked_on": "self"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pre.IsError {
+		t.Fatal("a tool behind requireStation succeeded BEFORE any workspace was declared; the " +
+			"fixture carries a station and this test proves nothing")
+	}
+
+	meOverTransport(t, sess, map[string]any{"session_key": "unlock-conv", "workspace_name": "unlock"})
+
+	post, err := sess.CallTool(ctx, &mcp.CallToolParams{
+		Name: "station_task_add", Arguments: map[string]any{"text": "after declaring", "blocked_on": "self"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if post.IsError {
+		t.Fatalf("a tool behind requireStation still refuses after the conversation declared itself: "+
+			"%+v — mint works and nothing else does, which is the clean-VM failure unfixed", post.Content)
+	}
+}
