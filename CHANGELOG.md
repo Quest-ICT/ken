@@ -15,6 +15,15 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+_Nothing yet — everything below is tagged, built and published._
+
+<!-- KEEP THIS PLACEHOLDER LINE. An EMPTY "Unreleased" heading sitting directly above the newest
+     release reads as though that release is unreleased — Vlad read it exactly that way on
+     2026-08-27 and asked whether 3.40.0 still needed cutting when it had already shipped. The
+     heading is a Keep a Changelog convention and stays; the line under it is what stops it
+     being ambiguous. Replace this line with real entries when work is pending, and restore it
+     when the next release is cut. -->
+
 ## [3.40.0] — 2026-08-27
 
 ### Fixed
