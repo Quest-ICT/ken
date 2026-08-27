@@ -404,11 +404,16 @@ func runServe(args []string) {
 		// AND THE SAME FOR THE OTHER TWO SURFACES. They answered 401 with no challenge at all, so
 		// a client had nothing to follow and no way to see that anything was missing — the header
 		// is discarded before it reaches a session, so the fault can only be fixed here.
-		commserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/comm/mcp"))
-		stationserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/station/mcp"))
+		// BOTH POINT AT /mcp, because there is only one machine surface now. They used to name
+		// their own endpoints; those endpoints are gone.
+		commserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/mcp"))
+		stationserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/mcp"))
 	}
 	mcpHandler := mcpserver.NewHTTPHandler(mcpDeps)
-	mux.Handle("/mcp", mcpHandler)
+	// NOT MOUNTED HERE ANY MORE. /mcp is the ONE machine surface and it serves every tool, so it
+	// can only be built after COMM and STATIONS are. The mount is at the bottom of this function.
+	// mcpHandler survives as the knowledge-base dependency set and as the fallback when a surface
+	// is switched off.
 	// Rebuild the AI-facing instructions live when the curation language(s) change,
 	// but only then — an unrelated settings edit shouldn't churn the MCP server.
 	lastCurLangs := strings.Join(live.Current().CurationLangSet, ",")
@@ -507,11 +512,9 @@ func runServe(args []string) {
 		// the live comm_files_enabled switch. Mounted as a prefix because the grant
 		// travels in the path.
 		mux.Handle("/comm/files/", commserver.NewFileHandler(commDeps, commHandler))
-		// The MCP endpoint is /comm/mcp, not /comm: the human console lives at /comm
-		// (served by the web handler mounted on "/"), and a top-level exact "/comm"
-		// route here would shadow it. It also reads better — /mcp and /comm/mcp are
-		// the two machine surfaces, everything else is human.
-		mux.Handle("/comm/mcp", commHandler)
+		// /comm/mcp IS GONE. There is one machine surface, /mcp, and it carries every tool.
+		// /comm/files/ above is NOT an MCP surface — it is the file-transfer path, whose grant
+		// travels in the URL — so it stays exactly where it is.
 
 		// Apply COMM limit edits live, and only when a COMM field actually changed —
 		// same guard as the rate limiter, so an unrelated settings edit does not churn
@@ -633,26 +636,35 @@ func runServe(args []string) {
 				stationHandler.SetLimits(stationLimits(sn))
 			}
 		})
-		mux.Handle("/station/mcp", stationHandler)
-		log.Printf("STATIONS: enabled at /station/mcp — requires a kens_ key bound to a station (ken station add --name <n>, then ken station key --station <n> --label <machine>)")
+		// /station/mcp IS GONE, like /comm/mcp. One surface.
+		log.Printf("STATIONS: enabled — served from the single machine surface at /mcp")
 		stationDepsOut, stationsOn = sd, true
 	}
 
-	// *** THE UNIFIED ENDPOINT: ALL THREE SURFACES, ONE CONNECTOR. ***
+	// *** ONE MACHINE SURFACE: /mcp, EVERY TOOL. ***
 	//
-	// Mounted only when COMM and STATIONS are both live, because it offers everything and a
-	// credential reaching it must be able to use everything. With a surface missing there is
-	// nothing coherent to serve, so the endpoint is ABSENT rather than partial — a connector that
-	// silently covers two of three would be worse than one that does not exist.
+	// Vlad, settling it: only /mcp from now on, the whole tool set at the root, and nothing under
+	// /comm or /station. This replaces both the old knowledge-base-only /mcp and the /all/mcp
+	// experiment; /comm/mcp and /station/mcp are deleted outright. Nothing migrates — his
+	// instruction was that anyone using Ken after this either works or re-onboards.
 	//
-	// The three specific endpoints keep working, unchanged. This is additive: prod holds eight
-	// bound comm endpoints and other machines are configured against the specific URLs, so
-	// nobody migrates on Ken's schedule.
+	// A USEFUL SIDE EFFECT, WORTH KEEPING IN MIND WHEN READING 401s: an old connector still
+	// pointed at /mcp with a legacy knowledge-base-only grant now meets the full auth chain and is
+	// REFUSED, where before it silently worked with a third of the tools. That is the failure
+	// direction he asked for — nothing keeps limping on the old shape without anyone noticing.
+	//
+	// THE FALLBACK IS A DEGRADED MODE, NOT A DESIGN. With COMM or STATIONS switched off there is
+	// no coherent whole to serve, so /mcp carries the knowledge base alone and says so loudly.
+	// Vlad's standing ruling is that no surface is optional; if that ruling is finished, these
+	// switches and this branch go with it.
 	if commHandler != nil && stationsOn {
-		mux.Handle("/all/mcp", allserver.NewHTTPHandler(allserver.Deps{
+		mux.Handle("/mcp", allserver.NewHTTPHandler(allserver.Deps{
 			KB: mcpDeps, Comm: commDepsOut, CommH: commHandler, Station: stationDepsOut,
 		}))
-		log.Printf("UNIFIED: all three surfaces at /all/mcp — ONE connector instead of three. The credential must carry every capability; the per-surface endpoints remain for narrower ones")
+		log.Printf("MCP: one surface at /mcp — every tool, one connector, one credential carrying every capability")
+	} else {
+		mux.Handle("/mcp", mcpHandler)
+		log.Printf("MCP: /mcp is serving the KNOWLEDGE BASE ONLY — comm=%v stations=%v. Sessions will not see comm_* or station_* tools at all", commHandler != nil, stationsOn)
 	}
 
 	mux.Handle("/", reg.Counting("web", web.Handler(web.Deps{

@@ -187,19 +187,14 @@ func (s *Server) HandlePRMetadata(w http.ResponseWriter, r *http.Request) {
 
 // resourceFor maps a protected-resource metadata request to the MCP surface it describes.
 //
-// RFC 9728 puts the resource's path after the well-known prefix, so
-// /.well-known/oauth-protected-resource/station/mcp describes /station/mcp. The bare form has no
-// suffix and answers for /mcp, which is what it has always meant and what existing clients expect.
-func resourceFor(r *http.Request) string {
-	const prefix = "/.well-known/oauth-protected-resource"
-	suffix := strings.TrimPrefix(r.URL.Path, prefix)
-	switch suffix {
-	case "/comm/mcp", "/station/mcp":
-		return suffix
-	default:
-		return "/mcp"
-	}
-}
+// RFC 9728 puts the resource's path after the well-known prefix. There is now exactly ONE
+// protected resource — /mcp, carrying every tool — so every form answers for it.
+//
+// THE PER-SURFACE SUFFIXES USED TO ECHO THEMSELVES BACK, and they must not any more: returning
+// "/station/mcp" would describe an endpoint that no longer exists, and a client following it would
+// authorise against a 404. A stale connector asking the old question now gets the right answer
+// instead of a confident wrong one.
+func resourceFor(r *http.Request) string { return "/mcp" }
 
 // --- dynamic client registration (RFC 7591) ---
 

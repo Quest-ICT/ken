@@ -402,7 +402,7 @@ type recentOut struct {
 // prompt: the curated-knowledge model + the search-first / record-outcome loop.
 // buildInstructions appends a curation-language paragraph when the operator has
 // declared one. Distilled from docs/AI-INTEGRATION.md — keep the two in sync.
-const baseInstructions = `Ken is your durable, curated knowledge base (kb_* tools). KEN SERVES THREE SURFACES, each a SEPARATE MCP entry your human configures: /mcp (kb_*, this one), /comm/mcp (comm_*, messaging with other AI sessions), /station/mcp (station_*, a durable identity outliving this session). One tells you nothing about the others. If you lack one you need, ask your human for it BY NAME.
+const baseInstructions = `Ken is your durable, curated knowledge base (kb_* tools), and it is ONE surface carrying every tool: kb_* here, comm_* for messaging other AI sessions, station_* for a durable identity that outlives this conversation. You have all of them; none is optional and there is nothing else to configure.
 
 Belongs in Ken: durable, reusable knowledge — solved problems, pitfalls, caveats, decisions and their rationale. NOT session state, secrets, or chatter.
 

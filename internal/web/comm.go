@@ -723,13 +723,12 @@ func (a *app) handleCommRevokeEndpoint(w http.ResponseWriter, r *http.Request, s
 	flashRedirect(w, r, "/comm", "flash.comm_endpoint_revoked", id)
 }
 
-// publicCommURL builds the externally-reachable COMM MCP endpoint for a
-// copy-paste registration example, using the same derivation and the same
-// <ken-host> fallback as the knowledge base's URL.
-func (a *app) publicCommURL(r *http.Request) string {
-	base := a.publicMCPURL(r)
-	return strings.TrimSuffix(base, "/mcp") + "/comm/mcp"
-}
+// publicCommURL is the externally-reachable MCP endpoint for a copy-paste registration example.
+//
+// IT IS NOW THE SAME URL AS EVERYTHING ELSE. There is one machine surface, /mcp, carrying every
+// tool; /comm/mcp is deleted. This used to derive a second endpoint by swapping the suffix, and a
+// console that still offered that URL would hand an operator a connector that 404s.
+func (a *app) publicCommURL(r *http.Request) string { return a.publicMCPURL(r) }
 
 // commEnabled reports whether the console should appear in the nav.
 func (a *app) commEnabled() bool { return a.comm != nil }

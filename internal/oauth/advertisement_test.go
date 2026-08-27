@@ -55,18 +55,25 @@ func TestTheKenScopesAreAdvertised(t *testing.T) {
 	}
 }
 
-// EVERY MCP SURFACE DESCRIBES ITSELF, not always /mcp.
+// *** THERE IS ONE PROTECTED RESOURCE, AND EVERY FORM ANSWERS FOR IT. ***
 //
-// RFC 9728 puts the resource's path after the well-known prefix. Ken serves three surfaces and
-// this document answered for one, so a client following the spec to the metadata for the surface
-// it wanted got a 404 — or, worse, a 200 describing a different resource.
-func TestProtectedResourceMetadataNamesTheSurfaceAskedFor(t *testing.T) {
+// THIS TEST USED TO ASSERT THE OPPOSITE, and it was right at the time: Ken served three surfaces,
+// this document answered for one, and a client following RFC 9728 to the metadata for the surface
+// it wanted got a 404 or a 200 describing a different resource.
+//
+// Vlad collapsed the surfaces: /mcp carries every tool, /comm/mcp and /station/mcp are deleted.
+// **So echoing the old suffixes back is now the defect.** A client asking about /station/mcp and
+// being told "yes, that is the resource" would authorise against an endpoint that returns 404 —
+// a confident wrong answer where a right one costs nothing.
+func TestProtectedResourceMetadataAlwaysNamesTheOneSurface(t *testing.T) {
 	s := New(nil, func(*http.Request) string { return "https://kb.example" }, Config{})
 	for _, tc := range []struct{ path, want string }{
 		{"/.well-known/oauth-protected-resource", "https://kb.example/mcp"},
 		{"/.well-known/oauth-protected-resource/mcp", "https://kb.example/mcp"},
-		{"/.well-known/oauth-protected-resource/comm/mcp", "https://kb.example/comm/mcp"},
-		{"/.well-known/oauth-protected-resource/station/mcp", "https://kb.example/station/mcp"},
+		// THE RETIRED FORMS. A stale client may still ask; it must be pointed at the surface that
+		// exists, never at the one it named.
+		{"/.well-known/oauth-protected-resource/comm/mcp", "https://kb.example/mcp"},
+		{"/.well-known/oauth-protected-resource/station/mcp", "https://kb.example/mcp"},
 	} {
 		rec := httptest.NewRecorder()
 		s.HandlePRMetadata(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
@@ -75,8 +82,9 @@ func TestProtectedResourceMetadataNamesTheSurfaceAskedFor(t *testing.T) {
 			t.Fatalf("%s: %v", tc.path, err)
 		}
 		if doc["resource"] != tc.want {
-			t.Errorf("%s describes resource %v, want %s — a client is told the metadata for the "+
-				"surface it asked about belongs to a different one", tc.path, doc["resource"], tc.want)
+			t.Errorf("%s describes resource %v, want %s — a client asking about a retired surface "+
+				"must be pointed at the one that exists, not handed back the name it asked with",
+				tc.path, doc["resource"], tc.want)
 		}
 		scopes, _ := json.Marshal(doc["scopes_supported"])
 		if !strings.Contains(string(scopes), store.ScopeStation) {
@@ -94,7 +102,9 @@ func TestProtectedResourceMetadataNamesTheSurfaceAskedFor(t *testing.T) {
 // propagated to me at all."
 func TestEachSurfaceChallengesWithItsOwnMetadata(t *testing.T) {
 	s := New(nil, func(*http.Request) string { return "https://kb.example" }, Config{})
-	for _, surface := range []string{"/comm/mcp", "/station/mcp"} {
+	// ONE SURFACE. This looped over /comm/mcp and /station/mcp until they were deleted; keeping
+	// those arguments would have tested a call nothing makes.
+	for _, surface := range []string{"/mcp"} {
 		got := s.ResourceMetadataURLFor(surface)(httptest.NewRequest(http.MethodPost, surface, nil))
 		want := "https://kb.example/.well-known/oauth-protected-resource" + surface
 		if got != want {
