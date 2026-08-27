@@ -41,6 +41,14 @@ func TestTheMergedInstructionsKeepWhatTheyExistToSay(t *testing.T) {
 			"guidance, the guidance is unreachable"},
 		{"station_me", "it is the call every session must make first, and the only one that " +
 			"does not need a workspace already"},
+		{"INVENT", "a claude.ai chat CANNOT see its own conversation id — verified 2026-08-26 by " +
+			"asking one directly, which reported 'I have no access to a conversation id' and noted " +
+			"it can retrieve an id for any PAST conversation but not the one it is in. Without this " +
+			"sentence a chat session has no way to hold an identity at all, and every reload strands " +
+			"another workspace"},
+		{"STATE IT IN YOUR REPLY", "the transcript is the only conversation-scoped thing a chat " +
+			"session can persist — its own words. A key that lives only in a tool call is lost on " +
+			"reload, so telling it to invent one is useless without telling it where to put one"},
 	} {
 		if !strings.Contains(Instructions, c.needle) {
 			t.Errorf("the merged instructions no longer mention %q: %s", c.needle, c.why)

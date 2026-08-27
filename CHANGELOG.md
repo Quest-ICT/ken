@@ -15,6 +15,32 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.37.1] — 2026-08-26
+
+### Fixed
+
+- **The `session_key` guidance was Claude-Code-specific and gave a chat session nothing.** It said
+  *"in Claude Code, the UUID in your transcript or scratchpad path"* — useless to the population
+  the whole mechanism was extended for.
+
+  **Measured by asking a claude.ai chat session directly**, which is the experiment that should
+  have been run first: *"I have no access to a conversation id. Nothing in my context — system
+  prompt, metadata, or any tool result — contains an identifier for this conversation."* It also
+  found the asymmetry: `recent_chats` returns `https://claude.ai/chat/<uuid>` for **past**
+  conversations, so ids exist — but **not for the one it is in.** Whatever assigns that id happens
+  outside what the session can see, so no transport change could have fixed it either.
+
+  And it identified the one thing that does persist: *"Only the transcript itself… conversation-scoped
+  and persistent."*
+
+  So the guidance now tells a session with no natural id to **invent one and state it in its reply**
+  — because the transcript is what survives a reload, and a key that lives only in a tool call is a
+  key that is lost. No client support needed, and nothing else changed: `session_key` already
+  accepted any stable string.
+
+  `TestTheMergedInstructionsKeepWhatTheyExistToSay` now fails if either half is removed — inventing
+  a key is useless without being told where to put it.
+
 ## [3.37.0] — 2026-08-26
 
 ### Added

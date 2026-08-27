@@ -349,7 +349,11 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		if out.SessionKeyEcho == "" {
 			out.HowToKeepThisWorkspace = "TO COME BACK TO THIS WORKSPACE after a client restart, pass " +
 				"session_key on every station_me call in this conversation — a stable id for THIS " +
-				"conversation (in Claude Code, the UUID in your transcript or scratchpad path). " +
+				"conversation. In Claude Code that is the UUID in your transcript or scratchpad path. " +
+				"IF YOU HAVE NO SUCH ID — a claude.ai chat CANNOT see its own conversation id, verified " +
+				"2026-08-26 — invent one random string, reuse it for this whole conversation, and STATE IT " +
+				"IN YOUR REPLY to your human. The transcript is the only thing that survives a reload, so a " +
+				"key that lives only in a tool call is a key you lose. " +
 				"IF YOUR TOOL SCHEMA DOES NOT LIST session_key, SEND IT ANYWAY: your schema was captured " +
 				"when this conversation began and never refreshes, while this result is current. New " +
 				"parameters are honoured even when your copy of the tool does not mention them. Without " +

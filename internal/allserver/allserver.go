@@ -72,7 +72,7 @@ const sessionTimeout = 30 * 60 * 1e9 // 30 minutes, in nanoseconds
 // how_to_keep_this_workspace says it too, but only after a call; this says it before one.
 const Instructions = `Ken — ONE connection, THREE surfaces. Knowledge base (kb_*), inter-session messaging (comm_*), and a durable working identity (station_*). You have all three; none is optional.
 
-CALL station_me FIRST, EVERY SESSION, and pass session_key — a stable id for THIS conversation (in Claude Code, the UUID in your transcript or scratchpad path). It is how you return to the SAME workspace after a client restart instead of minting a new one and stranding this one. SEND IT EVEN IF YOUR TOOL SCHEMA DOES NOT LIST IT: your schema was captured when this conversation began and never refreshes, while tool RESULTS are always current.
+CALL station_me FIRST, EVERY SESSION, and pass session_key — a stable id for THIS conversation. In Claude Code it is the UUID in your transcript or scratchpad path. IF YOU HAVE NO SUCH ID (a claude.ai chat cannot see its own conversation id): INVENT one random string, use it for the whole conversation, and STATE IT IN YOUR REPLY to your human — the transcript is what survives a reload, so a key you only put in a tool call is a key you lose. SEND IT EVEN IF YOUR TOOL SCHEMA DOES NOT LIST IT: your schema was captured when this conversation began and never refreshes, while tool RESULTS are always current.
 
 Then, IN YOUR FIRST MESSAGE, tell your human in words what station_me says is waiting on them. A briefing nobody relays is the original problem with extra steps.
 
