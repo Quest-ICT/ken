@@ -15,6 +15,57 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.37.0] — 2026-08-26
+
+### Added
+
+- **A conversation can CLAIM a comm endpoint and drive it with no secret at all.**
+  `comm_register{session_key}` ships with migration `0019` under Rule 4.
+
+  **This is what locked chat sessions out of comm.** `comm_register` returned a one-time secret
+  and told the session, in capitals, *"WRITE THEM TO A FILE ON DISK NOW."* **A claude.ai chat
+  session has no disk** — it could register once and then lose the ability to poll forever,
+  because the secret is shown once and nothing it controls survives a compaction. The same
+  instruction is the per-machine credential tax `IDENTITY.md` §4b exists to remove.
+
+  **And the secret only ever existed because Ken could not tell two sessions apart.**
+  `0001_init.sql:38`, unchanged since the first release: *"the operating convention is one Ken
+  token per MACHINE, so every session on a box shares a token. Without a per-endpoint secret, two
+  sessions could poll and ack each other's messages."* That is a disambiguation problem, and a
+  conversation key solves it — better, because it survives a client restart while a secret
+  survives only a file.
+
+  Claiming is **idempotent per conversation**: calling again after a restart returns the same
+  endpoint with its channels and queued mail intact.
+
+### Changed
+
+- **`comm_register`'s description now leads with the secret-free path**, and the write-to-a-file
+  instruction is the **fallback** for callers that send no key rather than the headline. It also
+  says to send `session_key` **even if the tool schema does not list it**, for the same reason
+  `station_me` does — a session's schema pins at connect time and cannot announce a parameter
+  added later.
+
+- **`auth` gained a secret-free path at the single chokepoint every comm tool passes through**, and
+  the post-authentication checks were factored into `afterEndpointAuth` so the two paths **cannot
+  diverge**. A second copy would be one edit away from a claimed endpoint outliving a station-key
+  revocation that a secret-driven one respects.
+
+### Security
+
+- **The secret is NOT deleted, and that restraint is measured.** `station_me` returns
+  `comm_endpoint_ids`, so endpoint ids are handed out rather than private. Removing the secret with
+  nothing in its place would let any session that has seen an id poll and ack that endpoint's mail
+  — exactly and only what the secret prevents. Production holds eight bound endpoints. So claimed
+  endpoints need no secret, unclaimed ones keep theirs, and the secret can be retired for real once
+  measurement shows nothing depends on it.
+
+- **The conversation key AUTHORISES here, unlike the station key of the same name.** The station
+  `session_key` selects a workspace and grants nothing (§4, §9.2). This one drives a mailbox: it is
+  a credential, as sensitive as the secret it replaces, and must never be logged, put in a URL, or
+  written to a notebook. **Ownership is re-checked on every use** — a key presented under a
+  different bearer token is refused, so a leaked key cannot be replayed from another account.
+
 ## [3.36.0] — 2026-08-26
 
 ### Added

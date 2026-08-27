@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // Endpoint is one AI session's communication point.
@@ -34,6 +35,12 @@ type Endpoint struct {
 	// skew an id that no longer resolves is treated as UNBOUND rather than as an
 	// error. Bound endpoints share their station's inbox with claim-once delivery.
 	StationID string
+
+	// SessionKey is the CONVERSATION that owns this endpoint, empty for endpoints that predate
+	// migration 0019 and for any driven by a secret. Unlike the station key of the same name this
+	// one AUTHORISES — presenting it drives this endpoint's mail — so it is as sensitive as the
+	// secret it replaces and must never be logged or written down.
+	SessionKey string
 	// BoundByStationKeyID is the station key that authorised the binding. Revoking
 	// that key severs every endpoint it bound (S6) — without this column, revocation
 	// would stop future bindings and leave the leaked capability running.
@@ -52,6 +59,120 @@ type Endpoint struct {
 // hostHint is stored opaquely and is never consulted for authorization — see the
 // schema comment and docs/COMM.md C9 for why a self-reported machine identity
 // cannot prove a shared filesystem.
+// ClaimEndpointForSession returns the endpoint a CONVERSATION owns, creating one on first use.
+//
+// This is the secret-free path. A session that declares its conversation key gets an endpoint it
+// can drive with no secret at all — see migration 0019 for why the secret was only ever a
+// disambiguator, and why a conversation key does that job better.
+//
+// IDEMPOTENT PER CONVERSATION, which is the whole point: called again after a client restart it
+// returns the SAME endpoint, with its channels, its mail and its station binding intact. A chat
+// session — which has no disk and cannot keep a secret — can therefore come back to its own
+// mailbox, which it could never do before.
+//
+// The key is a CREDENTIAL here, unlike the station key of the same name: presenting it drives this
+// endpoint's mail. Callers must treat it as they treated the secret.
+func (s *Store) ClaimEndpointForSession(ctx context.Context, owner Owner, sessionKey, label, hostHint string) (*Endpoint, bool, error) {
+	if strings.TrimSpace(sessionKey) == "" {
+		return nil, false, errors.New("no session key given")
+	}
+	ep, err := s.endpointBySessionKey(ctx, sessionKey)
+	switch {
+	case err == nil:
+		// OWNERSHIP IS RE-CHECKED ON EVERY CLAIM, not just at creation. A conversation key
+		// presented under a DIFFERENT token must not hand over the endpoint: the token says whose
+		// estate this is, and that is the boundary the key does not get to cross.
+		if ep.Owner.TokenID != owner.TokenID {
+			return nil, false, ErrDenied
+		}
+		return ep, false, nil
+	case !errors.Is(err, ErrNotFound):
+		return nil, false, err
+	}
+
+	// No endpoint for this conversation yet. Register one and claim it. The secret it generates
+	// is discarded rather than returned — the row keeps a hash of a value nobody holds, which is
+	// deliberate: it means a claimed endpoint cannot ALSO be driven by a guessed secret.
+	created, _, err := s.RegisterEndpoint(ctx, owner, label, hostHint)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := s.W.ExecContext(ctx,
+		`UPDATE endpoint SET session_key=? WHERE endpoint_id=? AND session_key IS NULL`,
+		sessionKey, created.EndpointID); err != nil {
+		return nil, false, err
+	}
+	created.SessionKey = sessionKey
+	return created, true, nil
+}
+
+// endpointBySessionKey resolves a claimed endpoint. Revoked endpoints are refused here rather than
+// returned for the caller to check, so no path can accidentally hand one back.
+func (s *Store) endpointBySessionKey(ctx context.Context, sessionKey string) (*Endpoint, error) {
+	var id string
+	err := s.R.QueryRowContext(ctx,
+		`SELECT endpoint_id FROM endpoint WHERE session_key=? AND revoked_at IS NULL`, sessionKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.endpointByIDNoSecret(ctx, id)
+}
+
+// endpointByIDNoSecret loads an endpoint without verifying a secret. Unexported and used only by
+// the session-key path, where the key IS the credential — exporting it would offer a way to load
+// any endpoint by id, which is precisely what the secret exists to prevent for unclaimed ones.
+func (s *Store) endpointByIDNoSecret(ctx context.Context, endpointID string) (*Endpoint, error) {
+	var (
+		ep      Endpoint
+		hash    string
+		revoked sql.NullString
+		label   sql.NullString
+		hint    sql.NullString
+		skey    sql.NullString
+	)
+	err := s.R.QueryRowContext(ctx, `
+SELECT id, endpoint_id, secret_sha256, token_id, actor_id, label, host_hint,
+       created_at, last_seen_at, revoked_at,
+       COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,''),
+       session_key
+FROM endpoint WHERE endpoint_id=?`, endpointID).
+		Scan(&ep.ID, &ep.EndpointID, &hash, &ep.Owner.TokenID, &ep.Owner.ActorID, &label, &hint,
+			&ep.CreatedAt, &ep.LastSeenAt, &revoked,
+			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt, &skey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if revoked.Valid && revoked.String != "" {
+		return nil, ErrDenied
+	}
+	ep.Label, ep.HostHint, ep.SessionKey = label.String, hint.String, skey.String
+	return &ep, nil
+}
+
+// AuthenticateEndpointBySessionKey is the secret-free counterpart of AuthenticateEndpoint.
+//
+// It performs the SAME post-checks the secret path performs — revoked endpoint refused — and the
+// caller performs the same station-key and archived-station checks afterwards, because those live
+// one layer up and apply to both paths identically.
+func (s *Store) AuthenticateEndpointBySessionKey(ctx context.Context, sessionKey string) (*Endpoint, error) {
+	ep, err := s.endpointBySessionKey(ctx, sessionKey)
+	if err != nil {
+		return nil, err
+	}
+	// Same throttled touch as the secret path, so a claimed endpoint's liveness is reported the
+	// same way an unclaimed one's is.
+	_, _ = s.W.ExecContext(ctx, `
+UPDATE endpoint SET last_seen_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE id=? AND last_seen_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-60 seconds')`, ep.ID)
+	return ep, nil
+}
+
 func (s *Store) RegisterEndpoint(ctx context.Context, owner Owner, label, hostHint string) (*Endpoint, string, error) {
 	endpointID, err := randBase62(22)
 	if err != nil {
