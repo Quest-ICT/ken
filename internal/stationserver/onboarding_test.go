@@ -59,14 +59,26 @@ func TestASessionWithNoWorkspaceGetsOneAndWorksImmediately(t *testing.T) {
 			"'here is your briefing' from 'here is your new workspace'")
 	}
 
-	// THE ID MUST REACH THE HUMAN, and the result is the only channel that always arrives.
-	// A workspace whose id dies with the conversation is a workspace the next session in this
-	// folder cannot find — it would mint a second one, and a third.
-	for _, want := range []string{out.StationID, WorkspaceHeader, "rename"} {
+	// *** THE INSTRUCTION MUST NAME THE THING THAT ACTUALLY BRINGS A SESSION BACK. ***
+	//
+	// It used to require the station id and the X-Ken-Workspace header, on the reasoning that an id
+	// dying with the conversation means the next session mints another. The reasoning was right and
+	// the remedy was wrong: a claude.ai connector cannot set a custom header, so that advice was
+	// unfollowable for the population it was written for — and the header is now deleted outright,
+	// measured as never used in the deployment's entire life.
+	//
+	// What replaces it is session_key, which is an ARGUMENT rather than configuration: nothing to
+	// install, nothing for a human to approve, and it survives a client restart.
+	for _, want := range []string{"session_key", "rename"} {
 		if !strings.Contains(out.PutThisInYourConfig, want) {
-			t.Errorf("the instruction handed back does not mention %q; without it the next session "+
-				"here starts with no workspace and mints another", want)
+			t.Errorf("the instruction handed back does not mention %q; without it the session has "+
+				"not been told how to come back here", want)
 		}
+	}
+	// AND IT MUST NOT RESURRECT THE HEADER. A string here is advice a session will act on.
+	if strings.Contains(out.PutThisInYourConfig, "X-Ken-Workspace") {
+		t.Error("the onboarding instruction still tells a session to ask for a header that no " +
+			"longer exists and that its client cannot set")
 	}
 
 	// AND IT IS NOT WITHHELD PENDING ANYTHING. §5: "The session works immediately: notebook,
@@ -139,8 +151,9 @@ func onboardingHarness(t *testing.T) (Deps, *principal) {
 	}
 }
 
-// wsRT adds the bearer AND a workspace header, so a test can drive the real transport the way a
-// folder's MCP entry does.
+// wsRT adds the bearer. It used to add a workspace HEADER too, which is how a folder's MCP entry
+// declared its station — that header is deleted, so the field remains only to keep the helper's
+// call sites honest about what they are no longer doing.
 type wsRT struct {
 	token, workspace string
 	base             http.RoundTripper
@@ -148,9 +161,6 @@ type wsRT struct {
 
 func (w wsRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Set("Authorization", "Bearer "+w.token)
-	if w.workspace != "" {
-		r.Header.Set(WorkspaceHeader, w.workspace)
-	}
 	return w.base.RoundTrip(r)
 }
 
@@ -189,58 +199,6 @@ func meOverTransport(t *testing.T, sess *mcp.ClientSession, args map[string]any)
 	return out
 }
 
-// *** THE WORKSPACE HEADER RESOLVES A SESSION TO A WORKSPACE, OVER THE REAL TRANSPORT. ***
-//
-// docs/IDENTITY.md §4: the folder's MCP entry carries a stable opaque workspace id, and the
-// credential proves who. Asserted here rather than on the middleware in isolation, because the
-// property is about what a CLIENT sending a header actually gets — and a unit test of the resolver
-// passes whether or not the header is ever read off the request.
-//
-// Mutation found the gap: deleting the assignment `sp.StationID = ws` left the whole suite green.
-func TestTheWorkspaceHeaderSelectsTheWorkspace(t *testing.T) {
-	st, srv, _, station := harness(t)
-	ctx := context.Background()
-
-	// A station-LESS key: the state an OAuth grant arrives in, reachable here without one.
-	actor, err := st.FindOrCreateActor(ctx, "ai", "roaming-session")
-	if err != nil {
-		t.Fatal(err)
-	}
-	roaming, err := st.IssueStationKey(ctx, actor, "", "no-station", []string{ScopeStation})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// WITHOUT the header it has no workspace, so station_me mints one — the control proving the
-	// header is what does the work below, not the credential.
-	//
-	// ON A SEPARATE KEY, DELIBERATELY. Driving both halves through one bearer confounds the test:
-	// two MCP sessions on one credential share server-side session state, and the second call read
-	// the first's principal — which looked exactly like "the header was ignored". Two folders in
-	// production hold two credentials anyway, so this is also the honest fixture.
-	control, err := st.IssueStationKey(ctx, actor, "", "control-key", []string{ScopeStation})
-	if err != nil {
-		t.Fatal(err)
-	}
-	minted := meOverTransport(t, connectWS(t, srv, control, ""), map[string]any{"workspace_name": "somewhere"})
-	if !minted.JustCreated {
-		t.Fatal("a station-less session with no header did not get a workspace; the fixture is wrong")
-	}
-
-	// WITH the header it works as that workspace, and is briefed on it rather than given a new one.
-	got := meOverTransport(t, connectWS(t, srv, roaming, station.StationID), map[string]any{})
-	if got.JustCreated {
-		t.Error("the session minted a NEW workspace despite declaring one — the header was ignored, " +
-			"so every folder would accumulate a fresh workspace on every connection")
-	}
-	if got.StationID != station.StationID {
-		t.Errorf("session resolved to %q, want the declared %q", got.StationID, station.StationID)
-	}
-	if got.Name != station.Name {
-		t.Errorf("name = %q, want %q — the session is briefed on the wrong post", got.Name, station.Name)
-	}
-}
-
 // *** station_me IS THE PATH, and the auto-provision must be ON it. ***
 //
 // §5's flow works because station_me is the call every session is told to make first — the fix
@@ -267,9 +225,12 @@ func TestStationMeMintsAWorkspaceForASessionThatHasNone(t *testing.T) {
 			"could not create a station, and a console-minted key could never bind the session it "+
 			"was minted for.", out)
 	}
-	if !strings.Contains(out.PutThisInYourConfig, out.StationID) {
-		t.Error("the workspace id was not handed back in a form the human can act on; the next " +
-			"session in this folder would mint another")
+	// THE INSTRUCTION MUST NAME session_key, not the station id. The id used to be the thing a
+	// human pasted into a header; there is no header, and what brings a session back is the key it
+	// sends itself.
+	if !strings.Contains(out.PutThisInYourConfig, "session_key") {
+		t.Error("the session is not told to keep sending session_key, so it has not been told how " +
+			"to come back to this station at all")
 	}
 }
 
@@ -406,8 +367,17 @@ func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// BOTH PATHS OVER THE REAL TRANSPORT, driven by session_key rather than the deleted header.
+	// The established arm claims a station on its first call and returns to it on its second —
+	// which is the briefing path, and is now also a check that the key actually resolves.
 	created := meOverTransport(t, connectWS(t, srv, minting, ""), map[string]any{"workspace_name": "brand-new"})
-	briefed := meOverTransport(t, connectWS(t, srv, established, station.StationID), map[string]any{})
+
+	estSess := connectWS(t, srv, established, "")
+	if first := meOverTransport(t, estSess, map[string]any{"session_key": "conv-established"}); !first.JustCreated {
+		t.Fatal("the established key did not mint on its first call; the fixture is wrong")
+	}
+	briefed := meOverTransport(t, estSess, map[string]any{"session_key": "conv-established"})
+	_ = station
 
 	// The fixture must actually cover both paths, or this passes by testing one thing twice.
 	if !created.JustCreated {
@@ -442,108 +412,7 @@ type qsRT struct {
 
 func (q qsRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.Header.Set("Authorization", "Bearer "+q.token)
-	r.Header.Del(WorkspaceHeader)
 	return q.base.RoundTrip(r)
-}
-
-// *** A WORKSPACE CAN BE DECLARED IN THE URL, BECAUSE A CONNECTOR CANNOT SEND A HEADER. ***
-//
-// The 2026-08-26 acceptance run on a clean VM found the station surface unreachable through
-// claude.ai connectors — the onboarding path Ken recommends and the one that propagates to every
-// device. The client enforces an allowlist of header names: "Only approved header names are
-// accepted." So `station_me` could mint a workspace with zero approvals, exactly as §6 promises,
-// and every other station tool refused it one call later.
-//
-// This drives the REAL transport with the header stripped, which is the only arrangement that
-// reproduces what a connector actually does.
-func TestAWorkspaceCanBeDeclaredInTheURLWhenTheClientCannotSendHeaders(t *testing.T) {
-	st, srv, _, station := harness(t)
-	ctx := context.Background()
-
-	actor, err := st.FindOrCreateActor(ctx, "ai", "connector-session")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := st.IssueStationKey(ctx, actor, "", "connector-key", []string{ScopeStation})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	connect := func(url string) *mcp.ClientSession {
-		t.Helper()
-		cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-		sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
-			Endpoint:             url,
-			HTTPClient:           &http.Client{Transport: qsRT{token: key, base: http.DefaultTransport}},
-			DisableStandaloneSSE: true,
-		}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { sess.Close() })
-		return sess
-	}
-
-	// CONTROL FIRST: with NO header and NO query, this credential has no workspace and mints one.
-	// Without this the success below could be caused by the credential carrying a station.
-	minted := meOverTransport(t, connect(srv.URL), map[string]any{"workspace_name": "nowhere"})
-	if !minted.JustCreated {
-		t.Fatal("the control did not mint; this key already carries a station and the test proves nothing")
-	}
-
-	// AND NOW THE PROPERTY: the same header-less client, with ?workspace= in the URL, resolves to
-	// the DECLARED workspace instead of minting another.
-	got := meOverTransport(t, connect(srv.URL+"?workspace="+station.StationID), map[string]any{})
-	if got.JustCreated {
-		t.Fatal("the URL-declared workspace was ignored and a NEW one was minted — a connector " +
-			"would accumulate an orphan station on every connection and never reach a working state")
-	}
-	if got.StationID != station.StationID {
-		t.Errorf("resolved to %q, want the declared %q", got.StationID, station.StationID)
-	}
-	if got.Name != station.Name {
-		t.Errorf("name = %q, want %q — the session is briefed on the wrong post", got.Name, station.Name)
-	}
-}
-
-// THE REST OF THE STATION SURFACE MUST WORK FROM A URL-DECLARED WORKSPACE, not just station_me.
-// station_me was always reachable — it is the one tool that does NOT go through requireStation,
-// which is exactly why the VM could mint a workspace and then use nothing. Asserting only on
-// station_me would re-pass the broken state.
-func TestURLDeclaredWorkspaceReachesToolsBehindRequireStation(t *testing.T) {
-	st, srv, _, station := harness(t)
-	ctx := context.Background()
-	actor, err := st.FindOrCreateActor(ctx, "ai", "connector-session-2")
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := st.IssueStationKey(ctx, actor, "", "connector-key-2", []string{ScopeStation})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:             srv.URL + "?workspace=" + station.StationID,
-		HTTPClient:           &http.Client{Transport: qsRT{token: key, base: http.DefaultTransport}},
-		DisableStandaloneSSE: true,
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sess.Close()
-
-	// station_task_add goes through requireStation, like every station tool except station_me.
-	res, err := sess.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "station_task_add",
-		Arguments: map[string]any{"text": "reachable from a URL-declared workspace", "blocked_on": "self"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("a tool behind requireStation refused a URL-declared workspace: %+v — this is the "+
-			"VM failure, unfixed: mint works, everything else does not", res.Content)
-	}
 }
 
 // *** A CONVERSATION DECLARES ITSELF AND COMES BACK TO THE SAME WORKSPACE. ***

@@ -994,3 +994,22 @@ func (s *Store) ReassignStationToSession(ctx context.Context, stationID, session
 	res.Station = st
 	return res, nil
 }
+
+// StationForActor reports whether this station is this human's and is live.
+//
+// ONE STATEMENT REPLACING THREE DRIFTED ONES. Before this, the same question was asked three ways
+// in three places: an owner-token comparison in comm's auth (vacuous for an OAuth caller — one
+// grant means one token id for every conversation on the account, so it compared a value to
+// itself), IsStationArchived reading `state`, and StationExists reading `archived_at`. Two columns,
+// three answers, for one fact.
+//
+// `state` IS THE ONE TO READ: it carries a CHECK constraint (migration 0012), so an invalid value
+// is impossible rather than merely unwritten.
+func (s *Store) StationForActor(ctx context.Context, stationID string, actorID int64) (bool, error) {
+	var ok bool
+	err := s.R.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM station
+                        WHERE station_id=?1 AND created_by_actor_id=?2 AND state='active')`,
+		stationID, actorID).Scan(&ok)
+	return ok, err
+}

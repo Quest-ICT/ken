@@ -252,20 +252,25 @@ func TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone(t *testing.T) {
 	// again, which would mint a second workspace and leave me in the same place, because the gap
 	// is the header, not the mint."
 	//
-	// The refusal must therefore say what actually closes the gap — DECLARING a workspace — and
-	// must warn against the re-mint rather than recommend it.
-	if !strings.Contains(err.Error(), "workspace") {
-		t.Errorf("the refusal does not say the connection failed to DECLARE a workspace, which is the "+
-			"actual gap: %v", err)
+	// The refusal must therefore say what actually closes the gap — DECLARING a station — and must
+	// warn against the re-mint rather than recommend it.
+	//
+	// IT USED TO REQUIRE "?workspace=" AS THE REMEDY. That was correct when a connector had no
+	// other way to declare one; both the URL form and the header are now deleted, measured as never
+	// used, and session_key replaced them. Requiring the old string here would pin advice a session
+	// cannot act on.
+	if !strings.Contains(err.Error(), "session_key") {
+		t.Errorf("the refusal does not name session_key, which is the only remedy a session can act "+
+			"on by itself: %v", err)
 	}
-	if !strings.Contains(err.Error(), "?workspace=") {
-		t.Errorf("the refusal does not name the URL form, which is the ONLY remedy available to a "+
-			"claude.ai connector: %v", err)
+	if !strings.Contains(strings.ToLower(err.Error()), "not the fix") &&
+		!strings.Contains(strings.ToLower(err.Error()), "mints a new station") {
+		t.Errorf("the refusal does not warn that re-calling station_me with no key mints ANOTHER "+
+			"station; a session following it accumulates orphans: %v", err)
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "not one") &&
-		!strings.Contains(strings.ToLower(err.Error()), "second workspace") {
-		t.Errorf("the refusal does not warn that re-calling station_me mints ANOTHER workspace; a "+
-			"session following it accumulates orphan stations: %v", err)
+	// AND IT MUST NOT RESURRECT THE DELETED ADVICE.
+	if strings.Contains(err.Error(), "?workspace=") || strings.Contains(err.Error(), "X-Ken-Workspace") {
+		t.Errorf("the refusal still points at a transport mechanism that no longer exists: %v", err)
 	}
 }
 

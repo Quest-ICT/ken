@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"log"
+
+	"github.com/Quest-ICT/ken/internal/station"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/Quest-ICT/ken/internal/metrics"
 	"github.com/Quest-ICT/ken/internal/ratelimit"
@@ -67,27 +66,18 @@ func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, 
 	if p == nil {
 		return nil, errors.New("unauthenticated")
 	}
+	// THE CONVERSATION'S OWN DECLARATION, made on its first station_me call. The header that used
+	// to be consulted first is gone — see station.Resolve.
 	if p.StationID == "" {
-		p = p.withWorkspace(workspaceFrom(req))
-	}
-	// THE CONVERSATION'S OWN DECLARATION, made on its first station_me call. Checked AFTER the
-	// header so an explicit per-connection header still wins, and before the refusal so a session
-	// that has said who it is never sees one.
-	if p.StationID == "" {
-		p = p.withWorkspace(boundStation(req))
+		p = p.withWorkspace(station.Bound(req))
 	}
 	if p.StationID == "" {
-		// THIS USED TO SAY "call station_me" — WHICH IS A LOOP THAT MINTS A SECOND WORKSPACE.
+		// THIS USED TO SAY "call station_me" — WHICH IS A LOOP THAT MINTS A SECOND STATION.
 		// A session that followed it got another id, the same refusal, and one more orphan
-		// station each time. The gap is never the mint; it is that this connection does not
-		// SAY which workspace it is. So the advice has to be about declaring one, and it has to
-		// name both ways of declaring it, because a claude.ai connector cannot send a header.
-		return nil, errors.New("this connection has not said which workspace it is. Two ways to fix it, " +
-			"and calling station_me again is NOT one — that would mint a SECOND workspace and leave you " +
-			"here. (1) If you already have a workspace id, your human adds it to this connector's URL as " +
-			"?workspace=<id>, or sets the " + WorkspaceHeader + " header if the client allows custom " +
-			"headers. (2) If you have no workspace at all, call station_me ONCE to get an id, then ask " +
-			"your human to do (1) with it. Either way you reconnect afterwards and everything works")
+		// each time. The gap is never the mint; it is that this connection has not said which
+		// station it is. ONE WORDING, shared with comm, so the two surfaces cannot drift into
+		// answering the same miss differently.
+		return nil, station.ErrNoWorkspace
 	}
 	return p, nil
 }
@@ -129,56 +119,12 @@ func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, 
 // the recovery is that each session re-declares on its next station_me, which every session does
 // at the start of every conversation anyway. A silently-full cache that stopped accepting new
 // bindings would be far worse than one that occasionally makes sessions say who they are again.
-var sessionBindings sync.Map
-
-const maxSessionBindings = 4096
-
-var sessionBindingCount atomic.Int64
-
-// bindSession records the workspace this connection is working as.
-func bindSession(req *mcp.CallToolRequest, stationID string) {
-	if req == nil || req.Session == nil || stationID == "" {
-		return
-	}
-	id := req.Session.ID()
-	if id == "" {
-		// A transport with no session id (stateless mode). Nothing to key on, so the
-		// conversation declares its key on every call instead — correct, just chattier.
-		return
-	}
-	if _, loaded := sessionBindings.LoadOrStore(id, stationID); !loaded {
-		if sessionBindingCount.Add(1) > maxSessionBindings {
-			sessionBindings.Range(func(k, _ any) bool { sessionBindings.Delete(k); return true })
-			sessionBindingCount.Store(0)
-		}
-		return
-	}
-	sessionBindings.Store(id, stationID)
-}
-
-// boundStation returns the workspace this connection claimed, or "".
-func boundStation(req *mcp.CallToolRequest) string {
-	if req == nil || req.Session == nil {
-		return ""
-	}
-	id := req.Session.ID()
-	if id == "" {
-		return ""
-	}
-	if v, ok := sessionBindings.Load(id); ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func workspaceFrom(req *mcp.CallToolRequest) string {
-	if req == nil || req.Extra == nil || req.Extra.Header == nil {
-		return ""
-	}
-	return strings.TrimSpace(req.Extra.Header.Get(WorkspaceHeader))
-}
+// THE BINDING MAP AND THE HEADER READER MOVED TO internal/station.
+//
+// Both are now shared with comm rather than reachable from it by accident: the `?workspace=`
+// promotion used to live in THIS middleware, and comm handlers saw its effect only because
+// allserver wired station's middleware inside comm's — a wiring order nothing asserted. See
+// station.Resolve for what replaced it, and for why the header itself is gone.
 
 // withWorkspace returns a copy of the principal working as the declared workspace, or the
 // principal unchanged when the declaration is empty or names nothing live.
@@ -194,19 +140,19 @@ func (p *principal) withWorkspace(ws string) *principal {
 	return &c
 }
 
-// WorkspaceHeader carries the stable opaque workspace id a folder's MCP entry declares.
+// *** X-Ken-Workspace AND ?workspace= ARE DELETED. ***
 //
-// NOT A SECRET, and docs/IDENTITY.md §4 says that is the whole point: it replaces a per-folder
-// station KEY, which was a bearer credential a human had to generate, deliver and protect — and
-// whose only delivery path on 2026-08-18 was a prompt, which the same instruction forbade, so the
-// key was burned on arrival. "A credential whose delivery path is a prompt is not protecting
-// anything."
+// Both carried identity in the TRANSPORT, and a claude.ai connector is added once per account — so
+// whatever they carried had exactly one value for every machine and every conversation, forever.
+// The header was worse: the client refuses custom header names, so it could not be set at all.
 //
-// §9.2 states the condition this design lives under: "A stable opaque workspace id in an MCP header
-// authorises nothing, so there is nothing to keep out of a transcript. IF THAT ID EVER GAINS
-// AUTHORITY, THIS CONTROL COMES STRAIGHT BACK." It selects a workspace; the OAuth grant is what
-// authorises, and single-user is what makes selection sufficient.
-const WorkspaceHeader = "X-Ken-Workspace"
+// MEASURED BEFORE DELETING, because "probably unused" is not a reason to break something. The
+// server logged every successful header claim; across the entire life of the deployment there were
+// 91, all one test token claiming one test station inside a single 39-minute window, both retired
+// since. Vlad's rule for reading that: if it was only ever used to run tests, it was never used.
+//
+// What replaces them is session_key — declared in the CALL, per conversation, and proven across a
+// real client restart. See station.Resolve.
 
 // authMiddleware authenticates a `kens_` bearer key or an OAuth grant, requires the station scope,
 // and resolves which workspace the session is working as.
@@ -219,39 +165,6 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxStationBody)
-
-		// *** THE WORKSPACE MAY ALSO ARRIVE IN THE URL, BECAUSE A CONNECTOR CANNOT SEND A HEADER. ***
-		//
-		// Found by the 2026-08-26 acceptance run on a clean Windows VM, and it made the entire
-		// station surface unreachable by the onboarding path Ken actually recommends. claude.ai
-		// CONNECTORS — added once on the account, propagating to every device, which is the flow
-		// that finally worked for Vlad — enforce an allowlist of header names and refuse custom
-		// ones outright: "Only approved header names are accepted." An already-created connector
-		// has no headers field at all.
-		//
-		// So a session could call station_me, be given a workspace with zero approvals exactly as
-		// §6 promises, and then find every other station tool refusing it one call later. Worse,
-		// the refusal advised calling station_me again, which mints ANOTHER workspace — a loop
-		// that accumulates orphan stations and never reaches a working state.
-		//
-		// A URL is the one thing a connector lets a user set freely, and connectors are unique PER
-		// URL — so ?workspace=A and ?workspace=B are two connectors, which gives per-workspace
-		// identity AND account-level propagation at once. Neither was achievable before.
-		//
-		// SAFE ONLY BECAUSE THE ID AUTHORISES NOTHING. IDENTITY.md §4: "A stable opaque workspace
-		// id in an MCP header authorises nothing, so there is nothing to keep out of a transcript."
-		// A URL is a worse place for a secret than a header — it lands in proxy logs, browser
-		// history and referrers — so this is acceptable for a NAME TAG and would not be for a
-		// credential. §9.2's condition governs it unchanged: IF THAT ID EVER GAINS AUTHORITY, THIS
-		// GOES WITH IT.
-		//
-		// The header still WINS when both are present: an explicit per-request header is the more
-		// specific signal, and a stale query string on a saved connector must not override it.
-		if r.Header.Get(WorkspaceHeader) == "" {
-			if q := strings.TrimSpace(r.URL.Query().Get("workspace")); q != "" {
-				r.Header.Set(WorkspaceHeader, q)
-			}
-		}
 
 		tok := bearerToken(r)
 		if tok == "" {
@@ -326,24 +239,6 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 		// workspace each session claimed. Vlad ruled on 2026-08-25 that the vault follows the
 		// workspace like everything else, rather than growing a second factor that would
 		// reintroduce the ceremony this design exists to remove.
-		if sp.StationID == "" {
-			if ws := strings.TrimSpace(r.Header.Get(WorkspaceHeader)); ws != "" {
-				ok, err := st.StationExists(r.Context(), ws)
-				if err != nil {
-					authFailReq(w, r, reg, "invalid station key")
-					return
-				}
-				if !ok {
-					// Same opaque answer as an unknown credential. A workspace id is not a
-					// secret, but "does this id exist" must not become a probe either — the
-					// unprobeability rule is about what an unproven caller can enumerate.
-					authFailReq(w, r, reg, "invalid station key")
-					return
-				}
-				sp.StationID = ws
-				log.Printf("STATION: session on token %s claimed workspace %s via %s", sp.TokenID, ws, WorkspaceHeader)
-			}
-		}
 		if limiter != nil {
 			if ok, retry := limiter.Allow(sp.TokenID); !ok {
 				w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))

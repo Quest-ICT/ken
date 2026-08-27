@@ -15,6 +15,7 @@ import (
 
 	"github.com/Quest-ICT/ken/internal/metrics"
 	"github.com/Quest-ICT/ken/internal/ratelimit"
+	"github.com/Quest-ICT/ken/internal/station"
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
@@ -376,7 +377,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		// alike. Binding only inside the keyed branch is what made the adoption below miss: a
 		// session that minted with no arguments left nothing for its next call to adopt, and
 		// stranded the workspace it had just been given.
-		bindSession(req, out.StationID)
+		station.Bind(req, out.StationID)
 
 		out.KenVersion = version.Version
 		out.VersionNote = versionNote
@@ -943,11 +944,11 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 			// Scoped to the binding rather than to "any recent unclaimed station of this actor",
 			// which would let one conversation adopt another's.
 			st, created, err := d.Store.ClaimStationForSession(ctx, key, in.WorkspaceName, p.ActorID,
-				boundStation(req))
+				station.Bound(req))
 			if err != nil {
 				return meOut{}, err
 			}
-			bindSession(req, st.StationID)
+			station.Bind(req, st.StationID)
 			if created {
 				out := claimedWorkspaceOut(st)
 				out.SessionKeyEcho = key
@@ -961,7 +962,9 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 			return out, nil
 		}
 	}
-	if p := principalFrom(ctx); p != nil && p.StationID == "" && workspaceFrom(req) == "" {
+	// NO STATION ON THE PRINCIPAL AND NOTHING BOUND: this session has never claimed one, so it
+	// gets one. There used to be a header consulted here too; it is gone.
+	if p := principalFrom(ctx); p != nil && p.StationID == "" && station.Bound(req) == "" {
 		return claimWorkspace(ctx, d, p, in.WorkspaceName)
 	}
 	p, err := requireStation(ctx, req)
@@ -1212,13 +1215,17 @@ func claimWorkspace(ctx context.Context, d Deps, p *principal, hint string) (meO
 		Name:        st.Name,
 		NameSource:  "auto",
 		JustCreated: true,
-		PutThisInYourConfig: "Ken made you a workspace called " + st.Name + " and you are working in it NOW — " +
+		// THE SECOND INSTRUCTION USED TO BE "ask your human to add the X-Ken-Workspace header".
+		// That header is deleted, and the advice was unfollowable for a connector session anyway —
+		// the client refuses custom header names. What replaces it is the thing that actually
+		// works and costs the human nothing: keep sending the same session_key.
+		PutThisInYourConfig: "Ken made you a station called " + st.Name + " and you are working in it NOW — " +
 			"notebook, tasks, locker and vault, nothing withheld and nothing to approve. TWO THINGS TO DO: " +
-			"(1) tell your human, in words, that you are working as " + st.Name + " (auto-named after this folder) " +
+			"(1) SEND THE SAME session_key ON EVERY CALL from now on, including comm_* calls. That is the whole " +
+			"of how you come back here after a client restart — it is not config, it is an argument, and nothing " +
+			"needs to be installed or approved for it. " +
+			"(2) tell your human, in words, that you are working as " + st.Name + " (auto-named after this folder) " +
 			"and that they can rename it in the console if it is wrong — the name is what they will see when " +
-			"approving this workspace to talk to another, which is the one moment a bad name matters. " +
-			"(2) ask them to add the header " + WorkspaceHeader + ": " + st.StationID + " to this folder's Ken MCP " +
-			"entry. Without it the NEXT session here starts with no workspace and mints a second one. The id is " +
-			"permanent and is not a secret — it is a name tag, not a key.",
+			"approving this station to talk to another, which is the one moment a bad name matters.",
 	}, nil
 }
