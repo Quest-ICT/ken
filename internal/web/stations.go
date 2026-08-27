@@ -397,6 +397,32 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 	_ = r.ParseForm()
 	id := r.PathValue("id")
 
+	// A ROOM request is approved by TYPING THE NAME, like a station request and unlike a link.
+	// The agent's name_hint is shown beside the field and is not used: it is documented NON-BINDING
+	// on the column itself, and an approval that silently took it would let a session choose what
+	// its human sees in the room list.
+	//
+	// THE ROOM IS CREATED EMPTY. Membership stays entirely the human's, added afterwards from the
+	// rooms page — which is the whole reason migration 0017's surviving argument holds with this
+	// feature in place: the agent asked, the human decides who.
+	if r.FormValue("kind") == "room" {
+		room, err := a.store.ApproveRoomRequest(r.Context(), id, strings.TrimSpace(r.FormValue("name")), sess.ActorID)
+		switch {
+		case errors.Is(err, store.ErrRequestNotPending):
+			flashRedirect(w, r, "/stations", "flash.station_request_gone", "")
+		case errors.Is(err, store.ErrRoomNameTaken):
+			flashRedirect(w, r, "/stations", "flash.room_name_taken", strings.TrimSpace(r.FormValue("name")))
+		case err != nil:
+			flashRedirect(w, r, "/stations", "flash.station_approve_failed", err.Error())
+		default:
+			// Sent to /rooms rather than back to /stations: the next thing the human must do is
+			// add members, and the room they just made is empty until they do. A flash saying
+			// "approved" on a page with no members visible would read as finished.
+			flashRedirect(w, r, "/rooms", "flash.room_created_from_request", room.Name)
+		}
+		return
+	}
+
 	// A LINK request has no name to type — the human is approving a relationship
 	// between two stations that already exist, not creating one. Routed on the form's
 	// declared kind rather than on whether a name happens to be present, so a
@@ -442,6 +468,22 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 			}
 			flashRedirect(w, r, "/stations", flash, l.NameA+" ↔ "+l.NameB)
 		}
+		return
+	}
+
+	// *** AN UNKNOWN KIND FAILS LOUDLY RATHER THAN FALLING IN HERE. ***
+	//
+	// Until 2026-08-27 this was the fallthrough for everything the branches above did not claim,
+	// and the template's station branch emitted no `kind` at all — so a request of any future kind
+	// landed here and was refused by ApproveStationRequest with a message naming a different
+	// function. Latent while only two kinds existed; 'room' is the third, and the trap was found
+	// by the analysis that designed it rather than by an operator hitting it.
+	//
+	// Every template branch now declares its kind, so an empty or unrecognised one means the form
+	// and this handler have drifted apart — which is worth saying out loud, not absorbing.
+	if k := r.FormValue("kind"); k != "" && k != "station" {
+		flashRedirect(w, r, "/stations", "flash.station_approve_failed",
+			"unknown request kind "+k+" — the console form and the approval handler disagree")
 		return
 	}
 

@@ -231,7 +231,24 @@
           {{if .Reason}}<p><b>{{$.T "stations.req_reason"}}:</b> {{.Reason}}</p>{{end}}
           {{if .NameHint}}<p class="help">{{$.T "stations.req_hint"}}: <code>{{.NameHint}}</code> — {{$.T "stations.req_hint_note"}}</p>{{end}}
 
-          {{if eq .Kind "link"}}
+          {{if eq .Kind "room"}}
+          <!-- A ROOM REQUEST NAMES NOBODY, deliberately: the session asked for a room, the human
+               decides who is in it. The name field is the human's — name_hint above is shown as a
+               suggestion and is never used by the approval. -->
+          <p class="cell-title"><b class="mono">{{.FromName}}</b> {{$.T "stations.room_wants"}}</p>
+          <p class="help">{{$.T "stations.room_help"}}</p>
+          <form method="post" action="/stations/requests/{{.RequestID}}/approve">
+            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+            <input type="hidden" name="kind" value="room">
+            <div class="field">
+              <label for="rn-{{.RequestID}}">{{$.T "stations.room_name"}}</label>
+              <input class="input" id="rn-{{.RequestID}}" name="name" type="text" required
+                     value="{{.NameHint}}" placeholder="ops" title="{{$.T "stations.room_name_help"}}">
+              <span class="help">{{$.T "stations.room_name_help"}}</span>
+            </div>
+            <button class="btn btn--primary" type="submit" title="{{$.T "stations.room_approve_help"}}">{{$.T "stations.room_approve"}}</button>
+          </form>
+          {{else if eq .Kind "link"}}
           <p class="cell-title"><b class="mono">{{.FromName}}</b> {{$.T "stations.link_wants"}} <b class="mono">{{.ToName}}</b></p>
           <p class="help">{{$.T "stations.link_help"}}</p>
           <p class="help">{{$.T "stations.link_grants"}}</p>
@@ -243,6 +260,11 @@
           {{else}}
           <form method="post" action="/stations/requests/{{.RequestID}}/approve">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+            <!-- DECLARED, where it used to be omitted. The approve handler dispatches on this
+                 field and this branch emitted none, so ANY kind the template did not recognise
+                 fell in here and was refused by ApproveStationRequest with a message naming the
+                 wrong function. Latent until a third kind existed; 'room' is that third kind. -->
+            <input type="hidden" name="kind" value="station">
             <div class="field">
               <label for="n-{{.RequestID}}">{{$.T "stations.req_name"}}</label>
               <input class="input" id="n-{{.RequestID}}" name="name" type="text" required

@@ -279,6 +279,44 @@ func RegisterTools(s *mcp.Server, d Deps) {
 	})
 
 	addTool(s, d, &mcp.Tool{
+		Name: "station_room_request",
+		Description: "Ask your human to create a ROOM — a group your station can broadcast to, where one message " +
+			"reaches every member and each of them acknowledges for itself. Use it when you need to reach SEVERAL " +
+			"peers, which a link cannot do: a link is one relationship with one station. You do NOT name who should " +
+			"be in it and cannot — your human decides membership, entirely, and adds each station themselves. Give a " +
+			"reason written for the person deciding; it is shown to YOUR HUMAN only and never delivered to anyone " +
+			"else. name_hint is a suggestion they may ignore. You will be told it is pending either way — do not " +
+			"re-ask in a loop, and TELL YOUR HUMAN IN WORDS that you asked and why, because this result reaches " +
+			"nobody otherwise.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in roomRequestIn) (*mcp.CallToolResult, roomRequestOut, error) {
+		p, err := requireStation(ctx, req)
+		if err != nil {
+			return nil, roomRequestOut{}, err
+		}
+		if strings.TrimSpace(in.Reason) == "" {
+			return nil, roomRequestOut{}, errors.New("a reason is required — your human decides on it, and an unexplained request is one they cannot judge")
+		}
+		// NO TARGET TO RESOLVE, WHICH IS THE POINT. station_link_request needs
+		// StationByNameVisibleTo because a bare name there was an enumeration oracle over every
+		// station in the space, including the ones withheld from station_directory. A room request
+		// names nobody, so that surface does not exist here — and the human keeps sole authority
+		// over who ends up in the room, which is what migration 0017's surviving argument is about.
+		if _, err := d.Store.CreateRoomRequest(ctx, p.TokenID, p.StationID,
+			in.NameHint, in.Reason, hearsayFor(ctx, d, p)); err != nil {
+			return nil, roomRequestOut{}, err
+		}
+		// Identical answer whether the request was filed, collapsed into one already pending, or
+		// silently dropped against a muted station. A caller that could tell the difference could
+		// probe its human's past refusals one request at a time.
+		return nil, roomRequestOut{
+			Status: "pending",
+			Note: "Submitted for your human to decide. Tell them in words that you asked and why — this tool result " +
+				"reaches nobody otherwise. They create the room and choose who is in it; you will see it in " +
+				"comm_channels once they add your station.",
+		}, nil
+	})
+
+	addTool(s, d, &mcp.Tool{
 		Name: "station_me",
 		Description: "Your briefing: who you are staffing, open tasks (named), handoff staleness, and what is " +
 			"waiting on your human. Call it FIRST in every session, and relay what it says to your human in words — " +

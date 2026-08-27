@@ -68,8 +68,12 @@ func (s *Store) ApproveStationRequest(ctx context.Context, requestID, name strin
 	if err != nil {
 		return nil, err
 	}
+	// NAMES NO SIBLING, because there are now two and this message named one. It said "approve it
+	// with ApproveLinkRequest" for every non-station kind, so a 'room' request that reached here —
+	// which is exactly what happened before the console grew a room branch — sent the operator to a
+	// function that would also refuse it. A refusal that misdirects is worse than a bare one.
 	if kind != "station" {
-		return nil, fmt.Errorf("request %s is a %s request — approve it with ApproveLinkRequest", requestID, kind)
+		return nil, fmt.Errorf("request %s is a %s request, not a station request — approve it from the %s section of the console", requestID, kind, kind)
 	}
 
 	stationID, err := randBase62(16)
@@ -131,9 +135,17 @@ UPDATE station_request
 		return err
 	}
 
-	// A denied LINK escalates the mute window, so a session that keeps asking waits
-	// longer each time. A denied station request does not: there is nothing to mute
-	// against, and a session with no station has no other way to ask.
+	// THREE KINDS, THREE DENIAL POLICIES — and this comment described two until room requests
+	// shipped, which would have read as complete while silently omitting a case.
+	//
+	//   link    escalates the mute below, keyed on the unordered PAIR, so a session that keeps
+	//           asking waits longer each time.
+	//   room    also escalates, on the SAME ladder, but CreateRoomRequest computes it from the
+	//           asking station's own denied rows rather than from a table — station_link_denial is
+	//           keyed on a pair and a room request has none, so storing (x,x) there would be a lie
+	//           in the schema. Nothing to do here; the mute is read at ask time.
+	//   station does NOT mute: there is nothing to key it against, and a session with no station
+	//           has no other way to ask.
 	if kind == "link" && fromStation != nil && toStation != nil {
 		a, b := orderPair(*fromStation, *toStation)
 		if _, err := tx.ExecContext(ctx, `
@@ -686,4 +698,183 @@ SELECT l.link_id, l.station_a, l.station_b,
 		return StationLink{}, ErrNotFound
 	}
 	return l, err
+}
+
+// CreateRoomRequest files a session's ask for a ROOM, naming no other station.
+//
+// *** VLAD DECIDED THIS ON 2026-08-06 AND IT WAS DECLINED IN CODE SIX DAYS LATER. *** His words,
+// overriding the session's own recommendation: "ROOM CREATION: sessions may REQUEST, human
+// approves — NOT the humans-only option I recommended … Same shape as the curation gate, which is
+// the right instinct — the agent proposes, the human promotes." Migration 0024 carries the whole
+// account of why the schema objection that blocked it is no longer true.
+//
+// *** IT NAMES NO STATION, AND THAT IS THE SAFETY PROPERTY RATHER THAN A SIMPLIFICATION. ***
+//
+// 0017's surviving argument is that "a room is a set of stations a human decided should talk to
+// each other; there is no version of that decision an agent should be making for itself." A
+// request that names no members does not touch it: the human still decides membership, entirely,
+// at the console. It also means there is no station name to resolve, so the enumeration oracle
+// that CreateStationLinkRequest needs its identical-wording refusal to close cannot arise here.
+//
+// THREE PROPERTIES MIRRORED FROM THE LINK PATH, deliberately, because they were each paid for:
+//
+//   - THE REASON IS NEVER DELIVERED TO ANYONE. It is stored for the human and shown only in the
+//     console (0012's S9 note). Without that rule a request is a one-shot unauthorized message
+//     channel — and a room request would be a broadcast one.
+//   - A MUTED STATION IS SILENTLY DROPPED and receives the ordinary "submitted, pending review"
+//     answer. Telling the caller it was muted lets a persistent session probe the human's past
+//     decisions one request at a time.
+//   - hearsay MARKS THE TRANSITIVE PATH. A peer can talk this station into asking, and the request
+//     then reaches the human looking like its own idea.
+//
+// WHERE IT DIVERGES, AND WHY. The link mute lives in station_link_denial, keyed on an unordered
+// PAIR. A room request has no pair, and overloading a table whose every column says "link" to
+// store (x,x) would be a lie in the schema. So the same escalating ladder is computed from the
+// request rows themselves — which needs no new table and cannot drift from the denials it counts.
+//
+// Returns the request id, or ("", nil) when silently dropped; the caller reports success either way.
+func (s *Store) CreateRoomRequest(ctx context.Context, tokenID, fromStation, nameHint, reason string, hearsay bool) (string, error) {
+	if strings.TrimSpace(fromStation) == "" {
+		return "", errors.New("a room request must come from a station")
+	}
+	if strings.TrimSpace(reason) == "" {
+		return "", errors.New("a room request needs a reason — it is the only thing the human has to decide on, " +
+			"and a request with none asks them to guess")
+	}
+	if _, err := s.StationByID(ctx, fromStation); err != nil {
+		return "", err
+	}
+
+	// THE MUTE, computed from the station's own denied room requests. Same ladder as links:
+	// 1 denial an hour, then 6, then 24, then a week.
+	var denials int
+	var lastDenied sql.NullString
+	if err := s.R.QueryRowContext(ctx, `
+SELECT COUNT(*), MAX(decided_at) FROM station_request
+ WHERE kind='room' AND from_station=? AND state='denied'`, fromStation).Scan(&denials, &lastDenied); err != nil {
+		return "", err
+	}
+	if denials > 0 && lastDenied.Valid {
+		window := "+7 days"
+		switch denials {
+		case 1:
+			window = "+1 hour"
+		case 2:
+			window = "+6 hours"
+		case 3:
+			window = "+24 hours"
+		}
+		var muted bool
+		if err := s.R.QueryRowContext(ctx,
+			`SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') < strftime('%Y-%m-%dT%H:%M:%fZ',?,?)`,
+			lastDenied.String, window).Scan(&muted); err != nil {
+			return "", err
+		}
+		if muted {
+			// Silently dropped. The caller is told what every caller is told.
+			return "", nil
+		}
+	}
+
+	// AT MOST ONE PENDING ROOM ASK PER STATION. A session that asks twice must not put two rows in
+	// front of the human to decide identically — the same rule the link path applies to a pair.
+	var existing string
+	err := s.R.QueryRowContext(ctx,
+		`SELECT request_id FROM station_request WHERE kind='room' AND state='pending' AND from_station=?`,
+		fromStation).Scan(&existing)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+
+	id, err := randBase62(12)
+	if err != nil {
+		return "", err
+	}
+	// to_station stays NULL: this request is about nobody else, which is the whole point.
+	if _, err := s.W.ExecContext(ctx, `
+INSERT INTO station_request(request_id, kind, from_station, from_token_id, name_hint, reason,
+                            prompted_by_peer_traffic)
+VALUES(?,'room',?,?,?,?,?)`,
+		id, fromStation, tokenID, nullStr(strings.TrimSpace(nameHint)), reason,
+		boolOrNilStore(hearsay)); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// ApproveRoomRequest turns a pending room request into a room, with the name the HUMAN typed.
+//
+// THE NAME IS THE HUMAN'S, ALWAYS. name_hint is documented NON-BINDING on the column itself and is
+// treated that way here: it is shown in the console as a suggestion and this function takes the
+// name as an argument. An approval that silently used the agent's hint would let a session choose
+// what its human sees in the room list.
+//
+// MEMBERSHIP IS NOT TOUCHED. The room is created EMPTY and the human adds members at the console,
+// exactly as before this existed. That is the whole reason 0017's principle survives the feature:
+// the agent asked, the human decided who.
+func (s *Store) ApproveRoomRequest(ctx context.Context, requestID, name string, actorID int64) (*Room, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("a room needs a name — the suggestion in the request is not binding")
+	}
+	tx, err := s.W.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var kind string
+	err = tx.QueryRowContext(ctx,
+		`SELECT kind FROM station_request WHERE request_id=? AND state='pending'`, requestID).Scan(&kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrRequestNotPending
+	}
+	if err != nil {
+		return nil, err
+	}
+	// GUARDED LIKE ITS SIBLINGS, and it earns the guard: the console approve handler dispatches on
+	// a form field, and a mis-filled form must fail loudly rather than take the wrong branch.
+	if kind != "room" {
+		return nil, fmt.Errorf("request %s is a %s request — approve it with the matching function", requestID, kind)
+	}
+
+	roomID, err := randBase62(16)
+	if err != nil {
+		return nil, err
+	}
+	// THE SAME INSERT CreateRoom PERFORMS, kind and all, deliberately rather than a second shape.
+	// Two creation paths that differ by a column is how a room made one way stops behaving like a
+	// room made the other, and this project has paid for divergence like that more than once.
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO comm_room(room_id, name, kind, purpose, created_by_actor_id)
+VALUES(?,?,'topic','',?)`, roomID, name, actorID); err != nil {
+		// A name collision is the ordinary case — a human approving a second ask for "ops" — so it
+		// comes back as the sentinel the console already renders rather than a raw constraint.
+		if isUniqueViolation(err) || strings.Contains(err.Error(), "UNIQUE") {
+			return nil, ErrRoomNameTaken
+		}
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE station_request
+   SET state='approved', decided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), decided_by_actor_id=?
+ WHERE request_id=? AND state='pending'`, actorID, requestID); err != nil {
+		return nil, err
+	}
+	// THE EPOCH MOVES, because CreateRoom moves it. An empty room reaches nobody, so a bump here
+	// is arguably redundant — but the argument for matching is stronger than the argument for
+	// saving one increment: a consumer must not be able to tell which path made a room. Done in
+	// THIS transaction, like ApproveLinkRequest, so an approval is atomic across both facts.
+	if _, err := tx.ExecContext(ctx, `
+UPDATE comm_roster_epoch SET epoch = epoch + 1,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &Room{RoomID: roomID, Name: name, Kind: "topic", State: "active"}, nil
 }

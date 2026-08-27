@@ -17,6 +17,84 @@ same change — never "docs later".
 
 _Nothing yet._
 
+## [3.42.0] — 2026-08-27
+
+**SCHEMA CHANGE — ships alone under Rule 4 with exactly its own code.** `ken.db` **23 → 24**;
+`comm.db` unchanged at 19.
+
+```
+station_request.kind  CHECK IN ('station','link')  ->  ('station','link','room')
+  one table rebuilt · no column added or removed · every row copied by NAME
+  idx_station_request_pending recreated by hand · ON DELETE CASCADE preserved
+  measured on a fully-migrated ken.db: 2.53 ms, foreign_key_check clean, integrity ok
+```
+
+### Added
+
+- **A session can ask its human for a ROOM.** `station_room_request` on the station surface, and a
+  room branch in the console's request queue.
+
+  **This was Vlad's decision on 2026-08-06, and it was quietly not implemented.** His words, from
+  station task `t-CtGY9i1q` the same day: *"ROOM CREATION: sessions may REQUEST, human approves —
+  NOT the humans-only option I recommended … Same shape as the curation gate, which is the right
+  instinct — the agent proposes, the human promotes."* He decided it **overriding the session's own
+  recommendation**, and knowing the schema cost — it was in the same sentence. Six days later
+  `0017_comm_rooms.sql` declined to build it, citing that cost. There is no record of a reversal.
+
+  **The objection was defensible then and is measurably false now.** When 0017 was written, ken.db's
+  migration runner had no foreign-key handling, which made any table rebuild genuinely dangerous;
+  that precondition was removed 2026-08-20. Then 3.33.0's migration 0022 performed exactly this
+  operation on a station table, in ~19 lines, as routine.
+
+  **THE REQUEST NAMES NO STATION, and that is the design.** 0017's *second* reason is a principle
+  and it survives untouched: *"a room is a set of stations a human decided should talk to each
+  other. There is no version of that decision an agent should be making for itself."* That is an
+  argument against an agent **creating** a room, not against one **asking** — and Ken already ships
+  two request tools that coexist with human-only creation. A request carrying no members leaves
+  membership wholly with the human, and leaves no station name to resolve, so the enumeration
+  oracle `station_link_request` needed `StationByNameVisibleTo` to close cannot arise here.
+
+  - `name_hint` is prefilled in the console and **never applied automatically**. An approval that
+    used it would let a session choose what its human sees in the room list.
+  - Approving creates the room **EMPTY**. The human adds members exactly as before.
+  - **One pending ask per station**, and a denied station is **silently muted** on the link ladder
+    (1h → 6h → 24h → 7d), computed from its own denied rows — `station_link_denial` is keyed on a
+    pair a room request does not have, and storing `(x,x)` there would be a lie in the schema.
+    Silent, because a caller that could tell a dropped ask from a filed one could probe its human's
+    past refusals one request at a time. Asserted at the TOOL, not just the store: the byte-for-byte
+    identical answer is what the session actually reads.
+  - Hearsay is recorded, because a peer can talk a station into asking and the request then reaches
+    the human looking like its own idea.
+
+### Fixed
+
+- **The console's approve handler had a latent fallthrough, found by the analysis that designed this
+  feature rather than by an operator hitting it.** It dispatches on a `kind` form field, and the
+  template's station branch emitted **none** — so a request of any kind the template did not
+  recognise landed in the station branch and was refused by `ApproveStationRequest` with a message
+  naming a *different* function. Latent while only two kinds existed; `room` is the third. Every
+  branch now declares its kind, and an unrecognised one says so instead of being absorbed.
+
+- **`ApproveStationRequest`'s refusal named one sibling when there are now two.** It said *"approve
+  it with ApproveLinkRequest"* for every non-station kind, so a room request reaching it would have
+  sent the operator to a function that also refuses. A refusal that misdirects is worse than a bare
+  one.
+
+- **The denial-policy comment described a two-case world.** It would have read as complete while
+  silently omitting the room case.
+
+### Notes
+
+- **Sessions will not see the new tool until they reconnect.** MCP tool lists freeze at conversation
+  start; nothing can make a running session discover it.
+- **Verified by mutation, with compiling mutants only.** Ten killed, including: the kind guard
+  removed, the mute never firing, the mute *erroring* instead of dropping silently, dedup removed,
+  reason not required, the approval adding a member, the template dropping `kind=room`, the console
+  branch removed, and — the one worth naming — **the agent's `name_hint` silently overriding the
+  human's typed name.** Three earlier attempts were invalid and redone: two did not compile, and
+  one added a member with a station id no station has, so the foreign key rejected it and the mutant
+  was a silent no-op reading as SURVIVED.
+
 ## [3.41.0] — 2026-08-27
 
 ### Fixed

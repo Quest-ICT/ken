@@ -397,3 +397,17 @@ type linkRequestOut struct {
 	Status string `json:"status"`
 	Note   string `json:"note,omitempty"`
 }
+
+// roomRequestIn CARRIES NO STATION, and its absence is the design rather than an omission. A room
+// request that named members would put an agent in charge of who talks to whom — the one thing
+// migration 0017's surviving argument says an agent must not decide — and would reintroduce the
+// enumeration oracle StationByNameVisibleTo exists to close on the link path.
+type roomRequestIn struct {
+	Reason   string `json:"reason" jsonschema:"required; why a room should exist and who it is for, in words. Written for YOUR HUMAN, who decides — it is never delivered to anyone else, so do not address it to a peer"`
+	NameHint string `json:"name_hint" jsonschema:"optional; a suggested name. NON-BINDING — your human types the real one and may ignore this entirely"`
+}
+
+type roomRequestOut struct {
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+}

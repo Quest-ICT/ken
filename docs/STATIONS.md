@@ -796,6 +796,29 @@ on, and it was never gated on COMM's state either, because stations work with CO
   - The console ticks the vault box by default and **counts secrets in the receipt**, because this
     is the action that used to leave them behind in silence.
 
+- **room requests** (3.42.0) — a session asks its human to create a ROOM; the human creates it and
+  chooses who is in it. Vlad decided this on 2026-08-06 ("sessions may REQUEST, human approves —
+  NOT the humans-only option I recommended … the agent proposes, the human promotes"), it was
+  declined in code six days later on schema-cost grounds, and never reversed. Migration 0024
+  carries why that cost is no longer real.
+
+  **THE REQUEST NAMES NO STATION, and that is the safety property rather than a simplification.**
+  Migration 0017's surviving argument — "a room is a set of stations a human decided should talk to
+  each other; there is no version of that decision an agent should be making for itself" — is an
+  argument against an agent CREATING a room, not against one ASKING. A request with no members in
+  it leaves membership entirely with the human, and leaves no station name to resolve, so the
+  enumeration oracle `station_link_request` needs `StationByNameVisibleTo` to close cannot arise.
+  - `name_hint` is a suggestion, prefilled in the console and **never applied automatically** — an
+    approval that used it would let a session choose what its human sees in the room list.
+  - Approving creates the room **EMPTY**; the human adds members from the rooms page as before.
+  - **At most one pending ask per station**, and a denied station is **silently muted** on the same
+    escalating ladder links use (1h → 6h → 24h → 7d). Silently, because a caller that could tell a
+    dropped ask from a filed one could probe its human's past refusals one request at a time. The
+    ladder is computed from the station's own denied rows rather than from `station_link_denial`,
+    which is keyed on a pair a room request does not have.
+  - Hearsay travels: an ask made mid-conversation is badged, because a peer can talk a station into
+    asking and the request then reaches the human looking like its own idea.
+
 - **workspace reassignment** (3.38.0) — pointing a station at a **conversation key**, and the only
   way back into an abandoned workspace. A session may adopt a station only while its `session_key`
   is NULL (§4 of docs/IDENTITY.md: the key *selects*, it never *authorises*), so when a conversation
