@@ -15,6 +15,49 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [3.41.0] — 2026-08-27
+
+### Fixed
+
+- **THE DEAD-SEAT GATE HAD A SECOND DOOR, AND IT WAS STANDING OPEN ON PRODUCTION.** Revoke an
+  endpoint's **owner token** instead of the endpoint, and you get the identical black hole with
+  `endpoint.revoked_at` still `NULL`, so 3.40.0's gate never fires.
+
+  **Found by ken-prod-ops through an entirely ordinary operator action**, not an exotic one: Vlad
+  revoked a machine's three per-machine API tokens during routine credential cleanup, and one of
+  them owned a comm endpoint. `store.RevokeToken` writes `api_token` and **nothing else** — it never
+  opens comm.db — while the endpoint becomes exactly as dead as a revoked one, because nobody can
+  present the revoked token and any other token fails `auth`'s `ep.Owner.TokenID` comparison.
+
+  ```
+  revoke a STATION KEY  -> SeverEndpointsBoundBy sets revoked_at -> gate FIRES    correct
+  revoke a COMM TOKEN   -> nothing sets revoked_at               -> gate BLIND    the hole
+  revoke the ENDPOINT   -> revoked_at set                        -> gate FIRES    correct
+  ```
+
+  Reproduced in-process before anything was written: `ChannelFor -> nil`, **send accepted,
+  `recipients: 1`**, filed under `e:<rowid>`, unretrievable forever.
+
+  **Ken's own code had already argued this would happen.** `auth`'s station-key check carries the
+  reason: *"the revoking end cannot be relied upon … failing closed at use covers every revocation
+  path, including ones added later that forget stations exist."* A token revocation is precisely
+  such a path, and `ChannelFor` inherited the assumption that comment warns against — that
+  `revoked_at` is a trustworthy record of deadness.
+
+  **The fix is at USE, and one layer up, because it cannot be anywhere else.** `api_token` lives in
+  ken.db and comm.db has no handle on it; the comm package imports nothing from the store,
+  deliberately. So `comm.PeerSeatOwner` reports the peer seat's owner token and binding, and the
+  tool handler — which holds both databases — judges it. Prod's suggested one-column join was not
+  available for exactly this reason, which is worth recording since it is the natural first idea.
+
+  **Scoped to UNBOUND, like the first door.** A bound seat's mail files under `s:<station>` and a
+  successor collects it, so a bound peer whose owner token was revoked must still accept mail —
+  otherwise routine credential cleanup would silently destroy every station-bound channel a machine
+  ever opened. A lookup failure does not refuse either: this is a deliverability warning, and
+  turning a database hiccup into a refused send trades a rare silent loss for a common loud one.
+
 ### Added
 
 - **The dead-seat refusal is now asserted at the layer a session actually reads it** — a real MCP
@@ -56,6 +99,36 @@ _Everything below this section is tagged, built and published._
      heading is a Keep a Changelog convention and stays; the line under it is what stops it
      being ambiguous. Replace this line with real entries when work is pending, and restore it
      when the next release is cut. -->
+
+### Notes
+
+- **The verification procedure for the FIRST door was itself a silent instrument, and prod caught
+  it before anyone ran the check.** Both strings contain the word `revoked`:
+
+  ```
+  PASS (gate fired)      "…was revoked and was never bound to a station…"
+  FAIL (gate flattened)  "channel is not open — … and it must not be revoked"
+  ```
+
+  So `grep revoked` — the obvious check, and the one this project's own hand-off text invited —
+  **cannot distinguish the fix from the mutant that survived the store-level suite.** The
+  discriminators are `was never bound to a station` and `to_station`, present only in the authored
+  refusal; the reliable assertion is that the GENERIC string is ABSENT. Two further false passes on
+  the same check: a channel not in `state='open'` returns before the gate is reached, and a revoked
+  **bound** peer refusing is the over-scoping regression, not a pass. Both new tests here match on
+  the discriminator and never on the shared word.
+
+- **A store-level probe for this fix reported SEND ACCEPTED against the fixed build**, because the
+  gate lives in the tool handler where both databases are in hand. It was written first, and it was
+  structurally blind to its own subject — the same trap, one layer over. The shipped tests drive a
+  real MCP client over a real HTTP transport.
+
+- **Mutation, with compiling mutants only.** Four killed: the gate never firing, the gate ignoring
+  the binding (caught by the bound-seat test, which is why that test exists), a revoked token
+  reading as live, and an absent token reading as live. That last one **survived the whole suite**
+  until a test was written for it — `TokenIsRevoked` treats an absent row as revoked, deliberately,
+  and nothing asserted it. Two earlier attempts did not compile and were re-done: a mutant that
+  fails to build reads as a passing check.
 
 ## [3.40.0] — 2026-08-27
 

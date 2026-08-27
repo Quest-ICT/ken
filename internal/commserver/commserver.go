@@ -811,6 +811,39 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			if _, _, err = d.Comm.ChannelFor(ctx, ep, in.ChannelID); err != nil {
 				return nil, sendOut{}, commError(err)
 			}
+			// *** THE SECOND DOOR INTO THE DEAD-SEAT DEFECT, CLOSED HERE BECAUSE IT CANNOT BE
+			// CLOSED WHERE THE FIRST ONE WAS. ***
+			//
+			// ChannelFor refuses a peer seat that is revoked and unbound, reading
+			// endpoint.revoked_at. ken-prod-ops found the hole by watching an ordinary operator
+			// action on the live estate: Vlad revoked a machine's API tokens during credential
+			// cleanup and one of them owned a comm endpoint. store.RevokeToken writes api_token
+			// and NOTHING else — it never opens comm.db — so revoked_at stays NULL while the
+			// endpoint is exactly as dead: nobody can present the revoked token, and any other
+			// token fails the ep.Owner.TokenID comparison in auth(). Reproduced in-process before
+			// this was written: send accepted, recipients=1, filed under e:<rowid>, unretrievable.
+			//
+			// IT LIVES HERE BECAUSE api_token IS IN ken.db AND comm.db HAS NO HANDLE ON IT. The
+			// comm package imports nothing from the store, deliberately, so it can report the
+			// seat's owner but can never judge it. This is the same at-use shape auth() uses for
+			// station keys, for the reason its own comment gives and this bug demonstrates: the
+			// revoking end cannot be relied upon, and failing closed at use covers every
+			// revocation path "including ones added later that forget stations exist."
+			//
+			// SCOPED TO UNBOUND, exactly like the first door. A bound seat's mail files under
+			// s:<station> and a successor endpoint collects it, so a bound peer whose owner token
+			// was revoked must still accept mail — that is successor inheritance, not a leak.
+			//
+			// A LOOKUP FAILURE DOES NOT REFUSE. If either query errors the send proceeds: this is
+			// a deliverability warning, and turning a database hiccup into a refused message would
+			// trade a rare silent loss for a common loud one.
+			if tokenID, stationID, sErr := d.Comm.PeerSeatOwner(ctx, ep, in.ChannelID); sErr == nil && stationID == "" {
+				if dead, rErr := d.Store.TokenIsRevoked(ctx, tokenID); rErr == nil && dead {
+					return nil, sendOut{}, errors.New("the other side of this channel is owned by a revoked token and was never bound to a station, " +
+						"so nothing can ever read mail sent here — this is not a peer who is merely offline. " +
+						"Ask your human to re-pair, or address the station directly with to_station if a link joins you")
+				}
+			}
 			m, err = d.Comm.Send(ctx, ep, in.ChannelID, in.Body, opts)
 		}
 		if err != nil {

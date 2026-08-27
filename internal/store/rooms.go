@@ -11,7 +11,8 @@ import (
 // docs/COMM.md).
 //
 // A room is a set of stations a HUMAN named and filled. Everything in this file is
-// reachable only from the console and the CLI; there is deliberately no agent path,
+// reachable only from the CONSOLE — there has never been a room CLI, and two places in this
+// tree said there was until 2026-08-27; there is deliberately no agent path,
 // because a room is a decision about which posts should be able to talk to each other
 // and there is no version of that an agent should make for itself.
 //
@@ -50,16 +51,23 @@ type RoomMember struct {
 	AddedAt     string
 }
 
-// ErrRoomNameTaken keeps two rooms from sharing a name in this instance. The name is how a
-// human refers to a room and how a session addresses one, so a duplicate is not a
-// cosmetic problem — it makes `to_room: "ops"` ambiguous at the moment it matters.
+// ErrRoomNameTaken keeps two rooms from sharing a name in this instance.
+//
+// THE NAME IS FOR HUMANS ONLY, AND THIS COMMENT SAID OTHERWISE UNTIL 2026-08-27. It claimed the
+// name is "how a session addresses one" and that a duplicate makes `to_room: "ops"` ambiguous.
+// Both are false: `RoomByName` does not exist anywhere in the tree, SendToRoom takes a room ID and
+// builds its scope from it with no name lookup, and `to_room: "ops"` would not resolve at all.
+// Migration 0017 says it correctly — "the NAME is for humans and may be edited; the id is what
+// messages are filed against". The uniqueness is still worth keeping so a human picking from a
+// console list is never choosing between two identical labels; it just is not an addressing
+// constraint.
 var ErrRoomNameTaken = errors.New("a room with that name already exists")
 
 // CreateRoom makes a room. Named by a human, always.
 func (s *Store) CreateRoom(ctx context.Context, name, purpose string, actorID int64) (*Room, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return nil, errors.New("a room needs a name — it is how sessions address it")
+		return nil, errors.New("a room needs a name — it is the label a human picks it out by")
 	}
 	roomID, err := randBase62(16)
 	if err != nil {

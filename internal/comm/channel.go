@@ -188,6 +188,45 @@ UPDATE pairing_code SET consumed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE i
 	return ch, nil
 }
 
+// PeerSeatOwner reports the owner token and station binding of the seat OPPOSITE ep on a channel.
+//
+// *** WHY THIS EXISTS: THE GATE IN ChannelFor HAS A SECOND DOOR IT STRUCTURALLY CANNOT SEE. ***
+//
+// That gate refuses a send whose peer seat is revoked and unbound, and it reads
+// `endpoint.revoked_at`. ken-prod-ops found the hole on the live estate through an entirely
+// ordinary action: Vlad revoked a machine's API TOKEN during credential cleanup, and one of those
+// tokens owned a comm endpoint. Revoking a token writes `api_token` and nothing else —
+// `store.RevokeToken` never opens comm.db — so `revoked_at` stays NULL while the endpoint becomes
+// exactly as dead as a revoked one: nobody can present the revoked token, and any other token
+// fails `auth`'s `ep.Owner.TokenID != p.TokenID` comparison. Reproduced in-process: the send is
+// accepted, `recipients: 1`, filed under `e:<rowid>`, unretrievable forever.
+//
+// THIS PACKAGE CANNOT ANSWER THE QUESTION, WHICH IS WHY IT ONLY REPORTS. `api_token` lives in
+// ken.db; comm.db has no handle on it and this package imports nothing from the store. The
+// judgement belongs one layer up, where both databases are in hand — which is the shape `auth`
+// already uses for the station-key check, for a reason its own comment gave and this bug proves:
+// "the revoking end cannot be relied upon … failing closed at use covers every revocation path,
+// including ones added later that forget stations exist." A token revocation is such a path.
+//
+// STATION IS RETURNED TOO, AND IT IS LOAD-BEARING. A BOUND seat stays deliverable however its
+// owner token fares: its mail files under `s:<station>` and a successor endpoint collects it. Only
+// an unbound seat is a black hole — the same scoping as the first door, for the same reason.
+func (s *Store) PeerSeatOwner(ctx context.Context, ep *Endpoint, channelID string) (tokenID, stationID string, err error) {
+	_, peer, err := s.ChannelFor(ctx, ep, channelID)
+	if err != nil {
+		return "", "", err
+	}
+	err = s.R.QueryRowContext(ctx,
+		`SELECT token_id, COALESCE(station_id,'') FROM endpoint WHERE id=?`, peer).
+		Scan(&tokenID, &stationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The seat's row is gone. Reported as unowned rather than as an error: the caller's
+		// question is "can anything ever read this", and for a vanished row the answer is no.
+		return "", "", nil
+	}
+	return tokenID, stationID, err
+}
+
 // ChannelFor resolves an open channel by its public id and verifies the endpoint
 // belongs to it, returning the peer's rowid.
 //

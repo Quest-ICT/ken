@@ -90,8 +90,23 @@ INSERT INTO comm_roster_epoch(id, epoch) VALUES (1, 1);
 --
 -- station_request's kind CHECK is IN ('station','link') (0012_stations.sql), SQLite
 -- cannot alter a CHECK in place, and rebuilding a live request table to add 'room' is
--- not worth it. So rooms are created by the human, in the console or the CLI, and a
--- session that wants one asks in words.
+-- not worth it. So rooms are created by the human, IN THE CONSOLE, and a session that wants
+-- one asks in words.
+--
+-- *** TWO CORRECTIONS TO THIS NOTE, 2026-08-27 — the reasoning it records is no longer sound. ***
+--
+-- (1) "or the CLI" WAS NEVER TRUE. No room subcommand has ever existed in cmd/ken. The console
+--     is the only path, and docs/OPERATION.md has said so correctly the whole time.
+--
+-- (2) THE SCHEMA ARGUMENT IS NOW FALSE. It was defensible when written: ken.db's migration runner
+--     had no foreign-key handling until 2026-08-20, which made any ken.db table rebuild genuinely
+--     dangerous. That precondition is gone, and on 2026-08-26 migration 0022 performed exactly
+--     this operation — widening a CHECK on a station table by rebuild — in about 19 lines and
+--     called it routine. Measured against a fully-migrated ken.db, the rebuild this note declines
+--     takes 2.53 ms, preserves every row, and passes foreign_key_check and integrity_check.
+--
+-- The SECOND reason below is untouched by both corrections and is the one that still decides the
+-- question. Read it as the live argument; the paragraph above is history.
 --
 -- That falls out of a schema constraint, and it is also the right answer: a room is a
 -- set of stations a human decided should talk to each other. There is no version of
