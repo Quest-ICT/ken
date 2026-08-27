@@ -15,7 +15,40 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-_Nothing yet — everything below is tagged, built and published._
+### Added
+
+- **The dead-seat refusal is now asserted at the layer a session actually reads it** — a real MCP
+  client, a real HTTP transport, a real `comm_send` tools/call, checking the text that comes back.
+
+  **ken-prod-ops named this gap after taking 3.40.0, and was right to.** It satisfied the migration
+  declaration 15 of 15 and passed the idle-peer check with a delivery row — then reported plainly
+  that the check I most wanted could not be run there: on that deployment zero revoked endpoints sit
+  on a channel, and manufacturing one means revoking an endpoint on a LIVE channel to test a gate.
+  It declined, correctly, and said so rather than reporting three checks as passed when one was.
+
+  Three layers carry that refusal, and each has already hidden a defect of exactly this kind:
+
+  ```
+  comm.ChannelFor   raises it       — a store test here SURVIVED a CallerSafe-less mutant
+  commError         maps it         — 3.3.0 shipped a correct string this layer discarded
+  the MCP handler   serializes it   — UNTESTED, and the only layer the caller reads
+  ```
+
+  Demonstrated with two mutants rather than argued:
+
+  ```
+                            CallerSafe marker removed   commError ignores CallerSafe
+    store test                    SURVIVED                      SURVIVED
+    mapper test                   killed                        (n/a — is the mutant)
+    MCP wire test                 killed                        killed
+  ```
+
+  The second mutant is the point: it lives *above* every store assertion, so nothing in
+  `internal/comm` can see it, and it would have shipped the 3.3.0 defect again — a correct refusal
+  in the binary that no session can read. Production could not have caught it either, for the reason
+  prod gave. It is catchable here, in-process, with disposable endpoints and nothing at risk.
+
+_Everything below this section is tagged, built and published._
 
 <!-- KEEP THIS PLACEHOLDER LINE. An EMPTY "Unreleased" heading sitting directly above the newest
      release reads as though that release is unreleased — Vlad read it exactly that way on
