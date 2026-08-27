@@ -172,6 +172,14 @@ WHERE scope_id=? AND sender_party=? AND idempotency_key=?`,
 				scope, senderParty, opts.IdempotencyKey).Scan(&existing)
 			if err == nil {
 				out, err = messageByID(ctx, t, existing)
+				// RECIPIENTS IS SET ON THE REPLAY TOO. It is assigned after the insert, below,
+				// which this branch returns before — so an idempotent retry reported
+				// `recipients: 0` for a message that has a delivery row and was sent to one
+				// party. A sender reading that as "it reached nobody" would resend under a new
+				// key, which is precisely what the idempotency key exists to prevent.
+				if out != nil {
+					out.Recipients = 1
+				}
 				return err
 			}
 			if !errors.Is(err, sql.ErrNoRows) {

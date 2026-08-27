@@ -202,17 +202,22 @@ func (s *Store) ChannelFor(ctx context.Context, ep *Endpoint, channelID string) 
 	)
 	var stnA, stnB string
 	var snapA, snapB string
+	var revA, revB bool
 	err := s.R.QueryRowContext(ctx, `
 SELECT c.id, c.channel_id, c.owner_actor_id, c.endpoint_a, c.endpoint_b,
        c.state, c.created_at, c.opened_at,
        COALESCE(ea.station_id,''), COALESCE(eb.station_id,''),
-       COALESCE(c.station_a,''), COALESCE(c.station_b,'')
+       COALESCE(c.station_a,''), COALESCE(c.station_b,''),
+       -- REVOCATION OF EACH SEAT. Two columns on rows this query already joins, read for the
+       -- gate below. It projected station_id from both endpoints and not the adjacent column
+       -- saying whether that seat can ever be held again — see the refusal after membership.
+       ea.revoked_at IS NOT NULL, eb.revoked_at IS NOT NULL
 FROM channel c
 LEFT JOIN endpoint ea ON ea.id = c.endpoint_a
 LEFT JOIN endpoint eb ON eb.id = c.endpoint_b
 WHERE c.channel_id=?`, channelID).
 		Scan(&ch.ID, &ch.ChannelID, &ch.OwnerActorID, &ch.EndpointA, &bID, &ch.State, &ch.CreatedAt, &opn,
-			&stnA, &stnB, &snapA, &snapB)
+			&stnA, &stnB, &snapA, &snapB, &revA, &revB)
 	if errors.Is(err, sql.ErrNoRows) {
 		// D2. A ROOM ID PASSED AS channel_id LANDS HERE, and a bare "not found" is what
 		// made a working station conclude the feature did not exist.
@@ -297,6 +302,43 @@ WHERE c.channel_id=?`, channelID).
 	}
 	if !ch.Open() || peer == 0 {
 		return &ch, 0, ErrChannelClosed
+	}
+
+	// *** A SEAT THAT IS REVOKED AND UNBOUND IS A BLACK HOLE, AND THIS IS WHERE IT IS CAUGHT. ***
+	//
+	// ken-prod-ops reported that comm_send returns `recipients: 1` for mail nobody can ever
+	// retrieve, then RETRACTED it — the incident it inferred from turned out to be ordinary poll
+	// latency. But it retracted the mechanism along with the incident, and only the incident was
+	// wrong. Measured directly: revoke a peer endpoint, send to the channel, and the send succeeds
+	// with recipients=1, the channel still reads state="open" in comm_channels, and the delivery is
+	// filed under `e:<rowid>` for a rowid that can never authenticate again (there is no unrevoke
+	// anywhere in the tree).
+	//
+	// THE SILENT INSTRUMENT IS HERE, NOT IN THE COUNTER. `recipients` is specified honestly as the
+	// number of addressed parties and never claimed to be a delivery check. THIS function is the
+	// check: deciding whether the channel can carry a message is its entire job, it already tests
+	// ch.Open() and peer != 0, and it reads station_id off both endpoint rows on every call — while
+	// ignoring the adjacent column that says the seat is dead forever. A permanently undeliverable
+	// send rendered identically to a healthy one.
+	//
+	// SCOPED TO **UNBOUND**, AND THAT IS THE LOAD-BEARING HALF. A revoked BOUND peer must keep
+	// working: its mail is filed under `s:<station>` and a successor endpoint on that station
+	// collects it — verified, not assumed. Gating on revocation alone would destroy exactly the
+	// successor inheritance the station model exists for.
+	//
+	// WHY AT SEND TIME RATHER THAN AS A NOTICE. The condition is knowable inside this call, and the
+	// existing signal is an `expired` notice at the undelivered TTL — 30 days on shipped defaults,
+	// itself purged 7 days after settling. A 30-day-late signal for a fact knowable now is not an
+	// instrument. It is also why this is not a new output FIELD: tool schemas freeze at conversation
+	// start, so a field never reaches the sessions that already have the problem. A refusal does.
+	//
+	// WHAT THIS DELIBERATELY DOES NOT DO: refuse because nobody is reading. An unstaffed post is the
+	// designed normal state of this transport — median 11 min, p90 144 min — and a check that fires
+	// on the common case trains senders to ignore it, which puts the real case back in the dark.
+	if (peer == ch.EndpointA && revA && stnA == "") || (peer == ch.EndpointB && revB && stnB == "") {
+		return &ch, 0, CallerSafe(fmt.Errorf("%w: the other side of this channel was revoked and was never bound to a station, "+
+			"so nothing can ever read mail sent here — this is not a peer who is merely offline. "+
+			"Ask your human to re-pair, or address the station directly with to_station if a link joins you", ErrChannelClosed))
 	}
 	return &ch, peer, nil
 }

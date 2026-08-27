@@ -15,6 +15,63 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.40.0] — 2026-08-27
+
+### Fixed
+
+- **A channel send to a peer that can NEVER read it succeeded, with `recipients: 1`.** Revoke a
+  peer's endpoint and the send went through: `recipients: 1`, `comm_channels` still reading
+  `state="open"`, and the delivery filed under `e:<rowid>` for a rowid that can never authenticate
+  again — **nothing anywhere in the tree clears `revoked_at`.** A permanently undeliverable send
+  rendered identically to a healthy one.
+
+  **The silent instrument was `ChannelFor`, not the counter**, and that distinction shaped the fix.
+  `recipients` is specified honestly as the number of addressed **parties** and never claimed to be
+  a delivery check. `ChannelFor` *is* the check — deciding whether a channel can carry a message is
+  its whole job, it already tested `Open()` and `peer != 0`, and it read `station_id` off both
+  endpoint rows on every call while ignoring the adjacent column saying that seat was dead forever.
+  It now reads two more columns from rows it was already joining and refuses, `CallerSafe`, naming
+  what happened and what to do instead.
+
+  **SCOPED TO UNBOUND, which is the load-bearing half.** A revoked **bound** peer keeps working: its
+  mail is filed under `s:<station>` and a successor endpoint on that station collects it. Verified
+  rather than assumed — the test polls as a successor and reads the message. Gating on revocation
+  alone would have destroyed exactly the successor inheritance the station model exists for.
+
+  **What it deliberately does not do is refuse because nobody is reading.** An unstaffed post is the
+  designed normal state of this transport (median 11 min, p90 144 min); a check that fires on the
+  common case trains senders to ignore it and puts the real case back in the dark. A separate test
+  sends to an idle, never-polled peer and requires it to succeed.
+
+  Why a refusal rather than a new result field: **MCP tool schemas freeze at conversation start**, so
+  a new output field never reaches the sessions that already have the problem.
+
+  *Provenance, because the shape of it matters.* ken-prod-ops reported this class and then retracted
+  it — the incident it inferred from was ordinary poll latency, and its `reachable_via` evidence
+  described station-addressed reachability rather than channel delivery. **It retracted the mechanism
+  along with the incident, and only the incident was wrong.** Measured directly afterwards.
+
+- **An idempotent channel replay reported `recipients: 0`** for a message that has a delivery row.
+  The count is assigned after the insert; the replay branch returns before reaching it. A sender
+  reading `0` as "it reached nobody" resends under a new key — **defeating the exact feature the key
+  exists to provide**, so the bug attacked the mechanism it lived inside.
+
+- **`comm_send`'s description overstated `recipients`** as "how many endpoints it actually went to".
+  The pair path contradicts that by design: `to_station` mail to a station with nobody staffing it
+  is filed with no endpoint attached and still counts 1, waiting for whoever arrives. It now says
+  parties, and says what a party is. Reaches new conversations only — descriptions freeze at connect.
+
+### Notes
+
+- **Verified by mutation, and one mutant exposed a test that could not see it.** Five breakages of
+  the gate (removed, ignoring the binding, firing on any peer, checking the wrong seat, the replay
+  fix reverted) were killed by store-level tests. Dropping the `CallerSafe` marker **survived** —
+  at the store layer `err.Error()` returns the full text either way, while a caller would have read
+  the generic "both sessions must join the pairing code", which is advice to re-join a channel that
+  is open. That is the 3.3.0 defect verbatim: a correct string in the binary, unreachable from every
+  caller, with a test one layer below it passing. There is now an assertion at the `commError`
+  boundary, and it kills that mutant while the store-level one still cannot.
+
 ## [3.39.0] — 2026-08-27
 
 ### Upgrading from 3.36.0 or earlier — ONE comm migration is applied, declared here

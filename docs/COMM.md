@@ -547,6 +547,46 @@ A room message that **some** recipients read and others ignored still produces a
 the parties that went quiet. Suppressing it when any recipient acked was a real defect: one ack hid
 every other silence, and silence is what a sender reads as delivery.
 
+### 4.x A seat that is revoked and unbound is refused at SEND time (3.40.0)
+
+**The failure.** Revoke a peer's endpoint, then send to the channel: the send succeeded,
+`recipients: 1`, `comm_channels` still read `state="open"`, and the delivery was filed under
+`e:<rowid>` for a rowid that can never authenticate again — **there is no unrevoke anywhere in the
+tree.** A permanently undeliverable send rendered identically to a healthy one. The only correction
+was an `expired` notice at the undelivered TTL, **30 days on shipped defaults**, itself purged
+7 days after settling. A 30-day-late signal for a fact knowable at call time is not an instrument.
+
+**Where the defect was, which is not where it looked.** `recipients` is not the liar: §4 specifies
+it as the number of addressed **parties**, and it never claimed to be a delivery check. The check is
+`ChannelFor` — deciding whether a channel can carry a message is its entire job, it already tested
+`Open()` and `peer != 0`, and it read `station_id` off both endpoint rows on every call while
+ignoring the adjacent column saying the seat was dead forever.
+
+**Scoped to UNBOUND, and that is the load-bearing half.** A revoked **bound** peer must keep
+working: its mail is filed under `s:<station>` and a successor endpoint on that station collects it.
+That is verified rather than assumed — the test polls as a successor and reads the message. Gating
+on revocation alone would have destroyed exactly the inheritance the station model exists for.
+
+**What this deliberately does NOT do: refuse because nobody is reading.** An unstaffed post is the
+designed normal state of this transport — median 11 min, p90 144 min — and a check that fires on
+the common case trains senders to ignore it, putting the real case back in the dark. `to_station`
+mail to a station with no endpoint attached still counts `1` and waits for whoever arrives; that is
+"not yet", not "never", and it is a promise the tool description makes.
+
+**Why a refusal and not a new result field.** MCP tool schemas freeze at conversation start, so a
+new output field never reaches the sessions that already have the problem. A refusal does.
+
+**Provenance.** ken-prod-ops reported this class, then retracted it — the incident it had inferred
+from turned out to be ordinary poll latency, and its `reachable_via` evidence described
+station-addressed reachability rather than channel delivery. **It retracted the mechanism along with
+the incident, and only the incident was wrong.** Measured directly afterwards; the mechanism held.
+
+Two corrections landed with it: an idempotent channel replay reported `recipients: 0` for a message
+that has a delivery row (the count is assigned after the insert, which the replay branch returns
+before) — a sender reading that as "it reached nobody" resends under a new key, defeating the key;
+and `comm_send`'s description claimed `recipients` was "how many endpoints it actually went to",
+which the pair path contradicts by design.
+
 **How it clears.** Each poll confirms what the PREVIOUS poll displayed, then records what it is
 showing. A notice is therefore cleared by the caller coming back, not by the call that showed it, so
 a fault between the query and the caller holding the result cannot drop it. A result lost in transit
