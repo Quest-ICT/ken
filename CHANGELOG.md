@@ -17,6 +17,28 @@ same change — never "docs later".
 
 ## [3.39.0] — 2026-08-27
 
+### Upgrading from 3.36.0 or earlier — ONE comm migration is applied, declared here
+
+An operator coming from **3.36.0** crosses **comm migration 0019**, which shipped in 3.37.0. It is
+additive and touches one table:
+
+```
+comm.db   18 -> 19      ken.db unchanged (23)
+  ALTER TABLE endpoint ADD COLUMN session_key TEXT
+  CREATE UNIQUE INDEX idx_endpoint_session_key ON endpoint(session_key) WHERE session_key IS NOT NULL
+  INSERT INTO schema_migration(version) VALUES (19)
+```
+
+Expect exactly: the `endpoint` table redefined in `sqlite_master`, one added index, one new
+`schema_migration` row, and **every other table byte-identical**. No row is rewritten and no
+constraint tightens. Coming from 3.37.0 or later, **no migration runs at all** — 3.38.0 and 3.39.0
+carry none in either database.
+
+*Stated because it was got wrong once.* The 3.38.0 entry originally attributed comm 0019 to 3.36.0;
+ken-prod-ops caught it before upgrading, since an undeclared migration is exactly what their band
+check flags — and a wrong version here produces a false violation reported against a correct
+release.
+
 ### Added
 
 - **A connector row now names the cause, not just the symptom: LEGACY GRANT, and the registered
@@ -137,7 +159,18 @@ same change — never "docs later".
   - Every reassignment and release is logged with the operator's name, like a rotation: `comm.db` is
     expendable and not backed up, so the server log is the record that survives.
 
-  No schema change — both columns shipped in 3.35.0 (migration 0023) and 3.36.0 (comm 0019).
+  No schema change in this release. The two columns it uses shipped earlier: `station.session_key`
+  in **3.35.0** (migration 0023) and `endpoint.session_key` in **3.37.0** (comm migration 0019).
+
+  *Corrected 2026-08-27:* this entry first attributed comm 0019 to **3.36.0**, which is wrong —
+  3.36.0 (`/all/mcp`) carried no migration in either database. ken-prod-ops caught it from the
+  live estate before running the upgrade, holding comm 18 after 3.36.0 and reasonably asking
+  which of the two possible explanations applied. **An operator upgrading from 3.36.0 crosses
+  3.37.0's comm migration**, and an undeclared migration is precisely what their band check
+  exists to catch — so the wrong version here would have produced a false violation reported
+  against a correct release. Verified against the tags, not from memory:
+  `git cat-file -e v3.36.0:internal/comm/migrations/0019_endpoint_session_key.sql` fails and
+  `v3.37.0` succeeds.
 
 ## [3.37.1] — 2026-08-26
 
