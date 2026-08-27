@@ -15,6 +15,83 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.38.0] — 2026-08-26
+
+### Fixed
+
+- **Transferring a station's assets left its VAULT behind, and nothing said so.**
+  `TransferStationAssets` is the console answer to "a session is gone and its work should not be".
+  It moved notes, note revisions, tasks and locker files — and silently left the secrets. Its own
+  doc comment explained at length why the message queue stays put (expendable, S7) and said nothing
+  about credentials, so an operator reading it would have concluded the transfer was complete.
+
+  Found while designing workspace takeover, which is exactly the path that would have hit it. Vlad's
+  ruling and his reason: **the whole point is that work survives a session, and secrets are the part
+  hardest to recreate** — an API key nobody has a second copy of is worse to lose than a note.
+
+  - **Vault names are collision-checked** like page and locker names, and a clash refuses the whole
+    transfer. A silent merge would overwrite one credential with another and the loser would be
+    unrecoverable.
+  - **Revision history follows its secret; the read trail does not.** Those rows record reads that
+    happened at the SOURCE — relocating them would make the destination's log assert reads from
+    before it held the value, and erase the source's record of ever holding it.
+  - **The departure is audited**: one `station_vault_read` row per secret, `via='transfer'`, against
+    the source — the same meaning that value already carries for `station_vault_send`. No value is
+    decrypted to do it; the ciphertext is re-pointed and ownership changing is the event.
+  - The console box is **ticked by default** and the receipt now **counts secrets**, because this is
+    the action that used to leave them behind in silence.
+
+  Verified by mutation: five separate breakages of the move, the collision check, the audit row and
+  the trail rule are each caught by a named test. The history mutant **survived the first run** —
+  nothing asserted that previous values travel — which is why there is now a test that says so.
+
+### Added
+
+- **Console reassignment: an abandoned workspace can be taken over, and so can its mailbox.**
+
+  The sealed-workspace problem, which nobody had answered: a session may adopt a station only while
+  its `session_key` is NULL — it must, because a key that could take a *claimed* workspace would be
+  authorising something, and the key is documented as selecting and never authorising. So when a
+  conversation dies, the workspace it claimed is sealed with its notes, tasks, locker and vault
+  inside it, and **nothing can reach them**. Every abandoned conversation was a one-way door.
+
+  Vlad: *"I think we can use the fact that a workspace can be re-assigned to tell a chat session to
+  recover (take over) an (abandoned) workspace and it might even be used to re-establish comm
+  channels."*
+
+  - `POST /stations/{id}/reassign` points a workspace at a conversation key. **Console-only**, because
+    reassignment is exactly the act the claim path refuses to infer from a session's say-so — behind
+    an authenticated form the rule survives intact: the key still authorises nothing, a *person*
+    decides who takes over a post.
+  - `POST /comm/endpoints/{id}/reassign` does the same for a mailbox, because a workspace recovered
+    without its mail is half a recovery. **Rotate was the only way in and it does not work for the
+    sessions that need it**: it mints a secret for the human to relay and the session to write to
+    disk, and a claude.ai chat has no disk — the exact ceremony 3.36.0 removed from `comm_register`.
+    The endpoint's id, channels, station binding and **queued messages** are untouched; a
+    reassignment that dropped the inbox would be a rotation with extra steps.
+  - **It costs the human no credential work.** The session states a conversation key in its reply — a
+    Claude Code session has a UUID, a chat session invents one — the human pastes that string into
+    both forms, and the session's next `station_me` and `comm_poll` land in the recovered workspace
+    and read the mail waiting in it. Nothing secret is displayed, typed or transported.
+  - **The key is taken from whatever holds it, and the displacement is reported.** The first cut
+    refused a key in use; the test written for the recovery flow hit it on the first run, because
+    that is the MAIN path — a session asked for its key has usually already claimed a fresh empty
+    workspace under it. Nothing is destroyed by taking it, so the safety is disclosure rather than
+    refusal: the receipt names what was displaced and one click puts it back.
+  - **An empty key releases**, which is the undo; **archived stations and revoked endpoints are
+    refused**, or archive and revocation would be advisory.
+  - The stations page marks each workspace **held** or **unclaimed**, and the comm page shows which
+    conversation drives each mailbox — the operator's first question is which posts are abandoned.
+  - The endpoint's **owner token is not touched**, and that is load-bearing: `auth` re-checks the
+    bearer's token against the endpoint's owner on every call, so a conversation key alone can never
+    drive a mailbox from another account. A taking-over session on a different Ken token also needs
+    a **repoint**, which is the control next to it. Repointing silently here would move an estate
+    boundary as a side effect of a convenience.
+  - Every reassignment and release is logged with the operator's name, like a rotation: `comm.db` is
+    expendable and not backed up, so the server log is the record that survives.
+
+  No schema change — both columns shipped in 3.35.0 (migration 0023) and 3.36.0 (comm 0019).
+
 ## [3.37.1] — 2026-08-26
 
 ### Fixed

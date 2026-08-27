@@ -779,6 +779,44 @@ on, and it was never gated on COMM's state either, because stations work with CO
   message queue never moves: it is expendable, the assets are not. (Distinct from **reassigning a
   station** to another owner or space, which moves the station itself and takes its assets with it.)
 
+  **The vault moves too — and until 3.38.0 it did not, silently.** Notes, tasks and locker files
+  crossed; secrets stayed behind, and the operation's own documentation explained at length why the
+  message queue stays put while saying nothing about credentials, so a reader would have concluded
+  the transfer was complete. Vlad's ruling, and the reason: the whole point is that work survives a
+  session, and secrets are the part hardest to recreate — an API key with no second copy is worse
+  to lose than a note. What that entails:
+  - **Secret names are collision-checked** like page and locker names. A silent merge would
+    overwrite one credential with another and the loser would be gone.
+  - **Revision history follows its secret**; the read trail does **not**. Those rows record reads
+    that happened at the SOURCE — moving them would make the destination's log assert reads from
+    before it held the value, and erase the source's record of ever holding it.
+  - **The departure is audited**: one `station_vault_read` row per secret, `via='transfer'`, against
+    the source — the same meaning that value already carries for `station_vault_send`. The value is
+    never decrypted to do it; the ciphertext is re-pointed and ownership changing is the event.
+  - The console ticks the vault box by default and **counts secrets in the receipt**, because this
+    is the action that used to leave them behind in silence.
+
+- **workspace reassignment** (3.38.0) — pointing a station at a **conversation key**, and the only
+  way back into an abandoned workspace. A session may adopt a station only while its `session_key`
+  is NULL (§4 of docs/IDENTITY.md: the key *selects*, it never *authorises*), so when a conversation
+  dies the workspace it claimed is **sealed** — notes, tasks, locker and vault intact, and nothing
+  able to reach them. A human deciding who takes over is exactly the authority the claim path
+  declines to infer from a session's say-so, which is why this is console-only.
+
+  The recovery costs the human **no credential handling**: the session states a conversation key in
+  its reply (a Claude Code session has a UUID; a chat session invents one), the human pastes that
+  string into the form, and the session's next `station_me` lands in the recovered workspace.
+  Nothing secret is displayed or transported.
+  - **The key is TAKEN from whatever holds it, and the displacement is reported.** The first cut
+    refused a key in use and that was wrong in the exact case the feature exists for: a chat session
+    asked for its key has usually already called `station_me`, so a fresh empty workspace already
+    answers to it. Nothing is destroyed by taking it — the displaced workspace keeps everything and
+    stays listed — so the safety is **disclosure**, not refusal.
+  - **An empty key releases** the workspace back to the pool, which is the undo.
+  - **Archived workspaces are refused**, or archive would be advisory.
+  - The station list shows **held** / **unclaimed** per workspace, because the operator's first
+    question is which posts are abandoned.
+
 ---
 
 ## 11. The task list

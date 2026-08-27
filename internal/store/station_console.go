@@ -209,6 +209,9 @@ type TransferResult struct {
 	Notes  int
 	Tasks  int
 	Locker int
+	// Vault is the number of SECRETS moved. It was absent until 2026-08-26 because the vault
+	// was not moved at all — see the note on TransferStationAssets.
+	Vault int
 }
 
 // TransferStationAssets moves assets from one station to another — the answer to "a
@@ -227,13 +230,37 @@ type TransferResult struct {
 //     design, and pointing it at a new station would drag an expendable pointer into
 //     a durable move (S7).
 //
+// *** THE VAULT DID NOT MOVE EITHER, AND NOTHING SAID SO — CORRECTED 2026-08-26. ***
+//
+// This function is documented as the answer to "a session is gone and its work should not
+// be", and it left that session's CREDENTIALS behind. The comment above carefully explains
+// why the message queue stays put and was silent about secrets, so an operator reading it
+// would have concluded the transfer was complete. Found while designing workspace takeover
+// for chat sessions, which is exactly the path that would have hit it.
+//
+// It moves now, on Vlad's ruling and for the reason he gave: the whole point is that work
+// survives a session, and secrets are the part hardest to recreate — an API key nobody has
+// a second copy of is worse to lose than a note.
+//
+// TWO CONSEQUENCES, both deliberate:
+//
+//   - VAULT NAMES CAN COLLIDE, so they are pre-checked like notes and locker blobs. A
+//     silent merge here would overwrite one credential with another and the loser would be
+//     unrecoverable from the destination.
+//   - THE MOVE IS AUDITED AND THE TRAIL STAYS PUT. Every secret transferred writes one
+//     station_vault_read row with via='transfer' against the SOURCE — the same meaning that
+//     value already carries for station_vault_send — and the source's EXISTING read rows are
+//     left where they are, because they record reads that happened there. The secret and its
+//     revision history move; the record of who saw it does not. The value is never decrypted
+//     to do any of this: the ciphertext is re-pointed, and ownership changing is the event.
+//
 // Tasks cannot collide — they are keyed by an opaque id, not a name — so they always
 // move cleanly. Notes and locker blobs are keyed by human-chosen names and can.
-func (s *Store) TransferStationAssets(ctx context.Context, fromID, toID string, notes, tasks, locker bool) (*TransferResult, error) {
+func (s *Store) TransferStationAssets(ctx context.Context, fromID, toID string, notes, tasks, locker, vault bool, byTokenID string, byActorID int64) (*TransferResult, error) {
 	if fromID == toID {
 		return nil, errors.New("source and destination are the same station")
 	}
-	if !notes && !tasks && !locker {
+	if !notes && !tasks && !locker && !vault {
 		return nil, errors.New("nothing selected to transfer")
 	}
 	for _, id := range []string{fromID, toID} {
@@ -274,6 +301,18 @@ SELECT a.name FROM station_locker a JOIN station_locker b ON a.name=b.name
 		}
 	}
 
+	if vault {
+		names, err := collidingNames(ctx, tx, `
+SELECT a.name FROM station_vault a JOIN station_vault b ON a.name=b.name
+ WHERE a.station_id=? AND b.station_id=? ORDER BY a.name`, fromID, toID)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) > 0 {
+			return nil, &ErrTransferCollision{Class: "vault", Colliding: names}
+		}
+	}
+
 	res := &TransferResult{}
 	move := func(sql string) (int, error) {
 		r, err := tx.ExecContext(ctx, sql, toID, fromID)
@@ -300,6 +339,32 @@ SELECT a.name FROM station_locker a JOIN station_locker b ON a.name=b.name
 	}
 	if locker {
 		if res.Locker, err = move(`UPDATE station_locker SET station_id=? WHERE station_id=?`); err != nil {
+			return nil, err
+		}
+	}
+	if vault {
+		// AUDITED FIRST, AGAINST THE SOURCE, and it stays there. via='transfer' already means
+		// exactly this on the other path — station_vault_send records "this station's secret
+		// left it" — so a workspace transfer writes the same event for the same reason.
+		//
+		// THE READ TRAIL DOES NOT MOVE, and that is the deliberate half. Those rows record
+		// reads that HAPPENED AT THE SOURCE; relocating them would make the destination's log
+		// assert reads from before it held the secret, and would erase the source's record of
+		// ever having held it. The log answers "who could see this value" — moving it would
+		// make it answer that question wrongly at both ends at once.
+		if _, err = tx.ExecContext(ctx, `
+INSERT INTO station_vault_read(station_id, name, via, by_token_id, by_actor_id)
+SELECT station_id, name, 'transfer', ?, ? FROM station_vault WHERE station_id=?`,
+			nullStr(byTokenID), byActorID, fromID); err != nil {
+			return nil, err
+		}
+		// HISTORY DOES MOVE, for the same reason note revisions follow their page: a credential
+		// that arrives with no previous values cannot be rolled back any more, and
+		// reversibility is the vault's founding promise.
+		if res.Vault, err = move(`UPDATE station_vault SET station_id=? WHERE station_id=?`); err != nil {
+			return nil, err
+		}
+		if _, err = move(`UPDATE station_vault_history SET station_id=? WHERE station_id=?`); err != nil {
 			return nil, err
 		}
 	}

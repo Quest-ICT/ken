@@ -286,6 +286,20 @@
                 <button class="btn btn--sm" type="submit" title="{{$.T "comm.repoint_help"}}">{{$.T "comm.repoint"}}</button>
               </form>
               {{end}}
+              <!-- RE-ASSIGN: point this mailbox at a CONVERSATION, keeping its id, its channels,
+                   its station binding and its queued mail. This is the comm half of workspace
+                   recovery: rotate was the only way back into an abandoned mailbox and it hands
+                   the session a secret to write to disk, which a chat session cannot do. The key
+                   is not a secret to display — it selects which conversation drives this endpoint,
+                   and the owner token is re-checked at every use regardless. -->
+              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/reassign"
+                    data-confirm="{{$.T "comm.reassign_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{$.T "comm.confirm_channels"}}: {{.ChannelsLine}}{{end}}">
+                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+                <input class="input" name="session_key" value="{{.SessionKey}}"
+                       placeholder="{{$.T "comm.reassign_placeholder"}}"
+                       title="{{$.T "comm.reassign_help"}}" style="width:auto;font-size:.82rem">
+                <button class="btn btn--sm" type="submit" title="{{$.T "comm.reassign_help"}}">{{$.T "comm.reassign"}}</button>
+              </form>
               <!-- RE-BIND: change which station key authorised this binding, keeping the
                    station itself. Offered only when the station has another live key, and
                    only ever that station's keys — a binding moved to another station's key

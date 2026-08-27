@@ -106,7 +106,7 @@ func TestTransferRefusesNameCollisionsAndMovesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = st.TransferStationAssets(ctx, from.StationID, to.StationID, true, true, true)
+	_, err = st.TransferStationAssets(ctx, from.StationID, to.StationID, true, true, true, true, "tok", actorID)
 	var collision *ErrTransferCollision
 	if !errors.As(err, &collision) {
 		t.Fatalf("transfer returned %v, want an ErrTransferCollision naming the clash", err)
@@ -152,7 +152,7 @@ func TestTransferMovesAssetsWhenNamesAreDistinct(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := st.TransferStationAssets(ctx, from.StationID, to.StationID, true, true, true)
+	res, err := st.TransferStationAssets(ctx, from.StationID, to.StationID, true, true, true, true, "tok", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,5 +383,212 @@ VALUES(?,'link',?,?,'kens_1','second thoughts')`, id, a.StationID, b.StationID);
 	}
 	if again == "" {
 		t.Fatal("a request is still being muted after the human APPROVED the relationship")
+	}
+}
+
+// *** THE VAULT MOVES, AND FOR EIGHT RELEASES IT DID NOT. ***
+//
+// TransferStationAssets is the answer to "a session is gone and its work should not be", and it
+// silently left that session's CREDENTIALS behind — while its doc comment carefully explained why
+// the message queue stays put, so a reader would have concluded the transfer was complete. An API
+// key with no second copy is the part of a workspace hardest to recreate, which makes it the worst
+// possible thing to drop quietly.
+//
+// This asserts the property that actually matters, which is not "a row moved": it is that the
+// secret is READABLE AT THE DESTINATION. A transfer that relocated ciphertext nobody could open
+// would pass a row-count check and lose the credential just the same.
+func TestTransferMovesVaultSecretsAndTheyStillOpen(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	from, err := st.CreateStation(ctx, "old-box", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, err := st.CreateStation(ctx, "new-box", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := DefaultStationVaultLimits()
+	const plaintext = "sk-live-51H9d2xqPQ"
+	// WRITTEN TWICE, so there is a prior revision for the history assertion below to be about.
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from.StationID, "stripe", "sk-live-OLD", "billing", "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from.StationID, "stripe", plaintext, "billing", "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+	// A READ BEFORE THE MOVE, so the trail-stays-put assertion below has something to be about.
+	if _, err := st.GetStationVaultSecret(ctx, lim, from.StationID, "stripe", "station", "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := st.TransferStationAssets(ctx, from.StationID, to.StationID, false, false, false, true, "tok", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Vault != 1 {
+		t.Errorf("the receipt says %d secrets moved, want 1 — an operator reads this to know "+
+			"whether the credentials came across", res.Vault)
+	}
+
+	// THE POINT: it opens on the far side, with the same bytes.
+	got, err := st.GetStationVaultSecret(ctx, lim, to.StationID, "stripe", "station", "tok", actorID)
+	if err != nil {
+		t.Fatalf("the transferred secret cannot be read at the destination: %v", err)
+	}
+	if got.Secret != plaintext {
+		t.Errorf("the destination reads %q, want the original value — the credential did not "+
+			"survive the move intact", got.Secret)
+	}
+
+	// THE REVISION HISTORY COMES WITH IT. A credential that arrives with no previous values
+	// cannot be rolled back any more, and reversibility is the vault's founding promise — a
+	// rotation that turns out to be wrong is exactly when a takeover is under way.
+	if hist, err := st.StationVaultHistoryFor(ctx, to.StationID, "stripe"); err != nil {
+		t.Fatal(err)
+	} else if len(hist) != 1 {
+		t.Errorf("the destination holds %d prior revisions of stripe, want 1 — the secret moved "+
+			"but its history did not, so it can no longer be rolled back", len(hist))
+	}
+	if hist, err := st.StationVaultHistoryFor(ctx, from.StationID, "stripe"); err != nil {
+		t.Fatal(err)
+	} else if len(hist) != 0 {
+		t.Errorf("the source kept %d revisions of a secret it no longer holds — old values of a "+
+			"live credential, readable from an abandoned workspace", len(hist))
+	}
+
+	// And it is GONE from the source. A copy would mean an abandoned workspace still holds live
+	// credentials, which is the opposite of what a takeover is for.
+	if left, err := st.ListStationVault(ctx, from.StationID); err != nil {
+		t.Fatal(err)
+	} else if len(left) != 0 {
+		t.Errorf("the source still holds %d secrets after the transfer", len(left))
+	}
+}
+
+// THE DEPARTURE IS ON THE RECORD, AND THE OLD TRAIL DOES NOT FOLLOW THE SECRET.
+//
+// via='transfer' already means "this station's secret left it" — that is what station_vault_send
+// writes — so a workspace transfer writes the same event. The existing read rows STAY at the
+// source, because they record reads that happened there: moving them would make the destination's
+// log assert reads from before it held the secret and erase the source's record of ever holding it.
+func TestTransferAuditsTheDepartureAtTheSource(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	from, _ := st.CreateStation(ctx, "old-box", "", actorID)
+	to, _ := st.CreateStation(ctx, "new-box", "", actorID)
+	lim := DefaultStationVaultLimits()
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from.StationID, "stripe", "sk-live-x", "", "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetStationVaultSecret(ctx, lim, from.StationID, "stripe", "station", "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.TransferStationAssets(ctx, from.StationID, to.StationID, false, false, false, true, "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+
+	reads, _, err := st.StationVaultReads(ctx, from.StationID, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vias []string
+	for _, r := range reads {
+		vias = append(vias, r.Via)
+	}
+	var transfers, stations int
+	for _, v := range vias {
+		switch v {
+		case "transfer":
+			transfers++
+		case "station":
+			stations++
+		}
+	}
+	if transfers != 1 {
+		t.Errorf("the source's trail holds %d transfer rows, want exactly 1 (all: %v) — without it "+
+			"nothing records that the credential left", transfers, vias)
+	}
+	if stations != 1 {
+		t.Errorf("the source's trail holds %d earlier reads, want the 1 that happened there "+
+			"(all: %v) — the record of who saw this value must not travel with it", stations, vias)
+	}
+
+	// CONTROL: the destination's trail is NOT prefilled with the source's history. Its first entry
+	// is its own read, which is the honest starting point.
+	dst, _, err := st.StationVaultReads(ctx, to.StationID, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dst) != 0 {
+		t.Errorf("the destination inherited %d read rows it did not earn", len(dst))
+	}
+}
+
+// COLLIDING SECRET NAMES REFUSE THE WHOLE TRANSFER. A silent merge here overwrites one credential
+// with another and the loser is unrecoverable — strictly worse than the note case, which at least
+// keeps revisions. Same refusal shape as notes and locker files, deliberately.
+func TestTransferRefusesCollidingVaultNames(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	from, _ := st.CreateStation(ctx, "old-box", "", actorID)
+	to, _ := st.CreateStation(ctx, "new-box", "", actorID)
+	lim := DefaultStationVaultLimits()
+	for _, s := range []*Station{from, to} {
+		if _, _, err := st.PutStationVaultSecret(ctx, lim, s.StationID, "stripe", "sk-"+s.StationID, "", "tok", actorID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Only the source has this one; it must not move, because the transfer is refused whole.
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from.StationID, "aws", "AKIA-x", "", "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := st.TransferStationAssets(ctx, from.StationID, to.StationID, false, false, false, true, "tok", actorID)
+	var collision *ErrTransferCollision
+	if !errors.As(err, &collision) {
+		t.Fatalf("transfer returned %v, want an ErrTransferCollision naming the clash", err)
+	}
+	if collision.Class != "vault" {
+		t.Errorf("collision reported class %q, want \"vault\" — the operator has to know WHICH "+
+			"class to reconcile", collision.Class)
+	}
+	if len(collision.Colliding) != 1 || collision.Colliding[0] != "stripe" {
+		t.Fatalf("collision reported %v, want exactly [stripe]", collision.Colliding)
+	}
+	if left, err := st.ListStationVault(ctx, from.StationID); err != nil {
+		t.Fatal(err)
+	} else if len(left) != 2 {
+		t.Errorf("source holds %d secrets after a REFUSED transfer, want 2 — a half-applied "+
+			"credential move leaves the human guessing which side has what", len(left))
+	}
+}
+
+// THE FLAG IS A FLAG. Without this, every assertion above would also pass against an
+// implementation that moved the vault unconditionally, and an operator who deliberately unticked
+// the box would ship credentials to another workspace anyway.
+func TestTransferLeavesTheVaultWhenNotSelected(t *testing.T) {
+	st, ctx, actorID := stationFixture(t)
+	from, _ := st.CreateStation(ctx, "old-box", "", actorID)
+	to, _ := st.CreateStation(ctx, "new-box", "", actorID)
+	lim := DefaultStationVaultLimits()
+	if _, _, err := st.PutStationVaultSecret(ctx, lim, from.StationID, "stripe", "sk-live-x", "", "tok", actorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.WriteStationNote(ctx, DefaultStationNoteLimits(), from.StationID, "handoff", "H", "state", nil, "replace", -1, "tok", actorID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := st.TransferStationAssets(ctx, from.StationID, to.StationID, true, true, true, false, "tok", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Notes != 1 {
+		t.Fatalf("the notes did not move, so this test is not exercising a working transfer: %+v", res)
+	}
+	if res.Vault != 0 {
+		t.Errorf("the receipt claims %d secrets moved with the vault box unticked", res.Vault)
+	}
+	if left, err := st.ListStationVault(ctx, from.StationID); err != nil {
+		t.Fatal(err)
+	} else if len(left) != 1 {
+		t.Errorf("the source holds %d secrets, want the 1 it was told to keep", len(left))
 	}
 }

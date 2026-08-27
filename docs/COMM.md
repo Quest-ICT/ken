@@ -806,6 +806,35 @@ channels survive, so it is the cheap remedy for both a leak and a session that l
 is deliberately reachable *only* here); revoke a channel or an endpoint; disable the subsystem live.
 Rotation and revocation are visually distinct on purpose — rotation is recoverable, revocation is not,
 and two identical red buttons would invite the wrong one.
+
+**Reassign an endpoint to a conversation** (3.38.0) — the comm half of workspace recovery, and the
+answer to a mailbox whose conversation is gone. Rotation *was* the only way back into one, and it
+does not work for the sessions that need it most: it mints a secret for the human to relay and the
+session to write to disk (`0600`, outside any git repo), and a claude.ai chat has no disk. That is
+precisely the ceremony migration 0019 removed from `comm_register`; leaving it on the recovery path
+would have put it straight back.
+
+So the recovery is **one string used twice**: the session states its conversation key, the human
+pastes it into the station form and this one, and the next `comm_poll` reads the mail that was
+already waiting. The endpoint's id, channels, station binding and **queued messages** are untouched
+— a reassignment that dropped the inbox would be a rotation with extra steps.
+
+- **The owner token is NOT touched, and that is load-bearing.** `auth` re-checks on every call that
+  the bearer's token matches the endpoint's owner (§3), so a conversation key alone can never drive
+  a mailbox from another account. If the taking-over session bears a *different* Ken token, the
+  operator must also **repoint** the endpoint to that token — the control is right next to this one.
+  Repointing silently here would move an estate boundary as a side effect of a convenience.
+- **The key is taken from whatever holds it and the displacement is reported** — same ruling as the
+  station form, same reason: a session asked for its key has usually already claimed a fresh empty
+  mailbox under it, so refusing would fail the main path. Nothing is destroyed; the displaced
+  endpoint keeps its channels and can be reassigned back.
+- **An empty key releases** the mailbox — after which only its secret can drive it, so the flash
+  says to rotate if nobody holds one.
+- **A revoked endpoint is refused**, or revocation would be advisory.
+- Every reassignment and release is **logged to the server log** with the operator's name, like a
+  rotation and for the same reason: `comm.db` is expendable and not backed up, so the log is the
+  record that survives, and "who repointed this mailbox" is exactly the question that follows mail
+  turning up somewhere unexpected.
 The page **auto-refreshes** the way the Proposals page does — a small poller hits `GET /comm/count`
 (a cheap per-space "console fingerprint": counts of endpoints, channels, open channels, live pairing
 codes, and in-flight messages, prime-weighted so offsetting changes rarely collide) and reloads when

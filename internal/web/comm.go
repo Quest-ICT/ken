@@ -393,6 +393,55 @@ func (a *app) handleCommRotateEndpoint(w http.ResponseWriter, r *http.Request, s
 	a.renderComm(w, r, sess, "", reveal{EndpointID: id, Secret: secret})
 }
 
+// handleCommReassignEndpoint points a mailbox at a CONVERSATION — the comm half of workspace
+// recovery.
+//
+// ROTATE WAS THE ONLY WAY BACK IN AND IT DOES NOT WORK FOR A CHAT SESSION. It mints a fresh secret
+// for the human to relay and the session to write to disk (mode 0600, outside any git repo), and a
+// claude.ai chat has no disk — that is the ceremony 3.36.0 removed from the register path. So a
+// mailbox whose conversation is gone was recoverable only by a session that could keep a file.
+//
+// With this, recovery is ONE STRING USED TWICE: the session states its conversation key, the human
+// pastes it into the workspace form and this one, and the next poll reads the mail that was
+// already waiting. Nothing secret is displayed, and the channels, links and queued messages are
+// untouched.
+func (a *app) handleCommReassignEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if a.comm == nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	id := r.PathValue("id")
+	key := strings.TrimSpace(r.FormValue("session_key"))
+
+	res, err := a.comm.ReassignEndpointToSession(r.Context(), id, key)
+	switch {
+	case err != nil:
+		flashRedirect(w, r, "/comm", "flash.comm_reassign_failed", err.Error())
+		return
+	case key == "":
+		// LOGGED LIKE A ROTATION, and for the same reason: comm.db is expendable and not backed
+		// up, so the server log is the record that survives. Who repointed a mailbox is exactly
+		// the fact an operator needs when mail turns up somewhere unexpected.
+		log.Printf("COMM: endpoint %s released from its conversation by %q (actor %d)",
+			id, sess.ActorName, sess.ActorID)
+		flashRedirect(w, r, "/comm", "flash.comm_released", id)
+	case res.TakenFromID != "":
+		log.Printf("COMM: endpoint %s reassigned to a conversation by %q (actor %d) — the key was taken from endpoint %s",
+			id, sess.ActorName, sess.ActorID, res.TakenFromID)
+		flashRedirect(w, r, "/comm", "flash.comm_reassigned_taken", res.TakenFromID)
+	default:
+		log.Printf("COMM: endpoint %s reassigned to a conversation by %q (actor %d)",
+			id, sess.ActorName, sess.ActorID)
+		flashRedirect(w, r, "/comm", "flash.comm_reassigned", id)
+	}
+}
+
 // repointTarget is one token an endpoint may be moved onto.
 type repointTarget struct {
 	TokenID string

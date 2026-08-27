@@ -284,6 +284,10 @@
             {{.Name}}
             {{if eq .State "archived"}}<span class="badge badge--plain" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
             {{if .Published}}<span class="badge" title="{{$.T "stations.published_help"}}">{{$.T "stations.published"}}</span>{{end}}
+            <!-- HELD vs UNCLAIMED, at a glance. Reassignment is the only way back into a workspace
+                 whose conversation is gone, and the operator's first question is which ones those
+                 are — a page that shows nothing makes every post look the same. -->
+            {{if .SessionKey}}<span class="badge badge--plain" title="{{$.T "stations.held_help"}}">{{$.T "stations.held"}}</span>{{else}}<span class="badge badge--plain" title="{{$.T "stations.unclaimed_help"}}">{{$.T "stations.unclaimed"}}</span>{{end}}
           </h3>
         </div>
         <div class="card__body">
@@ -476,7 +480,32 @@
               <label class="check"><input type="checkbox" name="notes" value="1" checked> {{$.T "stations.transfer_notes"}}</label>
               <label class="check"><input type="checkbox" name="tasks" value="1" checked> {{$.T "stations.transfer_tasks"}}</label>
               <label class="check"><input type="checkbox" name="locker" value="1" checked> {{$.T "stations.transfer_locker"}}</label>
+              <!-- TICKED like the rest. The vault did not move at all until 2026-08-26, silently,
+                   in the one action documented as "a session is gone and its work should not be" —
+                   and credentials are the part of that work hardest to recreate. Every transfer of
+                   a secret is written to the read log as via='transfer' against the source. -->
+              <label class="check"><input type="checkbox" name="vault" value="1" checked> {{$.T "stations.transfer_vault"}}</label>
               <button class="btn btn--sm" type="submit" title="{{$.T "stations.transfer_submit_help"}}">{{$.T "stations.transfer_submit"}}</button>
+            </form>
+          </details>
+
+          <!-- workspace takeover: the only door back into an abandoned post. A session can adopt a
+               workspace only while it has no owning conversation, deliberately — so when that
+               conversation dies, a HUMAN is the only thing that can re-staff it. -->
+          <details>
+            <summary title="{{$.T "stations.reassign_help"}}">{{$.T "stations.reassign"}}</summary>
+            <form method="post" action="/stations/{{.StationID}}/reassign">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <p class="help">{{$.T "stations.reassign_note"}}</p>
+              <div class="field">
+                <label for="k-{{.StationID}}">{{$.T "stations.reassign_key"}}</label>
+                <!-- PREFILLED WITH THE CURRENT OWNER so the operator can see who holds it, and so
+                     clearing the box is the obvious way to release the post back to the pool. -->
+                <input class="input" id="k-{{.StationID}}" name="session_key" value="{{.SessionKey}}"
+                       placeholder="{{$.T "stations.reassign_key_placeholder"}}"
+                       title="{{$.T "stations.reassign_key_help"}}">
+              </div>
+              <button class="btn btn--sm" type="submit" title="{{$.T "stations.reassign_submit_help"}}">{{$.T "stations.reassign_submit"}}</button>
             </form>
           </details>
         </div>

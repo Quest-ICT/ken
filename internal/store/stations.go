@@ -150,7 +150,11 @@ FROM station WHERE `+where, args...).
 func (s *Store) ListStations(ctx context.Context) ([]Station, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT station_id, name, purpose, self_described_about, self_described_tags,
-       published, state, created_at, advertised_at, last_activity_at
+       published, state, created_at, advertised_at, last_activity_at,
+       -- SELECTED SO THE CONSOLE CAN SHOW WHO HOLDS EACH POST. Without it every workspace looks
+       -- unclaimed on the page, and an operator reassigning one cannot tell a live conversation's
+       -- workspace from an abandoned one — which is the first thing they need to know.
+       COALESCE(session_key,'')
 FROM station
 ORDER BY COALESCE(last_activity_at, created_at) DESC`)
 	if err != nil {
@@ -162,7 +166,8 @@ ORDER BY COALESCE(last_activity_at, created_at) DESC`)
 		var st Station
 		var tags, advertised, lastAct sql.NullString
 		if err := rows.Scan(&st.StationID, &st.Name, &st.Purpose, &st.SelfDescribedAbout,
-			&tags, &st.Published, &st.State, &st.CreatedAt, &advertised, &lastAct); err != nil {
+			&tags, &st.Published, &st.State, &st.CreatedAt, &advertised, &lastAct,
+			&st.SessionKey); err != nil {
 			return nil, err
 		}
 		if tags.Valid {
@@ -893,4 +898,99 @@ func (s *Store) AuthenticateAPITokenForStation(ctx context.Context, tok string) 
 	var scopes []string
 	_ = json.Unmarshal([]byte(scopesJSON), &scopes)
 	return &StationPrincipal{TokenID: tokenID, ActorID: actorID, Scopes: scopes}, nil
+}
+
+// ReassignResult reports what a reassignment did, including the part the operator did not ask for
+// explicitly and must still be told about.
+type ReassignResult struct {
+	Station *Station
+	// TakenFromName is the workspace that LOST this conversation key, empty when nothing held it.
+	// It is reported rather than refused — see ReassignStationToSession for why — and reporting it
+	// is what keeps that from being a silent steal.
+	TakenFromName string
+	TakenFromID   string
+}
+
+// ReassignStationToSession points an EXISTING workspace at a conversation, from the console.
+//
+// *** WHY A HUMAN NEEDS THIS: AN ABANDONED WORKSPACE HAS NO WAY BACK. ***
+//
+// ClaimStationForSession only ever ADOPTS a station whose `session_key IS NULL`, deliberately —
+// stealing a claimed workspace on a declared key would make the key a credential, and it is
+// documented as selecting rather than authorising (migration 0023). The consequence is that the
+// moment a conversation dies, the workspace it claimed is sealed: its notes, tasks, locker and
+// vault are intact and NOTHING can reach them, because the only conversation that could is gone.
+//
+// Vlad saw the way out: "we can use the fact that a workspace can be re-assigned to tell a chat
+// session to recover (take over) an (abandoned) workspace, and it might even be used to
+// re-establish comm channels."
+//
+// THE HUMAN IS THE AUTHORITY, WHICH IS WHY THIS IS CONSOLE-ONLY. Reassignment is exactly the act
+// the claim path refuses to perform on a session's say-so. Putting it behind an authenticated
+// console form keeps the rule intact — a key still authorises nothing; a PERSON decides who takes
+// over a post — and it costs the human no credential handling at all, which is the standing
+// requirement: the session invents a key, states it in its reply, and the human pastes that
+// string. Nothing secret is ever on screen.
+//
+// AN EMPTY KEY RELEASES the workspace instead of refusing. Without it there is no way to undo a
+// reassignment or to hand a post back to the pool, and a station wrongly pointed at a live
+// conversation would be stuck to it forever — the same dead end this exists to open.
+//
+// ARCHIVED WORKSPACES ARE NOT REASSIGNABLE. Archiving already severs live endpoints and
+// StationExists refuses archived ids; letting a reassign re-staff one would make archive a
+// suggestion, and an operator would have no way to explain a session working inside it.
+func (s *Store) ReassignStationToSession(ctx context.Context, stationID, sessionKey string) (*ReassignResult, error) {
+	st, err := s.StationByID(ctx, stationID)
+	if err != nil {
+		return nil, err
+	}
+	if st.State == "archived" {
+		return nil, errors.New("an archived workspace cannot be reassigned; unarchive it first")
+	}
+
+	key := strings.TrimSpace(sessionKey)
+	if key == "" {
+		if _, err := s.W.ExecContext(ctx,
+			`UPDATE station SET session_key=NULL WHERE station_id=?`, stationID); err != nil {
+			return nil, err
+		}
+		st.SessionKey = ""
+		return &ReassignResult{Station: st}, nil
+	}
+
+	// *** THE KEY IS TAKEN FROM WHOEVER HOLDS IT, AND THE OPERATOR IS TOLD. ***
+	//
+	// The first cut REFUSED this, which was wrong in the exact case the feature exists for. The
+	// human asks a chat session for its key; the session has already called station_me, so it
+	// already holds a FRESH EMPTY workspace under that key. Refusing meant the common path failed
+	// with "that key is in use" and demanded a second, non-obvious step — release the empty one,
+	// then come back. The test written for the recovery flow hit it on the first run.
+	//
+	// Taking it is safe in a way that is worth stating: NOTHING IS DESTROYED. The displaced
+	// workspace keeps every note, task, locker file and secret, stays listed in the console, and
+	// can be adopted or reassigned again. Only a pointer moved, and the operator moved it on
+	// purpose by typing that key.
+	//
+	// SO THE SAFETY IS DISCLOSURE, NOT REFUSAL: the result names what was displaced, the console
+	// says so in the receipt, and an operator who did not mean it can put it back in one click. A
+	// silent steal would be the defect; a refusal in the common case is just a wall.
+	res := &ReassignResult{}
+	if other, err := s.StationBySessionKey(ctx, key); err == nil && other.StationID != stationID {
+		if _, err := s.W.ExecContext(ctx,
+			`UPDATE station SET session_key=NULL WHERE station_id=?`, other.StationID); err != nil {
+			return nil, err
+		}
+		res.TakenFromName, res.TakenFromID = other.Name, other.StationID
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+
+	if _, err := s.W.ExecContext(ctx,
+		`UPDATE station SET session_key=? WHERE station_id=? AND state <> 'archived'`,
+		key, stationID); err != nil {
+		return nil, err
+	}
+	st.SessionKey = key
+	res.Station = st
+	return res, nil
 }

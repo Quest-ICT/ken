@@ -657,8 +657,13 @@ func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess
 		flashRedirect(w, r, "/stations", "flash.station_transfer_needs_target", "")
 		return
 	}
+	// The human's identity travels with the transfer so the vault audit names WHO moved the
+	// secrets. "" for the token id: this is a console action, not a token-authenticated one, and
+	// inventing a token id here would put a lie in the one log that answers who could see a
+	// credential.
 	res, err := a.store.TransferStationAssets(r.Context(), from, to,
-		r.FormValue("notes") == "1", r.FormValue("tasks") == "1", r.FormValue("locker") == "1")
+		r.FormValue("notes") == "1", r.FormValue("tasks") == "1", r.FormValue("locker") == "1",
+		r.FormValue("vault") == "1", "", sess.ActorID)
 
 	var collision *store.ErrTransferCollision
 	switch {
@@ -669,7 +674,52 @@ func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess
 		flashRedirect(w, r, "/stations", "flash.station_transfer_failed", err.Error())
 	default:
 		flashRedirect(w, r, "/stations", "flash.station_transferred",
-			fmt.Sprintf("%d notes, %d tasks, %d files", res.Notes, res.Tasks, res.Locker))
+			// SECRETS ARE COUNTED IN THE RECEIPT. The operator needs to see that credentials
+			// moved — this is the action that used to leave them behind in silence.
+			fmt.Sprintf("%d notes, %d tasks, %d files, %d secrets",
+				res.Notes, res.Tasks, res.Locker, res.Vault))
+	}
+}
+
+// handleStationReassign points a workspace at a CONVERSATION, which is how an abandoned one is
+// recovered.
+//
+// THIS IS THE ONLY DOOR BACK IN. A session declaring a key can adopt a workspace only while the
+// workspace has none — anything else would make the key a credential — so a workspace whose
+// conversation is gone is sealed with its notes, tasks, locker and vault inside it. A human
+// deciding who takes over is exactly the authority the claim path declines to infer.
+//
+// AND IT COSTS THE HUMAN NO CREDENTIAL HANDLING, which is the standing requirement rather than a
+// nicety: the session invents a conversation key and states it in its reply, the human pastes that
+// string here, and the session's next station_me lands in the recovered workspace. Nothing secret
+// is displayed, typed or transported — the key selects a post, it does not open one.
+func (a *app) handleStationReassign(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.stationsEnabled {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	key := strings.TrimSpace(r.FormValue("session_key"))
+
+	res, err := a.store.ReassignStationToSession(r.Context(), r.PathValue("id"), key)
+	switch {
+	case err != nil:
+		flashRedirect(w, r, "/stations", "flash.station_reassign_failed", err.Error())
+	case key == "":
+		flashRedirect(w, r, "/stations", "flash.station_released", res.Station.Name)
+	case res.TakenFromName != "":
+		// THE DISPLACEMENT IS IN THE RECEIPT. Taking the key from whatever held it is what makes
+		// the common case one click — a chat session has usually already claimed a fresh empty
+		// workspace under the key it just invented — but an operator who did not mean it must
+		// learn it here, not from a session that later reports the wrong briefing.
+		flashRedirect(w, r, "/stations", "flash.station_reassigned_taken", res.TakenFromName)
+	default:
+		flashRedirect(w, r, "/stations", "flash.station_reassigned", res.Station.Name)
 	}
 }
 

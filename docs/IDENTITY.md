@@ -141,6 +141,41 @@ belonging to **the same human**, which it could already do by editing its own co
 boundary is the OAuth grant — whose estate — never the key, which chooses which post inside it.
 **If that ever stops being true, this becomes a credential and must be treated as one.**
 
+### 4c. The consequence nobody had answered: an abandoned workspace was sealed
+
+The rule above has a sharp edge that only shows up later. `ClaimStationForSession` adopts a station
+**only while its `session_key` is NULL** — it must, because a key that could take a *claimed*
+workspace would be authorising something, which §4b forbids. So the moment a conversation dies, the
+workspace it claimed is **sealed**: notes, tasks, locker and vault all intact, and *nothing* able to
+reach them. Every abandoned conversation was a one-way door.
+
+Vlad saw the way out while we were building the chat-session path:
+
+> *"I like the figure 'chat sessions can use comm and station too' is taking… I think we can use
+> the fact that a workspace can be re-assigned to tell a chat session to recover (take over) an
+> (abandoned) workspace and it might even be used to re-establish comm channels."*
+
+**A HUMAN IS THE ONLY THING THAT MAY DO IT, WHICH IS WHY IT IS CONSOLE-ONLY.** Reassignment is
+precisely the act the claim path refuses to perform on a session's say-so. Behind an authenticated
+console form the rule survives intact: the key still authorises nothing; a *person* decides who
+takes over a post. Shipped 3.38.0 as `POST /stations/{id}/reassign`, and its comm counterpart
+`POST /comm/endpoints/{id}/reassign` (COMM.md §9), because a workspace recovered without its
+mailbox is half a recovery.
+
+**AND IT COSTS THE HUMAN NO CREDENTIAL WORK**, which is the standing requirement rather than a
+nicety: the session states a conversation key in its reply — a Claude Code session has a UUID, a
+chat session invents one — the human pastes that string into the form, and the session's next
+`station_me` lands in the recovered workspace. Nothing secret is displayed, typed or transported.
+The same string reassigns the mailbox, so one paste each recovers both halves.
+
+**THE KEY IS TAKEN FROM WHATEVER HOLDS IT, AND THE DISPLACEMENT IS REPORTED.** The first cut
+refused a key already in use, and that was wrong in the exact case the feature exists for: a chat
+session asked for its key has usually *already* called `station_me`, so a fresh empty workspace
+answers to it. Refusing failed the main path with "that key is in use" and demanded a second,
+non-obvious step. Nothing is destroyed by taking it — the displaced workspace keeps everything and
+stays listed — so the safety is **disclosure**: the receipt names what was displaced, and one click
+puts it back. A silent steal would be the defect; a refusal in the common case is just a wall.
+
 ## 5. Starting work in an unknown folder
 
 Decided: **fully working, auto-named, no approval.**
