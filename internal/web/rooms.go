@@ -77,10 +77,6 @@ func (a *app) syncRoomMirror(r *http.Request) {
 }
 
 func (a *app) handleRoomCreate(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -102,10 +98,6 @@ func (a *app) handleRoomCreate(w http.ResponseWriter, r *http.Request, sess *sto
 }
 
 func (a *app) handleRoomMember(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -128,10 +120,6 @@ func (a *app) handleRoomMember(w http.ResponseWriter, r *http.Request, sess *sto
 }
 
 func (a *app) handleRoomArchive(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)

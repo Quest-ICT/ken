@@ -64,7 +64,7 @@ func TestConsoleLinkDecisionsReachTheCommMirror(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs, StationsEnabled: true}))
+	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
 	defer srv.Close()
 	jar, _ := cookiejar.New(nil)
 	cli := &http.Client{Jar: jar}

@@ -51,20 +51,6 @@ type Deps struct {
 	// small win: the console no longer has two indistinguishable causes to report.
 	// The comm MCP endpoint is mounted separately in main.go.
 	Comm *comm.Store
-	// StationsEnabled, when true, mounts the stations console (/stations) — where a
-	// human approves a session's request for a working identity and TYPES its name,
-	// which is the capability every station tool is denied. The station MCP endpoint
-	// is mounted separately in main.go.
-	//
-	// Stations are always on; main.go passes true unconditionally. This field stays an
-	// explicit bool rather than defaulting
-	// on, because the zero value belongs to whoever CONSTRUCTS Deps — tests build one
-	// deliberately without stations — and a library that turns a surface on because a
-	// caller forgot a field is worse than one that waits to be told.
-	//
-	// Independent of Comm on purpose (S2): the notebook and task list need no peers, so
-	// stations keep working when Comm is nil because comm.db failed to open.
-	StationsEnabled bool
 }
 
 // Handler returns the web UI mux. When no admin exists yet it logs the one-time

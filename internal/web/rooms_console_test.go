@@ -254,7 +254,7 @@ func stationsHarnessWithComm(t *testing.T) (*store.Store, context.Context, *http
 		t.Fatal(err)
 	}
 	harnessComm = cs
-	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs, StationsEnabled: true}))
+	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	cli := &http.Client{Jar: jar}

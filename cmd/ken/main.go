@@ -442,7 +442,6 @@ func runServe(args []string) {
 	// unified endpoint and the specific ones are wired from the SAME values by construction.
 	var commDepsOut commserver.Deps
 	var stationDepsOut stationserver.Deps
-	var stationsOn bool
 	if commStore != nil {
 		// REBUILD THE ROOM MIRROR AT BOOT, before anything can send.
 		//
@@ -591,8 +590,12 @@ func runServe(args []string) {
 	// The independence from COMM that S2 insisted on is now STRUCTURAL rather than
 	// contingent: no flag exists that could couple them, and stations keep working when
 	// commStore is nil because comm.db failed to open.
-	stationsEnabled := true
-	if stationsEnabled {
+	// NOT A SETTING AND NOT A BRANCH. Stations are unconditional, exactly like the knowledge base
+	// and COMM: Vlad's standing ruling is that no Ken surface is optional and every session gets
+	// everything it can use. This was `stationsEnabled := true` wrapped in an `if` that could not
+	// be false — a switch with no hand on it, which reads to the next person as though turning
+	// stations off were a supported thing to do.
+	{
 		sd := stationserver.Deps{Store: st, TokenLimiter: rlToken, Metrics: reg}
 		// The hearsay marker is keyed on the ACTOR, so it only works when COMM is on and
 		// the station key was minted under the same actor as that machine's comm token.
@@ -637,8 +640,8 @@ func runServe(args []string) {
 			}
 		})
 		// /station/mcp IS GONE, like /comm/mcp. One surface.
-		log.Printf("STATIONS: enabled — served from the single machine surface at /mcp")
-		stationDepsOut, stationsOn = sd, true
+		log.Printf("STATIONS: served from the single machine surface at /mcp")
+		stationDepsOut = sd
 	}
 
 	// *** ONE MACHINE SURFACE: /mcp, EVERY TOOL. ***
@@ -653,24 +656,24 @@ func runServe(args []string) {
 	// REFUSED, where before it silently worked with a third of the tools. That is the failure
 	// direction he asked for — nothing keeps limping on the old shape without anyone noticing.
 	//
-	// THE FALLBACK IS A DEGRADED MODE, NOT A DESIGN. With COMM or STATIONS switched off there is
-	// no coherent whole to serve, so /mcp carries the knowledge base alone and says so loudly.
-	// Vlad's standing ruling is that no surface is optional; if that ruling is finished, these
-	// switches and this branch go with it.
-	if commHandler != nil && stationsOn {
-		mux.Handle("/mcp", allserver.NewHTTPHandler(allserver.Deps{
-			KB: mcpDeps, Comm: commDepsOut, CommH: commHandler, Station: stationDepsOut,
-		}))
-		log.Printf("MCP: one surface at /mcp — every tool, one connector, one credential carrying every capability")
+	// MOUNTED UNCONDITIONALLY. There is no arrangement of settings under which some other handler
+	// belongs here, because nothing can be switched off. The only way a surface is missing is the
+	// DEGRADED state — comm.db failed to open — and that is a failure, not a choice: allserver
+	// already skips comm's tools and comm's middleware on a nil CommH, so it degrades correctly on
+	// its own and the knowledge base and stations stay up. That is COMM.md §5's promise, kept.
+	mux.Handle("/mcp", allserver.NewHTTPHandler(allserver.Deps{
+		KB: mcpDeps, Comm: commDepsOut, CommH: commHandler, Station: stationDepsOut,
+	}))
+	if commHandler == nil {
+		log.Printf("MCP: one surface at /mcp — but COMM IS DEGRADED, so comm_* tools are absent. This is a failure to open comm.db, not a setting; the knowledge base and stations are unaffected")
 	} else {
-		mux.Handle("/mcp", mcpHandler)
-		log.Printf("MCP: /mcp is serving the KNOWLEDGE BASE ONLY — comm=%v stations=%v. Sessions will not see comm_* or station_* tools at all", commHandler != nil, stationsOn)
+		log.Printf("MCP: one surface at /mcp — every tool, one connector, one credential carrying every capability")
 	}
 
 	mux.Handle("/", reg.Counting("web", web.Handler(web.Deps{
 		Store: st, SecureCookies: secure, SetupToken: os.Getenv("KEN_SETUP_TOKEN"),
 		TrustedProxies: os.Getenv("KEN_TRUSTED_PROXIES"), Settings: live, OAuthEnabled: oauthEnabled,
-		I18n: i18n.New(i18nDir), Comm: commStore, StationsEnabled: stationsEnabled,
+		I18n: i18n.New(i18nDir), Comm: commStore,
 	})))
 
 	// The per-IP abuse guard is the outermost handler — ahead of web routing and MCP auth.

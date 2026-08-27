@@ -36,7 +36,7 @@ func stationsHarness(t *testing.T) (*store.Store, context.Context, *http.Client,
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(Handler(Deps{Store: st, StationsEnabled: true}))
+	srv := httptest.NewServer(Handler(Deps{Store: st}))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	cli := &http.Client{Jar: jar}
@@ -45,10 +45,16 @@ func stationsHarness(t *testing.T) (*store.Store, context.Context, *http.Client,
 	return st, ctx, cli, srv.URL, actorID
 }
 
-// The flag gates the whole surface. A deployment that has not enabled stations must
-// not serve the console at all — not an empty page, not a 500, a 404 — and the nav
-// entry must be absent so nobody follows a link into a feature that is off.
-func TestStationsConsoleIsAbsentWhenTheFlagIsOff(t *testing.T) {
+// *** THE STATIONS CONSOLE IS UNCONDITIONAL, AND THIS TEST USED TO ASSERT THE OPPOSITE. ***
+//
+// It was "TestStationsConsoleIsAbsentWhenTheFlagIsOff", and it passed against a flag that was
+// hardcoded `true` at cmd/ken/main.go — so it proved a behaviour no deployment could produce. The
+// only way to reach the 404 it asserted was to construct the handler by hand, as it did.
+//
+// Vlad, on being shown a log line that said stations could be switched off: "IN KEN NOTHING IS
+// OPTIONAL!" The flag, the nineteen `if !a.stationsEnabled` guards behind it, the Deps field, the
+// nav gate and the dashboard gate are all deleted. This asserts what replaced them.
+func TestTheStationsConsoleIsAlwaysServed(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -61,23 +67,25 @@ func TestStationsConsoleIsAbsentWhenTheFlagIsOff(t *testing.T) {
 	if _, err := st.CreateHumanUser(context.Background(), "admin", hash); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(Handler(Deps{Store: st})) // StationsEnabled deliberately unset
+	// Deps carries NO stations switch — there is nothing to pass, which is the point.
+	srv := httptest.NewServer(Handler(Deps{Store: st}))
 	defer srv.Close()
 	jar, _ := cookiejar.New(nil)
 	cli := &http.Client{Jar: jar}
 	lcsrf := extract(t, cli, srv.URL+"/login", `name="lcsrf" value="([^"]+)"`)
 	dash := postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
 
-	if strings.Contains(dash, `href="/stations"`) {
-		t.Fatal("nav offers /stations while the feature is off")
+	if !strings.Contains(dash, `href="/stations"`) {
+		t.Error("the nav does not offer /stations — an operator cannot reach a console that is " +
+			"always running")
 	}
 	resp, err := cli.Get(srv.URL + "/stations")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("GET /stations with the flag off = HTTP %d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /stations = HTTP %d, want 200 — the console is unconditional", resp.StatusCode)
 	}
 }
 

@@ -99,7 +99,7 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 		t.Fatalf("setup: %d open channel(s) before revoke (err=%v), want 1", n, err)
 	}
 
-	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs, StationsEnabled: true}))
+	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
 	defer srv.Close()
 	jar, _ := cookiejar.New(nil)
 	cli := &http.Client{Jar: jar}

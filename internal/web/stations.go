@@ -41,10 +41,6 @@ func (a *app) handleStations(w http.ResponseWriter, r *http.Request, sess *store
 // renderStations draws the console. newKey, when non-empty, is a just-minted station
 // key shown ONCE — only its hash is stored, so it can never be shown again.
 func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store.Session, newKey string, revealed *store.StationVaultEntry) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	ctx := r.Context()
 
 	stations, err := a.store.ListStations(ctx)
@@ -319,10 +315,6 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 // membership list nobody can take away is not a stronger gate than a bearer code, it
 // is a weaker one that lasts longer.
 func (a *app) handleStationLinkRevoke(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -385,10 +377,6 @@ func (a *app) handleStationLinkRevoke(w http.ResponseWriter, r *http.Request, se
 // station, named by the human at this moment. The agent's name_hint is displayed on
 // the page and carries no weight here.
 func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody) // before checkCSRF, which parses the form
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -510,10 +498,6 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 // handleStationDeny records a refusal WITH a reason. The reason is required by the
 // store, not merely by this form, so the CLI cannot bypass it.
 func (a *app) handleStationDeny(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -540,10 +524,6 @@ func (a *app) handleStationDeny(w http.ResponseWriter, r *http.Request, sess *st
 // so this renders the page directly instead of redirecting, exactly as pairing-code
 // minting and token creation do.
 func (a *app) handleStationKey(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -571,10 +551,6 @@ func (a *app) handleStationKey(w http.ResponseWriter, r *http.Request, sess *sto
 // The severing verb (revoke) goes through the ordinary token path so it cannot diverge
 // from `ken token revoke` — see S6.
 func (a *app) handleStationKeyRetire(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
 		return
@@ -596,10 +572,6 @@ func (a *app) handleStationKeyRetire(w http.ResponseWriter, r *http.Request, ses
 // at read time. So there is no mirror to push here and no channel to reopen — deliberately
 // unlike archive, which changes who receives and therefore moves the roster epoch.
 func (a *app) handleStationRename(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -628,10 +600,6 @@ func (a *app) handleStationRename(w http.ResponseWriter, r *http.Request, sess *
 // makes about itself being discoverable; it is not authorization, and nothing about
 // reachability follows from it.
 func (a *app) handleStationPublish(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -650,10 +618,6 @@ func (a *app) handleStationPublish(w http.ResponseWriter, r *http.Request, sess 
 // dormant rather than revoked, and unarchiving restores them. That is why this is one
 // handler with a boolean and not two verbs.
 func (a *app) handleStationArchive(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -683,10 +647,6 @@ func (a *app) handleStationArchive(w http.ResponseWriter, r *http.Request, sess 
 // A collision is reported with the colliding NAMES, because a bare refusal leaves the
 // operator with nothing to act on and a `handoff`-on-`handoff` clash is the common case.
 func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -736,10 +696,6 @@ func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess
 // string here, and the session's next station_me lands in the recovered workspace. Nothing secret
 // is displayed, typed or transported — the key selects a post, it does not open one.
 func (a *app) handleStationReassign(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -796,10 +752,6 @@ func (a *app) stationsLiveCount(ctx context.Context) (int, error) {
 }
 
 func (a *app) handleStationsCount(w http.ResponseWriter, r *http.Request, _ *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	n, err := a.stationsLiveCount(r.Context())
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -815,10 +767,6 @@ func (a *app) handleStationsCount(w http.ResponseWriter, r *http.Request, _ *sto
 // mechanism by which a human can CHECK — which is the only control the design actually
 // has (S11).
 func (a *app) handleStationLocker(w http.ResponseWriter, r *http.Request, _ *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	blob, err := a.store.GetStationLockerBlob(r.Context(), r.PathValue("id"), r.URL.Query().Get("name"))
 	if err != nil {
 		http.NotFound(w, r)
@@ -844,10 +792,6 @@ func (a *app) handleStationLocker(w http.ResponseWriter, r *http.Request, _ *sto
 // path — this only closes the loop so the request stops waiting and the station can
 // see it was answered.
 func (a *app) handlePromotionResolve(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody) // before checkCSRF, which parses the form
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -903,10 +847,6 @@ func (a *app) vaultLimits() store.StationVaultLimits {
 // value through flashRedirect would put the secret itself in a URL, which is the same
 // mistake with extra steps.
 func (a *app) handleStationVaultReveal(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -929,10 +869,6 @@ func (a *app) handleStationVaultReveal(w http.ResponseWriter, r *http.Request, s
 // destroyed something by mistake is not the party to decide what to put back, and the
 // station surface offers no restore tool for the same reason.
 func (a *app) handleStationVaultRestore(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.stationsEnabled {
-		http.NotFound(w, r)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
