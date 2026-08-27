@@ -122,7 +122,20 @@
         <tbody>
         {{range .Data.Connectors}}
           <tr>
-            <td class="cell-title"><b>{{.ClientName}}</b></td>
+            <td class="cell-title">
+              <b>{{.ClientName}}</b>
+              <!-- LEGACY: no ken: scope, so this connector reaches the knowledge base only however
+                   it is configured. Shown because the symptom (a short tool list) and the cause
+                   (an old grant a re-added connector silently reused) were unconnected — deleting
+                   a connector revokes nothing, and debugging it as a URL mistake cost a whole
+                   detour on the live estate. -->
+              {{if .Legacy}}<span class="badge badge--warn" title="{{$.T "tokens.connector_legacy_help"}}">{{$.T "tokens.connector_legacy"}}</span>{{end}}
+              <!-- THE ONLY FIELD ON THIS ROW THAT CARRIES TRUST. The name is self-reported and
+                   anyone reachable can register a client under a reassuring one; the registered
+                   redirect is where a code would actually go. It was visible at consent time and
+                   nowhere else — the one moment a human is least equipped to weigh it. -->
+              <div class="mono muted" style="font-size:.78rem">{{if .RedirectHost}}{{$.T "tokens.connector_redirect"}} {{.RedirectHost}}{{else}}<span title="{{$.T "tokens.connector_redirect_unknown_help"}}">{{$.T "tokens.connector_redirect"}} &mdash;</span>{{end}}</div>
+            </td>
             <td class="mono muted" style="font-size:.85rem">{{.ApprovedBy}}</td>
             <td class="num mono">{{.ActiveTokens}}</td>
             <td class="mono muted" style="font-size:.82rem">{{localtime .CreatedAt}}</td>

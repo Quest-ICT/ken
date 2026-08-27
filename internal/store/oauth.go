@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -358,6 +359,26 @@ type OAuthGrantRow struct {
 	Scope        string
 	CreatedAt    string
 	ActiveTokens int
+
+	// RedirectHost is the host of the client's FIRST registered redirect URI, and it is the only
+	// field on this row that carries trust. The name is self-reported — the consent screen says
+	// so — and anyone reachable can register a client under any reassuring one. ken-prod-ops found
+	// `ken-identity-verification` holding all three capabilities on the live estate: registered
+	// through open dynamic client registration, approved by a human, shipped by nothing in Ken.
+	// It was plausible ONLY because its redirect was loopback. That field was visible at consent
+	// time and nowhere else — the one moment a human is least equipped to weigh it.
+	RedirectHost string
+
+	// Legacy is true when the grant carries no `ken:` scope and therefore reaches the knowledge
+	// base only, whatever URL the connector is pointed at.
+	//
+	// SHOWN BECAUSE THE SYMPTOM AND THE CAUSE WERE UNCONNECTED. Vlad removed three connectors,
+	// re-added one, and saw only kb_* tools. His reconnect silently reused a grant from
+	// 2026-08-11 — deleting a connector revokes nothing — so he was KB-only BY GRANT while
+	// debugging it as a URL mistake, and pointing the same connector at /all/mcp would have
+	// returned a bare 401 and taught him nothing. The tool list is the symptom, the grant is the
+	// cause, and until now nothing anywhere connected them.
+	Legacy bool
 }
 
 // ListOAuthGrants returns live (non-revoked) grants, newest first.
@@ -365,7 +386,11 @@ func (s *Store) ListOAuthGrants(ctx context.Context) ([]OAuthGrantRow, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT g.id, COALESCE(c.client_name,''), h.display_name, g.scope, g.created_at,
        (SELECT COUNT(*) FROM oauth_token t
-          WHERE t.grant_id=g.id AND t.kind='access' AND t.revoked_at IS NULL AND t.expires_at > `+nowExpr+`)
+          WHERE t.grant_id=g.id AND t.kind='access' AND t.revoked_at IS NULL AND t.expires_at > `+nowExpr+`),
+       -- The FIRST registered redirect. redirect_uris is a JSON array and json_extract on a
+       -- malformed or empty one yields NULL, which COALESCE turns into "" — an unknown host
+       -- renders as a dash rather than failing the whole page.
+       COALESCE(json_extract(c.redirect_uris, '$[0]'), '')
 FROM oauth_grant g
 JOIN oauth_client c ON c.client_id = g.client_id
 JOIN actor h ON h.id = g.human_actor_id
@@ -378,12 +403,29 @@ ORDER BY g.created_at DESC, g.id DESC`)
 	var out []OAuthGrantRow
 	for rows.Next() {
 		var r OAuthGrantRow
-		if err := rows.Scan(&r.ID, &r.ClientName, &r.ApprovedBy, &r.Scope, &r.CreatedAt, &r.ActiveTokens); err != nil {
+		var redirect string
+		if err := rows.Scan(&r.ID, &r.ClientName, &r.ApprovedBy, &r.Scope, &r.CreatedAt, &r.ActiveTokens,
+			&redirect); err != nil {
 			return nil, err
 		}
+		r.RedirectHost = redirectHostOf(redirect)
+		// THE SAME PREDICATE THE AUTHENTICATOR USES — see IsLegacyGrant on why it is not computed
+		// a second time here.
+		r.Legacy = IsLegacyGrant(r.Scope)
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// redirectHostOf reduces a registered redirect URI to the host a human can judge. A URI that will
+// not parse, or carries no host, comes back EMPTY rather than raw: printing an unparseable string
+// in the column that is supposed to carry trust invites reading it as a host.
+func redirectHostOf(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Host
 }
 
 // RevokeOAuthGrant revokes a grant and all of its outstanding tokens in one tx.
@@ -456,6 +498,27 @@ const (
 // before this shipped was approved when a connector could reach `/mcp` and nothing else; that is
 // what its human agreed to. Widening it silently would be the invisible removal wearing a
 // migration's clothes. They keep what they had until a human approves anew.
+// IsLegacyGrant reports whether a grant predates per-surface scopes and therefore reaches the
+// knowledge base only, whatever URL its connector is pointed at.
+//
+// ONE DEFINITION, TWO READERS. The authenticator below decides what a grant may do; the console
+// tells a human which grants are legacy. Computing that twice is how a badge comes to disagree
+// with the server — and a badge that lies about capability is worse than no badge, because the
+// operator debugging a short tool list would now have a WRONG answer instead of no answer.
+//
+// It is not "grants exactly the knowledge base": a grant scoped `ken:kb` alone does that too, and
+// is a current grant a human narrowed, not a stale one. The distinction is whether ANY ken: scope
+// was recorded.
+func IsLegacyGrant(scope string) bool {
+	for _, f := range strings.Fields(scope) {
+		switch f {
+		case ScopeKB, ScopeCommSet, ScopeStation:
+			return false
+		}
+	}
+	return true
+}
+
 func GrantedCapabilities(scope string) []string {
 	var kb, comm, station bool
 	for _, f := range strings.Fields(scope) {

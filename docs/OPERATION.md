@@ -109,6 +109,31 @@ Earlier text listed only `/mcp`. An operator debugging "the agent cannot reach X
 four, because the failure is almost always a credential scoped for one of them being
 pointed at another.
 
+### Revoking a connector's access
+
+**Deleting or re-adding a connector in the client revokes nothing.** The OAuth grant survives,
+and re-adding silently reuses it — no consent screen, no change in what the connector may reach.
+An operator who removes a connector believing they have withdrawn access has withdrawn nothing.
+
+**Revocation happens in one place: `/tokens`, under "Connected apps (OAuth)".** Click **Revoke
+access** on the row. The grant is marked revoked and every token issued under it stops working
+immediately, because each MCP call re-checks the grant.
+
+**This also matters when WIDENING access.** A grant approved before per-surface scopes existed is
+LEGACY and reaches the knowledge base only, however the connector is configured — so a connector
+that lists only `kb_*` tools may be carrying an old grant rather than pointing at the wrong URL.
+**Revoke the row first, then add the connector**; only then does a fresh consent record the
+current capability set.
+
+*This is written from a live failure rather than from the code.* On 2026-08-27 Vlad removed three
+connectors, re-added one, and saw only `kb_*` tools. Two causes stacked: he used `/mcp` instead of
+`/all/mcp`, and — the one that would have survived fixing the URL — his reconnect silently reused
+a grant from 2026-08-11 whose scope predates `ken:kb ken:comm ken:station`. He was KB-only **by
+grant**, not by URL, and pointing the same connector at `/all/mcp` would have returned a bare 401
+and taught him nothing. The human's model is "I deleted it and made a new one"; the system's model
+is "same grant, unchanged", and nothing anywhere said otherwise. Reported by ken-prod-ops, whose
+words most of this section is.
+
 **`/setup` is not open.** While no admin exists every other CONSOLE path redirects to it —
 `/healthz`, `/lang`, `/favicon.ico` and `/static/**` are exempt, and the machine endpoints
 above are mounted outside the gate entirely. It requires a one-time token generated at startup

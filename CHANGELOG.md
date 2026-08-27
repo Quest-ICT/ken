@@ -15,6 +15,53 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [3.39.0] — 2026-08-27
+
+### Added
+
+- **A connector row now names the cause, not just the symptom: LEGACY GRANT, and the registered
+  redirect host.** Both reported by ken-prod-ops from the live estate.
+
+  **The failure this fixes cost a whole debugging detour.** Vlad removed three connectors, re-added
+  one, and saw only `kb_*` tools. Two causes stacked: he used `/mcp` instead of `/all/mcp`, and —
+  the one that would have survived fixing the URL — **his reconnect silently reused a grant from
+  2026-08-11** whose scope predates `ken:kb ken:comm ken:station`. He was KB-only **by grant**, not
+  by URL, and pointing the same connector at `/all/mcp` would have returned a bare 401 and taught
+  him nothing.
+
+  The human's model is "I deleted the connector and made a new one." The system's model is "same
+  grant, unchanged." **Deleting a connector revokes nothing**, and until now nothing anywhere said
+  so. The tool list was the symptom, the grant was the cause, and `/tokens` is where the two now
+  meet. `docs/OPERATION.md` gains the revocation section prod wrote to go with it.
+
+  The legacy predicate is `store.IsLegacyGrant`, **one definition read by both the authenticator
+  and the console**, because a badge that disagrees with what the server grants leaves an operator
+  worse off than no badge. It is *no `ken:` scope recorded* — not *grants exactly the knowledge
+  base*, which would also flag a grant a human deliberately narrowed to `ken:kb` and advise them to
+  undo their own decision.
+
+- **The registered redirect host on each connector row — the only field there that carries trust.**
+  The application name is self-reported, and the consent screen already says so; anyone reachable
+  can register a client under a reassuring one. ken-prod-ops found `ken-identity-verification`
+  holding all three capabilities on the live estate: registered through open dynamic client
+  registration, approved by a human, and shipped by nothing in Ken. Not a vulnerability —
+  registration grants nothing and a human approved it — but it was **plausible only because its
+  redirect was loopback**, and that field was visible at consent time and nowhere else: the one
+  moment a human is least equipped to weigh it. An unparseable redirect renders as a dash rather
+  than raw, since printing a non-host in the trust column invites reading it as one.
+
+### Notes
+
+- **The duplicated-scope defect prod reported on grant 9 is already fixed** — `oauth_web.go` dedupes
+  request and default scopes, shipped in 3.31.0 with that exact symptom named in its comment
+  (`"... ken:kb ken:comm ken:station ken:kb ken:comm ken:station"` on the first real consent ever
+  performed). Grants 10–12 are clean, which is consistent with grant 9 predating the deployed fix.
+- **`resource` is NULL on the `/all/mcp` grant because the client did not send one** — it is an
+  RFC 8707 request parameter Ken records verbatim, not a value Ken derives, and the consent screen
+  never used it (it shows the redirect host). Flagged by prod as an audit field that went empty;
+  recorded here as *client behaviour*, not a regression, and not something the server can fill in
+  honestly at consent time.
+
 ## [3.38.0] — 2026-08-26
 
 ### Fixed
