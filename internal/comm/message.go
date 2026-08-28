@@ -1071,12 +1071,8 @@ WHERE NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = message.id
 		}
 		purged, _ = res.RowsAffected()
 
-		// 4. Drop pairing codes that were never redeemed.
-		if _, err := t.ExecContext(ctx, `
-DELETE FROM pairing_code
-WHERE consumed_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')`); err != nil {
-			return err
-		}
+		// 4. The unredeemed-pairing-code purge is deleted with the table. Nothing mints a code:
+		//    a relationship is created by the first message and turned off, if ever, at the console.
 
 		// 5. *** THE IDLE-MAILBOX REAP IS DELETED, BECAUSE WHAT IT BOUNDED NO LONGER GROWS. ***
 		//

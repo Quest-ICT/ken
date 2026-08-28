@@ -22,32 +22,22 @@ func newStore(t *testing.T, l Limits) *Store {
 
 func owner(token string) Owner { return Owner{TokenID: token, ActorID: 7} }
 
-// pair registers two endpoints and joins them through one human-minted code,
-// returning both endpoints and the open channel id.
+// pair gives two stations a mailbox each and an open channel between them.
+//
+// IT USED TO REDEEM A HUMAN-MINTED CODE FROM BOTH SIDES, and asserted along the way that one join
+// left the channel PENDING — establishment was two-sided by design, so that "A opens a channel to
+// B" could later become an accept flow without tightening a shipped tool. The pairing code is gone
+// with the second human gate on comm, and with it the two-sidedness: a channel between two linked
+// stations opens in one call, because the relationship was already agreed.
 func pair(t *testing.T, st *Store) (*Endpoint, *Endpoint, string) {
 	t.Helper()
-	ctx := context.Background()
 	a := mailbox(t, st, "dev", "tok-a")
 	b := mailbox(t, st, "test", "tok-b")
-	code, err := st.MintPairingCode(ctx, 42, "dev<->test")
-	if err != nil {
-		t.Fatalf("mint: %v", err)
+	ch := openChannel(t, st, a, b, "dev<->test")
+	if !ch.Open() {
+		t.Fatalf("channel not open: state=%q", ch.State)
 	}
-	ch1, err := st.JoinChannel(ctx, a, code)
-	if err != nil {
-		t.Fatalf("join a: %v", err)
-	}
-	if ch1.Open() {
-		t.Fatal("channel opened after only ONE join — establishment must be two-sided")
-	}
-	ch2, err := st.JoinChannel(ctx, b, code)
-	if err != nil {
-		t.Fatalf("join b: %v", err)
-	}
-	if !ch2.Open() {
-		t.Fatalf("channel not open after both joins: state=%q", ch2.State)
-	}
-	return a, b, ch2.ChannelID
+	return a, b, ch.ChannelID
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {
@@ -89,57 +79,42 @@ func TestAStationHasExactlyOneMailbox(t *testing.T) {
 	}
 }
 
-func TestPairingCodeIsSingleUseByTwoEndpoints(t *testing.T) {
+// A CHANNEL HAS EXACTLY TWO SEATS AND NOBODY ELSE GETS IN.
+//
+// This was TestPairingCodeIsSingleUseByTwoEndpoints: a code could be redeemed once by each of two
+// endpoints and never by a third. The code is gone, and two of its three assertions went with it —
+// the idempotent re-join and the two-sided open were properties of redeeming, not of channels.
+//
+// The third is the one that was never about the code: a station on neither seat must not be able
+// to resolve the channel. That is a membership property, it survives every change to how channels
+// come into existence, and it is what this asserts now — with the second half restored, that a
+// member CAN resolve it, without which "nobody resolves it" would pass on a broken lookup.
+func TestOnlyTheTwoStationsOnAChannelCanResolveIt(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	// Re-joining from a member is idempotent, so a retried call after a lost
-	// response cannot wedge the pairing.
-	code, err := st.MintPairingCode(ctx, 42, "second")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	again, err := st.JoinChannel(ctx, a, code)
-	if err != nil {
-		t.Fatalf("re-join by the same endpoint must be idempotent, got %v", err)
-	}
-	if again.Open() {
-		t.Fatal("re-join by the SAME endpoint must not open the channel")
+	// POSITIVE CONTROL FIRST. If ChannelFor refused everyone, the refusal below would prove
+	// nothing at all about membership.
+	for _, member := range []*Endpoint{a, b} {
+		if _, _, err := st.ChannelFor(ctx, member, channelID); err != nil {
+			t.Fatalf("a station seated on the channel cannot resolve it: %v", err)
+		}
 	}
 
-	// A third endpoint cannot take a seat on the already-open channel.
 	c := mailbox(t, st, "intruder", "tok-c")
 	if _, _, err := st.ChannelFor(ctx, c, channelID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-member must not resolve the channel: got %v", err)
 	}
-	_ = b
 }
 
-func TestUnknownOrExpiredCodeIsIndistinguishable(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-	a := mailbox(t, st, "dev", "tok")
-	if _, err := st.JoinChannel(ctx, a, "nosuchcode"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("want ErrNotFound, got %v", err)
-	}
-
-	// An expired code must behave exactly like an unknown one.
-	l := DefaultLimits()
-	l.PairingCodeTTLSeconds = -1
-	st2 := newStore(t, l)
-	a2 := mailbox(t, st2, "dev", "tok")
-	code, err := st2.MintPairingCode(ctx, 42, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st2.JoinChannel(ctx, a2, code); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expired code: want ErrNotFound, got %v", err)
-	}
-}
+// TestUnknownOrExpiredCodeIsIndistinguishable IS DELETED WITH THE PAIRING CODE. It asserted that a
+// redeem of an unknown code and of an expired one both returned ErrNotFound, so a caller could not
+// probe which codes existed or had existed. Nothing mints a code and nothing redeems one.
+//
+// The property it protected has not gone anywhere, and lives on in the send path: a station id that
+// does not exist and one this session may not reach must not be told apart by their refusals. That
+// is asserted in commserver's refusal arms, over the wire.
 
 func TestSendPollAckRoundTrip(t *testing.T) {
 	ctx := context.Background()
@@ -773,17 +748,7 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 	a := mailbox(t, st, "dev-v1", "tok-a")
 	peer := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 42, "dev<->peer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, a, peer, "dev<->peer")
 	if _, err := st.Send(ctx, peer, ch.ChannelID, "the archive host is refusing the pull", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -864,17 +829,7 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 	a := mailbox(t, st, "dev-v1", "tok-a")
 	peer := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 42, "x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, a, peer, "x")
 	for _, body := range []string{"first", "second"} {
 		if _, err := st.Send(ctx, peer, ch.ChannelID, body, SendOpts{}); err != nil {
 			t.Fatal(err)
@@ -1059,4 +1014,20 @@ func mailbox(t *testing.T, st *Store, station, token string) *Endpoint {
 		t.Fatalf("mailbox for %s: %v", station, err)
 	}
 	return ep
+}
+
+// openChannel opens a channel between two station mailboxes.
+//
+// IT REPLACES A MINT-AND-JOIN PAIR that appeared in ten test files. Channels used to be created by
+// redeeming a human-minted pairing code from both sides, so every test needing one paid for the
+// whole ceremony; the code was deleted with the second human gate on comm, and OpenLinkedChannel —
+// the path the console has always used — is what remains. The tests that were ABOUT the code are
+// gone; these only ever needed a channel to exist.
+func openChannel(t *testing.T, st *Store, a, b *Endpoint, label string) *Channel {
+	t.Helper()
+	ch, err := st.OpenLinkedChannel(context.Background(), a, b, 42, label)
+	if err != nil {
+		t.Fatalf("open channel %s<->%s: %v", a.EndpointID, b.EndpointID, err)
+	}
+	return ch
 }

@@ -22,7 +22,7 @@ var testDefaults = settings.Values{
 	CommMaxBodyBytes: 64 * 1024, CommMaxUnacked: 64,
 	CommMessageTTLSec: 24 * 3600, CommMetadataTTLSec: 7 * 24 * 3600,
 	CommUndeliveredTTLSec: 30 * 24 * 3600, CommBodyRetentionSec: 24 * 3600,
-	CommReplyDeadlineS: 3600, CommPairingCodeTTLS: 900,
+	CommReplyDeadlineS: 3600,
 	CommPollWaitMaxSec: 15, CommProvenanceWindowSec: 3600,
 	CommFileMaxMB: 16, CommFileBudgetMB: 256, CommFileMinFreeMB: 512,
 	CommFileTTLSec: 24 * 3600, CommGrantTTLSec: 300,

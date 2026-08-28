@@ -558,7 +558,7 @@ func (s *Store) StationVaultRecoverableNames(ctx context.Context, stationID stri
 // talk. Reusing it means secret transfer needs no second approval ceremony — which is the whole
 // point, since "numerous keys, tokens, vouchers, approvals" is the tax this is meant to remove —
 // while still being impossible between two stations nobody connected.
-var ErrStationsNotLinked = errors.New("those stations are not linked, so a secret cannot pass between them — ask your human to approve a link (station_link_request), the same approval that lets you message each other")
+var ErrStationsNotLinked = errors.New("those stations are not linked, so a secret cannot pass between them. A link is created by the first message: send the peer anything with comm_send{to_station} and the relationship exists. If you have already written to them, your human has SUSPENDED that link at Ken's console — tell them, do not retry")
 
 // ErrCannotSendToSelf refuses a transfer whose source and destination are the same vault.
 var ErrCannotSendToSelf = errors.New("that is this station's own vault — a transfer to yourself would overwrite the secret with itself and bump its revision for nothing")

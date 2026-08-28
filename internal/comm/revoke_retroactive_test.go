@@ -118,17 +118,7 @@ func TestRevokingAChannelLeavesRoomMailUntouched(t *testing.T) {
 
 	// A channel between the SAME two stations, so the revocation below is genuinely
 	// adjacent to the room mail rather than in an unrelated corner of the database.
-	code, err := st.MintPairingCode(ctx, 42, "alpha<->beta")
-	if err != nil {
-		t.Fatalf("mint: %v", err)
-	}
-	if _, err := st.JoinChannel(ctx, sender, code); err != nil {
-		t.Fatalf("join sender: %v", err)
-	}
-	ch, err := st.JoinChannel(ctx, recipient, code)
-	if err != nil {
-		t.Fatalf("join recipient: %v", err)
-	}
+	ch := openChannel(t, st, sender, recipient, "alpha<->beta")
 	if !ch.Open() {
 		t.Fatalf("channel not open: state=%q", ch.State)
 	}

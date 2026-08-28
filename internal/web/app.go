@@ -196,7 +196,6 @@ func (a *app) routes() http.Handler {
 	if a.comm != nil {
 		mux.HandleFunc("GET /comm", a.requireAuth(a.handleComm))
 		mux.HandleFunc("GET /comm/count", a.requireAuth(a.handleCommCount))
-		mux.HandleFunc("POST /comm/pair", a.requireAuth(a.handleCommPair))
 		mux.HandleFunc("POST /comm/channels/{id}/revoke", a.requireAuth(a.handleCommRevokeChannel))
 		mux.HandleFunc("POST /comm/endpoints/{id}/revoke", a.requireAuth(a.handleCommRevokeEndpoint))
 		mux.HandleFunc("POST /comm/endpoints/{id}/reassign", a.requireAuth(a.handleCommReassignEndpoint))

@@ -182,8 +182,6 @@ type Limits struct {
 	// ReplyDeadlineSeconds is the default deadline applied to a message that
 	// requires a response.
 	ReplyDeadlineSeconds int
-	// PairingCodeTTLSeconds is how long a human-minted pairing code stays valid.
-	PairingCodeTTLSeconds int
 	// ClaimLeaseSeconds is how long a station-bound reader holds a claimed message
 	// before it returns to the unclaimed tail (docs/STATIONS.md S4).
 	//
@@ -265,7 +263,6 @@ func DefaultLimits() Limits {
 		BodyRetentionSeconds:  24 * 3600,
 		MetadataTTLSeconds:    7 * 24 * 3600,
 		ReplyDeadlineSeconds:  3600,
-		PairingCodeTTLSeconds: 900,
 		// 900 = 15 minutes, matching docs/STATIONS.md and what every configured
 		// deployment actually runs. This said 300 while internal/settings said 900 — and
 		// settings' own comment names THIS as the source of truth that it mirrors, so the

@@ -233,61 +233,66 @@ func TestListChannelsIsStationScopedLikePollAndChannelFor(t *testing.T) {
 
 // A STATION MUST NOT BECOME ITS OWN PEER.
 //
-// JoinChannel's re-join check compared endpoint ROWIDS, and the schema's
-// CHECK (endpoint_b <> endpoint_a) catches only the same literal rowid — so a second
-// endpoint of a station that already held a seat matched neither guard and took the free
-// one. A replacement session re-redeeming its predecessor's still-valid code is the
-// ordinary way to get there.
-func TestASecondEndpointOfOneStationCannotTakeBothSeats(t *testing.T) {
+// The original defect was in the deleted join path: its re-join check compared endpoint ROWIDS,
+// and the schema's CHECK (endpoint_b <> endpoint_a) catches only the same literal rowid — so a
+// second endpoint of a station that already held a seat matched neither guard and took the free
+// one. A replacement session re-redeeming its predecessor's still-valid code was the ordinary way
+// to get there.
+//
+// THE PATH IS GONE AND THE INVARIANT IS NOT. OpenLinkedChannel is what opens a channel now, and it
+// checked rowids and empty stations — not whether the two stations were the SAME. So this asserts
+// the property against the surviving path rather than retiring with the defect it was written for.
+//
+// It is unreachable through supported calls today: a station has exactly one mailbox, so two
+// endpoints of one station is a state nothing produces. This builds that state directly, because a
+// guard whose only proof is "nothing can reach it" is a guard nobody has watched refuse.
+func TestAStationCannotTakeBothSeatsOfAChannel(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
 
 	first := stationEndpoint(t, st, "tok-1", "st-solo")
-	code, err := st.MintPairingCode(ctx, 42, "solo<->peer")
-	if err != nil {
+	// A SECOND MAILBOX FOR THE SAME STATION, WRITTEN DIRECTLY. MailboxFor is get-or-create by
+	// station and would hand back `first`, so asking it twice proves nothing — the rowid guard
+	// would refuse the result and the STATION check would never be exercised. The row is inserted
+	// past the constructor precisely because the supported paths cannot produce this state.
+	if _, err := st.W.ExecContext(ctx, `
+INSERT INTO endpoint(endpoint_id, secret_sha256, token_id, actor_id, label, station_id, bound_at)
+VALUES('ep-second-seat','x','tok-2',7,'st-solo','st-solo',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := st.JoinChannel(ctx, first, code)
-	if err != nil {
+	var secondID int64
+	if err := st.R.QueryRow(`SELECT id FROM endpoint WHERE endpoint_id='ep-second-seat'`).Scan(&secondID); err != nil {
 		t.Fatal(err)
 	}
-	if pending.Open() {
-		t.Fatal("setup: the channel opened on one join")
+	second := &Endpoint{ID: secondID, EndpointID: "ep-second-seat", StationID: "st-solo"}
+	if first.ID == second.ID {
+		t.Fatal("setup: both handles are the same row, so the rowid guard alone would refuse this " +
+			"and the test would prove nothing about the STATION check")
 	}
 
-	// The successor redeems the same code. Its station already holds seat A.
-	second := stationEndpoint(t, st, "tok-2", "st-solo")
-	got, err := st.JoinChannel(ctx, second, code)
-	if err != nil {
-		t.Fatalf("a successor re-redeeming its predecessor's code was refused: %v", err)
-	}
-	if got.ChannelID != pending.ChannelID {
-		t.Fatalf("the successor got a DIFFERENT channel (%s, not %s)", got.ChannelID, pending.ChannelID)
-	}
-	if got.Open() {
-		t.Error("the channel is OPEN with one station on both sides — st-solo is now its " +
-			"own peer, and every message it sends is addressed to itself")
+	if _, err := st.OpenLinkedChannel(ctx, first, second, 42, "solo<->solo"); err == nil {
+		t.Error("a channel opened with one station on both sides — every message it sends would " +
+			"come back to it as mail from a peer")
 	}
 
-	var stnA, stnB string
-	if err := st.R.QueryRow(
-		`SELECT COALESCE(station_a,''), COALESCE(station_b,'') FROM channel WHERE channel_id=?`,
-		pending.ChannelID).Scan(&stnA, &stnB); err != nil {
-		t.Fatal(err)
-	}
-	if stnB != "" {
-		t.Errorf("seat B was filled by station %q while seat A holds %q", stnB, stnA)
-	}
-
-	// CONTROL: a genuinely different station still completes the pairing. Without this,
-	// a guard that refused EVERY second join would read as a pass.
+	// CONTROL: a genuinely different station still gets a channel. Without this, a guard that
+	// refused EVERY open would read as a pass.
 	other := stationEndpoint(t, st, "tok-3", "st-peer")
-	opened, err := st.JoinChannel(ctx, other, code)
+	opened, err := st.OpenLinkedChannel(ctx, first, other, 42, "solo<->peer")
 	if err != nil {
-		t.Fatalf("a different station cannot complete the pairing: %v", err)
+		t.Fatalf("a real peer was refused a channel: %v", err)
 	}
 	if !opened.Open() {
 		t.Fatalf("the channel did not open for a real peer: state=%q", opened.State)
+	}
+	var stnA, stnB string
+	if err := st.R.QueryRow(
+		`SELECT COALESCE(station_a,''), COALESCE(station_b,'') FROM channel WHERE channel_id=?`,
+		opened.ChannelID).Scan(&stnA, &stnB); err != nil {
+		t.Fatal(err)
+	}
+	if stnA == stnB {
+		t.Errorf("both seats hold station %q", stnA)
 	}
 }
 
@@ -301,17 +306,7 @@ func TestASuccessorSeesTheRequestsItsPredecessorIsStillOwed(t *testing.T) {
 
 	asker := stationEndpoint(t, st, "tok-ask", "st-asker")
 	peer := stationEndpoint(t, st, "tok-peer", "st-peer")
-	code, err := st.MintPairingCode(ctx, 42, "asker<->peer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, asker, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, asker, peer, "asker<->peer")
 	if _, err := st.Send(ctx, asker, ch.ChannelID, "please do X", SendOpts{RequiresResponse: true}); err != nil {
 		t.Fatal(err)
 	}

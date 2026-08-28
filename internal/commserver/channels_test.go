@@ -219,17 +219,7 @@ func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := dirComm.MintPairingCode(ctx, 42, "me<->sender")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := dirComm.JoinChannel(ctx, me, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := dirComm.JoinChannel(ctx, sender, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, dirComm, me, sender, "me<->sender")
 	if _, err := dirComm.Send(ctx, sender, ch.ChannelID, "on the channel", comm.SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -424,3 +414,14 @@ func TestAnArchivedStationCannotUseComm(t *testing.T) {
 // TestArchiveStateIsNotReadableWithoutTheSecret IS DELETED with the secret it was about. Archive
 // state is now behind station.Resolve, which requires state='active' and answers every miss with
 // one wording — so there is no second answer to compare against.
+
+// openChannel opens a channel between two station mailboxes. See the note on the twin helper in
+// internal/comm: the mint-and-join pair it replaces went with the pairing code.
+func openChannel(t *testing.T, st *comm.Store, a, b *comm.Endpoint, label string) *comm.Channel {
+	t.Helper()
+	ch, err := st.OpenLinkedChannel(context.Background(), a, b, 42, label)
+	if err != nil {
+		t.Fatalf("open channel: %v", err)
+	}
+	return ch
+}

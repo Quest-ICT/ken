@@ -20,7 +20,7 @@ func TestCommLimitsMapsEverySetting(t *testing.T) {
 	// A snapshot with every Comm* setting set to a distinct, plainly non-zero value.
 	v := settings.Values{
 		CommMaxBodyBytes: 1001, CommMaxUnacked: 1002, CommMessageTTLSec: 1003,
-		CommMetadataTTLSec: 1004, CommReplyDeadlineS: 1005, CommPairingCodeTTLS: 1006,
+		CommMetadataTTLSec: 1004, CommReplyDeadlineS: 1005,
 		CommUndeliveredTTLSec: 1017, CommBodyRetentionSec: 1018,
 		CommPollWaitMaxSec: 1007, CommProvenanceWindowSec: 1008,
 		CommFilesEnabled: true, CommFileMaxMB: 1010, CommFileBudgetMB: 1011,

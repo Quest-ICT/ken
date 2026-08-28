@@ -26,167 +26,28 @@ type Channel struct {
 // Open reports whether the channel may carry traffic.
 func (c *Channel) Open() bool { return c.State == "open" }
 
-// MintPairingCode creates a human-authorized pairing code and returns the
-// plaintext exactly once; only its SHA-256 is stored.
+// *** THE PAIRING CODE IS DELETED, AND WITH IT MintPairingCode AND JoinChannel. ***
 //
-// This is COMM's structural gate: an agent cannot conjure a channel, because
-// channel creation requires a value only the human web UI can produce. It is the
-// same move that makes the curation gate trustworthy — withhold the capability
-// rather than instruct the model not to use it — applied at the one place in COMM
-// where it is available.
-func (s *Store) MintPairingCode(ctx context.Context, humanActorID int64, label string) (string, error) {
-	code, err := randBase62(10)
-	if err != nil {
-		return "", err
-	}
-	_, err = s.W.ExecContext(ctx, `
-INSERT INTO pairing_code(code_sha256, human_actor_id, label, expires_at)
-VALUES(?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
-		sha256Hex(code), humanActorID, nullStr(label),
-		nowExpr(s.lim().PairingCodeTTLSeconds))
-	if err != nil {
-		return "", err
-	}
-	return code, nil
-}
-
-// JoinChannel redeems a pairing code for an endpoint.
+// It was COMM's structural gate: an agent could not conjure a channel, because creating one
+// required a value only the human web UI could produce. That was the right shape for its time —
+// withhold the capability rather than instruct the model not to use it, the same move that makes
+// the curation gate trustworthy — and Vlad removed it deliberately in the 2026-08-27 wave, along
+// with link approval: "links auto-approved on first contact; pairing code no longer required."
 //
-// Establishment is two-sided from day 1: the first redeem creates a pending
-// channel, the second opens it. Both sides call this even though both currently
-// share one owner — turning a unilateral "A opens a channel to B" into an accept
-// flow later would tighten an already-shipped tool, which is a breaking change.
+// WHAT REPLACED IT IS NOT A WEAKER GATE, IT IS A DIFFERENT PLACE TO STAND. Reaching a peer is now
+// the first message, which records a link; the human's control moved from authorising each
+// conversation in advance to suspending a relationship at the console, which they can also resume.
+// A code that expired in fifteen minutes while its human was away from the keyboard was, in
+// practice, the reason a session could not reach anyone rather than a decision anybody made.
 //
-// Re-redeeming the same code from an endpoint already on the channel is
-// idempotent and returns the channel unchanged, so a retried call after a lost
-// response cannot consume the code twice or wedge the pairing.
-func (s *Store) JoinChannel(ctx context.Context, ep *Endpoint, code string) (*Channel, error) {
-	var ch *Channel
-	err := s.tx(ctx, func(t *sql.Tx) error {
-		var (
-			pcID     int64
-			humanID  int64
-			chanID   sql.NullInt64
-			consumed sql.NullString
-			pcLabel  sql.NullString
-		)
-		err := t.QueryRowContext(ctx, `
-SELECT id, human_actor_id, channel_id, consumed_at, label
-FROM pairing_code
-WHERE code_sha256=? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-			sha256Hex(code)).Scan(&pcID, &humanID, &chanID, &consumed, &pcLabel)
-		if errors.Is(err, sql.ErrNoRows) {
-			// Expired and unknown are indistinguishable on purpose: a caller must
-			// not be able to probe which codes exist or existed.
-			return ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-
-		// First redeem: create the pending channel and bind the code to it.
-		if !chanID.Valid {
-			channelID, err := randBase62(22)
-			if err != nil {
-				return err
-			}
-			// THE AUTHORISING PAIR IS SNAPSHOTTED HERE TOO, not only on the linked
-			// path. Migration 0008 moved link revocation onto these columns precisely so
-			// authorisation could not be re-derived from a binding an agent can change —
-			// but only OpenLinkedChannel was taught to write them. A channel opened by
-			// PAIRING CODE between two station-bound endpoints therefore carried NULLs,
-			// and the predicate that finds "open channels between these two stations"
-			// could not see it: revoking the link left the channel open, while the console
-			// counted zero live channels and reported the revocation as complete.
-			//
-			// NULL when the joiner is unbound, which is correct rather than a gap: there is
-			// no station whose link could authorise it, so there is nothing for a link
-			// revocation to reach.
-			res, err := t.ExecContext(ctx, `
-INSERT INTO channel(channel_id, owner_actor_id, endpoint_a, state, label, station_a)
-VALUES(?,?,?, 'pending', ?, ?)`, channelID, humanID, ep.ID, nullStr(pcLabel.String), nullStr(ep.StationID))
-			if err != nil {
-				return err
-			}
-			newID, err := res.LastInsertId()
-			if err != nil {
-				return err
-			}
-			if _, err := t.ExecContext(ctx, `UPDATE pairing_code SET channel_id=? WHERE id=?`, newID, pcID); err != nil {
-				return err
-			}
-			ch, err = channelByRowID(ctx, t, newID)
-			return err
-		}
-
-		// Second redeem: open the channel, unless this endpoint is already on it.
-		cur, err := channelByRowID(ctx, t, chanID.Int64)
-		if err != nil {
-			return err
-		}
-		if cur.EndpointA == ep.ID || cur.EndpointB == ep.ID {
-			ch = cur // idempotent re-join
-			return nil
-		}
-		// A STATION MUST NOT BECOME ITS OWN PEER. The rowid comparison above answers
-		// "is this exact connection already seated", and the schema's
-		// CHECK (endpoint_b <> endpoint_a) enforces only the same literal rowid — so a
-		// SECOND endpoint of a station that already holds a seat matched neither, fell
-		// through, and took the free one. The channel then had station_a = station_b, and
-		// ChannelFor's station arms resolved that station's peer to itself.
-		//
-		// It is not an exotic path: a replacement session re-redeeming the code its
-		// predecessor was given is the ordinary way to reach it, and the code is still
-		// valid for its TTL. What that session actually wants is this branch — its station
-		// is already a party, so the join is a no-op and the channel is returned as it
-		// stands.
-		var stnA, stnB string
-		if err := t.QueryRowContext(ctx,
-			`SELECT COALESCE(station_a,''), COALESCE(station_b,'') FROM channel WHERE id=?`,
-			cur.ID).Scan(&stnA, &stnB); err != nil {
-			return err
-		}
-		if ep.StationID != "" && (ep.StationID == stnA || ep.StationID == stnB) {
-			ch = cur // the STATION is already on it; a second reader changes nothing
-			return nil
-		}
-		if cur.EndpointB != 0 {
-			// Both seats are taken by other endpoints: a third session must not be
-			// able to join, and a consumed code must not create a second channel.
-			return ErrDenied
-		}
-		// Only a PENDING channel may be opened. Without this, a human who revokes a
-		// half-formed pairing has their brake silently undone: the code stays valid
-		// for its TTL, and the second session's join would flip the revoked row back
-		// to 'open'. ErrNotFound rather than ErrChannelClosed, so a dead code stays
-		// indistinguishable from an unknown one.
-		if cur.State != "pending" {
-			return ErrNotFound
-		}
-		// The state guard is repeated in the WHERE clause because the SELECT above and
-		// this UPDATE are separate statements: a concurrent RevokeChannel runs on
-		// another connection and could land between them.
-		res, err := t.ExecContext(ctx, `
-UPDATE channel SET endpoint_b=?, station_b=?, state='open', opened_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE id=? AND endpoint_b IS NULL AND state='pending'`, ep.ID, nullStr(ep.StationID), cur.ID)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n != 1 {
-			return ErrNotFound
-		}
-		if _, err := t.ExecContext(ctx, `
-UPDATE pairing_code SET consumed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, pcID); err != nil {
-			return err
-		}
-		ch, err = channelByRowID(ctx, t, cur.ID)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return ch, nil
-}
+// TWO DEFECTS PAID FOR HERE ARE WORTH KEEPING, because both are about the CHANNEL table, which
+// survives. A channel opened by pairing code between two station-bound endpoints wrote NULL into
+// station_a/station_b, so the predicate finding "open channels between these two stations" could
+// not see it: suspending the link left the channel open while the console counted zero live
+// channels and reported the operation complete. And a second endpoint of a station that already
+// held a seat matched neither the rowid check nor the schema's CHECK (endpoint_b <> endpoint_a),
+// so it took the free seat and the channel ended up with station_a = station_b, resolving that
+// station's peer to itself.
 
 // PeerSeatOwner reports the owner token and station binding of the seat OPPOSITE ep on a channel.
 //
@@ -553,6 +414,22 @@ func (s *Store) OpenLinkedChannel(ctx context.Context, a, b *Endpoint, ownerActo
 	if a.StationID == "" || b.StationID == "" {
 		return nil, ErrDenied
 	}
+	// A STATION MUST NOT BECOME ITS OWN PEER, and the rowid check above does not say that.
+	//
+	// The deleted join path had this guard and paid for it: its re-join check compared endpoint
+	// ROWIDS, and the schema's CHECK (endpoint_b <> endpoint_a) catches only the same literal
+	// rowid — so a SECOND endpoint of a station that already held a seat matched neither, took the
+	// free one, and the channel ended up with station_a = station_b, resolving that station's peer
+	// to itself. Every message it sent came back as mail from a peer.
+	//
+	// UNREACHABLE TODAY AND KEPT ANYWAY. A station has exactly one mailbox now — MailboxFor is
+	// get-or-create by station — so two endpoints of one station is not a state the supported paths
+	// can produce. The guard costs one comparison, and the alternative is a channel that looks
+	// ordinary in every listing while being a loop.
+	if a.StationID == b.StationID {
+		return nil, ErrDenied
+	}
+
 	var out *Channel
 	err := s.tx(ctx, func(t *sql.Tx) error {
 		// An existing OPEN channel between these two STATIONS is reused, not

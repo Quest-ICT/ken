@@ -532,7 +532,7 @@ func runServe(args []string) {
 			}
 		})
 		registerCommCollectors(reg, commStore, commHandler)
-		log.Printf("COMM: inter-session communication ENABLED at /comm/mcp + console at /comm (db=%s) — requires a dedicated token with the 'comm' scope", commStore.Path())
+		log.Printf("COMM: inter-session communication served from the single machine surface at /mcp, console at /comm (db=%s)", commStore.Path())
 		// The one settings ordering nothing else guards. Logged rather than clamped or
 		// refused: the operator's intent is legitimate and only they can choose which of
 		// the two values should move. Silent on a sound configuration.
@@ -1045,7 +1045,6 @@ func commLimits(s *settings.Snapshot) comm.Limits {
 		BodyRetentionSeconds:  s.CommBodyRetentionSec,
 		MetadataTTLSeconds:    s.CommMetadataTTLSec,
 		ReplyDeadlineSeconds:  s.CommReplyDeadlineS,
-		PairingCodeTTLSeconds: s.CommPairingCodeTTLS,
 
 		FilesEnabled:     s.CommFilesEnabled,
 		FileMaxBytes:     int64(s.CommFileMaxMB) << 20,

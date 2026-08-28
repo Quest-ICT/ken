@@ -34,17 +34,7 @@ func TestPollScopeFilterDrainsOneConversationAndHidesTheRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := dirComm.MintPairingCode(ctx, 42, "hub<->sender")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := dirComm.JoinChannel(ctx, me, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := dirComm.JoinChannel(ctx, sender, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, dirComm, me, sender, "hub<->sender")
 	if !ch.Open() {
 		t.Fatalf("setup: channel state %q — nothing below would be testing what it claims", ch.State)
 	}

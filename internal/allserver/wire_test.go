@@ -145,7 +145,7 @@ func TestTheUnifiedEndpointServesOneWholeSetOfInstructions(t *testing.T) {
 			t.Errorf("the returned instructions never mention %q — a session reading this would never learn that surface exists", family)
 		}
 	}
-	if len(out.Tools) < 40 {
+	if len(out.Tools) < 35 {
 		t.Errorf("the answer lists %d tools; with per-tool rules behind ken_instructions{tool:\"…\"}, "+
 			"an incomplete list is a session that cannot discover what it may ask about", len(out.Tools))
 	}

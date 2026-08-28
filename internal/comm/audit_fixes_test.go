@@ -7,34 +7,42 @@ import (
 	"testing"
 )
 
-// A human's revoke is a brake. A still-valid pairing code must not let the second
-// session flip a revoked channel back open.
-func TestRevokedPendingChannelCannotBeReopened(t *testing.T) {
+// A human's revoke is a brake, and re-opening a channel must not undo it.
+//
+// The original hazard was a still-valid pairing code: one session joined, the human revoked, and
+// the second session's join would flip the revoked row back to 'open'. The code is gone, and with
+// it the two-sided join — so the surviving question is whether OpenLinkedChannel, which REUSES an
+// existing open channel between two stations, can resurrect a revoked one. It must not: reuse is
+// scoped to state='open', so a revoked channel is passed over and a new one is created rather than
+// the human's decision being quietly reversed.
+func TestARevokedChannelIsNeverReopened(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
 	a := mailbox(t, st, "dev", "tok-a")
 	b := mailbox(t, st, "test", "tok-b")
-	code, err := st.MintPairingCode(ctx, 42, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, a, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, a, b, "")
 	if err := st.RevokeChannel(ctx, ch.ChannelID); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := st.JoinChannel(ctx, b, code); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("second join on a revoked channel: want ErrNotFound, got %v", err)
+	again := openChannel(t, st, a, b, "")
+	if again.ChannelID == ch.ChannelID {
+		t.Fatal("opening a channel between the same two stations returned the REVOKED one — the " +
+			"human's brake would be released by the next call that wanted a channel")
 	}
 	list, err := st.ListChannelsForConsole(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].State != "revoked" {
-		t.Fatalf("channel state after refused join: %+v", list)
+	var revoked int
+	for _, c := range list {
+		if c.State == "revoked" {
+			revoked++
+		}
+	}
+	if revoked != 1 {
+		t.Fatalf("%d revoked channels after one revoke; the row must survive as the record of the "+
+			"decision: %+v", revoked, list)
 	}
 }
 
@@ -466,16 +474,7 @@ func TestChannelCarriesPairingLabel(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a := mailbox(t, st, "public-dev", "tok-a")
 	b := mailbox(t, st, "ken-prod-ops", "tok-b")
-	code, err := st.MintPairingCode(ctx, 42, "Ken dev <-> prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, b, code); err != nil {
-		t.Fatal(err)
-	}
+	openChannel(t, st, a, b, "Ken dev <-> prod")
 
 	rows, err := st.ListChannelsForConsole(ctx)
 	if err != nil {
@@ -498,16 +497,7 @@ func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
 	_ = channelID
 	c := mailbox(t, st, "x", "tok-c")
 	d := mailbox(t, st, "y", "tok-d")
-	code, err := st.MintPairingCode(ctx, 42, "") // no label
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, c, code); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, d, code); err != nil {
-		t.Fatal(err)
-	}
+	openChannel(t, st, c, d, "")
 	rows, err := st.ListChannelsForConsole(ctx)
 	if err != nil {
 		t.Fatal(err)

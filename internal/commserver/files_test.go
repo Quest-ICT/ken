@@ -60,17 +60,7 @@ func newFileFixture(t *testing.T) *fileFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := cs.MintPairingCode(ctx, 1, "t")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cs.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := cs.JoinChannel(ctx, b, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, cs, a, b, "t")
 
 	deps := Deps{Comm: cs, Store: kb}
 	h := NewHTTPHandler(deps)

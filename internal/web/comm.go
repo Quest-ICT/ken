@@ -31,15 +31,14 @@ import (
 const spaceForSession = int64(1)
 
 func (a *app) handleComm(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.renderComm(w, r, sess, "")
+	a.renderComm(w, r, sess)
 }
 
-// The `reveal` type is deleted with secret rotation: nothing is ever shown once any more.
+// The `reveal` type is deleted with secret rotation, and the newCode parameter with the pairing
+// code: nothing on this page is shown once any more, because nothing on it is a secret.
 
-// renderComm draws the console. newCode, when non-empty, is a just-minted pairing
-// code shown ONCE — only its hash is stored, so it can never be shown again. rot
-// carries a just-rotated endpoint secret under the same one-time contract.
-func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Session, newCode string) {
+// renderComm draws the console.
+func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Session) {
 	if a.comm == nil {
 		http.NotFound(w, r)
 		return
@@ -55,12 +54,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	channels, err := a.comm.ListChannelsForConsole(ctx)
 	if err != nil {
 		log.Printf("web: comm channels: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	codes, err := a.comm.ListPendingCodes(ctx)
-	if err != nil {
-		log.Printf("web: comm codes: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -228,9 +221,9 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	binders := []credential{}
 
 	a.render(w, r, sess, "comm", map[string]any{
-		"Endpoints": eps, "Channels": channels, "Codes": codes, "Stats": stats,
+		"Endpoints": eps, "Channels": channels, "Stats": stats,
 		"Owners": owners, "Binders": binders,
-		"NewCode": newCode, "CommURL": a.publicCommURL(r), "Fingerprint": fp,
+		"CommURL": a.publicCommURL(r), "Fingerprint": fp,
 	})
 }
 
@@ -255,34 +248,11 @@ func (a *app) handleCommCount(w http.ResponseWriter, r *http.Request, _ *store.S
 	fmt.Fprintf(w, `{"count":%d}`, n)
 }
 
-// handleCommPair mints a pairing code. This is the human act the whole design
-// depends on: the operator gives the code to exactly the two sessions they intend
-// to connect, and no agent can produce one.
-func (a *app) handleCommPair(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if a.comm == nil {
-		http.NotFound(w, r)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody) // before checkCSRF, which parses the form
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	_ = r.ParseForm()
-	label := strings.TrimSpace(r.FormValue("label"))
-	if len(label) > 190 {
-		flashRedirect(w, r, "/comm", "flash.comm_label_too_long", "")
-		return
-	}
-	code, err := a.comm.MintPairingCode(r.Context(), sess.ActorID, label)
-	if err != nil {
-		flashRedirect(w, r, "/comm", "flash.comm_pair_failed", err.Error())
-		return
-	}
-	// Render directly rather than redirecting, so the one-time code survives to the
-	// page — the same reason token creation does.
-	a.renderComm(w, r, sess, code)
-}
+// handleCommPair IS DELETED, with the pairing code it minted. It was "the human act the whole
+// design depends on" — the operator handed a code to exactly the two sessions they intended to
+// connect, and no agent could produce one. Vlad removed that gate in the 2026-08-27 wave; a
+// relationship is created by the first message and the console's control is Suspend, which unlike
+// a code the human can also undo.
 
 // handleCommRevokeChannel is the brake: it closes a channel permanently.
 func (a *app) handleCommRevokeChannel(w http.ResponseWriter, r *http.Request, sess *store.Session) {

@@ -19,82 +19,30 @@
   </div>
 </div>
 
-<div class="grid-2">
-  <!-- mint a pairing code: the human act the design depends on -->
-  <section>
-    <div class="card">
-      <div class="card__head"><h2 class="h3">{{.T "comm.pair_heading"}}</h2></div>
-      <div class="card__body">
-        <p class="help">{{.T "comm.pair_help"}}</p>
-        <form method="post" action="/comm/pair">
-          <input type="hidden" name="csrf" value="{{.Session.CSRF}}">
-          <div class="field">
-            <label for="c-label">{{.T "comm.pair_label"}}</label>
-            <input class="input" id="c-label" name="label" type="text" placeholder="dev &lt;-&gt; test" title="{{.T "comm.pair_label_help"}}">
-            <span class="help">{{.T "comm.pair_label_help"}}</span>
-          </div>
-          <button class="btn btn--primary" type="submit" title="{{.T "comm.pair_submit_help"}}">{{.T "comm.pair_submit"}}</button>
-        </form>
-      </div>
-    </div>
-  </section>
-
-  <!-- one-time code reveal -->
-  <section>
-    {{if .Data.NewCode}}
-    <div class="card card--accent">
-      <div class="card__head"><h2 class="h3">{{.T "comm.new_code_heading"}}</h2></div>
-      <div class="card__body">
-        <p class="help">{{.T "comm.new_code_help"}}</p>
-        <p><code class="mono" style="font-size:1.3rem;letter-spacing:.08em">{{.Data.NewCode}}</code></p>
-        <p class="help">{{.T "comm.new_code_endpoint"}}</p>
-        <p><code class="mono">{{.Data.CommURL}}</code></p>
-      </div>
-    </div>
-    {{else}}
-    <div class="card">
-      <div class="card__head"><h2 class="h3">{{.T "comm.stats_heading"}}</h2></div>
-      <div class="card__body">
-        <ul class="plain">
-          <li>{{.T "comm.stat_endpoints"}}: <b>{{.Data.Stats.Endpoints}}</b></li>
-          <li>{{.T "comm.stat_open_channels"}}: <b>{{.Data.Stats.OpenChannels}}</b></li>
-          <li>{{.T "comm.stat_unacked"}}: <b>{{.Data.Stats.Unacked}}</b></li>
-          <li>{{.T "comm.stat_bytes"}}: <b>{{.Data.Stats.BodyBytes}}</b></li>
-          <li>{{.T "comm.stat_files"}}: <b>{{.Data.Stats.Files}}</b></li>
-          <li>{{.T "comm.stat_file_bytes"}}: <b>{{.Data.Stats.FileBytes}}</b></li>
-        </ul>
-      </div>
-    </div>
-    {{end}}
-  </section>
-</div>
-
-<!-- codes awaiting redemption -->
-{{if .Data.Codes}}
-<section style="margin-top:var(--sp-5)">
+<!-- THE PAIRING-CODE PANEL, ITS ONE-TIME REVEAL AND THE PENDING-CODES TABLE ARE ALL GONE.
+     Minting a code was "the human act the whole design depends on"; Vlad removed that gate in the
+     2026-08-27 wave, and a relationship now begins with the first message. The console's control
+     over it is Suspend on the /stations links table — which, unlike a code, is a decision they can
+     also undo. The reveal and the table are deleted rather than left behind a condition: neither
+     could ever be true again, so both would have rendered as working markup nothing can reach.
+     (Written without a template action in it, deliberately — Go parses actions inside HTML
+     comments, so naming one here made the page fail to parse at startup.) -->
+<section>
   <div class="card">
-    <div class="card__head"><h2 class="h3">{{.T "comm.pending_heading"}}</h2></div>
-    <div class="table-wrap">
-      <table class="table">
-        <thead><tr>
-          <th>{{.T "comm.col_label"}}</th><th>{{.T "comm.col_status"}}</th>
-          <th>{{.T "comm.col_expires"}}</th><th>{{.T "comm.col_created"}}</th>
-        </tr></thead>
-        <tbody>
-        {{range .Data.Codes}}
-          <tr>
-            <td>{{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}</td>
-            <td>{{if .Joined}}<span class="badge badge--accent badge--sm">{{$.T "comm.status_awaiting_second"}}</span>{{else}}<span class="badge badge--sm">{{$.T "comm.status_unused"}}</span>{{end}}</td>
-            <td class="mono">{{localdeadline .ExpiresAt}}</td>
-            <td class="mono">{{localtime .CreatedAt}}</td>
-          </tr>
-        {{end}}
-        </tbody>
-      </table>
+    <div class="card__head"><h2 class="h3">{{.T "comm.stats_heading"}}</h2></div>
+    <div class="card__body">
+      <ul class="plain">
+        <li>{{.T "comm.stat_endpoints"}}: <b>{{.Data.Stats.Endpoints}}</b></li>
+        <li>{{.T "comm.stat_open_channels"}}: <b>{{.Data.Stats.OpenChannels}}</b></li>
+        <li>{{.T "comm.stat_unacked"}}: <b>{{.Data.Stats.Unacked}}</b></li>
+        <li>{{.T "comm.stat_bytes"}}: <b>{{.Data.Stats.BodyBytes}}</b></li>
+        <li>{{.T "comm.stat_files"}}: <b>{{.Data.Stats.Files}}</b></li>
+        <li>{{.T "comm.stat_file_bytes"}}: <b>{{.Data.Stats.FileBytes}}</b></li>
+      </ul>
     </div>
   </div>
 </section>
-{{end}}
+
 
 <!-- channels -->
 <section style="margin-top:var(--sp-5)">

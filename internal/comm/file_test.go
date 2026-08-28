@@ -403,17 +403,7 @@ func TestAReplacementSessionCanDownloadItsStationsAttachment(t *testing.T) {
 
 	sender := stationEndpoint(t, st, "tok-send", "st-sender")
 	first := stationEndpoint(t, st, "tok-1", "st-recv")
-	code, err := st.MintPairingCode(ctx, 42, "sender<->recv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, sender, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, first, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, sender, first, "sender<->recv")
 
 	content := []byte("bytes for whoever is staffing st-recv")
 	res, err := st.OfferFile(ctx, sender, FileAddr{ChannelID: ch.ChannelID}, FileOffer{
@@ -460,17 +450,7 @@ func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
 
 	sender := stationEndpoint(t, st, "tok-send", "st-sender")
 	recv := stationEndpoint(t, st, "tok-r", "st-recv")
-	code, err := st.MintPairingCode(ctx, 42, "sender<->recv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, sender, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, recv, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, sender, recv, "sender<->recv")
 	content := []byte("not for you")
 	res, err := st.OfferFile(ctx, sender, FileAddr{ChannelID: ch.ChannelID}, FileOffer{
 		Name: "x.bin", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
@@ -514,17 +494,7 @@ func TestARevokedPredecessorDoesNotStrandItsStationsFiles(t *testing.T) {
 
 	sender := stationEndpoint(t, st, "tok-send", "st-sender")
 	first := stationEndpoint(t, st, "tok-1", "st-recv")
-	code, err := st.MintPairingCode(ctx, 42, "sender<->recv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, sender, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, first, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, sender, first, "sender<->recv")
 
 	offer := func(name string) string {
 		t.Helper()

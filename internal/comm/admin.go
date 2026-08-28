@@ -70,41 +70,8 @@ ORDER BY c.created_at DESC`)
 	return out, rows.Err()
 }
 
-// PendingCode is an unredeemed pairing code shown to the operator so they can see
-// what they minted. The code itself is NOT recoverable — only its hash is stored —
-// so this shows metadata only; a lost code is re-minted, never recovered.
-type PendingCode struct {
-	Label     string
-	Joined    int // 0 = nobody has redeemed it yet, 1 = waiting for the second session
-	ExpiresAt string
-	CreatedAt string
-}
-
-// ListPendingCodes returns codes that are minted, unexpired, and not yet fully
-// consumed.
-func (s *Store) ListPendingCodes(ctx context.Context) ([]PendingCode, error) {
-	rows, err := s.R.QueryContext(ctx, `
-SELECT COALESCE(p.label,''),
-       CASE WHEN p.channel_id IS NULL THEN 0 ELSE 1 END,
-       p.expires_at, p.created_at
-FROM pairing_code p
- WHERE p.consumed_at IS NULL
-  AND p.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-ORDER BY p.created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []PendingCode
-	for rows.Next() {
-		var c PendingCode
-		if err := rows.Scan(&c.Label, &c.Joined, &c.ExpiresAt, &c.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
+// PendingCode AND ListPendingCodes ARE DELETED, with the pairing code they described. The console
+// listed unredeemed codes so an operator could see what they had minted; nothing mints one now.
 
 // Stats is the operator's at-a-glance view, and the source for metrics.
 type Stats struct {
@@ -201,8 +168,7 @@ SELECT
 
 // ConsoleFingerprint returns a single number that changes whenever the console's
 // view of a space would look different: an endpoint registered or revoked, a
-// channel created/opened/revoked, a pairing code minted or consumed, or messages
-// flowing. It backs the /comm page's live auto-refresh — the page reloads when
+// channel created/opened/revoked, or messages flowing. It backs the /comm page's live auto-refresh — the page reloads when
 // this diverges from the value it was rendered with, and updates its "last
 // checked" stamp on every poll.
 //
@@ -221,8 +187,6 @@ SELECT
   (SELECT COUNT(*) FROM endpoint WHERE revoked_at IS NULL) * 2
 + (SELECT COUNT(*) FROM channel) * 3
 + (SELECT COUNT(*) FROM channel  WHERE state='open') * 5
-+ (SELECT COUNT(*) FROM pairing_code WHERE consumed_at IS NULL
-     AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')) * 7
 + (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
      WHERE EXISTS (SELECT 1 FROM delivery d
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))) * 11`).Scan(&n)

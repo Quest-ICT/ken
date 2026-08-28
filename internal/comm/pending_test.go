@@ -136,17 +136,7 @@ func TestASuccessorEndpointSeesTheCountOnTheChannelItInherited(t *testing.T) {
 
 	first := stationEndpoint(t, st, "tok-1", "st-ops")
 	peer := mailbox(t, st, "peer", "tok-peer")
-	code, err := st.MintPairingCode(ctx, 42, "ops<->peer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, first, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, first, peer, "ops<->peer")
 	if _, err := st.Send(ctx, peer, ch.ChannelID, "for whoever is staffing ops", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -180,31 +170,12 @@ func TestThePendingCountDoesNotLeakChannelsTheStationIsNotOn(t *testing.T) {
 
 	mine := stationEndpoint(t, st, "tok-mine", "st-mine")
 	peer := mailbox(t, st, "peer", "tok-peer")
-	code, err := st.MintPairingCode(ctx, 42, "mine<->peer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, mine, code); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, peer, code); err != nil {
-		t.Fatal(err)
-	}
+	openChannel(t, st, mine, peer, "mine<->peer")
 
 	// A channel between two OTHER endpoints, with mail on it.
 	x := mailbox(t, st, "x", "tok-x")
 	y := mailbox(t, st, "y", "tok-y")
-	code2, err := st.MintPairingCode(ctx, 42, "x<->y")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, x, code2); err != nil {
-		t.Fatal(err)
-	}
-	other, err := st.JoinChannel(ctx, y, code2)
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := openChannel(t, st, x, y, "x<->y")
 	if _, err := st.Send(ctx, y, other.ChannelID, "none of your business", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -267,17 +238,7 @@ func TestPendingTotalSpansChannelRoomAndBroadcast(t *testing.T) {
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
 	// One channel message...
-	code, err := st.MintPairingCode(ctx, 42, "a<->b")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, alpha, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, beta, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, alpha, beta, "a<->b")
 	if _, err := st.Send(ctx, beta, ch.ChannelID, "channel", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -407,17 +368,7 @@ func TestWaitingForYouSeesRoomMailOnAChannelSend(t *testing.T) {
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
 	// A channel for alpha to send on, and room mail waiting for alpha meanwhile.
-	code, err := st.MintPairingCode(ctx, 42, "a<->b")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, alpha, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, beta, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, alpha, beta, "a<->b")
 	if _, err := st.SendToRoom(ctx, beta, "ops", "you have not read this", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -824,17 +775,7 @@ func TestAPairingCodeChannelRecordsItsAuthorisingStations(t *testing.T) {
 	a := stationEndpoint(t, st, "tok-a", "st-alpha")
 	b := stationEndpoint(t, st, "tok-b", "st-beta")
 
-	code, err := st.MintPairingCode(ctx, 42, "alpha<->beta")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, b, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, a, b, "alpha<->beta")
 
 	n, err := st.CountOpenChannelsBetweenStations(ctx, "st-alpha", "st-beta")
 	if err != nil {
@@ -1154,17 +1095,7 @@ func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
 	beta := stationEndpoint(t, st, "tok-b", "st-beta")
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
-	code, err := st.MintPairingCode(ctx, 42, "a<->b")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, alpha, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, beta, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := openChannel(t, st, alpha, beta, "a<->b")
 	if _, err := st.Send(ctx, beta, ch.ChannelID, "channel", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}

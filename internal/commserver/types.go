@@ -8,63 +8,28 @@ package commserver
 // Evolve them additively (keep old fields / old-arity behaviour), as with any
 // released surface.
 //
-// Every tool except comm_register carries endpoint_id + endpoint_secret. That is
-// not ceremony: the bearer token identifies a MACHINE (the operating convention is
-// one token per machine), so the endpoint pair is what identifies the SESSION
-// within it. Without it, two sessions sharing a token could poll and ack each
-// other's messages.
-
-type registerIn struct {
-	// SessionKey claims this endpoint for THIS conversation — no secret is issued and nothing has
-	// to be written to a file. A chat session with no disk can only use comm this way.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"STRONGLY RECOMMENDED: a stable id for THIS conversation. Ken claims an endpoint for it and returns NO secret — you drive it by sending this same key. Calling again with the same key returns the same endpoint after a restart. Send it even if your tool schema does not list it"`
-	Label      string `json:"label,omitempty" jsonschema:"optional; a human-readable name for this session, e.g. 'dev' or 'test'. Decoration only — never an address"`
-	HostHint   string `json:"host_hint,omitempty" jsonschema:"optional; an opaque string identifying this machine, used only as a hint about whether a same-host file handoff is worth attempting. NEVER authorization, and an absent hint matches nothing"`
-}
-
-// registerOut carries NO station fields, because registration no longer binds.
+// THE ENDPOINT CREDENTIAL IS GONE FROM ALL OF THEM. Every tool used to carry endpoint_id +
+// endpoint_secret, on the reasoning that the bearer token identified a MACHINE (one token per
+// machine, by convention) so the pair identified the SESSION within it — without which two sessions
+// sharing a token could poll and ack each other's mail.
 //
-// It used to. A voucher could be passed here, and a whole hazard lived in that: the
-// handler had already minted a secret shown exactly once, the MCP SDK discards
-// structured output when a handler returns an error, so a failed binding could
-// destroy the credential it had just created. The workaround was a BindingError
-// field reporting failure without failing — a second success path, existing only
-// because two unrelated operations shared one call.
-//
-// Binding moved to comm_bind, which is a plain tool with nothing to lose. That
-// deleted the hazard rather than guarding it, and it is also the stronger order:
-// register, WRITE YOUR SECRET DOWN, then bind.
-type registerOut struct {
-	// EndpointSecret is EMPTY on the claimed path, which is the point: a conversation that sent
-	// session_key has nothing to keep and nothing to write to a file. omitempty so its absence is
-	// visible rather than an empty string a session might dutifully store.
-	// SessionKeyEcho confirms which conversation claimed this endpoint, so a session can verify
-	// Ken received the key it sent rather than assume.
-	SessionKeyEcho string `json:"session_key_received,omitempty"`
-	// Note says what to do next, in the RESULT, because a session whose tool schema predates this
-	// will not know session_key exists — the same reason station_me carries its own guidance.
-	Note string `json:"note,omitempty"`
-}
+// A mailbox belongs to a STATION now, and session_key selects which station this call speaks for.
+// The separation the pair provided is still there; it is just no longer a secret anybody has to
+// write to a file.
 
-type joinIn struct {
-	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
-	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
-	// sessions are the population this exists for.
-	SessionKey  string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
-	PairingCode string `json:"pairing_code" jsonschema:"required; minted by your human in Ken's web UI. You cannot create one"`
-}
+// registerIn AND registerOut ARE DELETED with comm_register. Registration was how a session got a
+// mailbox and a secret; a station comes with one, so there is nothing to register and no secret to
+// return. The hazard they documented is worth keeping in mind if anything like them is built again:
+// the handler minted a secret shown exactly once, the MCP SDK discards structured output when a
+// handler returns an error, so a failed binding could destroy the credential it had just created.
 
-type joinOut struct {
-	ChannelID string `json:"channel_id"`
-	State     string `json:"state" jsonschema:"pending until both sessions have joined, then open"`
-	Open      bool   `json:"open"`
-}
+// joinIn AND joinOut ARE DELETED with comm_join and the pairing code it redeemed.
 
 type channelsIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 }
 
 type channelView struct {
@@ -168,13 +133,13 @@ type sendIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	// EXACTLY ONE of these three. channel_id is the pairing-code channel; to_room is a
 	// room you are in; to_room:"all" broadcasts to every station you share a room with;
 	// to_station is the peer station an approved link joins you to.
 	// No longer `required` individually — the handler enforces the choice, because
 	// "exactly one of" is not something a JSON schema can say.
-	ChannelID string `json:"channel_id,omitempty" jsonschema:"a pairing-code channel. Exactly one of channel_id, to_room or to_station"`
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"an open channel, from comm_channels. Exactly one of channel_id, to_room or to_station"`
 	ToRoom    string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of, or the literal \"all\" to reach every station you share a room with. Exactly one of channel_id, to_room or to_station"`
 	// ToStation is the addressing mode that needs no pairing code and no channel: a
 	// human approved a LINK between the two stations, and that approval is the standing
@@ -183,7 +148,7 @@ type sendIn struct {
 	// comm_channels and comm_directory both hand back the id to use. (comm_directory did
 	// NOT, for the whole of 3.12.0: the sentence was written and the field was not added.
 	// Fixed in 3.12.1 by making the sentence true rather than by narrowing it.)
-	ToStation        string `json:"to_station,omitempty" jsonschema:"a station_id an approved link joins you to — no pairing code, no channel. Get it from comm_channels (pairs) or comm_directory. Exactly one of channel_id, to_room or to_station"`
+	ToStation        string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — no channel, and no permission to obtain: the first message creates the link. Get it from comm_directory, which lists every station. Exactly one of channel_id, to_room or to_station"`
 	Body             string `json:"body" jsonschema:"required; the message text. Atomic and size-capped — there is no multi-part send"`
 	RequiresResponse bool   `json:"requires_response,omitempty" jsonschema:"optional; marks the message as owing a reply and arms a reply deadline"`
 	ReplyTo          string `json:"reply_to,omitempty" jsonschema:"optional; message_id of the request you are answering. Must be a message addressed to you on this channel"`
@@ -220,7 +185,7 @@ type pollIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey  string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey  string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	WaitSeconds int    `json:"wait_seconds,omitempty" jsonschema:"optional; how long to block waiting for a message. CLAMPED server-side, and the result tells you what you actually got: wait_seconds_granted is the real wait, and wait_clamped_from appears when yours was shortened. Prefer one long wait over frequent short polls — a parked call costs one request however long it waits. Pass -1 to return immediately"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"optional; max messages to return. Default 50, MAXIMUM 100 — a larger value returns 100, not fewer"`
 	Scope       string `json:"scope,omitempty" jsonschema:"optional; return only messages in ONE scope, so a hub can drain a single conversation instead of its whole inbox. Copy it verbatim from the scope field of a polled message, or build it: 'ch:'+channel_id, 'r:'+room_id. Other scopes are HIDDEN from this call, not empty — an empty scoped result does not mean your inbox is empty; comm_channels says what is waiting where and delivers nothing. The result echoes scope_filter: if that field is missing, the server predates this argument and ignored what you passed"`
@@ -348,7 +313,7 @@ type ackIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	MessageID  string `json:"message_id,omitempty" jsonschema:"the message you finished processing. Either this, or channel_id + ack_up_to_seq"`
 	ChannelID  string `json:"channel_id,omitempty" jsonschema:"with ack_up_to_seq, acks everything from the peer up to that sequence number"`
 	AckUpToSeq int64  `json:"ack_up_to_seq,omitempty" jsonschema:"with channel_id, acks cumulatively"`
@@ -373,7 +338,7 @@ type fileOfferIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	// EXACTLY ONE OF THE THREE ADDRESSES. `channel_id` is no longer required, because a file
 	// is no longer channel-only: `to_room` reaches every member of a room with one offer and
 	// one charge against the file budget, and `to_station` reaches a linked peer with no
@@ -408,7 +373,7 @@ type fileGrantIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey   string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey   string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	AttachmentID string `json:"attachment_id" jsonschema:"required; from the polled message's file descriptor"`
 }
 
@@ -424,7 +389,7 @@ type directoryIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 }
 
 // directoryEntry keeps the CLAIM fields under their claim-bearing names (S8). A
@@ -517,7 +482,7 @@ type openLinkedIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	ToStation  string `json:"to_station" jsonschema:"required; the station to open a channel with, by NAME. A human must already have approved a link between your station and that one"`
 	Label      string `json:"label,omitempty" jsonschema:"optional; a human-readable name for the channel, shown in your human's console"`
 }
@@ -532,7 +497,7 @@ type bindIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 }
 
 type bindOut struct {
@@ -544,7 +509,7 @@ type unbindIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. Drives the endpoint this conversation claimed via comm_register, with NO endpoint_secret. Treat it as a credential — presenting it reads and acks this endpoint's mail"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 }
 
 type unbindOut struct {

@@ -25,7 +25,7 @@ import (
 // ones nobody would think to look at.
 func TestEveryToolBriefStandsAlone(t *testing.T) {
 	names := registerEverythingForDocs(t)
-	if len(names) < 40 {
+	if len(names) < 35 {
 		t.Fatalf("only %d tools registered; this gate is meant to cover the whole surface", len(names))
 	}
 	for _, n := range names {

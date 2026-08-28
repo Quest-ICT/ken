@@ -61,7 +61,6 @@ type Values struct {
 	CommBodyRetentionSec  int
 	CommMetadataTTLSec    int
 	CommReplyDeadlineS    int
-	CommPairingCodeTTLS   int
 	CommPollWaitMaxSec    int
 	// CommProvenanceWindowSec is how recently a token must have RECEIVED an
 	// inter-session message for a version it authors to be marked as possible
@@ -229,9 +228,6 @@ var Fields = []Field{
 	intField("comm_reply_deadline_sec", "Inter-session comms", "Reply deadline (seconds)",
 		"Default deadline for a message that requires a response; past it the sender is told the reply is overdue instead of waiting forever.",
 		func(v Values) int { return v.CommReplyDeadlineS }, func(v *Values, n int) { v.CommReplyDeadlineS = n }, 30, 7*24*3600),
-	intField("comm_pairing_code_ttl_sec", "Inter-session comms", "Pairing code lifetime (seconds)",
-		"How long a code you mint stays usable. Short is good: it only has to survive being pasted into two sessions.",
-		func(v Values) int { return v.CommPairingCodeTTLS }, func(v *Values, n int) { v.CommPairingCodeTTLS = n }, 30, 24*3600),
 	intField("comm_poll_wait_max_sec", "Inter-session comms", "Max long-poll wait (seconds)",
 		"Ceiling on how long a receive call may block. Clamped to 30 in code regardless: a wait that ties the client's tool timeout turns a successful empty poll into an error.",
 		func(v Values) int { return v.CommPollWaitMaxSec }, func(v *Values, n int) { v.CommPollWaitMaxSec = n }, 1, 30),
@@ -526,7 +522,6 @@ func DefaultsFromEnv() Values {
 		CommBodyRetentionSec:    24 * 3600,
 		CommMetadataTTLSec:      7 * 24 * 3600,
 		CommReplyDeadlineS:      3600,
-		CommPairingCodeTTLS:     900,
 		CommPollWaitMaxSec:      15,
 		CommProvenanceWindowSec: 3600,
 
