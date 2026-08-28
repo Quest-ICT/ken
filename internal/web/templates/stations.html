@@ -291,6 +291,11 @@
                  are — a page that shows nothing makes every post look the same. -->
             {{if .SessionKey}}<span class="badge badge--plain" title="{{$.T "stations.held_help"}}">{{$.T "stations.held"}}</span>{{else}}<span class="badge badge--plain" title="{{$.T "stations.unclaimed_help"}}">{{$.T "stations.unclaimed"}}</span>{{end}}
           </h3>
+          <!-- THE ID, ON THE CARD. Sessions address each other by station_id — comm_directory hands
+               it out and comm_send{to_station} spends it — so it is the identifier that appears in
+               a session's own account of what it did. A console showing only names leaves the human
+               unable to match the two, which is exactly the moment they come to this page. -->
+          <p class="help mono" title="{{$.T "stations.id_help"}}">{{$.T "stations.id"}}: <code>{{.StationID}}</code></p>
         </div>
         <div class="card__body">
           {{if .Purpose}}<p>{{.Purpose}}</p>{{end}}

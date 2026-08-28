@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -242,3 +243,55 @@ func TestTransferCollisionIsReportedWithTheCollidingNames(t *testing.T) {
 
 // TestEndpointRotationIsReachableOnlyByAnAuthenticatedCurator IS DELETED with rotation. There is
 // no secret to rotate, so there is no control to gate.
+
+// THE CONSOLE MUST SHOW THE ID SESSIONS ACTUALLY USE.
+//
+// A session addresses a peer by station_id: comm_directory hands it out, comm_send{to_station}
+// spends it, and it is what appears when a session tells its human what it did. The console showed
+// names only, so the one moment a human comes to this page — "which of these is the station my
+// session just named?" — was the moment it could not answer.
+//
+// ASSERTED AGAINST THE REAL ID, not against the presence of a label. A page that renders the word
+// "Station id" next to nothing, or next to the wrong station's id, passes any check that only looks
+// for the heading — and this file has shipped that mistake before, six green assertions answered by
+// neighbouring markup.
+func TestTheStationsConsoleShowsTheIdSessionsAddress(t *testing.T) {
+	st, ctx, cli, base, actorID := stationsHarness(t)
+	one, err := st.CreateStation(ctx, "alpha", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := st.CreateStation(ctx, "beta", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The label as the console renders it. A missing i18n key renders as the key itself, so
+	// anchoring on the English text also catches a bundle that lost it.
+	const label = "Station id"
+	page := get(t, cli, base+"/stations")
+	// CONTROL: the page rendered at all, and rendered these stations. Without it every assertion
+	// below would be about an error page.
+	if !strings.Contains(page, "alpha") || !strings.Contains(page, "beta") {
+		t.Fatal("the stations page does not list the stations; nothing below would mean anything")
+	}
+	// SCOPED TO THE ELEMENT, NOT TO THE PAGE, and the first version of this test was not.
+	//
+	// A bare strings.Contains(page, stationID) passed with the display DELETED: every station id is
+	// already on this page inside the transfer dropdown's <option value>, the archive form's hidden
+	// input, and the vault table's data-listing-table key. The assertion was being answered by
+	// markup that has nothing to do with showing a human the id — the same shape that once put six
+	// green assertions in this file against a neighbour's output. Caught by removing the display
+	// and watching the test stay green, which is the only way this class is ever caught.
+	//
+	// So it matches the RENDERED PAIR: the label, then the id, close enough together to be the same
+	// element rather than two facts that happen to share a page.
+	for _, s := range []*store.Station{one, two} {
+		re := regexp.MustCompile(`(?s)` + regexp.QuoteMeta(label) + `.{0,60}?` + regexp.QuoteMeta(s.StationID))
+		if !re.MatchString(page) {
+			t.Errorf("station %q does not render %q beside its id %q — a human reading a session's "+
+				"report of \"I sent to %s\" has no way to tell which of these it means",
+				s.Name, label, s.StationID, s.StationID)
+		}
+	}
+}
