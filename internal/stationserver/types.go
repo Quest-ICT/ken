@@ -39,7 +39,7 @@ type dirOut struct {
 type meIn struct {
 	SelfDescribedAbout string   `json:"self_described_about,omitempty" jsonschema:"optional; how YOU describe what you know and are responsible for. A CLAIM, shown to others as self-described"`
 	SelfDescribedTags  []string `json:"self_described_tags,omitempty" jsonschema:"optional; short self-declared topic tags"`
-	StationLabel      string   `json:"station_label,omitempty" jsonschema:"optional; a LABEL for a station being created — the folder or project you are working in. Purely so your human can recognise it in the console; the identity is session_key, and the label stays renameable"`
+	StationLabel       string   `json:"station_label,omitempty" jsonschema:"optional; a LABEL for a station being created — the folder or project you are working in. Purely so your human can recognise it in the console; the identity is session_key, and the label stays renameable"`
 	// SessionKey is how a conversation says WHICH station is its own, and it is the whole
 	// mechanism now that identity has moved out of the connector. See migration 0023.
 	SessionKey string `json:"session_key,omitempty" jsonschema:"STRONGLY RECOMMENDED: a stable id for THIS CONVERSATION, so you return to the same station after a client restart instead of minting a new one. In Claude Code it is the conversation UUID in your transcript path. IF YOU HAVE NO SUCH ID (a claude.ai chat cannot see its own): invent one random string, reuse it all conversation, and state it in your reply so the transcript carries it across a reload. Send the SAME value every time this conversation calls; a new conversation sends a new one and gets its own station. It selects a station and authorises nothing"`

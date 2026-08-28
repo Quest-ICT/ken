@@ -15,7 +15,140 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-_Nothing yet._
+### 4.0.0 — THE BREAKING WAVE (staged here; not yet tagged)
+
+**MAJOR. SCHEMA CHANGE. Rule 4 is SUSPENDED for this release by decision** — a release carrying a
+migration normally carries nothing else, and staging this one would have meant several reconnects,
+which is exactly what it exists to avoid. `ken.db` **24 → 26**, `comm.db` **19 → 20**.
+
+**Every session must reconnect. Nothing is migrated.** Vlad, ruling on both: *"I prefer breaking
+them now that I can reconfigure every existing session rather than keep workspace laying around for
+future users"*, and *"Do not waste time on migrating existing 'anything'. Anybody using Ken after
+this upgrade — including you — either is able to use it after the upgrade or just gets off-board and
+on-board again."* It extends to `comm.db`, which may start empty. Everything durable survives:
+stations keep their ids, notebooks, tasks, lockers, vaults and links, and the knowledge base is
+untouched.
+
+Net **−6,377 lines** across 129 files. The operator briefing is
+[docs/UPGRADING.md](docs/UPGRADING.md).
+
+### Removed
+
+- **`/comm/mcp` and `/station/mcp`.** `/mcp` carries all **39** tools. The three-way split existed
+  because the surfaces took mutually exclusive credentials — a knowledge-base token could not send
+  messages, a comm token could not write knowledge — and that stopped being true when one OAuth
+  grant began carrying every scope family. What remained was three connectors, three consents and
+  three UUID prefixes in every tool list. A credential reaching `/mcp` must now carry **every**
+  capability and is refused at the transport otherwise, which turns a legacy connector into a loud
+  401 rather than a short tool list nobody can explain.
+- **Station keys**, their binding, the binding voucher and `ken station key`. A `kens_` credential
+  reached nothing once `/mcp` required a full grant. **`kens_` is a contract prefix**, which is one
+  of the reasons this release is a MAJOR rather than a carve-out.
+- **`comm_register`, `comm_bind`, `comm_unbind`**, the `endpoint_id` / `endpoint_secret` pair,
+  secret rotation, endpoint repointing, the console's reassign-a-mailbox form, and the idle-mailbox
+  sweep with `comm_endpoint_idle_sec`.
+- **The pairing code**, entirely: `comm_join`, `MintPairingCode`, `JoinChannel`, the console mint
+  form, its one-time reveal, the pending-codes table, `comm_pairing_code_ttl_sec`, and the
+  `pairing_code` table (comm migration 0020).
+- **`station_link_request`** and the console approval, with the denial ladder and
+  `station_link_denial`. A link is created by the first message.
+- **`X-Ken-Workspace` and `?workspace=`**, with the word *workspace* itself.
+- **The stations "switch"** — `stationsEnabled` was a constant `true` behind 19 dead guards, a nav
+  gate and a dashboard gate. Vlad: *"IN KEN NOTHING IS OPTIONAL!"* A test asserted the console could
+  be absent and passed against a 404 no deployment could produce.
+- `docs/RUNBOOK-ENDPOINT-MIGRATION.md`, whose subject no longer exists.
+
+### Changed
+
+- **A mailbox belongs to a STATION, not a session.** Vlad: *"I own a home and I don't have to go to
+  the post office to claim a mailbox — the mailbox resides in my home."* A successor session
+  inherits its predecessor's unread mail with nothing to re-bind, and there is no credential to
+  write to a `0600` file. The separation the endpoint secret provided survives on a better axis:
+  two sessions on one machine still cannot read each other's mail, because each resolves to its own
+  station.
+- **Links are born active, and SUSPEND replaces REVOKE.** Vlad: *"'suspend' button instead of revoke
+  button (I want to be able to 'resume' it). 'revoke' concept is out of the table."* The link is
+  still recorded — it is the audit trail and it carries the off-switch. Auto-linking will **not**
+  resurrect a suspended link, or the off-switch would be undone by the first thing it exists to
+  stop. Scoped to links only: channels still have a `revoked` state.
+- **The directory shows the whole estate.** `station_directory` and `comm_directory` list every live
+  station rather than only the published and already-linked. **This shipped WITH the gate removal
+  because it had to** — ken-prod-ops named the consequence of doing one without the other: a session
+  goes from "cannot reach anyone because not linked" to "cannot reach anyone because it does not
+  know who exists", the same outcome reached differently and harder to diagnose because nothing
+  errors. `published` and `linked` are still returned; they stopped being a filter and stayed as
+  facts.
+- **Per-tool rules live in `ken_instructions{tool:"<name>"}`.** Each tool's list entry is one
+  sentence plus a pointer. A tool description is captured when a conversation begins and never
+  refreshes; a result is computed per call, so this moves the detail to the side of the freeze that
+  stays fresh. One string per tool, not two — the brief is computed from the rules, so a summary
+  cannot disagree with its own detail.
+- **"Workspace" is retired; the word is "station".** No dual acceptance. Wire fields
+  `how_to_keep_this_workspace`, `workspace_just_created` and `workspace_name` become
+  `how_to_keep_this_station`, `station_just_created` and `station_label`. The default name a station
+  received when nothing better was available was literally `workspace` — the one place the retired
+  word would have kept appearing in front of a human, on the newest stations rather than the oldest.
+- **One station resolver** (`internal/station.Resolve`), used by both surfaces. The `?station=`
+  promotion used to live in the station middleware, and comm handlers saw its effect only because
+  `allserver` wired one middleware inside the other — a wiring order nothing asserted.
+- The console shows each station's **id**, which is what sessions address and what appears in a
+  session's own account of what it did.
+
+### Fixed
+
+- **A test was green because its harness lacked wiring production has.** The HTTP send test asserted
+  that a send to an unlinked station was refused; it kept passing after auto-linking shipped because
+  the auto-link push went through an **optional** `SyncLinkMirror` hook that was nil in that
+  harness. The link landed in `ken.db`, `comm.db` never heard, and the send refused with "no
+  approved link joins you" — naming as missing a permission the handler had created microseconds
+  earlier. The hook is deleted; the send path pushes the mirror itself.
+- **`ken_instructions` returned a third of the answer.** Three packages each registered it, correct
+  when there were three servers. `mcp.AddTool` *"adds a Tool to the server, or replaces one with the
+  same name"*, so the last registration won and the tool returned one surface's block, correctly
+  formatted, with nothing to suggest two thirds were missing. Every test stayed green: the
+  per-package tests connect to their own handlers, and the audit test asserted all three packages
+  registered it — which they did, and which **was** the defect. A wire test now reads the served
+  surface.
+- **The console rendered a "Mint key" form posting to a route deleted with the station keys**, four
+  lines below a comment reading "THE KEYS TABLE IS GONE". `TestEveryFormActionHasARoute` now checks
+  every template's `action` against the registered routes — the build cannot check a string in HTML,
+  and no test drives a control nobody knows about.
+- **A station's mailbox could be reaped with mail waiting for it.** The idle sweep spared any mailbox
+  referenced by a message, an attachment or a channel seat — but a pair message is addressed to the
+  post, so its delivery row carries no recipient mailbox by design. `MailboxFor` recreates one on the
+  next call, so nothing would have errored while the station came back with a new id, no history, and
+  the directory reporting it unstaffed.
+- **`OpenLinkedChannel` had the self-peer hole the deleted join path had already closed.** It checked
+  rowids and empty stations, never whether the two stations were the same, so a channel could end up
+  with `station_a = station_b` and every message that station sent would come back as mail from a
+  peer. Unreachable today — a station has one mailbox — and guarded anyway, with a test that builds
+  the state by direct INSERT because a guard whose only proof is "nothing can reach it" is one
+  nobody has watched refuse.
+- **Retiring the station keys would have left `withCaller` accepting nothing, silently.** It
+  re-derives the principal per call so a `kb_save` presented with token B on a session opened by
+  token A is authored by B, it knew only station keys, and it returns the unmodified context on
+  failure. It and the middleware had already drifted to different credential vocabularies; both now
+  go through one `principalFromToken`.
+- Three refusals were instructing sessions into dead ends: `ErrNotAStation` named `comm_bind` and
+  the `X-Ken-Workspace` header, `ErrNotLinked` said to file `station_link_request` and wait for a
+  human, and `ErrUnknownStation` claimed a station must appear in an approved link to be known.
+
+### Documentation
+
+- `IDENTITY.md` says what runs rather than what was planned, with the three places the build
+  diverged from the design marked where they appear. **"Same folder, new conversation, same station"
+  is recorded as genuinely unsolved and deliberately deferred** — the console's reassign step covers
+  it, and the folder-key design waits until Vlad wants to think about it.
+- `COMM.md`, `STATIONS.md` and `MCP-TOOLS.md` carry a dated box saying what changed, and the
+  decision records that were superseded say what survived rather than only that something did.
+- `IDENTITY-CONTROLS.md` is banner-marked as a **snapshot of the system before the replacement** and
+  deliberately not rewritten: it is evidence gathered while the code still ran, and every verdict in
+  it was handed to an adversary instructed to refute it. Editing it afterwards would turn evidence
+  into a summary that happens to agree with the outcome.
+- `UPGRADING.md` states, at the top, that **3.30.0–3.42.0 shipped with no entries** — thirteen
+  releases, against a file whose own rule is that a break is recorded in the change that causes it.
+- `COMPATIBILITY.md` records that the COMM v2 promotion trigger has **not** fired: the channel is
+  still the noun the tool surface is built on, and one open item is enough to keep it from firing.
 
 ## [3.42.0] — 2026-08-27
 

@@ -8,6 +8,35 @@
 > **STATUS: FINDINGS, NOT A PLAN.** Nothing here schedules work. Several entries describe
 > defects in the code as it stands today; those are findings, and they are called out in
 > IDENTITY.md §9.6 rather than left buried in a table.
+>
+> ---
+>
+> ### **THIS IS A SNAPSHOT OF THE SYSTEM BEFORE THE REPLACEMENT. READ IT AS EVIDENCE, NOT AS A
+> DESCRIPTION OF WHAT RUNS.**
+>
+> The replacement landed, finishing in the breaking wave of **2026-08-27**. Whole families of
+> controls catalogued below are gone with the mechanisms they guarded: **endpoint secrets** and
+> every ownership re-check on them, **station keys** and their binding, **binding vouchers**,
+> **pairing codes**, **link approval** and its denial mute, and the **three-endpoint credential
+> separation** that several rows justify themselves by.
+>
+> **The document is deliberately not rewritten**, for the reason it exists: it is the record of what
+> each control was FOR, gathered while the code still ran, and every verdict here was handed to an
+> adversary instructed to refute it. Editing it after the fact would turn evidence into a summary of
+> what happened to agree with the outcome.
+>
+> **How the count actually came out.** Three controls were found to dissolve outright, and twenty
+> more "only once a stated condition holds". Every one of those conditions was met by the
+> replacement — one identity spanning all surfaces, an id in the transport that authorises nothing,
+> a station rather than a session owning the inbox — so the conditional deletions happened, in the
+> order the conditions came true. That is the document working as intended: nothing was deleted
+> because it looked unnecessary, and the twenty that came back carrying conditions are the ones that
+> would have been deleted wrongly.
+>
+> **What it is still good for:** before re-adding anything in this space, find its row. The rows are
+> where the reasoning is, and several of them describe a failure mode that is invisible rather than
+> absent — which is what "if removed: nothing would break and nobody would notice" means in the
+> dangerous half of its two senses.
 
 ## How to read it, and how far to trust it
 

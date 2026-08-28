@@ -42,15 +42,19 @@ and then the claim — not the reverse.
   anything, and the honest move was to take the version bump the rule asks for.
 - **Credential prefixes & cookie format** — and they are not all the same kind of thing, so the
   contract is stated per prefix rather than as one list:
-  - `ken_` — an API token presented as `Authorization: Bearer …` on `/mcp` and, when it carries the
-    `comm` scope, on `/comm/mcp`.
-  - `kens_` — a **station key**, presented the same way on `/station/mcp`. Distinct from `ken_`
-    because it additionally carries a station binding.
+  - `ken_` — an API token presented as `Authorization: Bearer …` on `/mcp`, which is now the ONE
+    machine endpoint and requires a token carrying every capability.
+  - `kens_` — a **station key**. **RETIRED IN 4.0.0.** It was a credential carrying a station
+    binding, presented on `/station/mcp`; that endpoint is deleted, nothing binds, and no `kens_`
+    value authenticates anything. Retiring a contract prefix is exactly the kind of break the MAJOR
+    rule exists for, and it is one of the reasons 4.0.0 is a MAJOR rather than a carve-out.
   - `kenc_` — an **OAuth client id**, not a bearer token and never presented as one.
 
   An issued credential of any of these shapes keeps working across MINOR/PATCH upgrades.
 - **HTTP endpoints an external client depends on** — `/mcp`, the OAuth 2.1
-  discovery / registration / authorize / token endpoints, and `/healthz`.
+  discovery / registration / authorize / token endpoints, and `/healthz`. **4.0.0 deleted
+  `/comm/mcp` and `/station/mcp`**, which were contract for their surfaces: `/mcp` carries every
+  tool, and a credential reaching it must carry every capability.
 - **The database schema is forward-compatible.** Upgrades only **add** migrations and
   never require a schema change to downgrade; your `data/ken.db` is preserved across
   upgrades. Downgrading a release *after* a newer migration has run is not supported —
@@ -71,9 +75,11 @@ and then the claim — not the reverse.
 - **The inter-session communication surface** ([docs/COMM.md](docs/COMM.md)) — its `comm_*`
   tools, endpoint ids, MCP endpoint path, and settings. COMM is **core, on by default, and
   supported**. It is excluded not for being optional — it is not, any more — but because the
-  surface is **mid-redesign**. Notice-messages are gone (3.4.0) and rooms have landed; what
-  remains is replacing pairing codes and channel-pair addressing with name-addressed send, and
-  **retiring the channel**, the central noun of the tool surface as it stands. Promoting it into the
+  surface is **mid-redesign**. Most of that redesign landed in **4.0.0**: notice-messages gone
+  (3.4.0), rooms shipped, name-addressed send replacing pairing codes and channel-pair addressing,
+  both human gates removed, and the mailbox moved from the session onto the station. **One item
+  remains, and it is the one that keeps this exclusion alive: retiring the channel**, the central
+  noun of the tool surface as it stands. Promoting it into the
   contract now would make that redesign a MAJOR bump, or force a release cycle of deprecated v1
   aliases for a shape nobody intends to keep, and buy a caller nothing in exchange. Until then
   it evolves **additively wherever it can**, and where it cannot the CHANGELOG says so plainly
@@ -94,6 +100,11 @@ and then the claim — not the reverse.
   byte-level contract when the COMM v2 redesign lands.** Stations are named here alongside COMM
   because that redesign changes how COMM addresses a station, not because either surface is
   optional.
+
+  **As of 4.0.0 the trigger has NOT fired**, and saying so is the point of stating it as a trigger:
+  the channel is still the noun `comm_open_channel`, `comm_channels` and `comm_send{channel_id}`
+  are built on. A reader who saw the rest of the redesign land could reasonably assume promotion
+  followed; it did not, and one open item is enough to keep it from firing.
 
 ## Deprecation policy
 

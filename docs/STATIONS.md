@@ -22,7 +22,7 @@
 >   voucher, and no sever-on-revocation. A session authenticates with the one OAuth grant, and
 >   `session_key` — a stable id for the conversation — selects which station it staffs. What used to
 >   be a credential is now a selector that authorises nothing.
-> - **`X-Ken-Workspace` and `?workspace=` are deleted**, with the word *workspace* itself: the term
+> - **`X-Ken-Workspace` and `?station=` are deleted**, with the word *station* itself: the term
 >   is **station**, everywhere, with no dual acceptance.
 > - **`station_link_request` is deleted.** A link is created by the FIRST MESSAGE and is born active.
 >   There is nothing to ask for and nobody to approve it; a human's control is **Suspend** on the
@@ -153,9 +153,9 @@ approves in the console and **types the name**. No tool writes `name`.
   while the name is taken (offering rename-on-unarchive).
 - **The chicken-and-egg is solved by a station-less key.** A `station` key may exist with
   `station_id` NULL. **Since 2026-08-25 such a session simply calls `station_me` and gets a
-  workspace** — named after its folder, working from the next call, with nothing to approve
+  station** — named after its folder, working from the next call, with nothing to approve
   (docs/IDENTITY.md §5). `station_request` remains for the one case that is still a decision: a
-  human who wants to name and approve a particular workspace themselves.
+  human who wants to name and approve a particular station themselves.
 
   > This paragraph used to say `station_request` was the only tool a station-less key could call,
   > which was true and was the deadlock's disguise: a key with no station could call it, and a
@@ -287,10 +287,18 @@ single-use **binding voucher** that `comm_register` accepts.
     hardcodes space 1. Writing it now lets the check tighten to `(endpoint, actor, space)` with no
     further migration.
 
-### S5a — Binding is `comm_bind`, never `comm_register` *(chosen: one path, one guarantee)*
+### S5a — Binding is `comm_bind`, never `comm_register` — **SUPERSEDED 2026-08-27: THERE IS NO BINDING**
 
-Registration mints a credential and stops. To bind: **`comm_register` → write the secret to disk →
-`comm_bind` with the workspace header — no voucher since 3.29.0.**
+> A station comes with a mailbox. `comm_register`, `comm_bind` and the secret written to disk are all
+> deleted, and the sequence this decision was about no longer has any steps.
+>
+> **The reasoning survives as a rule about SHAPES, which is why it is kept.** Its point was that one
+> operation must carry one guarantee: a voucher passed to *registration* could not name its redeemer,
+> because the endpoint did not exist yet, so that path could only ever carry the weaker promise — and
+> shipping two strengths under one name is worse than shipping one.
+
+The sequence it described: **`comm_register` → write the secret to disk → `comm_bind` with the
+`X-Ken-Workspace` header — no voucher since 3.29.0.**
 
 - **A voucher passed to registration cannot name its redeemer**, because the endpoint does not exist
   yet. That path could only ever carry the weaker guarantee, and shipping two strengths under one
@@ -589,7 +597,7 @@ advertised_at}`.
 
 **Station key** — an `api_token` row with `{actor_id, scopes, station_id (nullable), label,
 secret_sha256, created_at, last_used_at, retired_at, revoked_at}` and a `kens_` prefix. `station_id`
-NULL means the session has no workspace yet — `station_me` gives it one on the spot (§5); `station_request` is for when a human wants to name and approve it instead.
+NULL means the session has no station yet — `station_me` gives it one on the spot (§5); `station_request` is for when a human wants to name and approve it instead.
 
 **Endpoint** — unchanged from COMM plus `station_id` and `bound_by_station_key_id`. Still ephemeral,
 still swept, still the holder of a *reader's* credential.
@@ -887,25 +895,25 @@ on, and it was never gated on COMM's state either, because stations work with CO
   - Hearsay travels: an ask made mid-conversation is badged, because a peer can talk a station into
     asking and the request then reaches the human looking like its own idea.
 
-- **workspace reassignment** (3.38.0) — pointing a station at a **conversation key**, and the only
-  way back into an abandoned workspace. A session may adopt a station only while its `session_key`
+- **station reassignment** (3.38.0) — pointing a station at a **conversation key**, and the only
+  way back into an abandoned station. A session may adopt a station only while its `session_key`
   is NULL (§4 of docs/IDENTITY.md: the key *selects*, it never *authorises*), so when a conversation
-  dies the workspace it claimed is **sealed** — notes, tasks, locker and vault intact, and nothing
+  dies the station it claimed is **sealed** — notes, tasks, locker and vault intact, and nothing
   able to reach them. A human deciding who takes over is exactly the authority the claim path
   declines to infer from a session's say-so, which is why this is console-only.
 
   The recovery costs the human **no credential handling**: the session states a conversation key in
   its reply (a Claude Code session has a UUID; a chat session invents one), the human pastes that
-  string into the form, and the session's next `station_me` lands in the recovered workspace.
+  string into the form, and the session's next `station_me` lands in the recovered station.
   Nothing secret is displayed or transported.
   - **The key is TAKEN from whatever holds it, and the displacement is reported.** The first cut
     refused a key in use and that was wrong in the exact case the feature exists for: a chat session
-    asked for its key has usually already called `station_me`, so a fresh empty workspace already
-    answers to it. Nothing is destroyed by taking it — the displaced workspace keeps everything and
+    asked for its key has usually already called `station_me`, so a fresh empty station already
+    answers to it. Nothing is destroyed by taking it — the displaced station keeps everything and
     stays listed — so the safety is **disclosure**, not refusal.
-  - **An empty key releases** the workspace back to the pool, which is the undo.
-  - **Archived workspaces are refused**, or archive would be advisory.
-  - The station list shows **held** / **unclaimed** per workspace, because the operator's first
+  - **An empty key releases** the station back to the pool, which is the undo.
+  - **Archived stations are refused**, or archive would be advisory.
+  - The station list shows **held** / **unclaimed** per station, because the operator's first
     question is which posts are abandoned.
 
 ---

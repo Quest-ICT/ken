@@ -156,7 +156,7 @@ func onboardingHarness(t *testing.T) (Deps, *principal) {
 // call sites honest about what they are no longer doing.
 type wsRT struct {
 	token, station string
-	base             http.RoundTripper
+	base           http.RoundTripper
 }
 
 func (w wsRT) RoundTrip(r *http.Request) (*http.Response, error) {

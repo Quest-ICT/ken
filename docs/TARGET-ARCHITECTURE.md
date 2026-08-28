@@ -268,10 +268,12 @@ hard-won knowledge actually lives.
    columns serve `space_id` across 6 migration files — and **nothing can create a second space.**
    That machinery never served a requirement and now never will. It is also *upstream* of the
    credential problem: it is why a session must carry an owner identity at all.
-3. **A workspace is what a station already is.** Ken's own code says it — *"an endpoint is a
-   CONNECTION and a station is a POST"* — and Claude Code already keys MCP config by folder, so the
-   estate had converged on one station per folder with nobody designing it. The model is right; the
-   provisioning around it is what fails.
+3. **The durable identity Vlad is describing is what a STATION already is.** Ken's own code says it
+   — *"an endpoint is a CONNECTION and a station is a POST"* — and the estate had converged on one
+   station per folder with nobody designing it, because Claude Code keys MCP config by folder. The
+   model is right; the provisioning around it is what fails. *(This line originally called that
+   identity a "workspace". The word was retired in 4.0.0 — it named the thing a station already
+   was, which is what this point says.)*
 
 **The decisions are recorded in [IDENTITY.md](IDENTITY.md)**, written before any code, because the
 reasoning behind the current controls lives in scattered comments and in one session's context.
