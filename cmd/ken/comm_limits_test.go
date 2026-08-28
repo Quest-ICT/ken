@@ -25,7 +25,7 @@ func TestCommLimitsMapsEverySetting(t *testing.T) {
 		CommPollWaitMaxSec: 1007, CommProvenanceWindowSec: 1008,
 		CommFilesEnabled: true, CommFileMaxMB: 1010, CommFileBudgetMB: 1011,
 		CommFileMinFreeMB: 1012, CommFileTTLSec: 1013, CommGrantTTLSec: 1014,
-		CommEndpointIdleTTLSec: 1015, CommClaimLeaseSec: 1016,
+		CommClaimLeaseSec: 1016,
 	}
 	got := commLimits(&settings.Snapshot{Values: v})
 

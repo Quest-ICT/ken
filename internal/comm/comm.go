@@ -225,11 +225,10 @@ type Limits struct {
 	// GrantTTLSeconds bounds a transfer grant. Short on purpose: it only has to
 	// survive being handed to curl.
 	GrantTTLSeconds int
-	// EndpointIdleTTLSeconds is how long an endpoint with no traffic and no live
-	// attachment survives before the sweeper removes it (its channels cascade).
-	// Sessions register once and never unregister, so without this the row set
-	// grows forever under ordinary use.
-	EndpointIdleTTLSeconds int
+	// EndpointIdleTTLSeconds IS DELETED, with the reap it configured. It bounded a row set that
+	// grew because "sessions register once and never unregister" — and there is no registration:
+	// a mailbox belongs to a station, one row, reused forever. See Sweep step 5 for why keeping
+	// the reap would have been worse than merely useless.
 }
 
 // DefaultLimits are deliberately conservative: COMM shares a disk with the
@@ -281,8 +280,6 @@ func DefaultLimits() Limits {
 		FileBudgetBytes:  256 << 20,
 		FileMinFreeBytes: 512 << 20,
 		GrantTTLSeconds:  300,
-
-		EndpointIdleTTLSeconds: 7 * 24 * 3600,
 	}
 }
 

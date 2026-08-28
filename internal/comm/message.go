@@ -1078,50 +1078,30 @@ WHERE consumed_at IS NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
 			return err
 		}
 
-		// 5. Idle endpoints and their settled channels. Sessions register once each
-		//    and never unregister, so under NORMAL usage these rows accumulate
-		//    forever — the operator console and comm.db grow without bound, and an
-		//    agent loop could add rows freely. An endpoint unseen for the retention
-		//    window has no live session behind it; its channels cascade.
+		// 5. *** THE IDLE-MAILBOX REAP IS DELETED, BECAUSE WHAT IT BOUNDED NO LONGER GROWS. ***
 		//
-		//    The guard is load-bearing: a threshold of 0 would make "idle for 0
-		//    seconds" = "idle now" and delete EVERY endpoint with no message traffic
-		//    yet — including one that just registered and is mid-handshake. A retention
-		//    sweep must fail SAFE (do nothing) on a non-positive window, never sweep
-		//    everything. This is exactly the failure a dropped settings mapping caused
-		//    in 1.2.0, so the sweep now refuses to run without a positive window
-		//    regardless of how the window was configured.
+		//    Its own justification was the premise: "sessions register once each and never
+		//    unregister, so under NORMAL usage these rows accumulate forever." That was true when
+		//    every session called comm_register and got its own endpoint. comm_register is gone. A
+		//    mailbox belongs to a STATION — one row, created on first use, reused by every session
+		//    that ever staffs it — so the row set is bounded by the number of stations, and a human
+		//    creates those by hand at the console.
 		//
-		//    A CHANNEL SEAT IS NOT AN IDLE ROW, however quiet its endpoint is.
-		//    `channel.endpoint_a/endpoint_b` are ON DELETE CASCADE, and the sentence
-		//    above — "its channels cascade" — was written when an endpoint WAS the party.
-		//    Under stations it is a disposable reader of a relationship a human
-		//    authorised, and the successor is promised it inherits that relationship
-		//    without re-pairing. So a seat whose messages had merely aged out took the
-		//    CHANNEL with it, plus any of the successor's own queued mail on it, plus the
-		//    attachment rows that are the only record of which bytes to unlink — silently,
-		//    since Sweep reports only expired and purged counts.
+		//    KEEPING IT WOULD HAVE BEEN WORSE THAN USELESS. The delete was guarded against rows
+		//    referenced by messages, attachments and channel seats, but a PAIR message is addressed
+		//    to the post rather than to a connection — recipient_endpoint is NULL by design since
+		//    the party model — so a station whose only traffic is pair mail matched every guard. Its
+		//    mailbox would have been deleted out from under it: MailboxFor recreates one on the next
+		//    call, with a NEW endpoint_id, so nothing errors and nothing is obviously lost, while
+		//    the directory reports the station as unstaffed and its last-seen history is gone. A
+		//    retention sweep that quietly re-issues an identity is the worst kind of maintenance.
 		//
-		//    The endpoint rows are still bounded: the channel-deletion pass below releases
-		//    a seat as soon as its channel is gone, and the next sweep collects it.
+		//    Two guards from that query are worth remembering rather than rediscovering. A channel
+		//    seat is not an idle row, however quiet: channel.endpoint_a/endpoint_b cascade, so
+		//    reaping a seat took the CHANNEL and any queued mail on it. And every NOT IN set had to
+		//    exclude NULL explicitly, because `id NOT IN (…, NULL)` is NULL rather than true — one
+		//    NULL silently stopped the sweep deleting anything at all, with no error and no log.
 		//
-		//    Both guards must exclude NULL explicitly. `id NOT IN (…, NULL)` is NULL, not
-		//    true, so a single NULL in either set would silently stop the sweep deleting
-		//    anything at all — a retention leak that presents as no error and no log line.
-		if idle := s.lim().EndpointIdleTTLSeconds; idle > 0 {
-			if _, err := t.ExecContext(ctx, `
-DELETE FROM endpoint
-WHERE last_seen_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
-  AND id NOT IN (SELECT sender_endpoint FROM message
-                 UNION SELECT recipient_endpoint FROM delivery WHERE recipient_endpoint IS NOT NULL)
-  AND id NOT IN (SELECT sender_endpoint FROM attachment WHERE stored_bytes > 0
-                 UNION SELECT recipient_endpoint FROM attachment WHERE stored_bytes > 0)
-  AND id NOT IN (SELECT endpoint_a FROM channel
-                 UNION SELECT endpoint_b FROM channel WHERE endpoint_b IS NOT NULL)`,
-				nowExpr(-idle)); err != nil {
-				return err
-			}
-		}
 		// Revoked channels with nothing left referencing them.
 		//
 		// *** BOTH SUBQUERIES FILTER NULLS, AND THE OMISSION WAS A PERMANENT NO-OP. ***

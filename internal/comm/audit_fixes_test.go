@@ -425,51 +425,6 @@ func TestSweepKeepsAccountingWhenBytesRemain(t *testing.T) {
 	}
 }
 
-// Idle endpoints must not accumulate forever: sessions register once and never
-// unregister.
-func TestSweepRemovesIdleEndpoints(t *testing.T) {
-	ctx := context.Background()
-	l := DefaultLimits()
-	l.EndpointIdleTTLSeconds = 60 // a real, positive idle window
-	st := newStore(t, l)
-	ep := mailbox(t, st, "ghost", "tok")
-	if eps, _ := st.ListEndpoints(ctx); len(eps) != 1 {
-		t.Fatalf("setup: %d endpoints", len(eps))
-	}
-	// Backdate last_seen well past the window — this is what makes it "idle".
-	if _, err := st.W.Exec(`UPDATE endpoint SET last_seen_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day') WHERE endpoint_id=?`, ep.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.Sweep(ctx); err != nil {
-		t.Fatal(err)
-	}
-	eps, err := st.ListEndpoints(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(eps) != 0 {
-		t.Fatalf("idle endpoint survived the sweep: %+v", eps)
-	}
-}
-
-// An endpoint with live traffic must NOT be swept, however idle it looks.
-func TestSweepKeepsEndpointsWithTraffic(t *testing.T) {
-	ctx := context.Background()
-	l := DefaultLimits()
-	l.EndpointIdleTTLSeconds = -1
-	st := newStore(t, l)
-	a, _, channelID := pair(t, st)
-	if _, err := st.Send(ctx, a, channelID, "live", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.Sweep(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if eps, _ := st.ListEndpoints(ctx); len(eps) != 2 {
-		t.Fatalf("endpoints with traffic were swept: %d remain", len(eps))
-	}
-}
-
 // The hearsay window must see a REdelivered message: at-least-once means a
 // message first delivered before the window is commonly re-read inside it.
 func TestProvenanceSeesRedelivery(t *testing.T) {
@@ -500,30 +455,6 @@ func TestProvenanceSeesRedelivery(t *testing.T) {
 	}
 	if got, _ := st.ReceivedSince(ctx, 7, 3600); !got {
 		t.Fatal("a message acted upon inside the window did not mark the actor")
-	}
-}
-
-// A retention sweep keyed on a threshold must fail SAFE on a non-positive window:
-// a zero window (the shape a dropped settings mapping produces) must DISABLE the
-// endpoint sweep, never delete every idle endpoint. This is the 1.2.0 regression
-// that made COMM unusable — a freshly registered endpoint was swept mid-handshake.
-func TestEndpointSweepFailsSafeOnZeroWindow(t *testing.T) {
-	ctx := context.Background()
-	l := DefaultLimits()
-	l.EndpointIdleTTLSeconds = 0 // the dropped-mapping shape
-	st := newStore(t, l)
-	if _, err := st.MailboxFor(ctx, "fresh", owner("tok")); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.Sweep(ctx); err != nil {
-		t.Fatal(err)
-	}
-	eps, err := st.ListEndpoints(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(eps) != 1 {
-		t.Fatalf("a zero idle-window swept a fresh endpoint (%d remain) — the sweep did not fail safe", len(eps))
 	}
 }
 
@@ -590,97 +521,64 @@ func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
 	_, _ = a, b
 }
 
-// A CHANNEL SEAT IS NOT AN IDLE ROW.
+// *** A STATION'S MAILBOX MUST SURVIVE EVERY SWEEP, AND THE CASE THAT MATTERS IS PAIR MAIL. ***
 //
-// `channel.endpoint_a/endpoint_b` cascade on delete, so an endpoint swept for idleness took
-// the CHANNEL with it — the human-authorised relationship a successor is promised it
-// inherits without re-pairing. The sweep's own comment ("its channels cascade") was written
-// when an endpoint WAS the party; under stations it is a disposable reader.
+// Four tests stood here, covering an idle-endpoint reap: that it removed idle rows, spared rows
+// with traffic, failed safe on a non-positive window, and did not collect a channel seat. All four
+// were correct about the code they described, and the code is gone — the reap bounded a row set
+// that grew because "sessions register once and never unregister", and there is no registration
+// any more. One station, one mailbox, created on first use and reused forever.
 //
-// The guards above it did not cover this: they retain an endpoint that still has message or
-// delivery rows, and those age out on the metadata TTL long before a quiet channel does.
+// THIS REPLACES THEM WITH THE PROPERTY THAT NOW MATTERS, and it is the case the old guards did not
+// cover. The reap spared any endpoint referenced by a message, an attachment or a channel seat —
+// but a PAIR message is addressed to the post, not to a connection, so its delivery row carries
+// recipient_endpoint NULL by design. A station whose only traffic was pair mail therefore matched
+// every guard and was eligible for deletion, with mail waiting for it.
 //
-// The control arm is the point. Zero surviving channels is also what this test would see if
-// the pairing never happened, so it asserts the channel EXISTS before the sweep and that a
-// genuinely idle non-seat endpoint is STILL collected afterwards — otherwise "fixed" is
-// indistinguishable from "the sweep stopped deleting anything", which is exactly what a
-// stray NULL in either NOT IN set would cause.
-func TestSweepDoesNotDeleteAChannelByCollectingItsIdleSeat(t *testing.T) {
+// The damage would have been quiet rather than loud: MailboxFor recreates a mailbox on the next
+// call, so nothing errors. It comes back with a NEW endpoint_id, no last-seen history, and the
+// directory reporting the station as unstaffed. A retention sweep that silently re-issues an
+// identity is worse than one that fails.
+func TestASweepNeverTakesAStationsMailbox(t *testing.T) {
 	ctx := context.Background()
-	l := DefaultLimits()
-	l.EndpointIdleTTLSeconds = 60
-	st := newStore(t, l)
+	st := newStore(t, DefaultLimits())
+	ep := mailbox(t, st, "s-quiet", "tok")
 
-	a, b, channelID := pair(t, st)
-	ghost := mailbox(t, st, "ghost", "tok-ghost")
-
-	// A HALF-JOINED CHANNEL, so that `channel.endpoint_b` actually contains a NULL. Without
-	// one, the NULL arm of the guard is untested and the control below cannot fail — every
-	// channel in the fixture would have both seats filled, which is not the state a pairing
-	// passes through.
-	halfJoiner := mailbox(t, st, "half", "tok-half")
-	pendingCode, err := st.MintPairingCode(ctx, 42, "never-completed")
+	// AS IDLE AS A ROW CAN LOOK: backdated a year, and never party to anything the old guards
+	// recognised. If any reap survives anywhere in Sweep, this is the row it takes.
+	if _, err := st.W.Exec(
+		`UPDATE endpoint SET last_seen_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-365 day') WHERE endpoint_id=?`,
+		ep.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	// POSITIVE CONTROL. Without it, "the mailbox is still there" would be equally true of a store
+	// where the row never existed and every assertion below would be about nothing.
+	before, err := st.ListEndpoints(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.JoinChannel(ctx, halfJoiner, pendingCode); err != nil {
-		t.Fatal(err)
-	}
-	var nulls int
-	if err := st.R.QueryRow(`SELECT COUNT(*) FROM channel WHERE endpoint_b IS NULL`).Scan(&nulls); err != nil {
-		t.Fatal(err)
-	}
-	if nulls == 0 {
-		t.Fatal("setup: no channel has a NULL endpoint_b, so the NULL arm of the guard is not exercised")
+	if len(before) != 1 {
+		t.Fatalf("setup: %d mailboxes, want 1", len(before))
 	}
 
-	// Both seats look idle and carry no traffic — the state a live channel reaches once
-	// its messages have aged out on the metadata TTL.
-	for _, id := range []string{a.EndpointID, b.EndpointID, ghost.EndpointID, halfJoiner.EndpointID} {
-		if _, err := st.W.Exec(
-			`UPDATE endpoint SET last_seen_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day') WHERE endpoint_id=?`,
-			id); err != nil {
+	for i := 0; i < 3; i++ {
+		if _, _, err := st.Sweep(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	var before int
-	if err := st.R.QueryRow(`SELECT COUNT(*) FROM channel WHERE channel_id=?`, channelID).Scan(&before); err != nil {
-		t.Fatal(err)
-	}
-	if before != 1 {
-		t.Fatalf("setup: the channel does not exist before the sweep (%d rows)", before)
-	}
-
-	if _, _, err := st.Sweep(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	var after int
-	if err := st.R.QueryRow(`SELECT COUNT(*) FROM channel WHERE channel_id=?`, channelID).Scan(&after); err != nil {
-		t.Fatal(err)
-	}
-	if after != 1 {
-		t.Errorf("the sweep deleted an OPEN channel by collecting its idle seat: %d rows remain.\n"+
-			"A successor inherits its station's channels without re-pairing; cascading them "+
-			"away on the endpoint's idleness destroys the relationship a human authorised.", after)
-	}
-
-	// CONTROL: the sweep must still do its job. Without this, a guard that accidentally
-	// matched everything — a NULL in either NOT IN set does exactly that — would read as a
-	// pass.
-	eps, err := st.ListEndpoints(ctx)
+	after, err := st.ListEndpoints(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, e := range eps {
-		if e.EndpointID == ghost.EndpointID {
-			t.Error("the idle non-seat endpoint survived: the sweep has stopped collecting " +
-				"anything, which is what a NULL in either NOT IN set produces — silently")
-		}
+	if len(after) != 1 {
+		t.Fatalf("a station's mailbox did not survive the sweep: %d rows remain. Its mail is addressed "+
+			"to the post rather than to this row, so nothing would have errored — the station would "+
+			"simply have come back with a new id and no history.", len(after))
 	}
-	if len(eps) != 3 {
-		t.Errorf("expected exactly the three seats to remain (two open, one half-joined), "+
-			"got %d endpoints", len(eps))
+	// THE SAME ROW, not a replacement. Identity is the thing at risk here: a mailbox deleted and
+	// recreated satisfies a count and loses everything the count was standing in for.
+	if after[0].EndpointID != ep.EndpointID {
+		t.Errorf("the mailbox was replaced: %s -> %s", ep.EndpointID, after[0].EndpointID)
 	}
 }
