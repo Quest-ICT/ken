@@ -493,6 +493,27 @@ type DirectoryEntry struct {
 // relationship from the party that holds it would be a lie by omission, and would
 // make the directory disagree with what comm_open_channel will actually do.
 //
+// *** IT LISTS EVERY LIVE STATION NOW, AND THE FILTER THAT WENT IS THE POINT. ***
+//
+// It used to show only stations that were PUBLISHED or already LINKED to the caller. That was
+// right while a link needed a human's approval, because the approval was also what told a session
+// a peer existed — but ken-prod-ops named the consequence of removing the gate without this:
+// "a session moves from 'cannot reach anyone because not linked' to 'cannot reach anyone because
+// it does not know who exists' — the same outcome, reached differently, and harder to diagnose
+// because nothing errors." Ship them together or the change reads as no change.
+//
+// THE ENUMERATION CONCERN DOES NOT APPLY. Publication existed so an unpublished station could not
+// be discovered by a peer, and StationByNameVisibleTo exists because a bare name lookup leaked
+// which stations exist. Both are controls against ANOTHER TENANT, and IDENTITY.md §4 is explicit
+// that there is not one: "single-user makes that sufficient… there is no other tenant to protect
+// against." Under one human and one account, every station in the instance is already this
+// human's, and hiding them from each other protects nobody while costing the session the one
+// thing it needs to act.
+//
+// `published` AND `linked` ARE STILL RETURNED. They stopped being a filter and stayed as facts:
+// the console still lets a human publish, and a session still wants to know which peers it
+// already has a standing relationship with.
+//
 // Archived stations are excluded: the directory answers "who is available", and a
 // station nobody is staffing by design is not. Self is excluded for the same reason —
 // a session does not need to discover itself.
@@ -511,7 +532,6 @@ SELECT st.station_id, st.name, st.purpose,
   FROM station st
  WHERE st.state <> 'archived'
    AND st.station_id <> ?1
-   AND (st.published=1 OR linked)
  ORDER BY COALESCE(st.last_activity_at, st.created_at) DESC`, fromStation)
 	if err != nil {
 		return nil, err

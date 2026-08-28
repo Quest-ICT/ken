@@ -6,13 +6,20 @@ import (
 	"testing"
 )
 
-// The directory's visibility rule, exercised on every branch at once.
+// The directory lists THE ESTATE: every live station but the asker's own.
 //
-// This test exists as much for the SQL as for the rule: the query refers to a SELECT
-// alias inside its WHERE clause, which SQLite accepts as an extension and standard
-// SQL does not. A Go build cannot tell a valid query from an invalid one — the query
-// is a string — so the only thing that establishes it works is running it.
-func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
+// This test used to assert the opposite for one of these stations — that an unpublished
+// station the asker held no link to was hidden. That rule was correct while a link needed
+// a human's approval, because the approval was also what told a session a peer existed.
+// Removing the gate without opening the directory would have moved a session from "cannot
+// reach anyone because not linked" to "cannot reach anyone because it does not know who
+// exists" — the same outcome, reached differently, and harder to diagnose because nothing
+// errors. The negative case below is now a POSITIVE one, deliberately.
+//
+// This test exists as much for the SQL as for the rule: a Go build cannot tell a valid
+// query from an invalid one — the query is a string — so the only thing that establishes
+// it works is running it.
+func TestTheDirectoryListsTheWholeEstate(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	actor, err := s.FindOrCreateActor(ctx, "human", "admin")
@@ -78,23 +85,30 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 	if e := seen["published-stranger"]; e.Linked {
 		t.Error("a published station I have no link to reports Linked=true — discovery and permission are being conflated")
 	}
-	// NEGATIVE CASES. Each of these passing for the wrong reason would make the test
-	// vacuous, which is why the positives above are asserted in the same run.
-	if _, ok := seen["unpublished-stranger"]; ok {
-		t.Error("an unpublished station I have no link to is listed — the directory leaks every station's existence")
+	// THE CHANGE, ASSERTED DIRECTLY. Neither published nor linked, and listed anyway:
+	// under one human and one account there is nobody to enumerate the estate to, and a
+	// session that cannot see a peer cannot ask to reach it.
+	if e, ok := seen["unpublished-stranger"]; !ok {
+		t.Error("an unpublished station I hold no link to is missing — removing the approval gate silently removed discovery with it")
+	} else if e.Linked {
+		t.Error("a station I have no link to reports Linked=true — discovery and permission are being conflated")
 	}
+	// STILL EXCLUDED, and these are the cases that keep the test from being vacuous: if
+	// the WHERE clause had been dropped wholesale rather than narrowed, both would fail.
 	if _, ok := seen["archived-but-published"]; ok {
 		t.Error("an archived station is listed as available for comm")
 	}
 	if _, ok := seen["me"]; ok {
 		t.Error("the asking station lists itself")
 	}
-	if len(got) != 2 {
-		t.Fatalf("directory returned %d entries, want exactly 2: %+v", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("directory returned %d entries, want exactly 3: %+v", len(got), got)
 	}
 
-	// Revoking the link must remove the unpublished peer, or visibility outlives the
-	// permission that granted it.
+	// SUSPENDING A LINK NO LONGER HIDES THE PEER — every station is visible now — so the
+	// only thing left carrying that fact is the Linked flag. If suspension did not clear
+	// it, a suspended link would read as a standing relationship and the directory would
+	// disagree with what comm_send actually does.
 	links, err := s.ListStationLinks(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -106,10 +120,18 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var found bool
 	for _, e := range after {
-		if e.Name == "unpublished-peer" {
-			t.Fatal("an unpublished station stayed visible after its link was revoked")
+		if e.Name != "unpublished-peer" {
+			continue
 		}
+		found = true
+		if e.Linked {
+			t.Error("a suspended link still reports Linked=true — the off-switch does not reach the directory")
+		}
+	}
+	if !found {
+		t.Error("the peer vanished from the directory when its link was suspended — suspension is not supposed to un-exist a station")
 	}
 	_ = pub
 	_ = hidden

@@ -112,10 +112,11 @@ func callDir(t *testing.T, sess *mcp.ClientSession, ctx context.Context) dirOut 
 	return out
 }
 
-// The /station mirror closes a real gap: station_link_request needs a NAME, and until
-// now nothing on this surface would tell a session that a station exists. It applies
-// the same visibility rule as the COMM side because it calls the same store function.
-func TestStationDirectoryMirrorsTheVisibilityRule(t *testing.T) {
+// The /station mirror closes a real gap: station_link_request needs a NAME, and nothing
+// else on this surface will tell a session that a station exists. It lists the same estate
+// as the COMM side because it calls the same store function — asserted here rather than
+// assumed, because two surfaces reading one query is exactly the shape that drifts.
+func TestStationDirectoryListsTheSameEstateAsComm(t *testing.T) {
 	sess, ctx, _ := dirSession(t, nil)
 	out := callDir(t, sess, ctx)
 
@@ -126,11 +127,13 @@ func TestStationDirectoryMirrorsTheVisibilityRule(t *testing.T) {
 	for _, e := range out.Stations {
 		names[e.Name] = e
 	}
-	if len(out.Stations) != 2 {
-		t.Fatalf("got %d stations, want 2: %+v", len(out.Stations), out.Stations)
+	if len(out.Stations) != 3 {
+		t.Fatalf("got %d stations, want 3: %+v", len(out.Stations), out.Stations)
 	}
-	if _, ok := names["unpublished-stranger"]; ok {
-		t.Error("an unpublished station with no link to me is listed")
+	if e, ok := names["unpublished-stranger"]; !ok {
+		t.Error("an unpublished station with no link to me is missing — this surface is where a session learns the name it must pass to station_link_request")
+	} else if e.Linked {
+		t.Error("a station I hold no link to reports linked=true")
 	}
 	if e, ok := names["linked-peer"]; !ok || !e.Linked {
 		t.Error("my established peer is missing or reports linked=false")

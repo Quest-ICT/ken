@@ -191,9 +191,13 @@ func TestOpenChannelRefusalsAreIndistinguishable(t *testing.T) {
 	}
 }
 
-// The directory answers what the refusal deliberately will not, and it answers it
-// per-asker: published stations plus my own established peers, and nothing else.
-func TestCommDirectoryListsOnlyWhatTheAskerMaySee(t *testing.T) {
+// The directory answers what the refusal deliberately will not: every live station in the
+// estate, with `linked` saying which of them the asker may already reach.
+//
+// The refusal above stays deliberately blind — it must not confirm a name it was handed —
+// but that was never an argument for hiding the roster from a session that asks for it by
+// the front door. Discovery and permission are separate facts and this tool reports both.
+func TestCommDirectoryListsTheEstate(t *testing.T) {
 	sess, _, ctx := dirHarness(t)
 
 	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_directory", Arguments: dirCreds()})
@@ -223,11 +227,13 @@ func TestCommDirectoryListsOnlyWhatTheAskerMaySee(t *testing.T) {
 	for _, e := range out.Stations {
 		byName[e.Name] = e
 	}
-	if len(out.Stations) != 2 {
-		t.Fatalf("directory returned %d stations, want 2: %+v", len(out.Stations), out.Stations)
+	if len(out.Stations) != 3 {
+		t.Fatalf("directory returned %d stations, want 3: %+v", len(out.Stations), out.Stations)
 	}
-	if _, ok := byName["unpublished-stranger"]; ok {
-		t.Error("an unpublished station with no link to me is listed — the directory leaks every station's existence")
+	if e, ok := byName["unpublished-stranger"]; !ok {
+		t.Error("an unpublished station with no link to me is missing — a session cannot ask to reach a peer it cannot see")
+	} else if e.Linked {
+		t.Error("a station I hold no link to reports linked=true")
 	}
 	if _, ok := byName["mine"]; ok {
 		t.Error("the asking station lists itself")
