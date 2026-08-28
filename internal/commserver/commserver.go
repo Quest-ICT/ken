@@ -55,6 +55,13 @@ type Deps struct {
 	TokenLimiter ratelimit.Limiter
 	// Metrics is optional.
 	Metrics *metrics.Registry
+	// SyncLinkMirror pushes ken.db's links into comm.db's projection. Optional; nil skips the
+	// push, and the next boot or console write rebuilds it anyway.
+	//
+	// A FUNCTION RATHER THAN A STORE HANDLE, because the projection is owned by the web layer and
+	// stamped with a roster epoch it computes. Handing this package the ability to rebuild the
+	// mirror itself would give it a second author for a table that must have exactly one.
+	SyncLinkMirror func(context.Context)
 	// MaxPollWaitSeconds bounds a long poll. Clamped server-side regardless of
 	// what an operator configures, because a wait that ties or exceeds the client's
 	// tool timeout turns a successful empty poll into a tool ERROR, which models
@@ -629,10 +636,40 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		var m *comm.Message
 		switch {
 		case in.ToStation != "":
-			// P2. No channel row is consulted and none is created: the approved link is
-			// the permission and the pair scope is derived from the two station ids, so
-			// this path works when neither side has ever run comm_open_channel and when
-			// the peer is not connected at all.
+			// *** THE LINK IS CREATED ON FIRST CONTACT, HERE, BEFORE THE SEND. ***
+			//
+			// Vlad removed both human gates on comm: it is available immediately to any session
+			// holding the connector, exactly like the station surface. A link is still recorded —
+			// he chose auto-approval over abolishing the concept, to keep the audit trail and an
+			// off-switch — it is simply born active.
+			//
+			// IT HAPPENS AT THIS LAYER BECAUSE ONLY THIS LAYER CAN. The link lives in ken.db and
+			// the gate that reads it is a MIRROR in comm.db; internal/comm holds no store handle
+			// by design (S7: the expendable side points at the durable one, never the reverse).
+			// So the handler creates the link, pushes the mirror, and only then sends.
+			//
+			// A SUSPENDED LINK IS NOT RESURRECTED — EnsureStationLink will not overwrite one, so
+			// a human's decision to turn a relationship off survives the next message that would
+			// have created it. Without that, Suspend would be undone by the first thing it exists
+			// to stop.
+			//
+			// FAILURE TO CREATE DOES NOT FAIL THE SEND. If it did, an unlinkable pair would get an
+			// error about linking rather than the send path's own refusal, which is the clearer
+			// one. The send re-checks the link itself, inside its own writing transaction.
+			if p := principalFrom(ctx); p != nil {
+				if created, lerr := d.Store.EnsureStationLink(ctx, ep.StationID, in.ToStation, p.ActorID); lerr != nil {
+					log.Printf("comm: auto-link %s <-> %s: %v", ep.StationID, in.ToStation, lerr)
+				} else if created {
+					if d.SyncLinkMirror != nil {
+						d.SyncLinkMirror(ctx)
+					}
+					log.Printf("COMM: link %s <-> %s created on first contact (actor %d) — no approval required",
+						ep.StationID, in.ToStation, p.ActorID)
+				}
+			}
+			// P2. No channel row is consulted and none is created: the link is the permission and
+			// the pair scope is derived from the two station ids, so this path works when neither
+			// side has ever run comm_open_channel and when the peer is not connected at all.
 			m, err = d.Comm.SendToStation(ctx, ep, in.ToStation, in.Body, opts)
 		case in.ToRoom == "all":
 			m, err = d.Comm.Broadcast(ctx, ep, in.Body, opts)

@@ -525,12 +525,25 @@
                  already refuses to pretend otherwise (stations.go:182 — "reporting 0 would
                  assert a fact nobody checked"). This row rendered `?` in the count column and
                  said "0 live channel(s) will be closed" in the same breath. -->
-            <form class="inline" method="post" action="/stations/links/{{.LinkID}}/revoke"
-                  data-confirm="{{if .KnownLive}}{{$.T "stations.link_revoke_confirm" .NameA .NameB .LiveChannels}}{{else}}{{$.T "stations.link_revoke_confirm_unknown" .NameA .NameB}}{{end}}">
+            <!-- SUSPEND AND RESUME, never revoke. A relationship between two of the human's own
+                 stations is never terminal — the button turns it off and the same button turns it
+                 back on. The confirm still states the live channels it will close, because
+                 suspending stops traffic and resuming does not bring those channels back. -->
+            {{if eq .State "suspended"}}
+            <form class="inline" method="post" action="/stations/links/{{.LinkID}}/suspend">
+              <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
+              <input type="hidden" name="resume" value="1">
+              <button class="btn btn--sm" type="submit"
+                      title="{{$.T "stations.link_resume_help"}}">{{$.T "stations.link_resume"}}</button>
+            </form>
+            {{else}}
+            <form class="inline" method="post" action="/stations/links/{{.LinkID}}/suspend"
+                  data-confirm="{{if .KnownLive}}{{$.T "stations.link_suspend_confirm" .NameA .NameB .LiveChannels}}{{else}}{{$.T "stations.link_suspend_confirm_unknown" .NameA .NameB}}{{end}}">
               <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
               <button class="btn btn--danger btn--sm" type="submit"
-                      title="{{$.T "stations.link_revoke_help"}}">{{$.T "stations.link_revoke"}}</button>
+                      title="{{$.T "stations.link_suspend_help"}}">{{$.T "stations.link_suspend"}}</button>
             </form>
+            {{end}}
             {{end}}
           </td>
         </tr>

@@ -626,14 +626,29 @@ SELECT EXISTS(SELECT 1 FROM station_link
 	return ok, err
 }
 
-// RevokeStationLink ends a relationship. S9's trade-off is that approval widens from
-// per-conversation to per-relationship, and this is the other half of that bargain:
-// revocation is one click. Killing the live channel is the CALLER's job, because the
-// channel lives in the expendable database this package must not reach into.
-func (s *Store) RevokeStationLink(ctx context.Context, linkID string) error {
+// SetStationLinkSuspended turns a relationship off, or back on.
+//
+// *** IT REPLACES RevokeStationLink, AND THE DIFFERENCE IS THE WHOLE POINT. *** Vlad: "'suspend'
+// button instead of revoke button (I want to be able to 'resume' it). 'revoke' concept is out of
+// the table." A relationship between two of his own stations should never be terminal — there is
+// no threat model in which it must be, because there is no other tenant, and a one-way control
+// makes a mistake permanent for no gain.
+//
+// GUARDED ON THE SOURCE STATE, deliberately. Suspending only touches an ACTIVE link and resuming
+// only touches a SUSPENDED one, so neither can collide with `dormant` — which ArchiveStation sets
+// and clears under exactly the same discipline. That guard is what lets one column carry two
+// independent reasons to be not-active, and it is asserted rather than assumed.
+//
+// Killing the live channel is the CALLER's job: the channel lives in the expendable database this
+// package must not reach into.
+func (s *Store) SetStationLinkSuspended(ctx context.Context, linkID string, suspend bool) error {
+	from, to, stamp := "active", "suspended", "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+	if !suspend {
+		from, to, stamp = "suspended", "active", "NULL"
+	}
 	res, err := s.W.ExecContext(ctx, `
-UPDATE station_link SET state='revoked', revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
- WHERE link_id=? AND state<>'revoked'`, linkID)
+UPDATE station_link SET state=?, suspended_at=`+stamp+`
+ WHERE link_id=? AND state=?`, to, linkID, from)
 	if err != nil {
 		return err
 	}
@@ -876,4 +891,55 @@ UPDATE comm_roster_epoch SET epoch = epoch + 1,
 		return nil, err
 	}
 	return &Room{RoomID: roomID, Name: name, Kind: "topic", State: "active"}, nil
+}
+
+// EnsureStationLink creates the relationship between two stations if it does not exist, ACTIVE.
+//
+// *** THIS IS THE AUTO-APPROVAL, AND IT IS THE HALF THAT REMOVES THE HUMAN FROM THE LOOP. ***
+//
+// Vlad's decision: comm is available immediately to any session holding the connector, exactly
+// like the station surface. His reasoning is Ken's own design doc — IDENTITY.md §4, "single-user
+// makes that sufficient… there is no other tenant to protect against" — so the approval was
+// guarding a threat model the design explicitly denies.
+//
+// WHAT IT DELETES BEYOND THE CLICK, and this is the part worth seeing before reading the code: the
+// entire apparatus around link REQUESTS existed to stop a session probing its human's refusals. If
+// nothing can be refused, the escalating mute ladder, the never-deliver-the-reason rule, and the
+// one-pending-ask-per-pair collapse are all guarding an outcome that cannot occur.
+//
+// *** THE LINK IS NOT ABOLISHED, AND THAT IS ALSO HIS CHOICE. *** ken-prod-ops put both options to
+// him and he took auto-approval specifically to keep the audit trail and a surgical off-switch: a
+// link still records who spoke to whom and since when, and it can still be suspended.
+//
+// A SUSPENDED LINK IS NOT RESURRECTED. `ON CONFLICT DO NOTHING` means a human's decision to turn a
+// relationship off survives the next message that would have created it — otherwise Suspend would
+// be undone by the first thing it was meant to stop, which is the whole failure mode of an
+// auto-approving gate. A dormant link is left alone for the same reason: its station is archived,
+// and unarchiving is what restores it.
+func (s *Store) EnsureStationLink(ctx context.Context, x, y string, actorID int64) (bool, error) {
+	if x == "" || y == "" || x == y {
+		return false, nil
+	}
+	a, b := orderPair(x, y)
+	linkID, err := randBase62(16)
+	if err != nil {
+		return false, err
+	}
+	res, err := s.W.ExecContext(ctx, `
+INSERT INTO station_link(link_id, station_a, station_b, approved_by_actor_id)
+VALUES(?,?,?,?) ON CONFLICT DO NOTHING`, linkID, a, b, actorID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return false, nil
+	}
+	// THE ROSTER EPOCH MOVES, for the same reason ApproveLinkRequest moved it: a link changes who
+	// a message can reach, and a consumer comparing epochs would otherwise conclude it is looking
+	// at the roster it already had.
+	if err := s.bumpRosterEpoch(ctx); err != nil {
+		return true, err
+	}
+	return true, nil
 }

@@ -113,7 +113,7 @@ func TestConsoleLinkDecisionsReachTheCommMirror(t *testing.T) {
 	}
 	link := links[0]
 	csrf = extract(t, cli, srv.URL+"/stations", `name="csrf" value="([^"]+)"`)
-	postForm(t, cli, srv.URL+"/stations/links/"+link.LinkID+"/revoke", url.Values{"csrf": {csrf}})
+	postForm(t, cli, srv.URL+"/stations/links/"+link.LinkID+"/suspend", url.Values{"csrf": {csrf}})
 
 	if linked() {
 		t.Fatal("the link was revoked and the mirror still authorises the pair — the " +
@@ -155,7 +155,7 @@ func TestLinkMirrorRowsExcludesRevokedLinksAndArchivedStations(t *testing.T) {
 	linkRevoked := link(revokedA, revokedB)
 	link(live, archived)
 
-	if err := st.RevokeStationLink(ctx, linkRevoked.LinkID); err != nil {
+	if err := st.SetStationLinkSuspended(ctx, linkRevoked.LinkID, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.ArchiveStation(ctx, archived.StationID, true); err != nil {

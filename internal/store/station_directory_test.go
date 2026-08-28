@@ -99,7 +99,7 @@ func TestListStationsVisibleToAppliesTheVisibilityRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RevokeStationLink(ctx, links[0].LinkID); err != nil {
+	if err := s.SetStationLinkSuspended(ctx, links[0].LinkID, true); err != nil {
 		t.Fatal(err)
 	}
 	after, err := s.ListStationsVisibleTo(ctx, me.StationID)

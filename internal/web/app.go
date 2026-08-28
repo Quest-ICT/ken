@@ -185,7 +185,7 @@ func (a *app) routes() http.Handler {
 		mux.HandleFunc("POST /stations/{id}/archive", a.requireAuth(a.handleStationArchive))
 		mux.HandleFunc("POST /stations/{id}/transfer", a.requireAuth(a.handleStationTransfer))
 		mux.HandleFunc("POST /stations/{id}/reassign", a.requireAuth(a.handleStationReassign))
-		mux.HandleFunc("POST /stations/links/{id}/revoke", a.requireAuth(a.handleStationLinkRevoke))
+		mux.HandleFunc("POST /stations/links/{id}/suspend", a.requireAuth(a.handleStationLinkSuspend))
 		mux.HandleFunc("POST /stations/promotions/{id}/resolve", a.requireAuth(a.handlePromotionResolve))
 		mux.HandleFunc("POST /stations/{id}/vault/reveal", a.requireAuth(a.handleStationVaultReveal))
 		mux.HandleFunc("POST /stations/{id}/vault/restore", a.requireAuth(a.handleStationVaultRestore))

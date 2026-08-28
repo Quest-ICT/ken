@@ -307,7 +307,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 // brake that a durable roster needs before it can replace a pairing code: a
 // membership list nobody can take away is not a stronger gate than a bearer code, it
 // is a weaker one that lasts longer.
-func (a *app) handleStationLinkRevoke(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+func (a *app) handleStationLinkSuspend(w http.ResponseWriter, r *http.Request, sess *store.Session) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
@@ -323,11 +323,17 @@ func (a *app) handleStationLinkRevoke(w http.ResponseWriter, r *http.Request, se
 		flashRedirect(w, r, "/stations", "flash.station_link_revoke_failed", err.Error())
 		return
 	}
-	// ErrNotFound here means "already revoked" — StationLinkByID above proved the row
-	// exists. Falling through is deliberate: it is what makes a retry able to finish a
-	// sweep that failed the first time. Treating it as an error is what made the
-	// half-done state permanent.
-	if err := a.store.RevokeStationLink(r.Context(), id); err != nil && !errors.Is(err, store.ErrNotFound) {
+	// ErrNotFound here means "already in the target state" — StationLinkByID above proved the
+	// row exists. Falling through is deliberate: it is what makes a retry able to finish a sweep
+	// that failed the first time. Treating it as an error is what made the half-done state
+	// permanent.
+	//
+	// SUSPEND, NOT REVOKE, and the channel sweep below still runs — turning a relationship off
+	// must stop live traffic, or "off" is a label rather than a state. Resuming re-authorises the
+	// pair scope; the channels do not come back by themselves, and that is honest: the sessions
+	// that held them are gone.
+	suspend := r.FormValue("resume") != "1"
+	if err := a.store.SetStationLinkSuspended(r.Context(), id, suspend); err != nil && !errors.Is(err, store.ErrNotFound) {
 		flashRedirect(w, r, "/stations", "flash.station_link_revoke_failed", err.Error())
 		return
 	}

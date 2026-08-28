@@ -96,7 +96,7 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	// The page must offer the control, and must show the blast radius before the
 	// click. A revoke button with no number is one people avoid or press twice.
 	page := get(t, cli, srv.URL+"/stations")
-	if !strings.Contains(page, "/stations/links/"+link.LinkID+"/revoke") {
+	if !strings.Contains(page, "/stations/links/"+link.LinkID+"/suspend") {
 		t.Fatal("the links table renders no revoke control — the store function stays unreachable and stations.link_help keeps promising a click that does not exist")
 	}
 	if !strings.Contains(page, "data-confirm=") {
@@ -104,13 +104,13 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	}
 
 	csrf := extract(t, cli, srv.URL+"/stations", `name="csrf" value="([^"]+)"`)
-	postForm(t, cli, srv.URL+"/stations/links/"+link.LinkID+"/revoke", url.Values{"csrf": {csrf}})
+	postForm(t, cli, srv.URL+"/stations/links/"+link.LinkID+"/suspend", url.Values{"csrf": {csrf}})
 
 	got, err := st.StationLinkByID(ctx, link.LinkID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != "revoked" {
+	if got.State != "suspended" {
 		t.Fatalf("link state is %q after revoke, want %q", got.State, "revoked")
 	}
 	// The permission AND its traffic. Ending one without the other is the defect.
@@ -146,13 +146,13 @@ func TestStationLinkRevokeWorksWithCommOff(t *testing.T) {
 	}
 
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
-	postForm(t, cli, base+"/stations/links/"+link.LinkID+"/revoke", url.Values{"csrf": {csrf}})
+	postForm(t, cli, base+"/stations/links/"+link.LinkID+"/suspend", url.Values{"csrf": {csrf}})
 
 	got, err := st.StationLinkByID(ctx, link.LinkID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != "revoked" {
-		t.Fatalf("link state is %q with COMM off, want %q", got.State, "revoked")
+	if got.State != "suspended" {
+		t.Fatalf("link state is %q with COMM off, want %q", got.State, "suspended")
 	}
 }
