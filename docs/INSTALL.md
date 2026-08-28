@@ -214,23 +214,33 @@ URL when TLS is on, `http://<host>:8080/` only behind a TLS-terminating proxy):
    `http://<host>:8080/mcp` with the header `Authorization: Bearer <token>`.
    Scopes: `read`, `write-draft`, `propose`, `curate`.
 
-3. **Issue credentials for the other two MCP surfaces** — inter-session messaging
-   (COMM: `/comm/mcp`, console `/comm`) and stations (`/station/mcp`, console
-   `/stations`). Both are **core**: every install serves them unless you opt out. The
-   knowledge-base token above does not reach either, and mixing is refused when the
-   token is minted — `comm` and `station` scopes may share a token, neither may be
-   combined with the knowledge-base scopes:
+3. **There are no other credentials to issue.** Ken serves **one** machine endpoint, `/mcp`, and it
+   carries every tool: `kb_*`, `comm_*` and `station_*`. `/comm/mcp` and `/station/mcp` are deleted,
+   along with the `kens_` station key and the rule that a token could hold knowledge-base scopes or
+   comm scopes but never both.
+
+   **A credential reaching `/mcp` must carry EVERY capability**, and is refused at the transport
+   otherwise. So the token above is not enough on its own:
 
    ```sh
    sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken \
-       token add --actor comm-dev --scopes comm         # add comm-file for file exchange
-   sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken \
-       station add --name prod-ops                      # a human names the station …
-   sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken \
-       station key --station prod-ops --label laptop    # … then mints its key (--locker adds the locker)
+       token add --actor my-agent \
+       --scopes read,write-draft,propose,comm,comm-file,station
    ```
 
-   A station key is bound to its station, so `ken token add` cannot mint one.
+   In practice you will not mint one at all: the ordinary credential is the **OAuth grant** a
+   human approves once when adding Ken as a connector, which carries the whole set. A static token
+   is for a CLI or a script.
+
+   Creating a station is still a human act, and still names it:
+
+   ```sh
+   sudo -u ken env KEN_DB=/opt/ken/data/ken.db /opt/ken/current/bin/ken \
+       station add --name prod-ops
+   ```
+
+   A session then claims a station by stating its conversation id (`session_key`) on its first
+   `station_me` call — no key to mint, deliver or protect.
 
    **There is no opt-out.** `KEN_COMM_ENABLED` and `KEN_STATION_ENABLED` were removed in
    2.0.0 — setting either does nothing. Both surfaces are core and always registered.

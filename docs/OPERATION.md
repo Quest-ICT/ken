@@ -53,21 +53,20 @@ is gone from the page.
 | Every setting the console can change — 45 of 47 (`tls_mode` and `tls_email` are display-only; see §2.1) | Console → **Settings** |
 | Review, promote, reject proposals | Console → **Proposals** |
 | Browse, search, read entries | Console → **Browse** / **Search** |
-| Stations, station keys, **rooms**, station vault, link + promotion queues | Console → **Stations** |
+| Stations, **rooms**, station vault, links (suspend/resume), station reassignment, station + room + promotion queues | Console → **Stations** |
 | Notebook pages and tasks | Console shows notebook COUNTS only, plus the body of any page a session has asked to promote. Tasks are listed and filterable but **read-only** — writing pages and closing, deferring or reopening tasks is the station MCP surface, not an operator one. |
-| Endpoints, channels, secret rotation | Console → **Inter-session comms** |
+| Mailboxes and channels | Console → **Inter-session comms** |
 | Mint a knowledge-base token (`read` / `write-draft` / `propose`) | Console → **Tokens** *(or CLI)* |
-| Mint a **`comm`** token (add `comm-file` for file exchange) | **CLI only today** — `ken token add --actor comm-<name> --scopes comm,comm-file`. The console form offers only the three knowledge-base scopes and **silently discards anything else**, so a comm token cannot be minted there. *Being fixed: the console will mint these too.* |
-| Mint a station key | Console → **Stations** *(or CLI)* |
+| Mint a token that reaches `/mcp` | It must carry EVERY capability — `read`, `write-draft`, `propose`, `comm`, `comm-file`, `station`. The ordinary credential is the **OAuth grant**, which already does; a static token is for a CLI or script. The console form still offers only the three knowledge-base scopes, so a full token is `ken token add` today. |
 | Create the *first* user | Browser wizard at `/setup`, or CLI |
 | Take or verify a snapshot from cron | CLI — it is a scheduled job |
 | Bulk import, embedding backfill | CLI — long-running batch work |
 
-**Corrected in this revision:** earlier text said token and station-key minting were
-CLI-only "because the secret is printed once, to a terminal". That has not been true for
-some time — **the console mints both and renders the secret once on the page**, deliberately
-rendering instead of redirecting so the secret survives to the response. The one-time
-property is preserved either way; the *surface* claim was wrong.
+**Corrected in this revision:** earlier text said token minting was CLI-only "because the secret is
+printed once, to a terminal". The console mints tokens and renders the secret once on the page,
+deliberately rendering instead of redirecting so the secret survives to the response. The one-time
+property is preserved either way; the *surface* claim was wrong. (Station-key minting is gone
+entirely — see §2.5.)
 
 **Rooms can only be created in the console.** There is no agent-facing create path. A
 session can use a room it has been added to and can do nothing whatsoever to bring one into
@@ -81,8 +80,8 @@ existence. That is doing real containment work — see §2.4(f).
 /browse           browse         the curated corpus
 /entry/{slug}     entry          one entry, its versions and history
 /proposals        review queue   what agents have proposed; promote or reject here
-/stations         stations       stations, notebooks, tasks, keys, ROOMS, station vault
-/comm             inter-session  endpoints, channels, pairing codes, secret rotation
+/stations         stations       stations, notebooks, tasks, links (suspend/resume), ROOMS, vault
+/comm             inter-session  mailboxes and channels, with pending counts
 /tokens           tokens         API tokens and their scopes
 /settings         settings       everything in §2
 /login  /lang  /oauth/authorize              supporting pages
@@ -94,20 +93,26 @@ existence. That is doing real containment work — see §2.4(f).
 /metrics          Prometheus     access-controlled; 404s rather than 403s when refused
 ```
 
-**Four machine endpoints, each taking a differently-scoped credential:**
+**TWO machine endpoints. It was four, and the reduction is the thing to know:**
 
 ```
-/mcp             knowledge base        agent token (read / write-draft / propose)
-/comm/mcp        inter-session comms   a token carrying the `comm` scope
-/station/mcp     station identity      a station key
-/comm/files/{g}  file transfer         a token carrying `comm-file` that OWNS the endpoint the
+/mcp             EVERY tool            one credential carrying every capability:
+                                       kb_* + comm_* + station_*, all of them, or none
+/comm/files/{g}  file transfer         a token carrying `comm-file` that OWNS the mailbox the
                                        grant was minted for, PLUS the single-use grant in the
                                        path — and the live `comm_files_enabled` switch on top
 ```
 
-Earlier text listed only `/mcp`. An operator debugging "the agent cannot reach X" needs all
-four, because the failure is almost always a credential scoped for one of them being
-pointed at another.
+`/comm/mcp` and `/station/mcp` are **deleted**. They existed because the three surfaces took
+mutually exclusive credentials — a knowledge-base token could not send messages and a comm token
+could not write knowledge — and that stopped being true when one OAuth grant began carrying all
+three scope families. What remained was three connectors and three consents for one Ken.
+
+**The debugging advice inverted with it.** It used to be: an operator investigating "the agent
+cannot reach X" needs all four endpoints, because the failure is almost always a credential scoped
+for one being pointed at another. That failure no longer exists. `/mcp` requires EVERY capability
+and fails closed at the transport, so a partial credential is refused with a 401 rather than shown a
+tool list it cannot use — which makes the symptom loud instead of confusing.
 
 ### Revoking a connector's access
 
@@ -364,7 +369,6 @@ configuration choice. All 18 fields are live.
 | **Body retention after settling (seconds)** | `comm_body_retention_sec` | 86400 | 0–7776000 |
 | Metadata retention (seconds) | `comm_metadata_ttl_sec` | 604800 | 60–7776000 |
 | Reply deadline (seconds) | `comm_reply_deadline_sec` | 3600 | 30–604800 |
-| Pairing code lifetime (seconds) | `comm_pairing_code_ttl_sec` | 900 | 30–86400 |
 | Max long-poll wait (seconds) | `comm_poll_wait_max_sec` | 15 | 1–30 |
 | Hearsay window (seconds) | `comm_provenance_window_sec` | 3600 | 0–604800 |
 | File exchange enabled | `comm_files_enabled` | **on** | on/off |
@@ -474,23 +478,29 @@ You no longer need to order these two against each other. **The one ordering rul
 enforced is `comm_undelivered_ttl_sec ≥ comm_message_ttl_sec`** (§2.3), and the form refuses
 a violation rather than accepting it.
 
-#### (c) The quiet endpoint, and why it matters less than it did
+#### (c) The quiet mailbox — **NOTHING REAPS IT ANY MORE**
 
-An endpoint is removed by the idle sweep when **all** hold: `last_seen_at` is older than
-`comm_endpoint_idle_sec`, no surviving message or attachment references it, **and it does not
-occupy a channel seat**. The seat condition was added in 3.9.0's predecessor: seats cascade, so
-collecting one used to delete the CHANNEL a human had authorised, along with any mail still
-queued on it. Endpoint rows for live pairings therefore persist indefinitely, and that is
-correct — the channel-deletion pass releases a seat once its channel is gone, and the next sweep
-collects it.
+There is no idle sweep for mailboxes, and `comm_endpoint_idle_sec` is gone with it. The sweep
+bounded a row set that grew because "sessions register once and never unregister"; there is no
+registration. A mailbox belongs to a **station** — one row, created on first use, reused by every
+session that ever staffs it — so the count is bounded by the number of stations, which you create
+by hand.
 
-`last_seen_at` is refreshed by **any** authenticated COMM call, throttled to once a minute —
-so a session that merely polls is protected regardless of whether anyone writes to it.
+**Keeping it would have been worse than useless.** Its guards spared any mailbox referenced by a
+message, an attachment or a channel seat, but a PAIR message is addressed to the post rather than to
+a connection, so its delivery row carries no recipient mailbox by design. A station whose only
+traffic was pair mail matched every guard — and the damage would have been quiet: `MailboxFor`
+recreates one on the next call, so nothing errors, while the station comes back with a new id, no
+last-seen history, and the directory reporting it unstaffed.
 
-**Losing an endpoint no longer costs a station its inbox.** Mail is addressed to a *party*
-(`s:<station_id>`), so a replacement endpoint bound to the same station inherits the queue.
-The old warning — "come back from leave to a deleted endpoint and need a fresh pairing
-code" — applies to an unbound endpoint, not to a staffed station.
+`last_seen_at` is still refreshed by any authenticated COMM call, throttled to once a minute. It is
+now purely a staffing signal for the directory rather than a survival condition.
+
+**Two guards from the deleted sweep are worth remembering**, because both cost real debugging: a
+channel seat is not an idle row (seats cascade, so collecting one deleted the CHANNEL and any mail
+queued on it), and every `NOT IN` set had to exclude NULL explicitly, because `id NOT IN (…, NULL)`
+is NULL rather than true — one NULL silently stopped the sweep deleting anything at all, with no
+error and no log line.
 
 #### (d) Body retention: what it measures from, and three traps
 
@@ -591,27 +601,38 @@ four had their operator-facing text corrected in 3.7.0 and 3.8.0 because the old
 the wrong blast radius** — which is the failure this whole document exists to prevent. If you
 are holding an older Ken, the button does what is written here, not what your console says.
 
-**Tokens page.** The table's columns are Agent, **Station**, Scopes, Label, Last used, Status.
-The Station column arrived in 3.8.0: before it, station keys minted by one human on one machine
-rendered as identical rows, and on a real deployment eight keys showed as three distinguishable
-ones. **Revoking a token whose row names a station also cuts off every session bound to that
-station** — notebook, tasks, locker and vault — at its next call.
+**Tokens page.** The table's columns are Agent, **Station**, Scopes, Label, Last used, Status. The
+Station column arrived in 3.8.0, when station keys minted by one human on one machine rendered as
+identical rows — eight keys showing as three distinguishable ones on a real deployment.
 
-**Comm page.** *Rotate* keeps the endpoint id and every channel: it is the right answer to a
-leaked or lost secret, and the session carries on. *Revoke* is permanent, and its blast radius
-depends on whether the endpoint is BOUND. A bound endpoint's STATION keeps its channels and a
-successor inherits them with a voucher — no re-pairing. An unbound endpoint's channels are
-effectively over and the peer must re-pair from a new code. The dialog says which.
+> **STATION KEYS ARE RETIRED (2026-08-27), so that column is now empty and the warning under it no
+> longer applies.** It read: *revoking a token whose row names a station also cuts off every session
+> bound to that station.* Nothing binds. A session authenticates with the OAuth grant, and
+> `session_key` selects which station it staffs.
 
-**Stations page.** *Archive* stops COMM and dormants links but **leaves keys working**, so the
-notebook, tasks, locker and vault stay reachable. *Retire* stops a key immediately — **including
-for a session holding it right now**, which loses the notebook, tasks, locker and vault at its
-next call — but leaves COMM endpoints that key already bound alive. *Revoke* is what also
-severs those.
+**The one credential that can stop a session is the OAuth authorization**, withdrawn from *Connected
+apps (OAuth)* on this page. Vlad's ruling when the governance was settled: *"the only token I see
+still exist after all the things we agreed on is the one associated to the OAuth authorization, and
+is exactly one — having two OAuth associations active would be an error, not a feature."*
 
-**And check "Last used" before retiring a key.** It HAS been recorded since 1.5.3, throttled to
-about once a minute. A blank means the key has not authenticated since then — not that use goes
-unrecorded, which is what the tooltip claimed for four releases.
+**Comm page.** *Revoke* a channel is permanent. **Rotate is gone** — there is no endpoint secret to
+rotate, so the answer to "a session lost its credential" is that there is nothing to lose. The
+pairing-code form, its one-time reveal and the pending-codes table went with the code.
+
+**Stations page.** Three controls, each on its own axis:
+
+- **Archive** a station — its sessions stop, its links go dormant, and its notebook, tasks, locker
+  and vault survive untouched. Unarchiving restores the links that were dormanted, not the ones a
+  human suspended.
+- **Suspend** a link — that relationship stops carrying traffic and its live channels close. The
+  confirmation states how many. **Resume** turns it back on; the channels do not come back, because
+  the sessions that held them are gone. Auto-linking will not resurrect a suspended link, or the
+  off-switch would be undone by the first message that would have created it.
+- **Reassign** a station to a conversation — the way back into one whose conversation is gone. The
+  session states its conversation key, you paste it in, and its next `station_me` lands in that
+  station with its mail, notebook, tasks, locker and vault.
+
+*Retire* and *Revoke* on a station key are both gone with the keys.
 
 ---
 
@@ -697,21 +718,23 @@ anything up.
 only surface that reveals a build whose version metadata failed to inject — which otherwise
 ships a binary quietly reporting the wrong version. Run it after every upgrade, first.
 
-**Commands that print secrets belong to the person who owns them.** `token add` and
-`station key` print a credential once and it cannot be retrieved afterwards. Run them
-yourself; do not have an agent run them for you, and do not paste the output anywhere it
-will be recorded.
+**Commands that print secrets belong to the person who owns them.** `token add` prints a credential
+once and it cannot be retrieved afterwards. Run it yourself; do not have an agent run it for you,
+and do not paste the output anywhere it will be recorded. (`station key` is gone with station keys.)
 
 **Token scopes** are the access-control boundary that makes the review queue meaningful:
 `read`, `write-draft`, `propose` — the default for `ken token add` — let an agent search, draft
 and propose.
 
-**A token is dedicated to ONE surface family.** The other mintable scopes are `comm` /
-`comm-file` (inter-session messaging) and `station` / `station-locker`. Knowledge-base scopes
-cannot be combined with either: `ken token add --scopes read,comm` is refused with "mint two
-tokens and register Ken twice". Station scopes are not mintable with `ken token add` at all —
-`/station/mcp` needs a `kens_` key BOUND to a station, so use `ken station add` then
-`ken station key`, which issues `station` + `station-locker` together.
+**A token is NOT dedicated to one surface family, and used to be.** `ken token add --scopes
+read,comm` was refused with "mint two tokens and register Ken twice", because a knowledge-base token
+could not send messages and a comm token could not write knowledge. That rule (`CheckScopeMix`) was
+deleted in 3.31.0 on the ruling that no surface is optional, and `/mcp` now requires **every**
+capability — so a token that cannot carry all of them cannot use the endpoint at all.
+
+The ordinary credential is the **OAuth grant**, which carries `read`, `write-draft`, `propose`,
+`comm`, `comm-file` and `station` together. A static `ken token add` token is for a CLI or a script,
+and needs the same set to reach `/mcp`.
 
 **An agent token should never carry `curate`** — but do not mistake that exclusion for the
 whole gate. **No MCP tool requires `curate`**: the only scopes any tool checks are `read`,
