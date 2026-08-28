@@ -4,23 +4,36 @@ The **AI-facing interface**. Ken exposes these tools over a remote **streamable-
 endpoint. This document is the contract: shapes here are stable API; change them only by
 *adding* optional fields, never by removing or retyping an existing one.
 
-- **Endpoint:** `https://<ken-host>/mcp` (TLS-only). **This document covers the knowledge-base
-  surface only.** Ken has two other MCP endpoints, both **core, with no switch for either**
-  (the opt-out variables were removed in 2.0.0), each with
-  its own token family and its own contract document — a client registers Ken once per surface it
-  uses, which is a security property rather than packaging taste (a knowledge-base token cannot send
-  messages, and a comm token cannot write knowledge):
-  | surface | endpoint | tools | credential | contract |
-  |---|---|---|---|---|
-  | knowledge base | `/mcp` | `kb_*` | `ken_` token, knowledge-base scopes | this document |
-  | inter-session comms | `/comm/mcp` | `comm_*` | `ken_` token, `comm` scope | [COMM.md](COMM.md) |
-  | stations | `/station/mcp` | `station_*` | `kens_` key, bound to a station | [STATIONS.md](STATIONS.md) |
+- **Endpoint:** `https://<ken-host>/mcp` (TLS-only). **ONE surface, carrying every tool.**
 
-  The comm surface takes an ordinary `ken_` token that carries the `comm` scope — the separation is
-  enforced by the SCOPE, not by a distinct prefix, and a token may not hold both families. Stations
-  are the exception with a prefix of their own, because a station key additionally carries a station
-  binding that an ordinary token has no field for. (`kenc_` is unrelated: it prefixes OAuth *client
-  ids*, not tokens.)
+  Ken used to serve three MCP endpoints — `/mcp` for the knowledge base, `/comm/mcp` for
+  messaging, `/station/mcp` for the durable identity — each a separate connector a human had to
+  add, with its own consent and its own credential family. That split existed for a reason that
+  has since been deleted: the three accepted **mutually exclusive** credentials, so a
+  knowledge-base token could not send messages and a comm token could not write knowledge.
+
+  Since a single OAuth grant carries every capability, and since **nothing in Ken is optional**,
+  the split cost the user three connectors and bought nothing. `/comm/mcp` and `/station/mcp` are
+  **deleted**; `/mcp` carries `kb_*`, `comm_*` and `station_*` together.
+
+  | family | tools | contract |
+  |---|---|---|
+  | knowledge base | `kb_*` | this document |
+  | inter-session comms | `comm_*` | [COMM.md](COMM.md) |
+  | stations | `station_*` | [STATIONS.md](STATIONS.md) |
+
+  **A credential reaching `/mcp` must carry every capability.** That falls out of the mechanism —
+  three authentication middlewares chained, each failing closed on a missing scope — and it is also
+  the right rule: a partial credential should be refused at the transport rather than seeing a tool
+  list naming everything it cannot use.
+
+  **`ken_instructions` is where per-tool detail lives.** Each tool's list entry is one sentence
+  plus a pointer; `ken_instructions{tool:"<name>"}` returns its complete rules. This is not
+  packaging: a tool description is captured by your client when the CONVERSATION begins and never
+  refreshes, so a rule written there is permanently as old as the session reading it. A result is
+  computed per call. Call it with no argument for the connect-time instructions plus the list of
+  every tool you can ask about.
+
 - **Register in Claude Code:**
   `claude mcp add --transport http ken https://<ken-host>/mcp --header "Authorization: Bearer $KEN_TOKEN" --scope user`
 - **Tool prefix:** `kb_*` (chosen).
@@ -43,7 +56,7 @@ token up by `tokenId`, constant-time-compares `SHA-256(secret)`, and resolves it
 | `write-draft` | `kb_save` (create a new **draft** entry) |
 | `propose` | `kb_propose_enhancement`, `kb_flag_stale`, `kb_record_outcome` |
 | `curate` | promotion / reject — **reserved; required by no MCP tool.** Curation happens in the human web UI. |
-| `comm` / `comm-file` | a *separate* surface, core and on by default — see below. Never combined with the scopes above. |
+| `comm` / `comm-file` | the `comm_*` tools on the same endpoint. Carried alongside the scopes above, never instead of them — /mcp requires every capability. |
 
 > **The standard agent token is `["read","write-draft","propose"]` — never `curate`.**
 > That exclusion *is* the curation gate: an AI can capture and enhance knowledge all day, but
@@ -57,24 +70,24 @@ it never collides with the `ken_` shape) and always resolves to the **same agent
 `read`, `write-draft`, `propose`, never `curate`** — and is revocable from the web UI's Tokens page
 (*Connected apps (OAuth)*). Full setup and security model: [OAUTH.md](OAUTH.md).
 
-> **Inter-session communication is a different endpoint, and this document does not cover it.**
-> Ken also serves `comm_*` tools at `https://<ken-host>/comm/mcp` for
-> AI-session-to-AI-session messaging and file exchange. They require a **dedicated** token carrying
-> the `comm` (and, for files, `comm-file`) scope — a token may hold comm scopes or knowledge-base
-> scopes, never both, so a client registers Ken **twice**. That surface is **core and on by
-> default**, with `KEN_COMM_ENABLED=0` kept as an opt-OUT *(that variable was itself removed in
-> 2.0.0; the paragraph records the reasoning as it stood, and the runtime degradation it
-> describes is still real)*: Ken already degrades to a "COMM off"
-> state when `comm.db` cannot be opened — on purpose, so an expendable database can never take the
-> durable knowledge base down — and removing the variable would not remove that state, only the
-> operator's control of it, which is their one remedy if COMM misbehaves in production. It still
-> sits **outside** the byte-level compatibility contract, but no longer because it is optional: the
-> surface is mid-redesign — notice-messages are gone (3.4.0) and rooms have landed, name-addressed
-> send still has to replace pairing codes and channel-pair addressing, and the *channel*, the central
-> noun of today's tools, is still to be retired — so
-> promoting it now would buy a MAJOR bump, or a release cycle of deprecated v1 aliases, for no
-> benefit. It is promoted when that redesign (COMM v2) lands. That is why its contract lives in
-> [COMM.md](COMM.md) rather than here. Nothing in this document changes either way.
+> **Inter-session communication is on the same endpoint, and this document does not cover it.**
+> Ken serves `comm_*` tools at the same `/mcp` for AI-session-to-AI-session messaging and file
+> exchange, and `station_*` for the durable identity a session staffs. **A client registers Ken
+> once**; there is no second connector and no second consent. The paragraph that used to stand here
+> described a token that could hold comm scopes or knowledge-base scopes but never both, and told
+> the reader to register Ken twice — that separation is gone, and so is `KEN_COMM_ENABLED`
+> (removed in 2.0.0; nothing in Ken is optional).
+>
+> One runtime state that variable pointed at is still real and still deliberate: Ken degrades to a
+> **COMM-unavailable** state when `comm.db` cannot be opened, so an expendable database can never
+> take the durable knowledge base down with it. That is a fault, not a setting.
+>
+> COMM still sits **outside** the byte-level compatibility contract, and no longer because it is
+> optional. The redesign that made it a first-class surface landed here: name-addressed send
+> replaced pairing codes and channel-pair addressing, the pairing code and its human gate are gone,
+> a link is created by the first message, and a mailbox belongs to a station rather than a session.
+> Its contract lives in [COMM.md](COMM.md) rather than here. Nothing in this document changes
+> either way.
 
 **Errors.** Tool errors are returned as ordinary MCP tool errors — a `CallToolResult` with
 `isError: true` whose single text content item is the error **message string**. There is **no**

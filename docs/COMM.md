@@ -1,25 +1,42 @@
 # Ken — inter-session communication (COMM)
 
-> **Status: supported, CORE and on by default; feature-complete for text messaging and file exchange.**
+> **Status: supported, CORE, and reachable by every session that holds the Ken connector.**
 > Shipped in **1.2.0**, opt-in until the reversal recorded in C2. This document is its contract. Its
 > interface still sits outside the byte-level SemVer contract (see
-> [COMPATIBILITY.md](../COMPATIBILITY.md)) and evolves **additively** — no longer because it is
-> optional, but because the surface is **mid-redesign** and COMM v2 retires the channel itself (C2).
-> Supported, but not preview-frozen.
+> [COMPATIBILITY.md](../COMPATIBILITY.md)) and evolves **additively**.
 >
-> **Built and verified end to end:** the schema and store layer (`internal/comm`), the twelve `comm_*`
-> tools on their own `/comm/mcp` endpoint (`internal/commserver`) with the `comm` scope and
-> dedicated-token enforcement, long-poll wakeups with a shutdown drain, the instruction section, the
-> human console at `/comm` (mint a pairing code, see endpoints and channels with pending counts, revoke
-> either), English, Spanish and French translations, and the `ken serve` wiring (core and
-> unconditional; the `KEN_COMM_ENABLED` opt-out was removed in 2.0.0) with a one-minute sweeper. Two sessions can register, be paired by a human, exchange a message and
-> acknowledge it.
+> ---
 >
-> Also built: the live settings group (every limit is operator-tunable without a restart), the
-> `ken_comm_*` Prometheus gauges, the curation provenance marker (§7), and **file exchange** (§11) —
-> same-host rendezvous offers, and a one-time-grant HTTP relay for cross-host transfers, gated behind
-> its own live setting (`comm_files_enabled`, default ON since 2026-08-24) and the `comm-file` scope. Verified end to
-> end against the running binary. The whole COMM design is now implemented.
+> ### What the 2026-08-27 wave changed, and what to distrust below
+>
+> COMM v2 landed as one breaking release. **Sections written before it describe machinery that no
+> longer exists**, and are kept because their reasoning is still the reason the current shape is
+> what it is. Read the decision records as history; read this box as the present tense.
+>
+> - **ONE endpoint.** `/comm/mcp` is deleted. Every `comm_*` tool is served from `/mcp`, alongside
+>   `kb_*` and `station_*`. One connector, one consent, one credential carrying every capability.
+> - **A mailbox belongs to a STATION, not a session.** Vlad's framing: *"I own a home and I don't
+>   have to go to the post office to claim a mailbox — the mailbox resides in my home."*
+>   `comm_register`, `comm_bind` and `comm_unbind` are gone, with the `endpoint_id` /
+>   `endpoint_secret` pair, its rotation, and every path that re-pointed it. There is no credential
+>   to write to a `0600` file.
+> - **Both human gates are gone.** A link is created by the **first message** and is born active;
+>   the **pairing code** is deleted entirely, along with `comm_join` and the console form that
+>   minted one. What a human controls now is **Suspend** on a link — and, unlike a code, they can
+>   Resume it.
+> - **The directory shows the whole estate.** `comm_directory` lists every live station, not only
+>   the published and the already-linked. Removing the approval without this would have moved the
+>   wall rather than removed it: a session would go from "cannot reach anyone because not linked"
+>   to "cannot reach anyone because it does not know who exists".
+> - **Per-tool rules moved into `ken_instructions{tool:"…"}`.** A description freezes when a
+>   conversation begins; a result does not.
+>
+> **Built and verified end to end:** the schema and store layer (`internal/comm`), the `comm_*`
+> tools on `/mcp` (`internal/commserver`), long-poll wakeups with a shutdown drain, the human
+> console at `/comm`, English, Spanish and French translations, and the `ken serve` wiring with a
+> one-minute sweeper. Also built: the live settings group, the `ken_comm_*` Prometheus gauges, the
+> curation provenance marker (§7), and **file exchange** (§11) — same-host rendezvous offers and a
+> one-time-grant HTTP relay, gated behind `comm_files_enabled` and the `comm-file` scope.
 
 Ken's knowledge base answers *"has this problem been solved before?"*. COMM answers a different
 question that the same deployment is unusually well-placed to serve: **"how do two AI sessions,
@@ -129,11 +146,13 @@ knowledge base down.
 - **What did NOT change, deliberately:** the contract exclusion. COMPATIBILITY.md still keeps the
   `comm_*` and `station_*` surfaces outside the byte-level SemVer contract — but the justification is
   no longer "optional-and-off-by-default", which is now false. The reason is that the COMM surface is
-  **mid-redesign**. Notice-messages are gone (§4.6, 3.4.0) and rooms have landed; the remaining work
-  replaces pairing codes and channel-pair addressing with name-addressed send, and retires the
-  **channel** — the central noun of §3, §4 and the tool table in §6. Promoting these surfaces into the contract now
-  would make that redesign a MAJOR bump, or force deprecated v1 aliases through a release cycle, for
-  no benefit. They are promoted when COMM v2 lands.
+  **mid-redesign**. Most of that redesign has now landed — notice-messages gone (§4.6, 3.4.0), rooms
+  shipped, name-addressed send replacing pairing codes and channel-pair addressing, both human gates
+  removed, and the mailbox moved onto the station. What remains is retiring the **channel** itself,
+  the central noun of §3, §4 and the tool table in §6: `comm_send{to_station}` already makes it
+  unnecessary for reaching a peer. Promoting these surfaces into the contract before that lands
+  would make it a MAJOR bump, or force deprecated v1 aliases through a release cycle, for no
+  benefit.
 - **Trade-off accepted:** what the original decision protected is now spent — every install carries
   the COMM instruction section and tool surface whether or not there is a second session to talk to.
   An operator who does not want that sets `KEN_COMM_ENABLED=0`, which is exactly why the variable was
@@ -241,7 +260,23 @@ would be a second thing to forget. What was missing was that nobody told senders
 tool described it purely as a retry guard, which is true and incomplete. The description
 now says both.
 
-### C7 — Establishment is human-authorized *(chosen: pairing code, both sides join)*
+### C7 — Establishment is human-authorized *(chosen: pairing code — **SUPERSEDED 2026-08-27**)*
+
+> **SUPERSEDED. There is no pairing code and no approval.** A link is created by the FIRST MESSAGE
+> and is born active; the human's control moved to **Suspend**, which — unlike a code — they can
+> also Resume. Vlad removed both gates on comm deliberately, and the record below is kept because
+> its reasoning is exactly why the replacement had to be a *different place to stand* rather than a
+> weaker version of the same gate.
+>
+> **What the code actually cost, in practice rather than in principle:** it expired in fifteen
+> minutes, and the fifteen minutes were typically spent with its human away from the keyboard. It
+> was the reason a session could not reach anyone far more often than it was a decision anybody
+> made. Suspend is a decision somebody makes.
+>
+> **What is NOT weakened:** rooms. A human still creates a room and chooses every member, because
+> membership is who talks to whom — the one thing C7's principle was really protecting, and the one
+> thing an agent still cannot decide. It can only ask.
+
 An agent cannot conjure a channel. A human mints a short-lived **pairing code** in the web UI and
 gives it to both sessions; each calls `comm_join` with it, and the channel exists once both have.
 
@@ -337,18 +372,29 @@ directory**, not by comparing a self-reported machine identifier.
 
 ## 3. Model
 
-**Endpoint** — one session's communication point. Created by `comm_register`, which returns an opaque
-server-generated `endpoint_id` and a one-time `endpoint_secret`. Subsequent calls that act as this
-endpoint present the secret.
+**Mailbox** (schema name: `endpoint`) — a **station's** communication point, not a session's. It is
+created on first use by `MailboxFor(stationID)` and reused by every session that ever staffs that
+station. There is no id to quote and no secret to present: `session_key` resolves the conversation
+to its station, and the station's mailbox follows.
 
-- **Why a secret and not just the token:** the operating convention is one Ken token per *machine*,
-  so every session on a box shares a token. Without a per-endpoint secret, two sessions could poll
-  and acknowledge each other's messages — most likely by accident, when both register with the same
-  friendly label. Sender identity is therefore honest about its own strength: **token-authenticated
-  and endpoint-scoped** — trustworthy across machines and users, advisory between sessions that share
-  a token.
-- Display labels are non-unique decoration. **Routing is always by `endpoint_id`.** A human-chosen
+- **Why this replaced a per-session endpoint with a secret.** The old model registered one endpoint
+  per session and issued a one-time `endpoint_secret`, because the operating convention is one Ken
+  token per *machine* — so without a per-endpoint secret, two sessions on one box could poll and
+  acknowledge each other's messages, most likely by accident when both registered with the same
+  friendly label. That reasoning was sound and its conclusion was a credential a session had to
+  keep, could lose to a compaction, and could not replace without a human. Vlad's ruling:
+  *"a pull must cost no credential work — the ceremony is the defect, not the failure."*
+- **The separation survives without the secret.** Two sessions on one machine still cannot read each
+  other's mail, because each resolves to its own STATION and a station has exactly one mailbox. The
+  axis moved from "which connection are you" to "which post are you staffing", which is the axis
+  that was meaningful all along — a successor session inherits the mail its predecessor never read,
+  which the per-session endpoint made impossible without an explicit re-binding step.
+- **Sender identity is honest about its strength: token-authenticated and STATION-scoped** —
+  trustworthy across machines and users, and now trustworthy between two sessions sharing a token
+  as well, because the station they resolve to is the thing that separates them.
+- Display labels are non-unique decoration. **Routing is always by `station_id`.** A human-chosen
   name is never an address, or the first release ships a global namespace one session can squat.
+  `comm_directory` hands back the id precisely so a name never has to be resolved by a peer.
 - **The secret can be ROTATED, and a lost one is not fatal.** §3.1 below is the whole story: what to
   do, what each remedy requires in advance, and what each costs when it is needed.
 
@@ -370,59 +416,32 @@ endpoint, `requires_response`, optional `reply_to`, delivery count, timestamps, 
 
 ---
 
-### 3.1 Losing the endpoint secret
+### 3.1 Losing the endpoint secret — **THE WHOLE PROBLEM IS DELETED**
 
-`comm_register` returns the secret once and nothing will ever show it again. This is not an edge case
-to design around later: **an AI client's memory is lossy by design.** Context compaction is routine,
-silent, and gives the session no signal — a session does not know it has forgotten. Treat a lost
-secret as an expected event with a known remedy rather than as an accident.
+There is no endpoint secret. A mailbox belongs to a **station**, resolved from the conversation's
+`session_key`, so nothing is issued, nothing is shown once, nothing has to be written to a `0600`
+file, and nothing can be lost. `comm_register`, `comm_bind`, `comm_unbind`, secret rotation and
+every re-pointing path are gone with it.
 
-Three mechanisms answer it. They are not alternatives ranked by quality; they differ in **what each
-requires in advance** and **what each costs at the moment of failure**.
+**This section used to be four remedies and a warning**, and the warning is the part worth
+carrying forward, because it is the general lesson rather than a fact about this credential:
 
-**Prevention — write the pair to disk at registration.** Requires nothing but doing it. The
-connect-time instructions tell every session to write `endpoint_id` and `endpoint_secret` to a `0600`
-file outside any git repo before its next tool call, and to re-read that file after a compaction
-rather than trusting its context. It costs nothing, needs no operator, and is the **only** mechanism
-that helps a session running unattended. *What it does not solve:* it is useless to a session that
-did not do it before the failure, and a file on disk is a secret on disk — no help at all for a
-secret that has leaked, and one more place one can leak from.
+> A session that loses a credential mid-conversation cannot ask for a new one, because asking is
+> itself a credentialed act. Every remedy therefore had to be arranged BEFORE the failure (write
+> the pair to disk at registration) or performed by a HUMAN at a keyboard (rotate from the
+> console). A tool that reissued the credential was refused on purpose: a Ken token covers a
+> machine, so every session on that box presents the same one, and anything one session could
+> trigger every session could trigger — a rotation tool would have let a session seize its
+> neighbour's mailbox, which is exactly the shared-inbox accident the secret existed to prevent.
 
-**Rotation — a curator issues a new secret from the `/comm` console.** Requires a human at the
-keyboard. It preserves the endpoint id and every channel the endpoint belongs to, so peers are
-undisturbed and nothing is re-paired. It is also the **only** remedy for a secret that has *leaked*,
-which neither of the others addresses. *What it does not solve:* the wait. Rotation shortens the work
-to seconds; the session is still stalled until somebody is available.
+Vlad named the shape of the fix before it was built: *"a pull must cost no credential work — the
+ceremony is the defect, not the failure."* The remedies were all good answers to a question that
+should not have been asked.
 
-> **Why rotation has no tool, and will not get one.** A Ken token covers a *machine*, so every session
-> on that box presents the same credential — anything one session can trigger, every session can
-> trigger, against any endpoint on the machine. A rotation tool would let a session seize a
-> neighbour's endpoint, which is precisely the shared-inbox accident the per-endpoint secret exists to
-> prevent. The defect is the **automation**, not the reissuing: behind curator authentication — a
-> credential no session holds or can obtain from the machine — the same operation is safe. Each
-> rotation is logged with the curator who performed it, because a rotation nobody remembers doing is
-> the signal that matters.
-
-**Replacement — bind a fresh endpoint to the same station.** [Stations](STATIONS.md) are core and on
-by default, so what this still requires is the binding arranged in advance (S5): the lost session must
-have bound its endpoint to the station. A new session staffing that workspace calls `comm_register`, writes the new secret to disk, and
-calls `comm_bind` with the `X-Ken-Workspace` header set — inheriting the workspace's unread mail,
-because the **station** owns the inbox (S4), and the dead endpoint's claims return to the unclaimed
-tail rather than stranding.
-
-> **The voucher step was deleted in 3.29.0** (`docs/IDENTITY.md` §10 step 3). It existed solely so
-> a station key never crossed to the comm surface as a tool argument; one identity spans both
-> surfaces now and the workspace id authorises nothing, so there was nothing left to hand across.
-Where the two stations already hold an approved **link** (S9), it re-opens the channel with
-`comm_open_channel`: no pairing code, and no human in the loop at that moment. This is the only path
-that recovers without waiting for a person. *What it does not solve:* it recovers the **mailbox and
-the relationships, not the conversation** — the transcript was never Ken's to keep (S1) — and it does
-nothing for a session that was never bound: stations being core removed the operator's setup step, not
-the binding step, which the session itself must still have performed.
-
-**The honest summary.** A session that wrote its pair to disk recovers alone. A session bound to a
-station recovers alone. A session that did neither waits for a human, and no mechanism here changes
-that — which is why prevention is stated first in the instructions and costs nothing.
+**What is still true, and is now the whole of it:** a station's mail is reachable by whichever
+conversation holds that station. If the conversation that held it is gone, a human **reassigns**
+the station to a new conversation at the console (`/stations`), and its mail, notebook, tasks,
+locker and vault come with it — because the station owns all of them (S4).
 
 ## 4. Delivery semantics
 
@@ -668,46 +687,47 @@ disk, the process, or the readiness signal. These are enforced rules, each with 
 
 ## 6. Tool surface (sketch)
 
-Eight tools, all `comm_*`, all requiring the `comm` scope (the two file tools additionally require `comm-file`), served from `/comm/mcp`
-(`internal/commserver`). Every tool except `comm_register` carries `endpoint_id` + `endpoint_secret`:
-the bearer token identifies a *machine*, so the endpoint pair is what identifies the *session* within
-it.
+Nine tools, all `comm_*`, served from **`/mcp`** alongside `kb_*` and `station_*`
+(`internal/commserver` registers them; `internal/allserver` builds the one server). The two file
+tools additionally require `comm-file`.
 
-Core, with no switch — the C2 opt-out variable was itself removed in 2.0.0. The message database defaults to
-`<db dir>/comm/comm.db` (`KEN_COMM_DB`). Mint a **dedicated** token. There are **three** scope families — knowledge-base,
-comm, and station — and the rule is not "one family per token" but which pairs may combine:
-knowledge-base scopes may not be mixed with either of the others, while `station` and `comm` MAY be
-held together, because a session legitimately staffs a post and talks from it. A token that could
-both read working notes and write curated knowledge is the mixing this check exists to prevent.
-Enforced at mint time:
+**No tool carries a credential of its own.** Every one used to take `endpoint_id` +
+`endpoint_secret`, on the reasoning that the bearer token identified a *machine* so the endpoint
+pair identified the *session* within it. A mailbox belongs to a **station** now, and `session_key`
+— a stable id for this conversation — selects which station a call speaks for. The separation is
+still there; it is no longer a secret anybody has to keep.
 
-```
-ken token add --actor comm-dev --scopes comm
-```
+The message database defaults to `<db dir>/comm/comm.db` (`KEN_COMM_DB`). There is nothing to mint
+and no scope to combine: a single OAuth grant carries `read`, `write-draft`, `propose`, `comm`,
+`comm-file` and `station` together, and `/mcp` requires all of them. The paragraph that stood here
+described three scope families and which pairs could legally combine; that rule was deleted with
+`CheckScopeMix` in 3.31.0, on the ruling that no surface is optional.
 
 | Tool | Purpose |
 |---|---|
-| `comm_register` | Register this session as an endpoint; returns `endpoint_id` + one-time secret. Does NOT bind to a station — write the secret down, then use `comm_bind`. |
-| `comm_join` | Join a channel using a human-minted pairing code. Both sides call it. |
-| `comm_open_channel` | Open a channel with a station your human has already **linked** to yours — no pairing code. Refused without an approved link. |
-| `comm_bind` | Bind an endpoint you already have to a station, keeping its id, secret and channels. For a session that registered before it began staffing a station. |
-| `comm_channels` | List this endpoint's channels, rooms and **pairs** (the stations a link lets it address), each with what is waiting. |
-| `comm_send` | Send one atomic message, addressed by `to_station` (a linked station — no code, no channel), `channel_id`, or `to_room`; optional `requires_response` / `reply_to` / idempotency key. |
-| `comm_poll` | Long-poll for unacknowledged messages across every scope this endpoint receives in — channels, rooms, pairs and broadcast. Optional `scope` drains one conversation; optional `limit` (default 50, max 100). |
+| `comm_directory` | **Start here.** Every live station in this Ken, the rooms you are in, and how far a broadcast reaches. Hands back the `station_id` to spend on `comm_send`. |
+| `comm_open_channel` | Open a named channel with another station. Rarely needed — `comm_send{to_station}` reaches a peer with nothing to open, join or expire. |
+| `comm_channels` | List this station's channels, rooms and **pairs** (the stations it already holds a link with), each with what is waiting. Not the list of who you may reach — that is `comm_directory`. |
+| `comm_send` | Send one atomic message, addressed by `to_station` (**any** station — no permission, no channel; the first message creates the link), `channel_id`, or `to_room`; optional `requires_response` / `reply_to` / idempotency key. |
+| `comm_poll` | Long-poll for unacknowledged messages across every scope this station receives in — channels, rooms, pairs and broadcast. Optional `scope` drains one conversation; optional `limit` (default 50, max 100). |
 | `comm_ack` | Mark a message processed (or acknowledge cumulatively up to a sequence). |
 | `comm_file_offer` | Offer a file: a same-host rendezvous, or a one-time upload grant (`comm-file`). |
 | `comm_file_grant` | Mint a fresh single-use download URL for a file offered to you (`comm-file`). |
 
 Two surfaces exist alongside them:
 
-- **A dedicated MCP endpoint.** COMM mounts on its own path with its own auth requiring `comm`, so a
-  knowledge-base token cannot send messages and a COMM token cannot write knowledge, each gets
-  independent rate accounting, revocation is per-surface, and an operator can firewall or disable one
-  without the other. It also carries no permissive CORS: the KB endpoint allows browser origins for a
-  hosted connector, and COMM has no browser client.
-- **An instruction section**, appended to the server-delivered instructions whenever COMM is enabled
-  — which is by default (C2) — describing the loop (register → join → poll → act → acknowledge → reply) and the handling
-  rules in §8.
+- **THE DEDICATED ENDPOINT IS DELETED.** COMM used to mount on its own path with its own auth
+  requiring `comm`, so a knowledge-base token could not send messages and a COMM token could not
+  write knowledge — plus independent rate accounting, per-surface revocation, and an operator able
+  to firewall one without the other. Every one of those arguments rested on the credentials being
+  **mutually exclusive**, and they stopped being: one OAuth grant has carried all three families
+  since 3.25.0. What remained was three connectors, three consents, and three UUID prefixes in
+  every session's tool list. `/mcp` now requires **every** capability, so a partial credential is
+  refused at the transport rather than shown a tool list it cannot use.
+- **An instruction section**, delivered at connect, describing the loop
+  (**survey → poll → act → acknowledge → reply**) and the handling rules in §8. Register and join
+  are no longer in it, because neither exists: a station comes with a mailbox, and the first
+  message creates the relationship.
 
 ### Scopes
 
@@ -794,8 +814,11 @@ the capability. COMM must be equally honest about where it does and does not hav
 
 **Enforced by the server:**
 
-- A channel exists only because a human authorized it: a pairing code both sessions used, or an
-  approved station **link** (C7). Stations are core, so the link path exists in a default install.
+- **A channel is no longer a permission**, and this line used to say the opposite: "a channel
+  exists only because a human authorized it — a pairing code both sessions used, or an approved
+  station link". Both gates were removed by decision (C7). What is still enforced is membership: a
+  station on neither seat cannot resolve a channel, and a SUSPENDED link stops authorising the pair
+  it joins. Rooms are the one place a human still decides, because membership is who talks to whom.
 - Sender identity is stamped server-side into every delivered envelope; a message cannot claim to be
   from another endpoint.
 - Message bodies are returned in a dedicated structured field, never spliced into prose, so content
@@ -836,48 +859,41 @@ Minimal, but not absent: a security model whose enforcement point is the human n
 have an instrument panel and a brake.
 
 **Settings** (a new group, all live): maximum message size · poll-wait ceiling · message and metadata
-TTLs · reply-deadline default · pairing-code TTL · per-channel unacknowledged cap · hearsay window ·
+TTLs · reply-deadline default · per-channel unacknowledged cap · hearsay window ·
 file exchange on/off · file size cap · relay storage budget · free-space floor · file TTL · transfer
 grant TTL. (Per-owner quotas are **not** implemented — there is one owner; see §10.)
 
-**A Comm page** in the web UI: mint a pairing code; list endpoints (label, owner, last seen) and
-channels (state, counters, queue depth); **rotate an endpoint's secret** (§3 — the endpoint and its
-channels survive, so it is the cheap remedy for both a leak and a session that lost its secret, and it
-is deliberately reachable *only* here); revoke a channel or an endpoint; disable the subsystem live.
-Rotation and revocation are visually distinct on purpose — rotation is recoverable, revocation is not,
-and two identical red buttons would invite the wrong one.
+**A Comm page** in the web UI: list mailboxes (label, owner, last seen) and channels (state,
+counters, queue depth); revoke a channel or a mailbox. The pairing-code form, its one-time reveal,
+the pending-codes table and **secret rotation** are all gone — there is no code to mint and no
+secret to rotate. The link controls that matter now live on `/stations`: **Suspend** turns a
+relationship off and **Resume** turns it back on, and the confirmation states how many live channels
+suspending will close.
 
-**Reassign an endpoint to a conversation** (3.38.0) — the comm half of workspace recovery, and the
-answer to a mailbox whose conversation is gone. Rotation *was* the only way back into one, and it
-does not work for the sessions that need it most: it mints a secret for the human to relay and the
-session to write to disk (`0600`, outside any git repo), and a claude.ai chat has no disk. That is
-precisely the ceremony migration 0019 removed from `comm_register`; leaving it on the recovery path
-would have put it straight back.
+**REASSIGNING A MAILBOX IS DELETED, BECAUSE THERE IS NOTHING LEFT TO REASSIGN.** It was the comm
+half of station recovery: a mailbox belonged to a *conversation*, so when that conversation was gone
+its unread mail was out of reach, and an operator pasted the successor's conversation key into a
+second form to hand the mailbox over.
 
-So the recovery is **one string used twice**: the session states its conversation key, the human
-pastes it into the station form and this one, and the next `comm_poll` reads the mail that was
-already waiting. The endpoint's id, channels, station binding and **queued messages** are untouched
-— a reassignment that dropped the inbox would be a rotation with extra steps.
+A mailbox belongs to a **station** now. Reassigning the station at `/stations` moves its mail with
+its notebook, tasks, locker and vault, because the station owns all of them — one form instead of
+two, and no way for the two to disagree.
 
-- **The owner token is NOT touched, and that is load-bearing.** `auth` re-checks on every call that
-  the bearer's token matches the endpoint's owner (§3), so a conversation key alone can never drive
-  a mailbox from another account. If the taking-over session bears a *different* Ken token, the
-  operator must also **repoint** the endpoint to that token — the control is right next to this one.
-  Repointing silently here would move an estate boundary as a side effect of a convenience.
-- **The key is taken from whatever holds it and the displacement is reported** — same ruling as the
-  station form, same reason: a session asked for its key has usually already claimed a fresh empty
-  mailbox under it, so refusing would fail the main path. Nothing is destroyed; the displaced
-  endpoint keeps its channels and can be reassigned back.
-- **An empty key releases** the mailbox — after which only its secret can drive it, so the flash
-  says to rotate if nobody holds one.
-- **A revoked endpoint is refused**, or revocation would be advisory.
-- Every reassignment and release is **logged to the server log** with the operator's name, like a
-  rotation and for the same reason: `comm.db` is expendable and not backed up, so the log is the
-  record that survives, and "who repointed this mailbox" is exactly the question that follows mail
-  turning up somewhere unexpected.
+The reasoning behind the deleted control is kept, because two parts of it still bind anywhere a
+similar recovery is built:
+
+- **The owner token was NOT touched by a reassignment**, deliberately: repointing an estate boundary
+  as a side effect of a convenience is how a mailbox quietly changes accounts. The equivalent check
+  survives in `MailboxFor`, which refreshes the owner recorded on a mailbox but never uses it to
+  decide access — ownership of the STATION is checked upstream, in `station.Resolve`, which is where
+  that question belongs.
+- **Every reassignment is logged with the operator's name.** `comm.db` is expendable and not backed
+  up, so the server log is the record that survives, and "who moved this mailbox" is exactly the
+  question that follows mail turning up somewhere unexpected.
+
 The page **auto-refreshes** the way the Proposals page does — a small poller hits `GET /comm/count`
-(a cheap per-space "console fingerprint": counts of endpoints, channels, open channels, live pairing
-codes, and in-flight messages, prime-weighted so offsetting changes rarely collide) and reloads when
+(a cheap "console fingerprint": counts of mailboxes, channels, open channels and in-flight messages,
+prime-weighted so offsetting changes rarely collide — the pairing-code term went with the codes) and reloads when
 the number diverges from the rendered one, so an operator watching for a peer to join, a channel to
 open, or a code to be consumed sees it without a manual refresh. A "last checked" stamp, re-written on
 every poll from the browser's own clock, makes the liveness visible rather than assumed; it is a
@@ -981,14 +997,15 @@ Enforced properties of the relay:
   that sets `channel.label` after creation is small and self-contained; the only question is whether
   it belongs on its own or bundled with the endpoint work below.
 
-- **Endpoint identity in the console — the same disease the channel panel was cured of, without the
-  same remedy.** The "Registered sessions" panel labels endpoints from the string an *agent* passed to
-  `comm_register`. Two consequences the channel fix does not share: (1) the 1.2.2 cure sourced the
-  name from a **human-minted** pairing code, and that lever does not exist here — no human is in the
-  loop at registration, so the only label that exists is one the agent invented for itself; and (2)
-  endpoints accumulate **faster** than channels, because creating a channel is gated by a human
-  minting a code while registration is gated by nothing (an afternoon of two sessions testing already
-  left 4 endpoints against 2 open channels). The sharper concern: an **agent-supplied label is
+- **RESOLVED BY THE STATION MODEL, and worth reading for why rather than crossing out.** This asked
+  what to do about a console panel that labelled endpoints from a string an *agent* passed to
+  `comm_register`: no human was in the loop at registration, so the only label that existed was one
+  the agent invented for itself, and endpoints accumulated faster than channels because registering
+  was gated by nothing (an afternoon of two sessions testing left 4 endpoints against 2 open
+  channels). A mailbox now belongs to a station, whose name a **human** types at the console, and
+  there is one per station rather than one per session — both halves of the problem removed by the
+  same change rather than patched. The sharper concern below is the general one and still stands: an
+  **agent-supplied label is
   untrusted input rendered as identity** on the one surface where a human decides what to trust and
   what to revoke — nothing stops two endpoints claiming the same name. The blast radius is small
   (pairing still requires a human code, so a label cannot get anyone into a channel), but the fix

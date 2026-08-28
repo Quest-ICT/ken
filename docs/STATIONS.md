@@ -1,27 +1,47 @@
 # Ken — stations, notebooks and task lists
 
-> **Status: BUILT, supported, and CORE — always on. There is no switch:** `KEN_STATION_ENABLED`
-> was removed in 2.0.0 and setting it does nothing (S2 records the decision as it stood).** Written before the code, the way [`COMM.md`](COMM.md) was, so the decisions were argued
+> **Status: BUILT, supported, and CORE — always on. Nothing in Ken is optional.**
+> `KEN_STATION_ENABLED` was removed in 2.0.0 and setting it does nothing (S2 records the decision as
+> it stood). Written before the code, the way [`COMM.md`](COMM.md) was, so the decisions were argued
 > while they were still cheap — then implemented against. The `station_*` surface still sits outside
-> the byte-level compatibility contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)), exactly as COMM
-> does — but **no longer because it is off by default**. It stays outside because the COMM surface
-> this design is wired into (S4's station-owned inbox, S9's links materializing channels) is
-> mid-redesign: notice-messages are gone (3.4.0) and rooms have landed; the remaining work replaces
-> pairing codes and channel-pair addressing with name-addressed send, and retires the **channel** —
-> the central noun of the current tool surface. Promoting either surface now would make that redesign a
-> MAJOR bump, or push deprecated v1 aliases through a release cycle, for no benefit. Both are
-> promoted into the contract when that redesign ("COMM v2") lands; until then they evolve additively.
+> the byte-level compatibility contract ([`COMPATIBILITY.md`](../COMPATIBILITY.md)), and no longer
+> because it is off by default: it stays outside while the last of the COMM redesign lands (the
+> **channel** is the remaining noun to retire).
 >
-> **Built:** the schema and `kens_` station keys with the three-way scope split (S5); the notebook
-> with revisions (S10); the task list and its ordering contract (§11); the locker (S11); the
-> `/station/mcp` surface (§6); the operator console at `/stations` (§10); `ken station
-> add|list|key|requests`; peer links, denials and their mute (S9); endpoint binding by voucher (S5, S5a); `station_directory` and its published-or-linked visibility rule (S8);
-> the station-owned inbox with claim-once delivery and its lease (S4); severing on key revocation
-> (S6); and `comm_open_channel`, which opens a channel over an approved link with **no pairing code**.
+> ---
+>
+> ### What the 2026-08-27 wave changed, and what to distrust below
+>
+> This shipped as one breaking release. **Several decision records below describe machinery that no
+> longer exists.** They are kept, marked, because their reasoning is why the current shape is what it
+> is — but read this box as the present tense.
+>
+> - **ONE endpoint.** `/station/mcp` is deleted. Every `station_*` tool is served from `/mcp`
+>   alongside `kb_*` and `comm_*`. One connector, one consent.
+> - **STATION KEYS ARE RETIRED.** There is no `kens_` credential, no station binding, no binding
+>   voucher, and no sever-on-revocation. A session authenticates with the one OAuth grant, and
+>   `session_key` — a stable id for the conversation — selects which station it staffs. What used to
+>   be a credential is now a selector that authorises nothing.
+> - **`X-Ken-Workspace` and `?workspace=` are deleted**, with the word *workspace* itself: the term
+>   is **station**, everywhere, with no dual acceptance.
+> - **`station_link_request` is deleted.** A link is created by the FIRST MESSAGE and is born active.
+>   There is nothing to ask for and nobody to approve it; a human's control is **Suspend** on the
+>   link, which they can also **Resume**.
+> - **`station_directory` lists the whole estate**, not published-or-linked. Removing the approval
+>   without this would have moved the wall rather than removed it.
+> - **A station comes with a MAILBOX.** Vlad: *"I own a home and I don't have to go to the post
+>   office to claim a mailbox — the mailbox resides in my home."* `comm_register`/`comm_bind` are
+>   gone, and a successor session inherits its predecessor's unread mail with nothing to re-bind.
+> - **Per-tool rules moved into `ken_instructions{tool:"…"}`**, where a result keeps them current.
+>
+> **Built:** the schema; the notebook with revisions (S10); the task list and its ordering contract
+> (§11); the locker (S11); the vault; the `station_*` tools on `/mcp` (§6); the operator console at
+> `/stations` (§10); `ken station add|list|requests`; links, suspend/resume, and the station-owned
+> inbox with claim-once delivery and its lease (S4).
 >
 > **Not built, and named here so no section reads as a promise it does not keep:** per-station
-> connect-time instructions (§13); and station-specific metrics, which do not exist beyond the generic
-> per-tool counters every MCP surface emits.
+> connect-time instructions (§13); and station-specific metrics, which do not exist beyond the
+> generic per-tool counters every MCP surface emits.
 >
 > Convention in this document: **S*n*** is a locked decision, **§*n*** is a section.
 
@@ -171,23 +191,35 @@ the claim is recorded on the row, and one ack settles it for the station.
   endpoints keep the shipped `(channel, sender_endpoint, seq)` behaviour, so the two regimes coexist
   in one index by writing the station id when there is one and the endpoint id when there is not.
 
-### S5 — The station key is a header credential; binding uses a voucher *(chosen: never a tool argument)* — **SUPERSEDED 2026-08-25**
+### S5 — The station key is a header credential; binding uses a voucher — **WHOLLY SUPERSEDED, 2026-08-27**
 
-> **THE VOUCHER HALF OF THIS DECISION IS DELETED** (`docs/IDENTITY.md` §10 step 3). The reasoning
-> below is preserved because it is correct and it is *why* the deletion was safe: the voucher
-> existed **solely** so a station key never crossed to the comm surface as a tool argument. Once one
-> identity spanned both surfaces (§10 step 2) and the per-folder station KEY became a workspace id
-> that authorises nothing (§4), there was no key to keep off that surface — so the voucher carried
-> nothing and went, with its 5-minute TTL, single-use redemption, endpoint pinning, actor matching,
-> hash-at-rest and hourly sweep.
+> **THERE IS NO STATION KEY, NO BINDING AND NO VOUCHER.** This decision is now history in all three
+> of its parts, and the record is kept because the reasoning is what made each deletion safe rather
+> than lucky.
 >
-> **Binding today:** `comm_bind` with the `X-Ken-Workspace` header set. The endpoint is bound with an
-> EMPTY `bound_by_station_key_id` — no key authorised it, so none can sever it, and revocation moved
-> to the credential that owns the endpoint.
+> - **The voucher** went first (2026-08-25). It existed **solely** so a station key never crossed to
+>   the comm surface as a tool argument; once one identity spanned both surfaces there was no key to
+>   keep off it, so the voucher carried nothing — and went with its 5-minute TTL, single-use
+>   redemption, endpoint pinning, actor matching, hash-at-rest and hourly sweep.
+> - **The key** went with this wave. A `kens_` credential reached nothing after `/mcp` began
+>   requiring an OAuth grant carrying every capability, and Vlad answered the question directly when
+>   it was put to him: retired. With it went `IssueStationKey`, `RetireStationKey`,
+>   `AuthenticateStationKey`, the console's key panel and `ken station key`.
+> - **The binding** went with the mailbox. A station comes with one; there is nothing to bind, and
+>   therefore nothing a key revocation could sever.
 >
-> **The header rule below still stands for station KEYS, which still exist.** §9.2's condition is
-> the one to re-read before changing any of this: *"a stable opaque workspace id in an MCP header
-> authorises nothing… **if that id ever gains authority, this control comes straight back**."*
+> **What replaced all of it is a SELECTOR, not a smaller credential.** `session_key` names the
+> conversation; `station.Resolve` maps it to a station; the OAuth grant on the request is what
+> authorises. §9.2's condition is still the one to re-read before changing any of this:
+> *"a stable opaque id in an MCP header authorises nothing… **if that id ever gains authority, this
+> control comes straight back**."* The id moved from a header to an argument, and the condition
+> travelled with it unchanged.
+>
+> **One trap, recorded because it nearly shipped:** retiring the keys would have left `withCaller` —
+> the per-call principal re-derivation that exists so a `kb_save` presented with token B on a
+> session opened by token A is authored by B — accepting **nothing**, silently, since it returns the
+> unmodified context on failure. It and the middleware had already drifted to different credential
+> vocabularies; both now go through one `principalFromToken`.
 
 A **station key** is an `api_token` row — same table, same hashing, same revocation, same `/tokens`
 listing — carrying `actor_id`, `scopes` and a new nullable `station_id`, minted with a **`kens_`**
@@ -274,7 +306,18 @@ Registration mints a credential and stops. To bind: **`comm_register` → write 
   a session working from an older flow gets a hard error rather than an unbound endpoint it believes
   is bound. Verified against the SDK, not assumed.
 
-### S6 — Revocation severs; retirement does not *(chosen: two verbs, severing default)*
+### S6 — Revocation severs; retirement does not — **SUPERSEDED 2026-08-27**
+
+> **BOTH VERBS ARE GONE WITH THE KEYS THEY ACTED ON.** There is no station key to revoke or retire,
+> no `bound_by_station_key_id` to sever on, and no third credential to compose them from. What a
+> human has instead is one control per axis: **archive a station** (its session stops working, its
+> contents survive), **suspend a link** (that relationship stops carrying traffic, and Resume turns
+> it back on), and **withdraw the OAuth authorization** (the master switch — one grant, and a second
+> active one would be an error rather than a feature).
+>
+> **The distinction below is still the one to preserve when naming any future pair of controls:** a
+> verb that leaves a leaked capability running until a sweep notices is theatre, and two controls
+> that differ in whether they stop something *now* must say so in their names, not in a footnote.
 
 Every endpoint records `bound_by_station_key_id`. **Revoke** stops further binds *and* severs every
 endpoint that key bound. **Retire** stops further binds and leaves live endpoints alone. There is no
@@ -355,7 +398,32 @@ A station advertises `self_described_about` and `self_described_tags`. Never `ab
 - **What is not a claim:** `name` (a human typed it), stamped server-side with `name_source: "human"`,
   and `published` (a human set it) — so a reader can always tell the two apart.
 
-### S9 — Approval is per relationship *(chosen: links, not per-conversation codes)*
+### S9 — Approval is per relationship *(chosen: links, not per-conversation codes)* — **THE APPROVAL IS GONE, THE LINK SURVIVES, 2026-08-27**
+
+> **THIS DECISION WAS HALF RIGHT AND THE RIGHT HALF WON.** It moved the human's decision from "this
+> conversation may happen" to "these two posts may talk", which was correct — the durable object
+> should match the durable decision. Vlad then removed the decision itself: a link is created by the
+> **first message**, born active, and `station_link_request` is deleted along with the console
+> approval, the denial ladder and its mute.
+>
+> **The link is still recorded**, deliberately, and that is what makes this a change of gate rather
+> than a removal of one: it is the audit trail of who started talking to whom, and it carries the
+> off-switch. **Suspend** stops a relationship; **Resume** restarts it; auto-linking will **not**
+> resurrect a suspended link, or the off-switch would be undone by the first thing it exists to stop.
+>
+> **What the removal cost, and what was shipped with it.** The approval was accidentally doing
+> DISCOVERY: the act of a human approving a link was also what told a session that peer existed.
+> Removing the gate alone would have moved a session from "cannot reach anyone because not linked"
+> to "cannot reach anyone because it does not know who exists" — the same outcome, reached
+> differently, and harder to diagnose because nothing errors. So `station_directory` opened to the
+> whole estate in the same release. Ship them together or the change reads as no change.
+>
+> **Two properties below are NOT superseded** and are the reason rooms still work the way they do:
+> the reason text is shown only to the human and never delivered to a target (otherwise every
+> request is a one-shot unauthorized message channel), and the transitive path is marked
+> (`prompted_by_peer_traffic`, badged as *"this session was in a conversation when it asked"*). Both
+> now apply to ROOM requests, which are the surviving kind — because room membership is who talks to
+> whom, and that is the one decision an agent still cannot make for itself.
 
 `station_link_request(to_station, reason)` → pending → the human approves or denies **with a reason**.
 An approved **link** lets either side materialize a channel when it needs one.
