@@ -1,14 +1,29 @@
-# Workspace identity — the locked decisions
+# Station identity — the locked decisions
 
-> **STATUS: DESIGN, NOT PLAN. Nothing here is built.** This records decisions Vlad took on
-> **2026-08-21**, in the conversation `docs/TARGET-ARCHITECTURE.md` was written to make possible.
-> It supersedes nothing and schedules nothing; `FINISHING.md` is unaffected.
+> **STATUS: BUILT. This is what runs.** It recorded decisions Vlad took on **2026-08-21**, before any
+> code, and said "DESIGN, NOT PLAN. Nothing here is built." It was implemented across 3.32.0–3.42.0
+> and finished in the breaking wave of **2026-08-27**.
 >
-> **What it is for.** Ken's identity and access layer is being replaced — that layer and no other.
-> The delivery model, the knowledge base, the console and the migration discipline stay. This file
-> is the contract the replacement is built against, written *before* any code, because the reasoning
-> behind the current controls lives in scattered comments and in one session's context, and a
-> replacement written without it would rebuild the same defects under new names.
+> **THE WORD IS "STATION". "Station" is retired**, everywhere, with no dual acceptance — Vlad's
+> condition being that *"nothing keeps calling workspace_whatever without nobody noticing it."* This
+> document was titled *Station identity*; the term it introduced never reached a released surface
+> under that name.
+>
+> **Three things shipped differently from the design below, and each is marked where it appears:**
+>
+> 1. **Identity travels as an ARGUMENT, not a header.** §4's `X-Ken-Workspace` was deleted before it
+>    ever carried real traffic: a claude.ai connector cannot set custom headers, so the one
+>    population that most needed it could not use it. `session_key` is a tool argument, which
+>    crosses the MCP freeze — captured schemas do not, and arguments do.
+> 2. **The unit is one station per CONVERSATION, not one per folder.** §5's per-folder model assumed
+>    a value in a folder's MCP config; with the header gone there is no per-folder channel to carry
+>    one. A conversation claims a station and keeps it across restarts. **"Same folder, new
+>    conversation, same station" is genuinely unsolved**, and Vlad deferred it deliberately: the
+>    console's reassign step covers it for now, and the folder-key design waits until he wants to
+>    think about it. It is not an oversight and should not be quietly built.
+> 3. **The identity is a SELECTOR that authorises nothing** — which §4 already required, and which
+>    is the reason the other two changes were cheap. Station keys are retired; the OAuth grant on the
+>    request is what authorises.
 
 ---
 
@@ -35,10 +50,10 @@ These are decisions, not proposals. Each was taken explicitly.
 |---|---|
 | **Single user, permanently** | One human per Ken instance. One Claude account per instance. Many Claude Code sessions — *the sessions are the actual users of the system.* |
 | **Multi-user is federation, never tenancy** | If instances ever need to share, that is a separate **federation service between instances**. Nothing inside one instance is ever multi-tenant again. |
-| **A workspace is what a station already is** | A durable identity owning notebook, tasks, vault and channels, which outlives every session. |
-| **One workspace per folder** | Not a new rule — Claude Code already keys MCP config by the folder a session starts in, and the estate converged on one station per folder without anyone designing it. |
+| **A station is what a station already is** | A durable identity owning notebook, tasks, vault and channels, which outlives every session. |
+| **One station per folder** | Not a new rule — Claude Code already keys MCP config by the folder a session starts in, and the estate converged on one station per folder without anyone designing it. |
 | **Identity is a stable opaque id; the name is decoration** | The id travels in the folder's MCP config. **It is not a secret** — knowing it authorises nothing. |
-| **The human can rename a workspace at any time** | With no side effects anywhere. |
+| **The human can rename a station at any time** | With no side effects anywhere. |
 | **An unknown folder works immediately** | Auto-named, fully functional, no approval. |
 | **The existing estate is migrated, not abandoned** | Stations, notebooks, tasks, vaults, channels and links all survive. |
 
@@ -51,17 +66,27 @@ using it loosely is what made the first explanation of this model unclear.
 |---|---|---|---|
 | **Device** | a machine where the human has logged into claude.ai | any number | **the login is the approval.** No Ken step exists or is wanted |
 | **Folder** | the directory a session starts in | many | never — it is a place, not an identity |
-| **Workspace** | the durable identity: notebook, tasks, vault, channels | one per folder | **once, by name, in the console** — and even that is optional |
-| **Session** | one Claude Code conversation | many, over time | **never.** It inherits its folder's workspace |
+| **Station** | the durable identity: notebook, tasks, vault, mailbox | one per **conversation** (the design said per folder — see the status box) | **once, by name, in the console** — and even that is optional |
+| **Session** | one Claude Code conversation | many, over time | **never.** It claims a station on its first call and returns to it after a restart |
 
-## 4. Identity: an id in config, a name in the console
+## 4. Identity: an id the session states, a name in the console
 
-The folder's MCP entry carries a **stable opaque workspace id**, written once by Ken:
+> **AS BUILT, THE ID IS A TOOL ARGUMENT.** The design below put it in the folder's MCP entry as a
+> header. That header was implemented and then deleted without ever carrying real traffic: a
+> claude.ai connector **cannot set custom header names**, so the population that most needed it
+> could not use it at all, and the census before deleting it found one test token and a single
+> 39-minute window of use. Everything this section says about the *nature* of the value is
+> unchanged and is why the move was cheap.
 
 ```
-X-Ken-Workspace: lhqBQKBpTSyJoZyu      ← permanent, meaningless, not a secret
-name in console:  ken-public            ← the human's, renameable at will
+session_key: 2e415ff7-c612-4af3-bd13-a438979ee957   ← the conversation's own id; permanent for it, not a secret
+name in console: ken-public                          ← the human's, renameable at will
 ```
+
+**Why an argument and not a header.** Arguments cross the MCP freeze; whole tools and captured
+schemas do not. A session whose tool list predates a new parameter can still send it, because the
+server validates what ARRIVES rather than the client's copy of the schema. ken-prod-ops proved that
+by passing `to_room` to a `comm_send` schema with no such property and watching it work.
 
 **Why the id and not the name.** `COMM.md` §3 already states the rule, learned on endpoints:
 
@@ -69,7 +94,7 @@ name in console:  ken-public            ← the human's, renameable at will
 > name is never an address, or the first release ships a global namespace one session can squat."*
 
 The first sketch of this design put the **name** in the config, and Vlad's rename requirement
-exposed it immediately: renaming would have invalidated every folder pointing at that workspace.
+exposed it immediately: renaming would have invalidated every folder pointing at that station.
 Recorded because the rule already existed and was nearly designed away.
 
 **Why it is not a secret, and why that is the whole point.** Today the per-folder value is a station
@@ -81,13 +106,13 @@ cannot be burned, never expires and never rotates.
 
 **What authorises, then.** The human's OAuth grant proves *who*, and single-user makes that
 sufficient: within one instance there is one human and one Claude account, so a session declaring a
-workspace is that human's own session. There is no other tenant to protect against. **The isolation
+station is that human's own session. There is no other tenant to protect against. **The isolation
 that matters moved to between instances — federation — which is where Vlad put it.**
 
-**The residual risk is confusion, not compromise** — a session adopting the wrong workspace and
+**The residual risk is confusion, not compromise** — a session adopting the wrong station and
 reading another's mail. It is mitigated by visibility rather than by credentials: Ken shows which
-workspace each session claimed, every session states its workspace in its first message, and two
-live sessions claiming one workspace is a condition the console can surface.
+station each session claimed, every session states its station in its first message, and two
+live sessions claiming one station is a condition the console can surface.
 
 ## 4b. A conversation says who it is — identity is IN-BAND, not in the connector
 
@@ -99,7 +124,7 @@ Vlad asked the question that dissolved it:**
 > claude.ai) so why each session cannot tell it's Ken instance 'I'm XXXXX' or 'My folder is
 > XXXXX'?"*
 
-**There was no reason. That is the whole finding.** The workspace arrived from the CONNECTION — a
+**There was no reason. That is the whole finding.** The station arrived from the CONNECTION — a
 header, briefly a URL — and a claude.ai connector is added **once per account**, so any value
 carried there has exactly one value for every machine and every session, forever. The header form
 could not be set at all (the client refuses custom header names); the URL form could be set and
@@ -108,71 +133,71 @@ identified nothing. Identity was in the transport when it belongs in the convers
 **WHAT A SESSION IS, IN HIS WORDS, BECAUSE THE DATA MODEL TURNS ON IT:**
 
 > *"For me it is when I click 'New' in Claude Code. If I restart the Claude Desktop client, the CC
-> sessions that live within it should reconnect to the workspace they were connected before
+> sessions that live within it should reconnect to the station they were connected before
 > (because they are not new, they just restarted)… one (existing) session is always connected to
-> the same workspace (unless explicitly reassigned by the human)."*
+> the same station (unless explicitly reassigned by the human)."*
 
-So the binding is **CONVERSATION ↔ WORKSPACE**. A new conversation gets a new workspace; a
+So the binding is **CONVERSATION ↔ STATION**. A new conversation gets a new station; a
 restarted one returns to its own.
 
 **THE MECHANISM.** `station_me{session_key}` — a stable id for THIS conversation, which the
 session already owns (in Claude Code, the UUID in its transcript and scratchpad paths). Ken looks
-it up: found, return that workspace with its notebook, tasks, locker and vault intact; not found,
-mint one and record the key. The resolved workspace is then bound to the MCP connection, so every
+it up: found, return that station with its notebook, tasks, locker and vault intact; not found,
+mint one and record the key. The resolved station is then bound to the MCP connection, so every
 other station tool works with no argument and no header.
 
     human actions to onboard a machine and start working:  ZERO beyond the consent
     survives a client restart:                             yes — the key is durable, the
                                                            connection binding is only a cache
-    two conversations in one folder:                       two workspaces, correctly
-    the same project on two machines:                      two workspaces, correctly
+    two conversations in one folder:                       two stations, correctly
+    the same project on two machines:                      two stations, correctly
 
 **WHY IT CANNOT BE KEYED ON THE MCP SESSION ID:** that is reborn on every reconnect, and a restart
 is precisely the case that must keep working.
 
 **THE LABEL IS AUTO; THE IDENTITY IS THE KEY.** Vlad: *"what I need to be 'auto' is the label that
 identifies the new station so me (the human) can identify it (I won't identify a raw number or a
-UUID) and as I requested before, labels must be editable."* So `workspace_name` decorates the
+UUID) and as I requested before, labels must be editable."* So `station_label` decorates the
 label only, and renaming stays free — the id is the identity and renaming invalidates nothing.
 
-**THE KEY SELECTS AND NEVER AUTHORISES**, exactly like the workspace id (§4) and under the same
-§9.2 condition. A session declaring another conversation's key lands in another workspace
+**THE KEY SELECTS AND NEVER AUTHORISES**, exactly like the station id (§4) and under the same
+§9.2 condition. A session declaring another conversation's key lands in another station
 belonging to **the same human**, which it could already do by editing its own config. The security
 boundary is the OAuth grant — whose estate — never the key, which chooses which post inside it.
 **If that ever stops being true, this becomes a credential and must be treated as one.**
 
-### 4c. The consequence nobody had answered: an abandoned workspace was sealed
+### 4c. The consequence nobody had answered: an abandoned station was sealed
 
 The rule above has a sharp edge that only shows up later. `ClaimStationForSession` adopts a station
 **only while its `session_key` is NULL** — it must, because a key that could take a *claimed*
-workspace would be authorising something, which §4b forbids. So the moment a conversation dies, the
-workspace it claimed is **sealed**: notes, tasks, locker and vault all intact, and *nothing* able to
+station would be authorising something, which §4b forbids. So the moment a conversation dies, the
+station it claimed is **sealed**: notes, tasks, locker and vault all intact, and *nothing* able to
 reach them. Every abandoned conversation was a one-way door.
 
 Vlad saw the way out while we were building the chat-session path:
 
 > *"I like the figure 'chat sessions can use comm and station too' is taking… I think we can use
-> the fact that a workspace can be re-assigned to tell a chat session to recover (take over) an
-> (abandoned) workspace and it might even be used to re-establish comm channels."*
+> the fact that a station can be re-assigned to tell a chat session to recover (take over) an
+> (abandoned) station and it might even be used to re-establish comm channels."*
 
 **A HUMAN IS THE ONLY THING THAT MAY DO IT, WHICH IS WHY IT IS CONSOLE-ONLY.** Reassignment is
 precisely the act the claim path refuses to perform on a session's say-so. Behind an authenticated
 console form the rule survives intact: the key still authorises nothing; a *person* decides who
 takes over a post. Shipped 3.38.0 as `POST /stations/{id}/reassign`, and its comm counterpart
-`POST /comm/endpoints/{id}/reassign` (COMM.md §9), because a workspace recovered without its
+`POST /comm/endpoints/{id}/reassign` (COMM.md §9), because a station recovered without its
 mailbox is half a recovery.
 
 **AND IT COSTS THE HUMAN NO CREDENTIAL WORK**, which is the standing requirement rather than a
 nicety: the session states a conversation key in its reply — a Claude Code session has a UUID, a
 chat session invents one — the human pastes that string into the form, and the session's next
-`station_me` lands in the recovered workspace. Nothing secret is displayed, typed or transported.
+`station_me` lands in the recovered station. Nothing secret is displayed, typed or transported.
 The same string reassigns the mailbox, so one paste each recovers both halves.
 
 **THE KEY IS TAKEN FROM WHATEVER HOLDS IT, AND THE DISPLACEMENT IS REPORTED.** The first cut
 refused a key already in use, and that was wrong in the exact case the feature exists for: a chat
-session asked for its key has usually *already* called `station_me`, so a fresh empty workspace
+session asked for its key has usually *already* called `station_me`, so a fresh empty station
 answers to it. Refusing failed the main path with "that key is in use" and demanded a second,
-non-obvious step. Nothing is destroyed by taking it — the displaced workspace keeps everything and
+non-obvious step. Nothing is destroyed by taking it — the displaced station keeps everything and
 stays listed — so the safety is **disclosure**: the receipt names what was displaced, and one click
 puts it back. A silent steal would be the defect; a refusal in the common case is just a wall.
 
@@ -180,12 +205,12 @@ puts it back. A silent steal would be the defect; a refusal in the common case i
 
 Decided: **fully working, auto-named, no approval.**
 
-1. Ken mints a workspace id and an **auto-name** from the folder's basename, disambiguated on
+1. Ken mints a station id and an **auto-name** from the folder's basename, disambiguated on
    collision — names are unique per space (`idx_station_name`).
 2. The session works **immediately**: notebook, tasks, vault, knowledge base. Nothing withheld.
 3. It says so in its first message: *"working as `ken-public` (auto-named) — rename it in the
    console if that is wrong."*
-4. The **only** thing still needing the human is two workspaces talking, because that is a decision
+4. The **only** thing still needing the human is two stations talking, because that is a decision
    about who may reach whom and always was.
 
 **Naming pays for itself at (4) rather than being a setup chore.** The channel approval screen reads
@@ -202,85 +227,101 @@ one moment a bad name is actually in front of them.
 > **"AUTO-NAMED, FULLY WORKING" WAS HALF TRUE, AND THE ACCEPTANCE RUN FOUND THE OTHER HALF.**
 > 2026-08-26, clean Windows VM, reported by ken-prod-ops.
 >
-> The mint is exactly as promised: `station_me` returns a workspace, zero approvals, immediately.
+> The mint is exactly as promised: `station_me` returns a station, zero approvals, immediately.
 > **Then every other station tool refused it one call later** — because they all pass through
-> `requireStation`, which needs the connection to SAY which workspace it is, and `station_me` is
+> `requireStation`, which needs the connection to SAY which station it is, and `station_me` is
 > the only tool that does not.
 >
 > **claude.ai CONNECTORS CANNOT SEND A CUSTOM HEADER.** Verbatim from the client: *"Only approved
 > header names are accepted."* An already-created connector has no headers field at all. So the
 > onboarding path Ken recommends — connectors added once on an account, propagating to every
-> device — could mint workspaces indefinitely and use none of them.
+> device — could mint stations indefinitely and use none of them.
 >
-> **And the refusal advised a LOOP**: it said "call station_me", which mints a SECOND workspace and
+> **And the refusal advised a LOOP**: it said "call station_me", which mints a SECOND station and
 > returns the same refusal, accumulating an orphan station each time. The VM session spotted that
 > and stopped rather than obeying.
 >
-> **FIXED IN 3.34.0 by accepting the workspace in the URL** — `/station/mcp?workspace=<id>` — since
+> **FIXED IN 3.34.0 by accepting the station in the URL** — `/station/mcp?station=<id>` — since
 > a URL is the one thing a connector lets a user set freely, and connectors are unique PER URL, so
-> `?workspace=A` and `?workspace=B` are two connectors. That gives per-workspace identity AND
+> `?station=A` and `?station=B` are two connectors. That gives per-station identity AND
 > account-level propagation, neither of which was achievable before.
 >
 > **Safe only because the id authorises nothing** (§4). A URL is a worse place for a secret than a
 > header — proxy logs, history, referrers — so §9.2's condition governs this unchanged: **if that
 > id ever gains authority, the query-string form goes with it.**
 >
-> **The honest cost:** a human still edits the connector URL once per workspace. That is one
+> **The honest cost:** a human still edits the connector URL once per station. That is one
 > config action, not an approval, and it is the same shape as the MCP-entry edit the header form
 > always needed. "Fully working" now means *fully working once the connection declares itself*.
-| Rename a workspace | none, and no side effects |
-| Two workspaces talking | **one, once per pair** — plus publishing the TARGET once, see below |
+| Rename a station | none, and no side effects |
+| Two stations talking | **one, once per pair** — plus publishing the TARGET once, see below |
 
-> **§6 UNDER-STATED THE CEREMONY, AND AN ACCEPTANCE TEST COUNTING AGAINST IT WOULD SCORE A
-> CORRECT SYSTEM AS OVER BUDGET.** Found 2026-08-26 by ken-prod-ops while planning the full-tool
-> run, against the shipped code rather than against this table.
+> **§6 OVER-STATES THE CEREMONY NOW — IT IS ZERO.** Two stations talking costs a human NOTHING.
+> `station_link_request` is deleted, the approval with it: the first message creates the link, born
+> active. What remains is an off-switch (**Suspend**, and **Resume**) the human uses if they want to.
 >
-> **A station cannot file a link request naming a station it cannot SEE**, and
-> `StationByNameVisibleTo` resolves only `published=1 OR <an active link already exists>`. Every
-> station is `published=0` by default — `0012_stations.sql:35`, *"human-only; an agent cannot
-> advertise itself"*. So before the first link to a given post, a human publishes it in the
-> console.
+> **This note used to record the opposite**, and the correction is worth keeping because it was
+> found the right way. ken-prod-ops, planning the full-tool acceptance run against the shipped code
+> rather than against this table, found that §6's "one, once per pair" UNDER-stated the cost: a
+> station could not name a station it could not SEE, `StationByNameVisibleTo` resolved only
+> `published=1 OR <an active link already exists>`, and every station is `published=0` by default.
+> So a first-ever link between two unpublished stations cost **three** human actions — publish,
+> request, approve — and an acceptance test counting against this table would have scored a correct
+> system as over budget.
 >
-> **THIS IS DELIBERATE AND IT IS NOT A DEFECT.** `station_link_request`'s own comment states the
-> threat it closes: a correct guess would *"put an agent-authored ask for an unpublished post in
-> front of its human, which is exactly the unsolicited approach publication exists to prevent."*
-> Removing it would let any session cold-call any human by guessing a station name.
+> **The threat that justified it was real and is now unreachable.** `station_link_request`'s comment
+> stated it: a correct guess would *"put an agent-authored ask for an unpublished post in front of
+> its human, which is exactly the unsolicited approach publication exists to prevent."* There is no
+> request to file, so a guessed name buys nothing — and `published` survives as a fact the console
+> can still set, no longer as a gate.
 >
-> **THE HONEST COUNT.** Publishing is **once per STATION**, not once per pair — amortised across
-> every future link to that post, and unnecessary forever after between two stations already
-> linked (the second half of the predicate keeps them visible to each other). So a first-ever link
-> between two unpublished stations costs a human **three** actions: publish the target, request,
-> approve. Every subsequent link to that same target costs the two this table promises.
->
-> **It was verified by watching it refuse**, not by reading the predicate:
-> `TestAnUnpublishedUnlinkedStationCannotBeFoundByName` (internal/store) refuses the lookup, then
-> proves publication fixes it AND that an existing link keeps an unpublished station visible — so
-> the refusal cannot pass for the wrong reason.
+> **The verification method is the part to carry forward.** It was checked by watching the lookup
+> REFUSE, not by reading the predicate, with a control proving publication fixed it and a second
+> proving an existing link kept an unpublished station visible — so the refusal could not pass for
+> the wrong reason. That test is now inverted rather than deleted: it asserts the same station is
+> discoverable, with the same controls in the same run.
 
 Against `TARGET-ARCHITECTURE.md` §3, where Vlad said he would accept one approval per device *and*
 one per session: this is fewer. The only surviving approval is the one he explicitly wants.
 
-## 7. What this deletes
+## 7. What this deletes — **ALL OF IT, AS OF 2026-08-27**
 
 Station keys. Binding vouchers. Pairing codes. Per-machine COMM tokens. Endpoint secrets a session
-must store, protect and re-read after every compaction. The `comm_bind` dance. Most of it exists to
-solve problems that do not exist under one human and one Claude account.
+must store, protect and re-read after every compaction. The `comm_bind` dance. Link requests and
+their approval. Two of the three MCP endpoints. Most of it existed to solve problems that do not
+exist under one human and one Claude account.
+
+**Every item on that list is now gone**, which is worth stating plainly because the paragraph was
+written as an intention and read as one for six weeks. What authorises anything today is a single
+OAuth grant; what SELECTS is `session_key`; and the only credential a human manages is that grant,
+which they withdraw from the console.
 
 **§9 is the correction to that paragraph, and it is a real one.** Of 164 credential controls,
 **three** dissolve outright. Most of the list above is deleted *conditionally* — safe only once one
 identity spans `/comm` and `/station`, or once the thing in the MCP header genuinely stops carrying
 authority. Read §9 before treating anything here as settled.
 
-## 8. Migrating the existing estate
+## 8. Migrating the existing estate — **REVERSED BY DECISION, 2026-08-27**
 
-Decided: **migrate.** `quest-infra` alone holds 47 tasks; there are live channels, links and a
-vault. Each existing station becomes a workspace, keeping its `station_id` — which is already the
-stable identifier everything else is keyed to — and its id is written into the corresponding
-folder's MCP config. Notebooks, tasks, vaults, channels and links follow unchanged because they
-already reference the station rather than any credential.
+> **NOTHING IS MIGRATED.** Vlad, ruling on the breaking wave: *"Do not waste time on migrating
+> existing 'anything'. Anybody using Ken after this upgrade — including you — either is able to use
+> it after the upgrade or just gets off-board and on-board again."* He extended it explicitly to
+> `comm.db`, which may start empty.
+>
+> **The durable half migrated itself, which is why the reversal is cheap.** Every station keeps its
+> `station_id`, and notebooks, tasks, vaults and links reference the STATION rather than any
+> credential — so they survived every deletion in this wave without a migration step. What is not
+> carried across is the expendable half: mailboxes, channels and queued mail in `comm.db`, plus any
+> session's configured connection, which is re-made by reconnecting.
+>
+> **The one thing a human does is reconnect**, and that was the condition Vlad set on the whole
+> break: it must be fixable by restarting or reinstalling Claude and/or the Ken connector, so that
+> nothing keeps calling a retired name unnoticed.
 
-*The detailed transition, including what is keyed to a token or endpoint id and therefore needs
-re-pointing, is §10 and depends on the extraction in §9.*
+Decided originally: **migrate.** `quest-infra` alone holds 47 tasks; there are live channels, links
+and a vault. Each existing station keeps its `station_id` — already the stable identifier everything
+else is keyed to. Notebooks, tasks, vaults, channels and links follow unchanged because they already
+reference the station rather than any credential.
 
 ## 9. What we must not lose
 
@@ -323,7 +364,7 @@ condition is usually the thing being built:
   station key never crosses to the comm surface as a tool argument. Nothing to hand across, nothing
   to hand it with.
 - **The header-only rule for station keys** dissolves *because the thing travelling stops being a
-  secret.* A stable opaque workspace id in an MCP header authorises nothing, so there is nothing to
+  secret.* A stable opaque station id in an MCP header authorises nothing, so there is nothing to
   keep out of a transcript. **If that id ever gains authority, this control comes straight back**,
   and §4's "it is not a secret, and that is the whole point" becomes load-bearing rather than
   descriptive.
@@ -331,7 +372,7 @@ condition is usually the thing being built:
   `x != x` under one OAuth identity and already costs more than it protects — it is why an endpoint
   cannot move between machines and dies with its registering token. But it is *the last line of
   `auth()`*, the only thing between "holds a valid endpoint id and secret" and "is the right
-  principal". **Delete it and the replacement must state what binds a workspace to a credential, or
+  principal". **Delete it and the replacement must state what binds a station to a credential, or
   the honest answer is "nothing".**
 - **Both-sides-join** — the first redeem creates a pending channel, the second opens it — is the
   one control the settled facts actively retire, and Ken has already retired it twice in place. Its
@@ -465,7 +506,7 @@ than discover it:
   control. It was fixed by merging the scope away. Fewer approval points is not only kinder; it
   removes states that cannot be told apart.
 - **Station-to-station isolation is a config-file boundary and the docs already say so.** Under one
-  human it protects one of his workspaces from another of his sessions. The new model's one
+  human it protects one of his stations from another of his sessions. The new model's one
   approval per talking pair must be justified as **intent and blast radius**, never as isolation —
   the human holding both configs can bridge them at will.
 - **A credential whose shape cannot satisfy any surface must be refused at issue**, because the
@@ -568,7 +609,8 @@ credentials retire, or mail is stranded with no error.
    > `SweepBindingVouchers`, the 5-minute TTL, single-use redemption, endpoint pinning, actor
    > matching, hash-at-rest, the hourly janitor sweep, the `station_binding_voucher` tool, the
    > `binding_voucher` argument, and four sentinel errors whose careful wording existed only to say
-   > which way a voucher had failed. `comm_bind` reads `X-Ken-Workspace` and binds.
+   > which way a voucher had failed. (`comm_bind` read `X-Ken-Workspace` and bound; both were
+   > deleted in turn — a station comes with a mailbox, so there is nothing to bind.)
    >
    > **The condition §9.2 set was met before a line was deleted**: *"the voucher exists SOLELY so a
    > station key never crosses to the comm surface as a tool argument."* Step 2 gave one identity
@@ -593,17 +635,17 @@ credentials retire, or mail is stranded with no error.
    > are inert. Existing bindings are untouched — eight on the live estate keep their key id and
    > keep being severed by it.
 
-4. **Then the workspace id in config**, and auto-naming for unknown folders (§5). Existing stations
-   keep their `station_id` and become workspaces; §8 covers the estate.
+4. **Then the station id in config**, and auto-naming for unknown folders (§5). Existing stations
+   keep their `station_id` and become stations; §8 covers the estate.
 
    > **DONE 2026-08-25, and it took the station-registration deadlock with it.** `X-Ken-Workspace`
-   > on the folder's MCP entry selects the workspace; the credential authorises. A session with no
-   > workspace calls `station_me` — the call it is already told to make first — and gets one, named
+   > on the folder's MCP entry selects the station; the credential authorises. A session with no
+   > station calls `station_me` — the call it is already told to make first — and gets one, named
    > after its folder, working from the next call, **with nothing to approve**. The id comes back in
    > the RESULT, which is the channel that always arrives, together with what to tell the human.
    >
    > **Existing stations needed no migration at all**: the header value IS the `station_id` they
-   > already have, so an estate becomes an estate of workspaces by having the header written into
+   > already have, so an estate becomes an estate of stations by having the header written into
    > each folder's config. §8's concern turned out to be a config edit per folder, not a data move.
    >
    > `station_request` survives for the one case that is still a decision — *"my human wants to name
@@ -612,7 +654,7 @@ credentials retire, or mail is stranded with no error.
    >
    > **Two failures worth keeping.** A name collision was detected by grepping the error MESSAGE for
    > "unique" while the sentinel's text says "already in use in this space", so a second folder of
-   > the same name was refused a workspace — the deadlock rebuilt in miniature by a check reading
+   > the same name was refused a station — the deadlock rebuilt in miniature by a check reading
    > prose. And the header was first resolved in the auth middleware, which the SDK never hands to a
    > tool handler: it hands the request, with `Extra.Header` on it, exactly as `internal/commserver`
    > has lifted its endpoint credential since it shipped. The mechanism existed; a second one was
