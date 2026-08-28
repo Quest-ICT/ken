@@ -32,7 +32,7 @@ import (
 // exclusive.
 //
 // docs/IDENTITY.md §5 decides it: "fully working, auto-named, no approval."
-func TestASessionWithNoWorkspaceGetsOneAndWorksImmediately(t *testing.T) {
+func TestASessionWithNoStationGetsOneAndWorksImmediately(t *testing.T) {
 	d, p := onboardingHarness(t)
 	ctx := context.WithValue(context.Background(), ctxKey{}, p)
 
@@ -40,12 +40,12 @@ func TestASessionWithNoWorkspaceGetsOneAndWorksImmediately(t *testing.T) {
 		t.Fatal("fixture: this principal already has a station, so it cannot exercise onboarding")
 	}
 
-	out, err := claimWorkspace(ctx, d, p, "ken-public")
+	out, err := claimStation(ctx, d, p, "ken-public")
 	if err != nil {
-		t.Fatalf("a session with no workspace could not get one: %v — the deadlock is still closed", err)
+		t.Fatalf("a session with no station could not get one: %v — the deadlock is still closed", err)
 	}
 	if out.StationID == "" {
-		t.Fatal("no workspace id came back; the session has nothing to put in its config")
+		t.Fatal("no station id came back; the session has nothing to put in its config")
 	}
 	if out.Name != "ken-public" {
 		t.Errorf("name = %q, want the folder basename — the auto-name is what the human sees on the "+
@@ -55,8 +55,8 @@ func TestASessionWithNoWorkspaceGetsOneAndWorksImmediately(t *testing.T) {
 		t.Errorf("name_source = %q; a human must be able to tell a name Ken guessed from one they chose", out.NameSource)
 	}
 	if !out.JustCreated {
-		t.Error("the result does not say a workspace was just created, so a session cannot tell " +
-			"'here is your briefing' from 'here is your new workspace'")
+		t.Error("the result does not say a station was just created, so a session cannot tell " +
+			"'here is your briefing' from 'here is your new station'")
 	}
 
 	// *** THE INSTRUCTION MUST NAME THE THING THAT ACTUALLY BRINGS A SESSION BACK. ***
@@ -85,22 +85,22 @@ func TestASessionWithNoWorkspaceGetsOneAndWorksImmediately(t *testing.T) {
 	// tasks, vault, knowledge base. Nothing withheld."
 	ok, err := d.Store.StationExists(ctx, out.StationID)
 	if err != nil || !ok {
-		t.Fatalf("the minted workspace is not live (%v, %v) — it was created pending something", ok, err)
+		t.Fatalf("the minted station is not live (%v, %v) — it was created pending something", ok, err)
 	}
 }
 
-// A MISSING FOLDER NAME STILL GETS A WORKSPACE.
+// A MISSING FOLDER NAME STILL GETS A STATION.
 //
 // Withholding one over an absent hint would rebuild the deadlock for exactly the case it was built
 // for: a session that does not know what to call itself is still a session that cannot work.
-func TestAWorkspaceIsMintedEvenWithNoFolderName(t *testing.T) {
+func TestAStationIsMintedEvenWithNoFolderName(t *testing.T) {
 	d, p := onboardingHarness(t)
-	out, err := claimWorkspace(context.WithValue(context.Background(), ctxKey{}, p), d, p, "")
+	out, err := claimStation(context.WithValue(context.Background(), ctxKey{}, p), d, p, "")
 	if err != nil {
-		t.Fatalf("no name hint meant no workspace: %v", err)
+		t.Fatalf("no name hint meant no station: %v", err)
 	}
 	if out.StationID == "" || out.Name == "" {
-		t.Fatalf("got an unusable workspace: id=%q name=%q", out.StationID, out.Name)
+		t.Fatalf("got an unusable station: id=%q name=%q", out.StationID, out.Name)
 	}
 }
 
@@ -110,21 +110,21 @@ func TestAWorkspaceIsMintedEvenWithNoFolderName(t *testing.T) {
 // `ken-public` on one machine is ordinary, and a session that cannot start because another folder
 // took the name first is a session waiting on a human again. The IDS are what differ, which is
 // COMM.md §3's rule: "a human-chosen name is never an address."
-func TestASecondFolderWithTheSameNameStillGetsAWorkspace(t *testing.T) {
+func TestASecondFolderWithTheSameNameStillGetsAStation(t *testing.T) {
 	d, p := onboardingHarness(t)
 	ctx := context.WithValue(context.Background(), ctxKey{}, p)
 
-	first, err := claimWorkspace(ctx, d, p, "ken-public")
+	first, err := claimStation(ctx, d, p, "ken-public")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := claimWorkspace(ctx, d, p, "ken-public")
+	second, err := claimStation(ctx, d, p, "ken-public")
 	if err != nil {
-		t.Fatalf("a second folder with the same name was refused a workspace: %v — that is the "+
+		t.Fatalf("a second folder with the same name was refused a station: %v — that is the "+
 			"deadlock again, in miniature", err)
 	}
 	if second.StationID == first.StationID {
-		t.Fatal("both folders got the SAME workspace — they would share a notebook, a task list and a vault")
+		t.Fatal("both folders got the SAME station — they would share a notebook, a task list and a vault")
 	}
 	if second.Name == first.Name {
 		t.Errorf("both are named %q; the human cannot tell them apart on the approval screen", second.Name)
@@ -151,11 +151,11 @@ func onboardingHarness(t *testing.T) (Deps, *principal) {
 	}
 }
 
-// wsRT adds the bearer. It used to add a workspace HEADER too, which is how a folder's MCP entry
+// wsRT adds the bearer. It used to add a station HEADER too, which is how a folder's MCP entry
 // declared its station — that header is deleted, so the field remains only to keep the helper's
 // call sites honest about what they are no longer doing.
 type wsRT struct {
-	token, workspace string
+	token, station string
 	base             http.RoundTripper
 }
 
@@ -164,12 +164,12 @@ func (w wsRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	return w.base.RoundTrip(r)
 }
 
-func connectWS(t *testing.T, srv *httptest.Server, token, workspace string) *mcp.ClientSession {
+func connectWS(t *testing.T, srv *httptest.Server, token, station string) *mcp.ClientSession {
 	t.Helper()
 	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	sess, err := cli.Connect(context.Background(), &mcp.StreamableClientTransport{
 		Endpoint:             srv.URL,
-		HTTPClient:           &http.Client{Transport: wsRT{token: token, workspace: workspace, base: http.DefaultTransport}},
+		HTTPClient:           &http.Client{Transport: wsRT{token: token, station: station, base: http.DefaultTransport}},
 		DisableStandaloneSSE: true,
 	}, nil)
 	if err != nil {
@@ -206,8 +206,8 @@ func meOverTransport(t *testing.T, sess *mcp.ClientSession, args map[string]any)
 // to know to look, which is the thing that was broken.
 //
 // Mutation found this too: disabling the branch in the handler left everything green, because the
-// other tests call claimWorkspace directly.
-func TestStationMeMintsAWorkspaceForASessionThatHasNone(t *testing.T) {
+// other tests call claimStation directly.
+func TestStationMeMintsAStationForASessionThatHasNone(t *testing.T) {
 	st, srv, _, _ := harness(t)
 	actor, err := st.FindOrCreateActor(context.Background(), "ai", "fresh-session")
 	if err != nil {
@@ -218,9 +218,9 @@ func TestStationMeMintsAWorkspaceForASessionThatHasNone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := meOverTransport(t, connectWS(t, srv, key, ""), map[string]any{"workspace_name": "ken-public"})
+	out := meOverTransport(t, connectWS(t, srv, key, ""), map[string]any{"station_label": "ken-public"})
 	if !out.JustCreated || out.StationID == "" {
-		t.Fatalf("station_me did not mint a workspace for a session with none: %+v\n"+
+		t.Fatalf("station_me did not mint a station for a session with none: %+v\n"+
 			"That is the deadlock: station_request needed a station-scoped credential, the console "+
 			"could not create a station, and a console-minted key could never bind the session it "+
 			"was minted for.", out)
@@ -236,7 +236,7 @@ func TestStationMeMintsAWorkspaceForASessionThatHasNone(t *testing.T) {
 
 // *** A PLAIN ken_ TOKEN ONBOARDS, BECAUSE THE CLIENT THAT REPORTED THIS CANNOT RUN OAUTH. ***
 //
-// 3.25.0 let an OAuth grant reach this surface and 3.26.0 let a session mint its own workspace.
+// 3.25.0 let an OAuth grant reach this surface and 3.26.0 let a session mint its own station.
 // Both were true and both were unreachable for the session that reported the deadlock:
 // ken-prod-ops measured that Vlad runs Claude Code inside the desktop app, where sessions are
 // NON-INTERACTIVE and cannot perform an OAuth sign-in at all. The client's own message to him:
@@ -263,7 +263,7 @@ func TestAPlainAPITokenCanOnboard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := meOverTransport(t, connectWS(t, srv, tok, ""), map[string]any{"workspace_name": "m600"})
+	out := meOverTransport(t, connectWS(t, srv, tok, ""), map[string]any{"station_label": "m600"})
 	if !out.JustCreated || out.StationID == "" {
 		t.Fatalf("a plain ken_ token could not onboard: %+v\nEvery other path needs a browser the "+
 			"reporting session does not have", out)
@@ -338,7 +338,7 @@ func TestTheUnauthorized401CarriesTheDiscoveryChallenge(t *testing.T) {
 // *** EVERY station_me PATH CARRIES THE VERSION — INCLUDING THE ONE THAT MINTS. ***
 //
 // ken-prod-ops found this live on 2026-08-25, on the first real onboarding this feature ever
-// served: `ken_version` and `ken_version_note` came back EMPTY on the workspace-CREATION call and
+// served: `ken_version` and `ken_version_note` came back EMPTY on the station-CREATION call and
 // correct on every established one. Two meOut construction sites, one of them stamping.
 //
 // THE MISS LANDS IN THE WORST AVAILABLE PLACE. That field exists so a session can discover its
@@ -346,10 +346,10 @@ func TestTheUnauthorized401CarriesTheDiscoveryChallenge(t *testing.T) {
 // is a brand-new one calling station_me as its first act. The single call where the signal matters
 // most was the single call that dropped it.
 //
-// WHY NO EXISTING TEST SAW IT: every other test here calls claimWorkspace DIRECTLY, and the stamp
+// WHY NO EXISTING TEST SAW IT: every other test here calls claimStation DIRECTLY, and the stamp
 // lives in the handler above it. That is this project's most expensive recurring mistake — a fix
 // tested one layer BELOW its defect — so this asserts over the real transport, on both paths, the
-// way prod discovered it: call the tool from a new workspace and an established one, and diff.
+// way prod discovered it: call the tool from a new station and an established one, and diff.
 func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
 	st, srv, _, station := harness(t)
 	ctx := context.Background()
@@ -370,7 +370,7 @@ func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
 	// BOTH PATHS OVER THE REAL TRANSPORT, driven by session_key rather than the deleted header.
 	// The established arm claims a station on its first call and returns to it on its second —
 	// which is the briefing path, and is now also a check that the key actually resolves.
-	created := meOverTransport(t, connectWS(t, srv, minting, ""), map[string]any{"workspace_name": "brand-new"})
+	created := meOverTransport(t, connectWS(t, srv, minting, ""), map[string]any{"station_label": "brand-new"})
 
 	estSess := connectWS(t, srv, established, "")
 	if first := meOverTransport(t, estSess, map[string]any{"session_key": "conv-established"}); !first.JustCreated {
@@ -384,13 +384,13 @@ func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
 		t.Fatal("the minting key did not mint; the fixture never exercises the creation path")
 	}
 	if briefed.JustCreated {
-		t.Fatal("the established key minted a new workspace; the fixture never exercises the briefing path")
+		t.Fatal("the established key minted a new station; the fixture never exercises the briefing path")
 	}
 
 	for _, c := range []struct {
 		path string
 		out  meOut
-	}{{"workspace-creation", created}, {"existing-workspace briefing", briefed}} {
+	}{{"station-creation", created}, {"existing-station briefing", briefed}} {
 		if c.out.KenVersion != version.Version {
 			t.Errorf("%s path: ken_version = %q, want %q — a session on this path cannot tell whether "+
 				"the instructions it is holding are older than the server answering it",
@@ -403,7 +403,7 @@ func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
 	}
 }
 
-// qsRT sends the bearer and NO workspace header, driving the transport the way a claude.ai
+// qsRT sends the bearer and NO station header, driving the transport the way a claude.ai
 // connector does — which is the whole point: that client refuses custom header names.
 type qsRT struct {
 	token string
@@ -415,17 +415,17 @@ func (q qsRT) RoundTrip(r *http.Request) (*http.Response, error) {
 	return q.base.RoundTrip(r)
 }
 
-// *** A CONVERSATION DECLARES ITSELF AND COMES BACK TO THE SAME WORKSPACE. ***
+// *** A CONVERSATION DECLARES ITSELF AND COMES BACK TO THE SAME STATION. ***
 //
 // This is the property Vlad specified in his own words: "one (existing) session is always
-// connected to the same workspace (unless explicitly reassigned by the human)", and "if I restart
-// the Claude Desktop client, the CC sessions that live within it should reconnect to the workspace
+// connected to the same station (unless explicitly reassigned by the human)", and "if I restart
+// the Claude Desktop client, the CC sessions that live within it should reconnect to the station
 // they were connected before (because they are not new, they just restarted)."
 //
 // So the test does not merely call station_me twice on one connection — that would prove a cache.
-// It RECONNECTS, which is what a client restart does, and asserts the workspace survives it.
-// Driven with NO workspace header at all, because the claude.ai connector cannot send one.
-func TestAConversationReturnsToItsOwnWorkspaceAfterAReconnect(t *testing.T) {
+// It RECONNECTS, which is what a client restart does, and asserts the station survives it.
+// Driven with NO station header at all, because the claude.ai connector cannot send one.
+func TestAConversationReturnsToItsOwnStationAfterAReconnect(t *testing.T) {
 	st, srv, _, _ := harness(t)
 	ctx := context.Background()
 	actor, err := st.FindOrCreateActor(ctx, "ai", "conversation-session")
@@ -452,39 +452,39 @@ func TestAConversationReturnsToItsOwnWorkspaceAfterAReconnect(t *testing.T) {
 	}
 
 	const conv = "conversation-uuid-2e415ff7"
-	first := meOverTransport(t, connect(), map[string]any{"session_key": conv, "workspace_name": "ken-public"})
+	first := meOverTransport(t, connect(), map[string]any{"session_key": conv, "station_label": "ken-public"})
 	if !first.JustCreated {
-		t.Fatal("the first declaration did not mint a workspace")
+		t.Fatal("the first declaration did not mint a station")
 	}
 	if first.StationID == "" {
-		t.Fatal("no workspace id came back")
+		t.Fatal("no station id came back")
 	}
 
 	// *** THE RESTART. A NEW CONNECTION, so the per-connection binding is empty and the answer
 	// must come from the database via the declared key. ***
 	again := meOverTransport(t, connect(), map[string]any{"session_key": conv})
 	if again.JustCreated {
-		t.Error("a restarted conversation MINTED A SECOND WORKSPACE — its notebook, tasks and vault " +
+		t.Error("a restarted conversation MINTED A SECOND STATION — its notebook, tasks and vault " +
 			"are stranded on the first, which is the orphan-accumulation failure this replaces")
 	}
 	if again.StationID != first.StationID {
-		t.Errorf("came back as %q, want the same workspace %q", again.StationID, first.StationID)
+		t.Errorf("came back as %q, want the same station %q", again.StationID, first.StationID)
 	}
 
-	// CONTROL: a DIFFERENT conversation gets a DIFFERENT workspace. Without this the test would
-	// pass against an implementation that ignored the key and returned one workspace to everyone.
-	other := meOverTransport(t, connect(), map[string]any{"session_key": "a-different-conversation", "workspace_name": "elsewhere"})
+	// CONTROL: a DIFFERENT conversation gets a DIFFERENT station. Without this the test would
+	// pass against an implementation that ignored the key and returned one station to everyone.
+	other := meOverTransport(t, connect(), map[string]any{"session_key": "a-different-conversation", "station_label": "elsewhere"})
 	if !other.JustCreated {
-		t.Error("a new conversation did not get its own workspace")
+		t.Error("a new conversation did not get its own station")
 	}
 	if other.StationID == first.StationID {
-		t.Error("two different conversations landed on the SAME workspace — the key is being ignored")
+		t.Error("two different conversations landed on the SAME station — the key is being ignored")
 	}
 }
 
 // AND THE REST OF THE SURFACE WORKS AFTER THE DECLARATION, with no header and no argument.
 // station_me was always reachable; asserting only on it would re-pass the exact state the clean-VM
-// run found, where a workspace could be minted and nothing else could touch it.
+// run found, where a station could be minted and nothing else could touch it.
 func TestDeclaringAConversationUnlocksToolsBehindRequireStation(t *testing.T) {
 	st, srv, _, _ := harness(t)
 	ctx := context.Background()
@@ -515,11 +515,11 @@ func TestDeclaringAConversationUnlocksToolsBehindRequireStation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !pre.IsError {
-		t.Fatal("a tool behind requireStation succeeded BEFORE any workspace was declared; the " +
+		t.Fatal("a tool behind requireStation succeeded BEFORE any station was declared; the " +
 			"fixture carries a station and this test proves nothing")
 	}
 
-	meOverTransport(t, sess, map[string]any{"session_key": "unlock-conv", "workspace_name": "unlock"})
+	meOverTransport(t, sess, map[string]any{"session_key": "unlock-conv", "station_label": "unlock"})
 
 	post, err := sess.CallTool(ctx, &mcp.CallToolParams{
 		Name: "station_task_add", Arguments: map[string]any{"text": "after declaring", "blocked_on": "self"}})
@@ -532,7 +532,7 @@ func TestDeclaringAConversationUnlocksToolsBehindRequireStation(t *testing.T) {
 	}
 }
 
-// *** EVERY station_me RESULT TELLS THE SESSION HOW TO KEEP ITS WORKSPACE. ***
+// *** EVERY station_me RESULT TELLS THE SESSION HOW TO KEEP ITS STATION. ***
 //
 // ken-prod-ops watched a session reason its way to exactly the wrong conclusion on the clean VM:
 // "There is no session_key parameter… I called it with no arguments rather than passing an
@@ -542,7 +542,7 @@ func TestDeclaringAConversationUnlocksToolsBehindRequireStation(t *testing.T) {
 // A tool description cannot fix it — descriptions pin at connect time, so the text saying "send
 // session_key" is invisible to precisely the sessions that need telling. Only RESULTS cross the
 // freeze. So the guidance rides in the result, on every call.
-func TestEveryStationMeResultSaysHowToKeepTheWorkspace(t *testing.T) {
+func TestEveryStationMeResultSaysHowToKeepTheStation(t *testing.T) {
 	st, srv, _, station := harness(t)
 	ctx := context.Background()
 	actor, err := st.FindOrCreateActor(ctx, "ai", "guidance-session")
@@ -557,14 +557,14 @@ func TestEveryStationMeResultSaysHowToKeepTheWorkspace(t *testing.T) {
 	// A session with NO key — the one that must be told, and the one whose schema does not
 	// mention the parameter.
 	noKey := meOverTransport(t, connectWS(t, srv, key, station.StationID), map[string]any{})
-	if noKey.HowToKeepThisWorkspace == "" {
+	if noKey.HowToKeepThisStation == "" {
 		t.Fatal("a result carries no guidance at all; a session whose schema predates session_key " +
 			"has nothing anywhere telling it the parameter exists")
 	}
 	for _, must := range []string{"session_key", "SEND IT ANYWAY"} {
-		if !strings.Contains(noKey.HowToKeepThisWorkspace, must) {
+		if !strings.Contains(noKey.HowToKeepThisStation, must) {
 			t.Errorf("the guidance omits %q, so a session that checked its schema and found nothing "+
-				"has no reason to try: %q", must, noKey.HowToKeepThisWorkspace)
+				"has no reason to try: %q", must, noKey.HowToKeepThisStation)
 		}
 	}
 
@@ -574,19 +574,19 @@ func TestEveryStationMeResultSaysHowToKeepTheWorkspace(t *testing.T) {
 	if withKey.SessionKeyEcho != "guidance-conv" {
 		t.Errorf("the key was not echoed back, so a session cannot confirm Ken received it: %q", withKey.SessionKeyEcho)
 	}
-	if withKey.HowToKeepThisWorkspace == noKey.HowToKeepThisWorkspace {
+	if withKey.HowToKeepThisStation == noKey.HowToKeepThisStation {
 		t.Error("the guidance is identical whether or not a key was sent; it is a constant rather " +
 			"than a response to what actually arrived")
 	}
 }
 
-// *** A SECOND CALL WITH A KEY ADOPTS THE WORKSPACE THE FIRST CALL MINTED. ***
+// *** A SECOND CALL WITH A KEY ADOPTS THE STATION THE FIRST CALL MINTED. ***
 //
 // The pre-3.35.0 tool text told sessions to call station_me with no arguments, so the real-world
 // sequence is no-arg then keyed — and on the clean VM that left an orphan station behind, because
 // Ken had no way to know the two calls were the same conversation. The connection binding does
 // know.
-func TestAKeyedCallAdoptsTheWorkspaceThisConnectionJustMinted(t *testing.T) {
+func TestAKeyedCallAdoptsTheStationThisConnectionJustMinted(t *testing.T) {
 	st, srv, _, _ := harness(t)
 	ctx := context.Background()
 	actor, err := st.FindOrCreateActor(ctx, "ai", "adopt-session")
@@ -599,7 +599,7 @@ func TestAKeyedCallAdoptsTheWorkspaceThisConnectionJustMinted(t *testing.T) {
 	}
 	sess := connectWS(t, srv, key, "")
 
-	first := meOverTransport(t, sess, map[string]any{"workspace_name": "adopt-me"})
+	first := meOverTransport(t, sess, map[string]any{"station_label": "adopt-me"})
 	if !first.JustCreated {
 		t.Fatal("the no-argument call did not mint; the fixture does not reproduce the sequence")
 	}
@@ -607,12 +607,12 @@ func TestAKeyedCallAdoptsTheWorkspaceThisConnectionJustMinted(t *testing.T) {
 	// SAME CONNECTION, now declaring a key. It must claim what it already has.
 	second := meOverTransport(t, sess, map[string]any{"session_key": "adopting-conversation"})
 	if second.StationID != first.StationID {
-		t.Errorf("the keyed call minted %q instead of adopting %q — the first workspace is now "+
+		t.Errorf("the keyed call minted %q instead of adopting %q — the first station is now "+
 			"orphaned, which is exactly the sequence the old tool text produced",
 			second.StationID, first.StationID)
 	}
 	if second.JustCreated {
-		t.Error("workspace_just_created is true on an ADOPTION; the workspace already existed and " +
+		t.Error("station_just_created is true on an ADOPTION; the station already existed and " +
 			"saying otherwise tells the session it was handed a fresh one")
 	}
 }

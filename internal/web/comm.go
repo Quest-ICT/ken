@@ -276,7 +276,7 @@ func (a *app) handleCommRevokeChannel(w http.ResponseWriter, r *http.Request, se
 // control only a human could reach, existing because a lost secret was otherwise terminal. A
 // station comes with a mailbox and holds no secret at all.
 
-// handleCommReassignEndpoint points a mailbox at a CONVERSATION — the comm half of workspace
+// handleCommReassignEndpoint points a mailbox at a CONVERSATION — the comm half of station
 // recovery.
 //
 // ROTATE WAS THE ONLY WAY BACK IN AND IT DOES NOT WORK FOR A CHAT SESSION. It mints a fresh secret
@@ -285,7 +285,7 @@ func (a *app) handleCommRevokeChannel(w http.ResponseWriter, r *http.Request, se
 // mailbox whose conversation is gone was recoverable only by a session that could keep a file.
 //
 // With this, recovery is ONE STRING USED TWICE: the session states its conversation key, the human
-// pastes it into the workspace form and this one, and the next poll reads the mail that was
+// pastes it into the station form and this one, and the next poll reads the mail that was
 // already waiting. Nothing secret is displayed, and the channels, links and queued messages are
 // untouched.
 func (a *app) handleCommReassignEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {

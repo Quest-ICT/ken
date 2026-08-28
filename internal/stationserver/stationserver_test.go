@@ -187,7 +187,7 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 	}
 }
 
-// A session with no workspace still cannot reach workinstance-wide tools — and the refusal must
+// A session with no station still cannot reach workinstance-wide tools — and the refusal must
 // now point at something it can do BY ITSELF.
 //
 // IT USED TO POINT AT station_request, AND THAT WAS THE DEADLOCK IN ONE SENTENCE. The tool's own
@@ -198,16 +198,16 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 // was minted for. Vlad, at the console and unable to give a session Station: "It is absurd the way
 // it works now."
 //
-// docs/IDENTITY.md §5 replaced the ask with a fact: call station_me and you have a workspace,
+// docs/IDENTITY.md §5 replaced the ask with a fact: call station_me and you have a station,
 // immediately, with nothing to approve. So the refusal points there, and this test asserts the
 // PROPERTY — that a session reading it can act without waiting for a human — rather than a
 // sentence, because the sentence is what changed.
-func TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone(t *testing.T) {
+func TestASessionWithNoStationIsToldWhatItCanDoAlone(t *testing.T) {
 	ctx := context.Background()
 	c := context.WithValue(ctx, ctxKey{}, &principal{StationID: "", Scopes: map[string]bool{ScopeStation: true}})
 	_, err := requireStation(c, nil)
 	if err == nil {
-		t.Fatal("a session with no workspace must not reach workspace-scoped tools")
+		t.Fatal("a session with no station must not reach station-scoped tools")
 	}
 	if !strings.Contains(err.Error(), "station_me") {
 		t.Errorf("the refusal does not name the call that fixes it, so the session waits: %v", err)
@@ -220,8 +220,8 @@ func TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone(t *testing.T) {
 	//
 	// But the acceptance run on a clean Windows VM proved the promise cannot be kept for USE on
 	// the path Ken actually recommends. claude.ai connectors refuse custom header names —
-	// "Only approved header names are accepted" — so a session can mint a workspace and then
-	// reach nothing, and the only remedy is a human putting ?workspace=<id> in the connector URL.
+	// "Only approved header names are accepted" — so a session can mint a station and then
+	// reach nothing, and the only remedy is a human putting ?station=<id> in the connector URL.
 	//
 	// Forbidding the words does not remove the dependency; it only stops the refusal from
 	// MENTIONING it, which would leave the session to discover the same wall with less
@@ -237,15 +237,15 @@ func TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone(t *testing.T) {
 	// *** AND THE ASSERTION THAT REPLACED IT: THE REFUSAL MUST NOT ADVISE A LOOP. ***
 	//
 	// Until 3.34.0 it said "call station_me" as the fix. A session that obeyed got a SECOND
-	// workspace, the same refusal, and one more orphan station — every time. The VM session
+	// station, the same refusal, and one more orphan station — every time. The VM session
 	// spotted it and stopped: "The error's advice is a loop. It tells me to call station_me
-	// again, which would mint a second workspace and leave me in the same place, because the gap
+	// again, which would mint a second station and leave me in the same place, because the gap
 	// is the header, not the mint."
 	//
 	// The refusal must therefore say what actually closes the gap — DECLARING a station — and must
 	// warn against the re-mint rather than recommend it.
 	//
-	// IT USED TO REQUIRE "?workspace=" AS THE REMEDY. That was correct when a connector had no
+	// IT USED TO REQUIRE "?station=" AS THE REMEDY. That was correct when a connector had no
 	// other way to declare one; both the URL form and the header are now deleted, measured as never
 	// used, and session_key replaced them. Requiring the old string here would pin advice a session
 	// cannot act on.
@@ -259,7 +259,7 @@ func TestASessionWithNoWorkspaceIsToldWhatItCanDoAlone(t *testing.T) {
 			"station; a session following it accumulates orphans: %v", err)
 	}
 	// AND IT MUST NOT RESURRECT THE DELETED ADVICE.
-	if strings.Contains(err.Error(), "?workspace=") || strings.Contains(err.Error(), "X-Ken-Workspace") {
+	if strings.Contains(err.Error(), "?station=") || strings.Contains(err.Error(), "X-Ken-Workspace") {
 		t.Errorf("the refusal still points at a transport mechanism that no longer exists: %v", err)
 	}
 }

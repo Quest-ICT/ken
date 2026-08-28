@@ -600,17 +600,17 @@ func (a *app) handleStationTransfer(w http.ResponseWriter, r *http.Request, sess
 	}
 }
 
-// handleStationReassign points a workspace at a CONVERSATION, which is how an abandoned one is
+// handleStationReassign points a station at a CONVERSATION, which is how an abandoned one is
 // recovered.
 //
-// THIS IS THE ONLY DOOR BACK IN. A session declaring a key can adopt a workspace only while the
-// workspace has none — anything else would make the key a credential — so a workspace whose
+// THIS IS THE ONLY DOOR BACK IN. A session declaring a key can adopt a station only while the
+// station has none — anything else would make the key a credential — so a station whose
 // conversation is gone is sealed with its notes, tasks, locker and vault inside it. A human
 // deciding who takes over is exactly the authority the claim path declines to infer.
 //
 // AND IT COSTS THE HUMAN NO CREDENTIAL HANDLING, which is the standing requirement rather than a
 // nicety: the session invents a conversation key and states it in its reply, the human pastes that
-// string here, and the session's next station_me lands in the recovered workspace. Nothing secret
+// string here, and the session's next station_me lands in the recovered station. Nothing secret
 // is displayed, typed or transported — the key selects a post, it does not open one.
 func (a *app) handleStationReassign(w http.ResponseWriter, r *http.Request, sess *store.Session) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
@@ -630,7 +630,7 @@ func (a *app) handleStationReassign(w http.ResponseWriter, r *http.Request, sess
 	case res.TakenFromName != "":
 		// THE DISPLACEMENT IS IN THE RECEIPT. Taking the key from whatever held it is what makes
 		// the common case one click — a chat session has usually already claimed a fresh empty
-		// workspace under the key it just invented — but an operator who did not mean it must
+		// station under the key it just invented — but an operator who did not mean it must
 		// learn it here, not from a session that later reports the wrong briefing.
 		flashRedirect(w, r, "/stations", "flash.station_reassigned_taken", res.TakenFromName)
 	default:

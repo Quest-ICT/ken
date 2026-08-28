@@ -52,7 +52,7 @@ func runToken(args []string) {
 		// to a station, and this command issues an unbound ken_ token." That was true when it was
 		// written. 3.27.0 taught /station/mcp to accept a plain `ken_` token carrying the station
 		// scope, and it was proven on the wire from a Windows machine the next day — a session
-		// with no key called station_me and got a workspace.
+		// with no key called station_me and got a station.
 		//
 		// THE CONSOLE'S IDENTICAL REFUSAL WAS FIXED IN 3.28.0 AND THIS ONE WAS NOT, which is the
 		// same half-fix the console itself had suffered: ken-prod-ops found `consoleCommScopes`

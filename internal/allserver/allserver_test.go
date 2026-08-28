@@ -33,19 +33,19 @@ func TestMergedInstructionsFitTheDeliveryBudget(t *testing.T) {
 // should have to say so.
 func TestTheMergedInstructionsKeepWhatTheyExistToSay(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
-		{"session_key", "without this a session cannot return to its workspace after a restart, " +
+		{"session_key", "without this a session cannot return to its station after a restart, " +
 			"and the parameter is missing from every tool schema older than 3.35.0"},
 		{"DOES NOT LIST IT", "ken-prod-ops watched a session conclude session_key did not exist " +
 			"because its schema predated it; this sentence is the only thing that arrives BEFORE a call"},
 		{"ken_instructions", "this block is deliberately thin — if it does not point at the full " +
 			"guidance, the guidance is unreachable"},
 		{"station_me", "it is the call every session must make first, and the only one that " +
-			"does not need a workspace already"},
+			"does not need a station already"},
 		{"INVENT", "a claude.ai chat CANNOT see its own conversation id — verified 2026-08-26 by " +
 			"asking one directly, which reported 'I have no access to a conversation id' and noted " +
 			"it can retrieve an id for any PAST conversation but not the one it is in. Without this " +
 			"sentence a chat session has no way to hold an identity at all, and every reload strands " +
-			"another workspace"},
+			"another station"},
 		{"STATE IT IN YOUR REPLY", "the transcript is the only conversation-scoped thing a chat " +
 			"session can persist — its own words. A key that lives only in a tool call is lost on " +
 			"reload, so telling it to invent one is useless without telling it where to put one"},

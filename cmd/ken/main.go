@@ -571,7 +571,7 @@ func runServe(args []string) {
 		// ONE DOCUMENT PER MCP SURFACE. Ken serves three and advertised one, so a client that
 		// followed RFC 9728 to the metadata for /comm/mcp or /station/mcp got a 404 — measured
 		// against the live deployment by ken-prod-ops, and one of three walls between a correct
-		// client and a workspace. The handler derives which surface it is answering for.
+		// client and a station. The handler derives which surface it is answering for.
 		mux.HandleFunc("/.well-known/oauth-protected-resource/mcp", oauthSrv.HandlePRMetadata)
 		mux.HandleFunc("/.well-known/oauth-protected-resource/comm/mcp", oauthSrv.HandlePRMetadata)
 		mux.HandleFunc("/.well-known/oauth-protected-resource/station/mcp", oauthSrv.HandlePRMetadata)

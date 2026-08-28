@@ -286,7 +286,7 @@
             {{.Name}}
             {{if eq .State "archived"}}<span class="badge badge--plain" title="{{$.T "stations.archived_help"}}">{{$.T "stations.archived"}}</span>{{end}}
             {{if .Published}}<span class="badge" title="{{$.T "stations.published_help"}}">{{$.T "stations.published"}}</span>{{end}}
-            <!-- HELD vs UNCLAIMED, at a glance. Reassignment is the only way back into a workspace
+            <!-- HELD vs UNCLAIMED, at a glance. Reassignment is the only way back into a station
                  whose conversation is gone, and the operator's first question is which ones those
                  are — a page that shows nothing makes every post look the same. -->
             {{if .SessionKey}}<span class="badge badge--plain" title="{{$.T "stations.held_help"}}">{{$.T "stations.held"}}</span>{{else}}<span class="badge badge--plain" title="{{$.T "stations.unclaimed_help"}}">{{$.T "stations.unclaimed"}}</span>{{end}}
@@ -451,8 +451,8 @@
             </form>
           </details>
 
-          <!-- workspace takeover: the only door back into an abandoned post. A session can adopt a
-               workspace only while it has no owning conversation, deliberately — so when that
+          <!-- station takeover: the only door back into an abandoned post. A session can adopt a
+               station only while it has no owning conversation, deliberately — so when that
                conversation dies, a HUMAN is the only thing that can re-staff it. -->
           <details>
             <summary title="{{$.T "stations.reassign_help"}}">{{$.T "stations.reassign"}}</summary>

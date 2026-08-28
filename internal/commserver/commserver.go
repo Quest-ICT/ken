@@ -251,7 +251,7 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 // home and I don't have to go to the post office to claim a mailbox — the mailbox resides in my
 // home."
 //
-// comm_bind is worth a sentence, because it was BROKEN as well as redundant: it read the workspace
+// comm_bind is worth a sentence, because it was BROKEN as well as redundant: it read the station
 // only from a header a claude.ai connector cannot send, so every connector session's mailbox was
 // stranded unattached, permanently, with no way to fix it from the session side. ken-prod-ops found
 // that while trying to onboard a machine. The defect dies with the tool rather than needing a fix.
@@ -1033,7 +1033,7 @@ func afterEndpointAuth(ctx context.Context, d Deps, ep *comm.Endpoint) (*comm.En
 //     revocation is already checked at the transport, where it belongs.
 //   - IsStationArchived is subsumed: station.Resolve requires state='active'.
 //
-// THE REFUSAL IS station.ErrNoWorkspace, shared verbatim with the station surface, so the two
+// THE REFUSAL IS station.ErrNoStation, shared verbatim with the station surface, so the two
 // cannot drift into answering the same miss differently.
 func auth(ctx context.Context, d Deps, req *mcp.CallToolRequest, sessionKey string) (*comm.Endpoint, error) {
 	p := principalFrom(ctx)
@@ -1191,7 +1191,7 @@ func stationLabel(ctx context.Context, d Deps, stationID string) string {
 	return stationID
 }
 
-// WorkspaceHeader AND workspaceFrom ARE DELETED. The header declared which workspace a folder's
+// StationHeader AND stationFrom ARE DELETED. The header declared which station a folder's
 // MCP entry spoke for, and it is gone with the word: one resolver, internal/station.Resolve, reads
 // the session key and nothing else. Its comment recorded a cost worth remembering — the SDK does
 // not hand a tool handler the HTTP request's context, only the request with Extra.Header on it, so

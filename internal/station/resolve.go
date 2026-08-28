@@ -3,7 +3,7 @@
 // *** WHY IT IS ITS OWN PACKAGE. ***
 //
 // The answer used to live in stationserver, unexported, and comm reached it by accident: the
-// `?workspace=` promotion sat in the STATION middleware, and comm handlers saw its effect only
+// `?station=` promotion sat in the STATION middleware, and comm handlers saw its effect only
 // because allserver happened to wire station's middleware inside comm's. A wiring order nothing
 // asserted, holding up a load-bearing fact.
 //
@@ -28,7 +28,7 @@ import (
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
-// ErrNoWorkspace is the SINGLE refusal for "this caller may not act as a station", whatever the
+// ErrNoStation is the SINGLE refusal for "this caller may not act as a station", whatever the
 // reason — nothing declared, not this human's station, or archived.
 //
 // ONE WORDING FOR ALL THREE, extending COMM's unprobeability rule: nothing here tells a caller
@@ -41,7 +41,7 @@ var ErrStationArchived = errors.New("that station is ARCHIVED, so it does not se
 	"Nothing is lost and nothing needs re-pairing: ask your human to UNARCHIVE it in Ken's console " +
 	"at /stations, and the same session carries on with the same mail")
 
-var ErrNoWorkspace = errors.New("this connection has not said which station it is, or that station is not yours or is archived. " +
+var ErrNoStation = errors.New("this connection has not said which station it is, or that station is not yours or is archived. " +
 	"Call station_me ONCE with session_key — a stable id for THIS conversation — and send the SAME session_key on every call that needs it. " +
 	"Calling station_me repeatedly with NO session_key is not the fix: that mints a new station each time and strands the previous one")
 
@@ -104,7 +104,7 @@ func Bound(req *mcp.CallToolRequest) string {
 //     conversation rather than the connector every conversation on the account shares.
 //  2. WHAT station_me BOUND for this MCP connection. Costs the session nothing on later calls.
 //
-// *** THE HEADER IS GONE, AND SO IS `?workspace=`. *** Both were transport-carried identity, and a
+// *** THE HEADER IS GONE, AND SO IS `?station=`. *** Both were transport-carried identity, and a
 // claude.ai connector is added once per account — so any value they carried had exactly one value
 // for every machine and every conversation, forever. The header was worse still: the client
 // refuses custom header names, so it could not be set at all. Measured before deleting: 91 uses in
@@ -126,19 +126,19 @@ func Resolve(ctx context.Context, st *store.Store, req *mcp.CallToolRequest, _ i
 		// have completely different remedies.
 		id, err := st.StationIDBySessionKeyAnyState(ctx, strings.TrimSpace(sessionKey))
 		if err != nil {
-			return "", ErrNoWorkspace
+			return "", ErrNoStation
 		}
 		sid = id
 	default:
 		sid = Bound(req)
 	}
 	if sid == "" {
-		return "", ErrNoWorkspace
+		return "", ErrNoStation
 	}
 	// ONE LIVENESS QUESTION, ASKED ONCE — see StationIsLive for why it does not compare actors.
 	ok, err := st.StationIsLive(ctx, sid)
 	if err != nil {
-		return "", ErrNoWorkspace
+		return "", ErrNoStation
 	}
 	if !ok {
 		// *** ARCHIVED IS ANSWERED SEPARATELY, AND THAT IS SAFE HERE. ***
@@ -155,7 +155,7 @@ func Resolve(ctx context.Context, st *store.Store, req *mcp.CallToolRequest, _ i
 		if archived, aerr := st.StationIsArchived(ctx, sid); aerr == nil && archived {
 			return "", ErrStationArchived
 		}
-		return "", ErrNoWorkspace
+		return "", ErrNoStation
 	}
 	return sid, nil
 }

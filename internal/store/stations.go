@@ -40,7 +40,7 @@ type Station struct {
 	CreatedAt          string
 	AdvertisedAt       string
 	LastActivityAt     string
-	// SessionKey is the CONVERSATION that owns this workspace — empty for stations that
+	// SessionKey is the CONVERSATION that owns this station — empty for stations that
 	// predate migration 0023, and for any staffed by whichever session picks them up. It
 	// SELECTS and never authorises; see the migration for why that distinction is the whole
 	// safety argument.
@@ -132,9 +132,9 @@ func (s *Store) ListStations(ctx context.Context) ([]Station, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT station_id, name, purpose, self_described_about, self_described_tags,
        published, state, created_at, advertised_at, last_activity_at,
-       -- SELECTED SO THE CONSOLE CAN SHOW WHO HOLDS EACH POST. Without it every workspace looks
+       -- SELECTED SO THE CONSOLE CAN SHOW WHO HOLDS EACH POST. Without it every station looks
        -- unclaimed on the page, and an operator reassigning one cannot tell a live conversation's
-       -- workspace from an abandoned one — which is the first thing they need to know.
+       -- station from an abandoned one — which is the first thing they need to know.
        COALESCE(session_key,'')
 FROM station
 ORDER BY COALESCE(last_activity_at, created_at) DESC`)
@@ -572,13 +572,13 @@ func (s *Store) IsStationArchived(ctx context.Context, stationID string) (bool, 
 
 // StationExists reports whether a station id names a live (non-archived) station.
 //
-// The validation behind the workspace header (docs/IDENTITY.md §4). It answers only yes/no: the
+// The validation behind the station header (docs/IDENTITY.md §4). It answers only yes/no: the
 // caller turns a "no" into the same opaque refusal an unknown credential gets, so the header does
-// not become a way to enumerate which workspaces a deployment has.
+// not become a way to enumerate which stations a deployment has.
 //
 // ARCHIVED IS NOT LIVE. Archiving already stops COMM and is documented as severing live endpoints;
-// letting a header re-enter an archived workspace would make archive a suggestion. An operator who
-// archived a workspace and then saw a session working in it would have no way to explain it.
+// letting a header re-enter an archived station would make archive a suggestion. An operator who
+// archived a station and then saw a session working in it would have no way to explain it.
 func (s *Store) StationExists(ctx context.Context, stationID string) (bool, error) {
 	var n int
 	err := s.R.QueryRowContext(ctx,
@@ -586,21 +586,21 @@ func (s *Store) StationExists(ctx context.Context, stationID string) (bool, erro
 	return n > 0, err
 }
 
-// StationBySessionKey returns the workspace a CONVERSATION already owns, or ErrNotFound.
+// StationBySessionKey returns the station a CONVERSATION already owns, or ErrNotFound.
 //
-// This is the lookup that makes "one existing session is always connected to the same workspace"
+// This is the lookup that makes "one existing session is always connected to the same station"
 // true across a client restart. The key is declared by the session itself (see migration 0023);
 // it SELECTS and never authorises, so this deliberately does not filter on actor — two callers
 // presenting the same conversation key are the same conversation, and forking them into separate
-// workspaces would be the silent-divergence failure rather than a safety measure.
+// stations would be the silent-divergence failure rather than a safety measure.
 func (s *Store) StationBySessionKey(ctx context.Context, sessionKey string) (*Station, error) {
 	return s.stationWhere(ctx, `session_key=?1 AND state <> 'archived'`, sessionKey)
 }
 
-// ClaimStationForSession finds or creates the workspace belonging to one conversation.
+// ClaimStationForSession finds or creates the station belonging to one conversation.
 //
 // THE WHOLE POINT IS THAT IT IS IDEMPOTENT PER CONVERSATION. Called again by the same session
-// after a Claude Desktop restart it returns the SAME workspace, created=false, with its notebook,
+// after a Claude Desktop restart it returns the SAME station, created=false, with its notebook,
 // tasks, locker and vault intact. Called by a new conversation it mints a fresh one. Neither case
 // costs a human anything, which is what §6 promised and could not deliver while identity lived in
 // the connector.
@@ -625,7 +625,7 @@ func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint
 		return nil, false, err
 	}
 
-	// ADOPT the workspace this connection already minted, if it is still unclaimed. Without this
+	// ADOPT the station this connection already minted, if it is still unclaimed. Without this
 	// a session that called with no arguments and then with a key leaves the first one orphaned —
 	// which is precisely what the pre-3.35.0 tool text told sessions to do. The UPDATE's own
 	// `session_key IS NULL` clause is the guard: adopting a station that another conversation has
@@ -642,7 +642,7 @@ func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint
 			if err != nil {
 				return nil, false, err
 			}
-			// created=false: the workspace already existed, this call only claimed it. Reporting
+			// created=false: the station already existed, this call only claimed it. Reporting
 			// true would tell the session it had just been given a fresh one.
 			return st, false, nil
 		}
@@ -650,7 +650,7 @@ func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint
 
 	name := strings.TrimSpace(nameHint)
 	if name == "" {
-		name = "workspace"
+		name = "station"
 	}
 	if len(name) > 60 {
 		name = name[:60]
@@ -673,10 +673,10 @@ func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint
 	return st, true, nil
 }
 
-// CreateStationAutoNamed mints a workspace whose NAME is derived from a folder, disambiguating on
+// CreateStationAutoNamed mints a station whose NAME is derived from a folder, disambiguating on
 // collision instead of refusing.
 //
-// docs/IDENTITY.md §5: "Ken mints a workspace id and an auto-name from the folder's basename,
+// docs/IDENTITY.md §5: "Ken mints a station id and an auto-name from the folder's basename,
 // disambiguated on collision — names are unique per instance (idx_station_name)."
 //
 // REFUSING ON COLLISION WOULD REBUILD THE DEADLOCK IN MINIATURE. Two folders called `ken-public`
@@ -689,7 +689,7 @@ func (s *Store) ClaimStationForSession(ctx context.Context, sessionKey, nameHint
 func (s *Store) CreateStationAutoNamed(ctx context.Context, name string, actorID int64) (*Station, error) {
 	base := strings.TrimSpace(name)
 	if base == "" {
-		base = "workspace"
+		base = "station"
 	}
 	const purpose = "Auto-named from the folder it was first used in. Rename it in the console at any time — " +
 		"the name is a label and the id is the identity, so renaming invalidates nothing."
@@ -708,7 +708,7 @@ func (s *Store) CreateStationAutoNamed(ctx context.Context, name string, actorID
 		// MATCHED ON THE SENTINEL, NOT ON THE MESSAGE TEXT. The first version of this grepped the
 		// error string for "unique" and never matched, because CreateStation returns
 		// ErrStationNameTaken whose text is "station name already in use in this space" — so a
-		// collision surfaced as a hard refusal and the second folder got no workspace at all.
+		// collision surfaced as a hard refusal and the second folder got no station at all.
 		// A substring match on a human-readable message is a check that silently stops working
 		// the day someone improves the wording.
 		if !errors.Is(err, ErrStationNameTaken) {
@@ -719,12 +719,12 @@ func (s *Store) CreateStationAutoNamed(ctx context.Context, name string, actorID
 }
 
 // AuthenticateAPITokenForStation verifies a `ken_<id>_<secret>` API token and returns it as a
-// station principal — with NO station, which is the state station_me turns into a workspace.
+// station principal — with NO station, which is the state station_me turns into a station.
 //
 // *** WHY A PLAIN API TOKEN REACHES /station/mcp AT ALL. ***
 //
 // §10 step 2 made an OAuth grant span the three surfaces, and step 4 let a session mint its own
-// workspace. Both are true and both were unreachable for the session that reported the deadlock:
+// station. Both are true and both were unreachable for the session that reported the deadlock:
 // ken-prod-ops measured that Vlad runs Claude Code inside the desktop app, where **sessions are
 // non-interactive and cannot perform an OAuth sign-in at all.** The client's own words to him:
 // "This session is non-interactive, so Claude cannot run the OAuth flow here."
@@ -774,25 +774,25 @@ func (s *Store) AuthenticateAPITokenForStation(ctx context.Context, tok string) 
 // explicitly and must still be told about.
 type ReassignResult struct {
 	Station *Station
-	// TakenFromName is the workspace that LOST this conversation key, empty when nothing held it.
+	// TakenFromName is the station that LOST this conversation key, empty when nothing held it.
 	// It is reported rather than refused — see ReassignStationToSession for why — and reporting it
 	// is what keeps that from being a silent steal.
 	TakenFromName string
 	TakenFromID   string
 }
 
-// ReassignStationToSession points an EXISTING workspace at a conversation, from the console.
+// ReassignStationToSession points an EXISTING station at a conversation, from the console.
 //
-// *** WHY A HUMAN NEEDS THIS: AN ABANDONED WORKSPACE HAS NO WAY BACK. ***
+// *** WHY A HUMAN NEEDS THIS: AN ABANDONED STATION HAS NO WAY BACK. ***
 //
 // ClaimStationForSession only ever ADOPTS a station whose `session_key IS NULL`, deliberately —
-// stealing a claimed workspace on a declared key would make the key a credential, and it is
+// stealing a claimed station on a declared key would make the key a credential, and it is
 // documented as selecting rather than authorising (migration 0023). The consequence is that the
-// moment a conversation dies, the workspace it claimed is sealed: its notes, tasks, locker and
+// moment a conversation dies, the station it claimed is sealed: its notes, tasks, locker and
 // vault are intact and NOTHING can reach them, because the only conversation that could is gone.
 //
-// Vlad saw the way out: "we can use the fact that a workspace can be re-assigned to tell a chat
-// session to recover (take over) an (abandoned) workspace, and it might even be used to
+// Vlad saw the way out: "we can use the fact that a station can be re-assigned to tell a chat
+// session to recover (take over) an (abandoned) station, and it might even be used to
 // re-establish comm channels."
 //
 // THE HUMAN IS THE AUTHORITY, WHICH IS WHY THIS IS CONSOLE-ONLY. Reassignment is exactly the act
@@ -802,11 +802,11 @@ type ReassignResult struct {
 // requirement: the session invents a key, states it in its reply, and the human pastes that
 // string. Nothing secret is ever on screen.
 //
-// AN EMPTY KEY RELEASES the workspace instead of refusing. Without it there is no way to undo a
+// AN EMPTY KEY RELEASES the station instead of refusing. Without it there is no way to undo a
 // reassignment or to hand a post back to the pool, and a station wrongly pointed at a live
 // conversation would be stuck to it forever — the same dead end this exists to open.
 //
-// ARCHIVED WORKSPACES ARE NOT REASSIGNABLE. Archiving already severs live endpoints and
+// ARCHIVED STATIONS ARE NOT REASSIGNABLE. Archiving already severs live endpoints and
 // StationExists refuses archived ids; letting a reassign re-staff one would make archive a
 // suggestion, and an operator would have no way to explain a session working inside it.
 func (s *Store) ReassignStationToSession(ctx context.Context, stationID, sessionKey string) (*ReassignResult, error) {
@@ -815,7 +815,7 @@ func (s *Store) ReassignStationToSession(ctx context.Context, stationID, session
 		return nil, err
 	}
 	if st.State == "archived" {
-		return nil, errors.New("an archived workspace cannot be reassigned; unarchive it first")
+		return nil, errors.New("an archived station cannot be reassigned; unarchive it first")
 	}
 
 	key := strings.TrimSpace(sessionKey)
@@ -832,12 +832,12 @@ func (s *Store) ReassignStationToSession(ctx context.Context, stationID, session
 	//
 	// The first cut REFUSED this, which was wrong in the exact case the feature exists for. The
 	// human asks a chat session for its key; the session has already called station_me, so it
-	// already holds a FRESH EMPTY workspace under that key. Refusing meant the common path failed
+	// already holds a FRESH EMPTY station under that key. Refusing meant the common path failed
 	// with "that key is in use" and demanded a second, non-obvious step — release the empty one,
 	// then come back. The test written for the recovery flow hit it on the first run.
 	//
 	// Taking it is safe in a way that is worth stating: NOTHING IS DESTROYED. The displaced
-	// workspace keeps every note, task, locker file and secret, stays listed in the console, and
+	// station keeps every note, task, locker file and secret, stays listed in the console, and
 	// can be adopted or reassigned again. Only a pointer moved, and the operator moved it on
 	// purpose by typing that key.
 	//

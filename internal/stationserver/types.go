@@ -39,10 +39,10 @@ type dirOut struct {
 type meIn struct {
 	SelfDescribedAbout string   `json:"self_described_about,omitempty" jsonschema:"optional; how YOU describe what you know and are responsible for. A CLAIM, shown to others as self-described"`
 	SelfDescribedTags  []string `json:"self_described_tags,omitempty" jsonschema:"optional; short self-declared topic tags"`
-	WorkspaceName      string   `json:"workspace_name,omitempty" jsonschema:"optional; a LABEL for a workspace being created — the folder or project you are working in. Purely so your human can recognise it in the console; the identity is session_key, and the label stays renameable"`
-	// SessionKey is how a conversation says WHICH workspace is its own, and it is the whole
+	StationLabel      string   `json:"station_label,omitempty" jsonschema:"optional; a LABEL for a station being created — the folder or project you are working in. Purely so your human can recognise it in the console; the identity is session_key, and the label stays renameable"`
+	// SessionKey is how a conversation says WHICH station is its own, and it is the whole
 	// mechanism now that identity has moved out of the connector. See migration 0023.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"STRONGLY RECOMMENDED: a stable id for THIS CONVERSATION, so you return to the same workspace after a client restart instead of minting a new one. In Claude Code it is the conversation UUID in your transcript path. IF YOU HAVE NO SUCH ID (a claude.ai chat cannot see its own): invent one random string, reuse it all conversation, and state it in your reply so the transcript carries it across a reload. Send the SAME value every time this conversation calls; a new conversation sends a new one and gets its own workspace. It selects a workspace and authorises nothing"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"STRONGLY RECOMMENDED: a stable id for THIS CONVERSATION, so you return to the same station after a client restart instead of minting a new one. In Claude Code it is the conversation UUID in your transcript path. IF YOU HAVE NO SUCH ID (a claude.ai chat cannot see its own): invent one random string, reuse it all conversation, and state it in your reply so the transcript carries it across a reload. Send the SAME value every time this conversation calls; a new conversation sends a new one and gets its own station. It selects a station and authorises nothing"`
 }
 
 type briefingView struct {
@@ -85,22 +85,22 @@ type elsewhereView struct {
 type meOut struct {
 	StationID  string `json:"station_id"`
 	Name       string `json:"name"`
-	NameSource string `json:"name_source"` // "human", or "auto" for a workspace Ken named from a folder
-	// JustCreated and PutThisInYourConfig appear only on the call that MINTED this workspace.
+	NameSource string `json:"name_source"` // "human", or "auto" for a station Ken named from a folder
+	// JustCreated and PutThisInYourConfig appear only on the call that MINTED this station.
 	//
-	// The id has to reach the human, because the next session in this folder finds the workspace
+	// The id has to reach the human, because the next session in this folder finds the station
 	// only if the folder's MCP entry declares it — and a value that lives in one conversation is
 	// a value that dies with it. So the instruction rides in the RESULT, which is the channel that
 	// always arrives, rather than in connect-time text the session may never see.
 	// ALWAYS PRESENT, NEVER omitempty. It used to be omitted when false, so a reader could not
-	// tell "this workspace already existed" from "the server did not say" — the third instance of
+	// tell "this station already existed" from "the server did not say" — the third instance of
 	// that shape found in one day (comm_endpoint_ids and the station briefing were the others).
 	// A boolean that disappears when false is a boolean that answers a different question than
 	// the one it is named for.
-	JustCreated         bool   `json:"workspace_just_created"`
+	JustCreated         bool   `json:"station_just_created"`
 	PutThisInYourConfig string `json:"put_this_in_your_config,omitempty"`
 
-	// *** HOW TO KEEP THIS WORKSPACE, DELIVERED IN THE RESULT BECAUSE THE SCHEMA CANNOT SAY IT. ***
+	// *** HOW TO KEEP THIS STATION, DELIVERED IN THE RESULT BECAUSE THE SCHEMA CANNOT SAY IT. ***
 	//
 	// station_me gained `session_key` in 3.35.0, and a session whose tool list predates that
 	// version does not have the parameter in its schema. ken-prod-ops watched one reason its way
@@ -111,7 +111,7 @@ type meOut struct {
 	// mechanism has to announce itself somewhere the freeze cannot reach — and only RESULTS cross
 	// it. A tool description saying "send session_key" is invisible to precisely the sessions that
 	// need telling.
-	HowToKeepThisWorkspace string `json:"how_to_keep_this_workspace,omitempty"`
+	HowToKeepThisStation string `json:"how_to_keep_this_station,omitempty"`
 
 	// SessionKeyEcho is the key this call actually arrived with, echoed back so a session can
 	// confirm Ken received what it sent — and so the guidance above can tell the two cases apart

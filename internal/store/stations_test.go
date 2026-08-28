@@ -32,7 +32,7 @@ func stationFixture(t *testing.T) (*Store, context.Context, int64) {
 // Names are unique and display-only. A collision is refused with a NAMED error, which is
 // load-bearing rather than cosmetic: CreateStationAutoNamed retries on ErrStationNameTaken
 // to decorate an auto-chosen name, so a session onboarding into a folder whose name is
-// already taken still gets a workspace instead of an error.
+// already taken still gets a station instead of an error.
 //
 // RENAMED from TestStationNameUniquePerSpace when space_id was removed (§9.1). The
 // uniqueness is real and survives; only the "per instance" half was a claim about a second

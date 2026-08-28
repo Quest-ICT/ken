@@ -288,10 +288,10 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"it shows you the number and you decide." +
 			" 'not_shown' reads as a queue awaiting its turn; 'never_briefed' is how many have never had one — when it is non-zero, read the full list with station_task_list rather than trusting the head. 'briefed_count' only rises, so an item raised every session looks attended to: when the age is large, read the list, look at created_at, and ASK whether each item is still worth doing, or done being worth doing.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in meIn) (*mcp.CallToolResult, meOut, error) {
-		// *** NO WORKSPACE? YOU GET ONE. NOTHING TO APPROVE, NOTHING TO WAIT FOR. ***
+		// *** NO STATION? YOU GET ONE. NOTHING TO APPROVE, NOTHING TO WAIT FOR. ***
 		//
 		// docs/IDENTITY.md §5, decided: "fully working, auto-named, no approval." A session in an
-		// unknown folder mints a workspace, works immediately — notebook, tasks, vault, knowledge
+		// unknown folder mints a station, works immediately — notebook, tasks, vault, knowledge
 		// base, nothing withheld — and says so in its first message.
 		//
 		// IT HAPPENS HERE BECAUSE station_me IS THE CALL EVERY SESSION IS TOLD TO MAKE FIRST, so
@@ -315,25 +315,25 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		// THE VERSION IS STAMPED AT THIS ONE EXIT AND NOWHERE ELSE, and that is the whole point.
 		//
 		// It used to be set inside buildBriefing, which is only ONE of the two paths through this
-		// tool. The other — claimWorkspace — built its own meOut from scratch and never carried it,
-		// so `ken_version` and `ken_version_note` came back EMPTY on the workspace-CREATION call.
+		// tool. The other — claimStation — built its own meOut from scratch and never carried it,
+		// so `ken_version` and `ken_version_note` came back EMPTY on the station-CREATION call.
 		//
 		// THAT IS THE WORST PLACE IN THE WHOLE SURFACE FOR IT TO BE MISSING. The field exists so a
 		// session can tell its manual is stale, and the session most likely to be holding stale
 		// text — and least equipped to suspect it — is a brand-new one calling station_me as its
 		// first act. The one call where the version signal matters most was the one call that
 		// omitted it. ken-prod-ops found it by calling the tool from both a new and an established
-		// workspace and diffing the two results, which is the only way it was ever going to show.
+		// station and diffing the two results, which is the only way it was ever going to show.
 		//
 		// Setting the two fields on the second path would have fixed this instance and left the
 		// shape intact for the third path. Stamping after the handler returns means a future path
 		// cannot omit it without deleting this line, and TestEveryStationMePathCarriesTheVersion
 		// fails if anyone does.
 		// BIND AT THE ONE EXIT, so EVERY path through this tool leaves the connection knowing
-		// which workspace it resolved — the keyed path, the header path, and the no-argument mint
+		// which station it resolved — the keyed path, the header path, and the no-argument mint
 		// alike. Binding only inside the keyed branch is what made the adoption below miss: a
 		// session that minted with no arguments left nothing for its next call to adopt, and
-		// stranded the workspace it had just been given.
+		// stranded the station it had just been given.
 		station.Bind(req, out.StationID)
 
 		out.KenVersion = version.Version
@@ -343,7 +343,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		// It is unconditional rather than only-when-missing, because a session that already sends
 		// the key is exactly the session that should keep sending it.
 		if out.SessionKeyEcho == "" {
-			out.HowToKeepThisWorkspace = "TO COME BACK TO THIS WORKSPACE after a client restart, pass " +
+			out.HowToKeepThisStation = "TO COME BACK TO THIS STATION after a client restart, pass " +
 				"session_key on every station_me call in this conversation — a stable id for THIS " +
 				"conversation. In Claude Code that is the UUID in your transcript or scratchpad path. " +
 				"IF YOU HAVE NO SUCH ID — a claude.ai chat CANNOT see its own conversation id, verified " +
@@ -353,9 +353,9 @@ func RegisterTools(s *mcp.Server, d Deps) {
 				"IF YOUR TOOL SCHEMA DOES NOT LIST session_key, SEND IT ANYWAY: your schema was captured " +
 				"when this conversation began and never refreshes, while this result is current. New " +
 				"parameters are honoured even when your copy of the tool does not mention them. Without " +
-				"it, your next restart mints a NEW workspace and strands this one."
+				"it, your next restart mints a NEW station and strands this one."
 		} else {
-			out.HowToKeepThisWorkspace = "Keep sending this same session_key on every station_me call in " +
+			out.HowToKeepThisStation = "Keep sending this same session_key on every station_me call in " +
 				"this conversation and you will return here after any restart."
 		}
 		return nil, out, nil
@@ -408,7 +408,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 	addTool(s, d, &mcp.Tool{
 		Name: "station_request",
 		Description: "Ask your human to create a station for you, and WAIT for them to approve it. " +
-			"YOU ALMOST CERTAINLY WANT station_me INSTEAD: if you have no workspace, station_me makes you one " +
+			"YOU ALMOST CERTAINLY WANT station_me INSTEAD: if you have no station, station_me makes you one " +
 			"immediately — named after your folder, working from the next call, with nothing to approve and " +
 			"nobody to wait for. Use this only when your human has told you they want to name and approve this " +
 			"one themselves. You supply a PURPOSE and may suggest a name; they type the real name on approval.",
@@ -854,7 +854,7 @@ const versionNote = "This is the version RUNNING NOW. Your connect-time instruct
 	"about them; new TOOLS are not in your list at all and cannot be called. Results like this one are " +
 	"always current."
 
-// stationMe resolves the caller to a workspace and returns their briefing, MINTING the workspace
+// stationMe resolves the caller to a station and returns their briefing, MINTING the station
 // when the caller has none — the two paths the version stamp must cover, kept in one function so
 // the handler above has a single success exit to stamp.
 func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (meOut, error) {
@@ -872,27 +872,27 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 		if p := principalFrom(ctx); p != nil {
 			// *** ADOPT WHAT THIS CONNECTION ALREADY MINTED, RATHER THAN STRANDING IT. ***
 			//
-			// A session that calls station_me with NO arguments gets a workspace, then calls again
+			// A session that calls station_me with NO arguments gets a station, then calls again
 			// WITH a key — which is exactly the sequence the old tool text produced, and ken-prod-ops
 			// watched it leave an orphan station on the deployment. Ken had no way to know the two
 			// calls were the same conversation, because the first one did not say.
 			//
 			// The connection binding does know: this same MCP connection minted it moments ago. So
-			// if that workspace is still UNCLAIMED, the key claims it instead of minting a second.
+			// if that station is still UNCLAIMED, the key claims it instead of minting a second.
 			// Scoped to the binding rather than to "any recent unclaimed station of this actor",
 			// which would let one conversation adopt another's.
-			st, created, err := d.Store.ClaimStationForSession(ctx, key, in.WorkspaceName, p.ActorID,
+			st, created, err := d.Store.ClaimStationForSession(ctx, key, in.StationLabel, p.ActorID,
 				station.Bound(req))
 			if err != nil {
 				return meOut{}, err
 			}
 			station.Bind(req, st.StationID)
 			if created {
-				out := claimedWorkspaceOut(st)
+				out := claimedStationOut(st)
 				out.SessionKeyEcho = key
 				return out, nil
 			}
-			out, err := buildBriefing(ctx, d, p.withWorkspace(st.StationID))
+			out, err := buildBriefing(ctx, d, p.withStation(st.StationID))
 			if err != nil {
 				return meOut{}, err
 			}
@@ -903,7 +903,7 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 	// NO STATION ON THE PRINCIPAL AND NOTHING BOUND: this session has never claimed one, so it
 	// gets one. There used to be a header consulted here too; it is gone.
 	if p := principalFrom(ctx); p != nil && p.StationID == "" && station.Bound(req) == "" {
-		return claimWorkspace(ctx, d, p, in.WorkspaceName)
+		return claimStation(ctx, d, p, in.StationLabel)
 	}
 	p, err := requireStation(ctx, req)
 	if err != nil {
@@ -931,7 +931,7 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 		return meOut{}, err
 	}
 	// KenVersion/VersionNote are NOT set here — the station_me handler stamps them on every path,
-	// including the workspace-creation one this function is not on. See the comment there.
+	// including the station-creation one this function is not on. See the comment there.
 	out := meOut{
 		StationID: st.StationID, Name: st.Name, NameSource: "human", Purpose: st.Purpose,
 		SelfDescribedAbout: st.SelfDescribedAbout, SelfDescribedTags: st.SelfDescribedTags,
@@ -1109,27 +1109,27 @@ func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) 
 	})
 }
 
-// claimedWorkspaceOut is the first-contact result for a conversation that just claimed a
-// workspace by declaring its key. Unlike claimWorkspace's version it does NOT ask the human to
+// claimedStationOut is the first-contact result for a conversation that just claimed a
+// station by declaring its key. Unlike claimStation's version it does NOT ask the human to
 // put anything in a config file — that was the whole cost this removes. The session simply sends
 // the same key next time.
-func claimedWorkspaceOut(st *store.Station) meOut {
+func claimedStationOut(st *store.Station) meOut {
 	return meOut{
 		StationID:   st.StationID,
 		Name:        st.Name,
 		NameSource:  "auto",
 		JustCreated: true,
-		PutThisInYourConfig: "Ken made you a workspace called " + st.Name + " and you are working in it NOW — " +
+		PutThisInYourConfig: "Ken made you a station called " + st.Name + " and you are working in it NOW — " +
 			"notebook, tasks, locker and vault, nothing withheld and nothing to approve. NOTHING TO CONFIGURE: " +
 			"you claimed it with your session_key, so send that SAME value on every station_me call in this " +
-			"conversation and you will come back to this workspace after a restart. TELL YOUR HUMAN, in words, " +
+			"conversation and you will come back to this station after a restart. TELL YOUR HUMAN, in words, " +
 			"that you are working as " + st.Name + " — it is a LABEL, auto-generated so they can recognise it, " +
 			"and they can rename it in the console at any time without breaking anything. The name is what they " +
-			"will see when approving this workspace to talk to another, which is the one moment a bad name matters.",
+			"will see when approving this station to talk to another, which is the one moment a bad name matters.",
 	}
 }
 
-// claimWorkspace mints a workspace for a session that has none, names it after the folder, and
+// claimStation mints a station for a session that has none, names it after the folder, and
 // hands back the id the human must write into that folder's MCP entry.
 //
 // docs/IDENTITY.md §5, decided: "fully working, auto-named, no approval." Nothing is withheld and
@@ -1140,12 +1140,12 @@ func claimedWorkspaceOut(st *store.Station) meOut {
 // address, or the first release ships a global namespace one session can squat." So a collision is
 // resolved by decorating the NAME and never by refusing, and the human renames it in the console
 // whenever they like without invalidating a single config.
-func claimWorkspace(ctx context.Context, d Deps, p *principal, hint string) (meOut, error) {
+func claimStation(ctx context.Context, d Deps, p *principal, hint string) (meOut, error) {
 	name := strings.TrimSpace(hint)
 	if name == "" {
-		// A session that offered no folder name still gets a workspace — withholding one over a
+		// A session that offered no folder name still gets a station — withholding one over a
 		// missing hint would put the deadlock back for the exact case it was built for.
-		name = "workspace"
+		name = "station"
 	}
 	if len(name) > 60 {
 		name = name[:60]
@@ -1154,7 +1154,7 @@ func claimWorkspace(ctx context.Context, d Deps, p *principal, hint string) (meO
 	if err != nil {
 		return meOut{}, err
 	}
-	log.Printf("STATION: minted workspace %s (%q, auto-named) for token %s — no approval required (IDENTITY.md §5)",
+	log.Printf("STATION: minted station %s (%q, auto-named) for token %s — no approval required (IDENTITY.md §5)",
 		st.StationID, st.Name, p.TokenID)
 	return meOut{
 		StationID:   st.StationID,

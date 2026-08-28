@@ -326,9 +326,9 @@ type EndpointReassignResult struct {
 
 // ReassignEndpointToSession points an EXISTING mailbox at a conversation, from the console.
 //
-// *** WHY: RECOVERING A WORKSPACE WITHOUT ITS MAIL IS HALF A RECOVERY. ***
+// *** WHY: RECOVERING A STATION WITHOUT ITS MAIL IS HALF A RECOVERY. ***
 //
-// Vlad, on workspace takeover: "it might even be used to re-establish comm channels." It has to
+// Vlad, on station takeover: "it might even be used to re-establish comm channels." It has to
 // be, because the station half alone leaves the new session holding a post whose mailbox it cannot
 // open. A claimed endpoint is driven by the DEAD conversation's key; an unclaimed one by a secret
 // that was shown once, to a session that is gone. The only existing answer was `rotate` — which
@@ -336,14 +336,14 @@ type EndpointReassignResult struct {
 // has no disk. That ceremony is the exact thing 3.36.0 removed.
 //
 // SO THE RECOVERY IS ONE STRING, USED TWICE: the session states its conversation key, the human
-// pastes it into the workspace form and this one, and the session's next poll reads the mail
+// pastes it into the station form and this one, and the session's next poll reads the mail
 // waiting in the mailbox it just inherited. Channels, links and queued messages are untouched —
 // only the pointer that says which conversation drives this endpoint moves.
 //
 // THE OWNER TOKEN IS NOT TOUCHED, AND THAT IS LOAD-BEARING. `auth` re-checks at every use that the
 // bearer's token matches the endpoint's owner, so a key alone can never drive a mailbox from
 // another account. If the taking-over session bears a DIFFERENT Ken token — a claude.ai grant
-// recovering a workspace a CLI session left — the operator must also repoint the endpoint to that
+// recovering a station a CLI session left — the operator must also repoint the endpoint to that
 // token, which the console already does next to this control. Silently repointing here would move
 // an estate boundary as a side effect of a convenience.
 //

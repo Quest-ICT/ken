@@ -207,9 +207,9 @@ func TestTheRunningVersionRidesInResultsOnEverySurface(t *testing.T) {
 // path satisfies it on behalf of every unstamped one.
 //
 // THAT IS NOT HYPOTHETICAL. On v3.29.0 this gate was GREEN while station_me returned an EMPTY
-// ken_version on the workspace-CREATION path: meOut was built at two sites, the briefing one
+// ken_version on the station-CREATION path: meOut was built at two sites, the briefing one
 // stamped and the minting one did not, and a file-level grep cannot tell those apart. It shipped,
-// and ken-prod-ops found it by calling the tool from a new workspace and an established one and
+// and ken-prod-ops found it by calling the tool from a new station and an established one and
 // diffing the results — which is the only instrument that was ever going to see it.
 //
 // So this gate's real claim is narrow and worth stating: IT CATCHES WHOLESALE REMOVAL OF A
@@ -235,6 +235,6 @@ func TestTheStampGateDoesNotOverclaim(t *testing.T) {
 	}
 	if !bytes.Contains(ot, []byte("TestEveryStationMePathCarriesTheVersion")) {
 		t.Error("the per-path wire test this gate defers to is gone, so nothing now proves the " +
-			"workspace-creation path carries a version — the exact defect that shipped in 3.29.0")
+			"station-creation path carries a version — the exact defect that shipped in 3.29.0")
 	}
 }

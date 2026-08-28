@@ -18,7 +18,7 @@ import (
 //	/.well-known/oauth-protected-resource/station/mcp  404
 //	scopes_supported                                   ["read","write","offline_access"]
 //
-// Three walls, each sufficient alone, between a correct client and a workspace. And the third
+// Three walls, each sufficient alone, between a correct client and a station. And the third
 // survives fixing the other two: with no ken: scope advertised, a client that asks for exactly
 // what the metadata offers lands in the legacy branch BY CONSTRUCTION and is refused, correctly,
 // at the end of a flow that could never have produced anything else. Their estate proved it — 8

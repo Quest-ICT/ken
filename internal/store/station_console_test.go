@@ -226,7 +226,7 @@ func TestAssetUsageCountsOnlyThisStation(t *testing.T) {
 // TransferStationAssets is the answer to "a session is gone and its work should not be", and it
 // silently left that session's CREDENTIALS behind — while its doc comment carefully explained why
 // the message queue stays put, so a reader would have concluded the transfer was complete. An API
-// key with no second copy is the part of a workspace hardest to recreate, which makes it the worst
+// key with no second copy is the part of a station hardest to recreate, which makes it the worst
 // possible thing to drop quietly.
 //
 // This asserts the property that actually matters, which is not "a row moved": it is that the
@@ -288,10 +288,10 @@ func TestTransferMovesVaultSecretsAndTheyStillOpen(t *testing.T) {
 		t.Fatal(err)
 	} else if len(hist) != 0 {
 		t.Errorf("the source kept %d revisions of a secret it no longer holds — old values of a "+
-			"live credential, readable from an abandoned workspace", len(hist))
+			"live credential, readable from an abandoned station", len(hist))
 	}
 
-	// And it is GONE from the source. A copy would mean an abandoned workspace still holds live
+	// And it is GONE from the source. A copy would mean an abandoned station still holds live
 	// credentials, which is the opposite of what a takeover is for.
 	if left, err := st.ListStationVault(ctx, from.StationID); err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestTransferMovesVaultSecretsAndTheyStillOpen(t *testing.T) {
 // THE DEPARTURE IS ON THE RECORD, AND THE OLD TRAIL DOES NOT FOLLOW THE SECRET.
 //
 // via='transfer' already means "this station's secret left it" — that is what station_vault_send
-// writes — so a workspace transfer writes the same event. The existing read rows STAY at the
+// writes — so a station transfer writes the same event. The existing read rows STAY at the
 // source, because they record reads that happened there: moving them would make the destination's
 // log assert reads from before it held the secret and erase the source's record of ever holding it.
 func TestTransferAuditsTheDepartureAtTheSource(t *testing.T) {
@@ -398,7 +398,7 @@ func TestTransferRefusesCollidingVaultNames(t *testing.T) {
 
 // THE FLAG IS A FLAG. Without this, every assertion above would also pass against an
 // implementation that moved the vault unconditionally, and an operator who deliberately unticked
-// the box would ship credentials to another workspace anyway.
+// the box would ship credentials to another station anyway.
 func TestTransferLeavesTheVaultWhenNotSelected(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
 	from, _ := st.CreateStation(ctx, "old-box", "", actorID)

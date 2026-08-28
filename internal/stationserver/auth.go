@@ -69,7 +69,7 @@ func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, 
 	// THE CONVERSATION'S OWN DECLARATION, made on its first station_me call. The header that used
 	// to be consulted first is gone — see station.Resolve.
 	if p.StationID == "" {
-		p = p.withWorkspace(station.Bound(req))
+		p = p.withStation(station.Bound(req))
 	}
 	if p.StationID == "" {
 		// THIS USED TO SAY "call station_me" — WHICH IS A LOOP THAT MINTS A SECOND STATION.
@@ -77,70 +77,40 @@ func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, 
 		// each time. The gap is never the mint; it is that this connection has not said which
 		// station it is. ONE WORDING, shared with comm, so the two surfaces cannot drift into
 		// answering the same miss differently.
-		return nil, station.ErrNoWorkspace
+		return nil, station.ErrNoStation
 	}
 	return p, nil
 }
 
-// workspaceFrom lifts the declared workspace id off the tool call's headers.
+// *** THE BINDING MAP, THE HEADER READER AND THE `?station=` PROMOTION HAVE ALL MOVED OR GONE. ***
 //
-// *** READ HERE, NOT IN THE MIDDLEWARE, AND THE REASON IS WORTH THE PARAGRAPH. ***
+// The map that remembered which station a connection had claimed now lives in internal/station,
+// shared with comm rather than reachable from it by accident: the promotion used to live in THIS
+// middleware, and comm handlers saw its effect only because allserver wired station's middleware
+// inside comm's — a wiring order nothing asserted. See station.Resolve for what replaced it.
 //
-// The first implementation resolved the workspace in authMiddleware and wrote it onto the
-// principal. The middleware ran, the header was present, the log line fired, the principal was
-// built with the right station — and the tool handler still saw an empty one. Measured, not
-// guessed: logging both sides of the seam in one run showed `hdr="glZ..." -> station="glZ..."`
-// three times, followed by `handler sees station=""`.
-//
-// The SDK does not hand a tool handler the HTTP request's context. It hands it the request, with
-// `Extra.Header` on it — which is exactly how internal/commserver has always lifted its endpoint
-// credential (withEndpointCred). The mechanism already existed in this repository; I built a
-// second one that could not work and spent the debugging finding out.
-//
-// IT AUTHORISES NOTHING (docs/IDENTITY.md §9.2). The value only SELECTS which workspace; the
-// credential on the request is what authorises, and requireStation still refuses a principal that
-// has neither. A station key bound to its own station never consults this — see authMiddleware.
-// sessionBindings remembers, for the life of one MCP connection, which workspace this
-// conversation claimed. station_me writes it; every other station tool reads it.
-//
-// WHY THIS EXISTS: the workspace has to be declared ONCE per conversation, not threaded through
-// every tool call as an argument. A session says who it is on its first call — which the
-// instructions already require — and the rest of the surface just works.
-//
-// KEYED ON THE MCP SESSION ID, WHICH IS NOT THE CONVERSATION KEY, AND THE DIFFERENCE MATTERS.
-// The MCP session is reborn on every reconnect; the conversation outlives it. So this is a
-// per-connection CACHE of a decision made from the durable key, never the source of truth. After
-// a client restart the map is empty, the session calls station_me with the same session_key, and
-// the same workspace comes back out of the database. Losing this map costs one lookup, never an
-// identity.
-//
-// BOUNDED, because a map keyed on connections that never announce their end would otherwise grow
-// for the life of the process. At the cap it is cleared wholesale rather than evicted cleverly:
-// the recovery is that each session re-declares on its next station_me, which every session does
-// at the start of every conversation anyway. A silently-full cache that stopped accepting new
-// bindings would be far worse than one that occasionally makes sessions say who they are again.
-// THE BINDING MAP AND THE HEADER READER MOVED TO internal/station.
-//
-// Both are now shared with comm rather than reachable from it by accident: the `?workspace=`
-// promotion used to live in THIS middleware, and comm handlers saw its effect only because
-// allserver wired station's middleware inside comm's — a wiring order nothing asserted. See
-// station.Resolve for what replaced it, and for why the header itself is gone.
+// ONE LESSON FROM THE DELETED READER IS KEPT, because it cost an hour and would cost it again.
+// The SDK does NOT hand a tool handler the HTTP request's context; it hands it the request, with
+// Extra.Header on it. Resolving something in a middleware and writing it onto the principal looks
+// right, runs, and logs correctly — `hdr="glZ..." -> station="glZ..."`, three times — while the
+// handler still sees an empty value. The mechanism that does work already existed in
+// internal/commserver and was not looked at first.
 
-// withWorkspace returns a copy of the principal working as the declared workspace, or the
+// withStation returns a copy of the principal working as the declared station, or the
 // principal unchanged when the declaration is empty or names nothing live.
 //
 // A COPY, because the principal in the context is shared across a session and a per-call
 // declaration must not leak into the next call.
-func (p *principal) withWorkspace(ws string) *principal {
-	if ws == "" {
+func (p *principal) withStation(stationID string) *principal {
+	if stationID == "" {
 		return p
 	}
 	c := *p
-	c.StationID = ws
+	c.StationID = stationID
 	return &c
 }
 
-// *** X-Ken-Workspace AND ?workspace= ARE DELETED. ***
+// *** X-Ken-Workspace AND ?station= ARE DELETED. ***
 //
 // Both carried identity in the TRANSPORT, and a claude.ai connector is added once per account — so
 // whatever they carried had exactly one value for every machine and every conversation, forever.
@@ -183,7 +153,7 @@ func principalFromToken(ctx context.Context, st *store.Store, tok string) (*stor
 }
 
 // authMiddleware authenticates a `kens_` bearer key or an OAuth grant, requires the station scope,
-// and resolves which workspace the session is working as.
+// and resolves which station the session is working as.
 func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No CORS headers: like /comm/mcp this endpoint has no browser client, so a
@@ -228,13 +198,13 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			return
 		}
 
-		// *** THE WORKSPACE HEADER — docs/IDENTITY.md §4, step 4 of §10. ***
+		// *** THE STATION HEADER — docs/IDENTITY.md §4, step 4 of §10. ***
 		//
 		//	X-Ken-Workspace: lhqBQKBpTSyJoZyu    <- permanent, meaningless, NOT a secret
 		//
 		// §4: "The human's OAuth grant proves WHO, and single-user makes that sufficient: within
 		// one instance there is one human and one Claude account, so a session declaring a
-		// workspace is that human's own session. There is no other tenant to protect against."
+		// station is that human's own session. There is no other tenant to protect against."
 		// The id selects; the grant authorises. That is why it can live in a config file, in
 		// plain sight, forever — "a name tag cannot leak, cannot be burned, never expires and
 		// never rotates", which is the whole point of replacing a per-folder station KEY.
@@ -247,8 +217,8 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 		//
 		// THE RESIDUAL RISK IS CONFUSION, NOT COMPROMISE (§4), and it is mitigated by visibility
 		// rather than by credentials: the claim is logged, and the console can show which
-		// workspace each session claimed. Vlad ruled on 2026-08-25 that the vault follows the
-		// workspace like everything else, rather than growing a second factor that would
+		// station each session claimed. Vlad ruled on 2026-08-25 that the vault follows the
+		// station like everything else, rather than growing a second factor that would
 		// reintroduce the ceremony this design exists to remove.
 		if limiter != nil {
 			if ok, retry := limiter.Allow(sp.TokenID); !ok {

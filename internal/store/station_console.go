@@ -233,7 +233,7 @@ type TransferResult struct {
 // This function is documented as the answer to "a session is gone and its work should not
 // be", and it left that session's CREDENTIALS behind. The comment above carefully explains
 // why the message queue stays put and was silent about secrets, so an operator reading it
-// would have concluded the transfer was complete. Found while designing workspace takeover
+// would have concluded the transfer was complete. Found while designing station takeover
 // for chat sessions, which is exactly the path that would have hit it.
 //
 // It moves now, on Vlad's ruling and for the reason he gave: the whole point is that work
@@ -343,7 +343,7 @@ SELECT a.name FROM station_vault a JOIN station_vault b ON a.name=b.name
 	if vault {
 		// AUDITED FIRST, AGAINST THE SOURCE, and it stays there. via='transfer' already means
 		// exactly this on the other path — station_vault_send records "this station's secret
-		// left it" — so a workspace transfer writes the same event for the same reason.
+		// left it" — so a station transfer writes the same event for the same reason.
 		//
 		// THE READ TRAIL DOES NOT MOVE, and that is the deliberate half. Those rows record
 		// reads that HAPPENED AT THE SOURCE; relocating them would make the destination's log

@@ -69,7 +69,7 @@ const sessionTimeout = 30 * 60 * 1e9 // 30 minutes, in nanoseconds
 // The middle paragraph is the one that must not be cut. `session_key` shipped in 3.35.0 and a
 // session whose tool list predates it will conclude the parameter does not exist — ken-prod-ops
 // watched exactly that happen and it nearly stopped the acceptance run. The result field
-// how_to_keep_this_workspace says it too, but only after a call; this says it before one.
+// how_to_keep_this_station says it too, but only after a call; this says it before one.
 const Instructions = `Ken — ONE connection, THREE surfaces. Knowledge base (kb_*), inter-session messaging (comm_*), and a durable working identity (station_*). You have all three; none is optional.
 
 CALL station_me FIRST, EVERY SESSION, and pass session_key — a stable id for THIS conversation. In Claude Code it is the UUID in your transcript or scratchpad path. IF YOU HAVE NO SUCH ID (a claude.ai chat cannot see its own conversation id): INVENT one random string, use it for the whole conversation, and STATE IT IN YOUR REPLY to your human — the transcript is what survives a reload, so a key you only put in a tool call is a key you lose. SEND IT EVEN IF YOUR TOOL SCHEMA DOES NOT LIST IT: your schema was captured when this conversation began and never refreshes, while tool RESULTS are always current.

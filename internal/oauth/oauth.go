@@ -89,7 +89,7 @@ func (s *Server) ResourceMetadataURL(r *http.Request) string {
 // Every protected surface must answer its 401 with a WWW-Authenticate naming ITS OWN metadata.
 // /mcp did; /comm/mcp and /station/mcp returned a bare "missing bearer token" with no challenge at
 // all, so a client had nothing to follow — measured on the live deployment, and the first of three
-// walls between a correct client and a workspace.
+// walls between a correct client and a station.
 //
 // Worth keeping from that measurement, because it decides where fixes for this class belong: the
 // session on the other side could not see the difference. Its own words — "a 401-without-
