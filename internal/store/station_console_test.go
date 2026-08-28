@@ -205,7 +205,7 @@ func TestAssetUsageCountsOnlyThisStation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.IssueStationKey(ctx, actorID, mine.StationID, "laptop", []string{"station"}); err != nil {
+	if _, err := st.IssueToken(ctx, actorID, []string{"station"}, "laptop"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -215,9 +215,6 @@ func TestAssetUsageCountsOnlyThisStation(t *testing.T) {
 	}
 	if u.Notes != 1 {
 		t.Fatalf("counted %d notes for this station, want 1 — the other station's pages must not be included", u.Notes)
-	}
-	if u.Keys != 1 {
-		t.Fatalf("counted %d live keys, want 1", u.Keys)
 	}
 	if u.NoteBytes == 0 {
 		t.Fatal("note bytes reported as 0 though a page with a body exists")

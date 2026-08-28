@@ -365,110 +365,20 @@ type StationKey struct {
 	ActorHasComm         bool
 }
 
-// IssueStationKey mints a `kens_`-prefixed key. stationID may be empty: such a key can
-// call exactly one tool, station_request, which is how a session with no station asks
-// for one (S3).
+// *** STATION KEYS ARE RETIRED. ***
 //
-// actorID must be the SAME actor as that machine's comm token, because the hearsay
-// window is keyed on the actor — a different actor silently defeats
-// prompted_by_peer_traffic, and a marker that fails open without saying so is worse
-// than no marker (S5).
+// A `kens_<id>_<secret>` credential was a per-machine bearer a human minted, delivered and
+// protected, so that a session could reach the station surface. Three things removed its reason to
+// exist, in order: OAuth grants carry every capability, /mcp became the one surface requiring all
+// of them (so a station key reached nothing), and a station is now claimed in-band with
+// session_key rather than by presenting a credential.
 //
-// THIS FUNCTION STILL DOES NOT ENFORCE THAT. It records what it is told. An earlier
-// version of this comment said "the caller enforces that", naming an enforcer that
-// never existed — which cost a production operator real time, because a contract
-// comment asserting a guarantee is worse than silence: it stops the reader looking.
+// Vlad's end state, in his words when he corrected my own governance text: "The only token I see
+// still exist after all the things we agreed on is the one associated to the OAuth authorization,
+// and is exactly one... having two OAuth associations active would be an error, not a feature."
 //
-// What changed in 0014: a mismatch is no longer silent everywhere. BINDING now
-// enforces it — RedeemBindingVoucher requires the redeeming endpoint's actor to be
-// the one the voucher was issued to, so a key minted under the wrong actor cannot
-// bind an endpoint and says so by name. That is a real check, and it is deliberately
-// NOT this function's: refusing at mint time would block the legitimate case of a
-// deployment that has no comm token yet, and stations run with COMM off by design.
-//
-// So the hearsay consequence above remains unenforced and silent — a mismatched key
-// authenticates perfectly and marks nothing — while the binding consequence is now
-// loud. Do not read the new check as covering both. What the callers still do is
-// make the right actor the DEFAULT: `ken station key` resolves the actor holding this
-// deployment's comm token and says which one it picked, the console offers a picker
-// that marks them, and the /stations key table now shows each key's actor and
-// whether it holds a comm token.
-func (s *Store) IssueStationKey(ctx context.Context, actorID int64, stationID, label string, scopes []string) (string, error) {
-	tokenID, err := randBase62(12)
-	if err != nil {
-		return "", err
-	}
-	secret, err := randBase62(40)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256([]byte(secret))
-	sj, _ := json.Marshal(scopes)
-	if _, err := s.W.ExecContext(ctx, `
-INSERT INTO api_token(token_id, secret_sha256, actor_id, scopes, label, station_id)
-VALUES(?,?,?,?,?,?)`,
-		tokenID, hex.EncodeToString(sum[:]), actorID, string(sj), nullStr(label), nullStr(stationID)); err != nil {
-		return "", err
-	}
-	return "kens_" + tokenID + "_" + secret, nil
-}
-
-// RetireStationKey stops the key working — INCLUDING for a session holding it right now.
-//
-// IT DOES NOT "LEAVE LIVE ONES ALONE", and six shipped strings said it did until 2026-08-14.
-// AuthenticateStationKey requires `retired_at IS NULL` (below) and the middleware
-// re-authenticates EVERY request, so the holder loses the notebook, task list, locker and
-// vault at its next call. What survives is the COMM endpoints the key already bound: those
-// authenticate on the endpoint secret, not on this key.
-//
-// So the difference from revocation is narrower than the words suggest — Retire severs the
-// STATION surface and spares COMM; Revoke severs both (RevokeToken plus the endpoint-severing
-// pass, S6). Neither is the graceful "I moved machines" path this comment used to promise.
-//
-// The behaviour was corrected in code in 1.5.2 by a commit that touched no .properties and no
-// template, so the operator-facing text kept promising the old behaviour for four releases.
-// ken-prod-ops found it by reading the auth query rather than the tooltip.
-func (s *Store) RetireStationKey(ctx context.Context, tokenID string) error {
-	res, err := s.W.ExecContext(ctx,
-		`UPDATE api_token SET retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-		 WHERE token_id=? AND station_id IS NOT NULL AND retired_at IS NULL AND revoked_at IS NULL`, tokenID)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// ListStationKeys lists a station's keys for the console, including retired and revoked
-// ones — a key nobody uses should be visible before it is a problem (§8).
-func (s *Store) ListStationKeys(ctx context.Context, stationID string) ([]StationKey, error) {
-	rows, err := s.R.QueryContext(ctx, `
-SELECT t.token_id, COALESCE(t.station_id,''), COALESCE(t.label,''), t.created_at,
-       COALESCE(t.last_used_at,''), COALESCE(t.retired_at,''), COALESCE(t.revoked_at,''),
-       COALESCE(a.kind,''), COALESCE(a.display_name,''),
-       EXISTS(SELECT 1 FROM api_token c
-               WHERE c.actor_id=t.actor_id AND c.revoked_at IS NULL
-                 AND c.scopes LIKE '%"comm"%')
-FROM api_token t LEFT JOIN actor a ON a.id = t.actor_id
-WHERE t.station_id=? ORDER BY t.created_at DESC`, stationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []StationKey
-	for rows.Next() {
-		var k StationKey
-		if err := rows.Scan(&k.TokenID, &k.StationID, &k.Label, &k.CreatedAt,
-			&k.LastUsedAt, &k.RetiredAt, &k.RevokedAt,
-			&k.ActorKind, &k.ActorName, &k.ActorHasComm); err != nil {
-			return nil, err
-		}
-		out = append(out, k)
-	}
-	return out, rows.Err()
-}
+// Gone with them: the binding they authorised, and the sever-on-revoke that made revoking one
+// meaningful. Archiving a station is the per-session control now.
 
 // StationPrincipal is what a verified station key resolves to.
 type StationPrincipal struct {
@@ -476,47 +386,6 @@ type StationPrincipal struct {
 	ActorID   int64
 	StationID string // empty = a station-less key: station_request and nothing else
 	Scopes    []string
-}
-
-// AuthenticateStationKey verifies a `kens_<id>_<secret>` credential.
-//
-// Retired and revoked keys are both refused here, and indistinguishably from an unknown
-// one — extending COMM's unprobeability house rule (§5). The one place a caller learns
-// WHY it was cut off is after its endpoint secret has already verified (S6), which
-// informs a proven holder and tells a prober nothing.
-func (s *Store) AuthenticateStationKey(ctx context.Context, presented string) (*StationPrincipal, error) {
-	rest, ok := strings.CutPrefix(presented, "kens_")
-	if !ok {
-		return nil, ErrNotFound
-	}
-	tokenID, secret, ok := strings.Cut(rest, "_")
-	if !ok || tokenID == "" || secret == "" {
-		return nil, ErrNotFound
-	}
-	var storedHash, scopesJSON string
-	var actorID int64
-	var stationID sql.NullString
-	err := s.R.QueryRowContext(ctx, `
-SELECT secret_sha256, actor_id, scopes, station_id FROM api_token
-WHERE token_id=? AND revoked_at IS NULL AND retired_at IS NULL`, tokenID).
-		Scan(&storedHash, &actorID, &scopesJSON, &stationID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	sum := sha256.Sum256([]byte(secret))
-	if subtle.ConstantTimeCompare([]byte(storedHash), []byte(hex.EncodeToString(sum[:]))) != 1 {
-		return nil, ErrNotFound
-	}
-	var scopes []string
-	_ = json.Unmarshal([]byte(scopesJSON), &scopes)
-	// A key with no station scope is not a station key, whatever its prefix.
-	if !hasScope(scopes, "station") {
-		return nil, ErrNotFound
-	}
-	return &StationPrincipal{TokenID: tokenID, ActorID: actorID, StationID: stationID.String, Scopes: scopes}, nil
 }
 
 func hasScope(scopes []string, want string) bool {

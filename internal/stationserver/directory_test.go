@@ -49,6 +49,11 @@ func dirSession(t *testing.T, staffing func(context.Context) (map[string]Station
 	}
 	ids := map[string]string{}
 	mine := mk("mine", true)
+	// THE CALLER'S STATION IS CLAIMED BY THE HARNESS CONVERSATION. A credential no longer names a
+	// station, so the fixture declares one the way a session does.
+	if _, _, err := st.ClaimStationForSession(ctx, harnessKey, "mine", actorID, mine.StationID); err != nil {
+		t.Fatal(err)
+	}
 	pub := mk("published-stranger", true)
 	peer := mk("linked-peer", false)
 	hidden := mk("unpublished-stranger", false)
@@ -62,7 +67,7 @@ func dirSession(t *testing.T, staffing func(context.Context) (map[string]Station
 	if _, err := st.ApproveLinkRequest(ctx, reqID, actorID); err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actorID, mine.StationID, "test", []string{ScopeStation})
+	key, err := st.IssueToken(ctx, actorID, []string{ScopeStation}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +84,7 @@ func dirSession(t *testing.T, staffing func(context.Context) (map[string]Station
 	if err != nil {
 		t.Fatal(err)
 	}
+	prime(t, sess)
 	t.Cleanup(func() { sess.Close() })
 	return sess, ctx, ids
 }

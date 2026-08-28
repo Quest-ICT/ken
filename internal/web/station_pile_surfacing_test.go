@@ -89,43 +89,6 @@ func addTask(t *testing.T, st *store.Store, ctx context.Context, sid, text, bloc
 	}
 }
 
-// A DESTRUCTIVE CONFIRM MUST NOT STATE A NUMBER NOBODY MEASURED.
-//
-// The revoke confirm took a bare int, so with COMM off — where this package holds no comm
-// handle and the count is genuinely UNKNOWN — the same table row rendered "?" in the count
-// column and said "0 live channel(s) will be closed" in the confirm. The handler already
-// refuses to pretend otherwise in its own words (stations.go:182: "reporting 0 would assert
-// a fact nobody checked. Two fields rather than one because a bare int cannot say unknown"),
-// and the template threw that distinction away one line after it was made.
-func TestTheRevokeConfirmSaysUnknownRatherThanZero(t *testing.T) {
-	st, ctx, cli, base, actor := stationsHarness(t) // no comm handle: KnownLive is false
-	a, err := st.CreateStation(ctx, "alpha", "", actor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := st.CreateStation(ctx, "beta", "", actor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reqID, err := st.CreateStationLinkRequest(ctx, "tok", a.StationID, b.StationID, "testing", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.ApproveLinkRequest(ctx, reqID, actor); err != nil {
-		t.Fatal(err)
-	}
-
-	body := get(t, cli, base+"/stations")
-	if !strings.Contains(body, "UNKNOWN") {
-		t.Fatal("the confirm does not say the count is unknown")
-	}
-	if strings.Contains(body, "0 live channel(s) will be closed") {
-		t.Fatal("the confirm asserts a measured zero for a count that was never taken")
-	}
-	// AND THE CONTROL MUST STILL BE REACHABLE. "Unknown" is not "zero": hiding revoke on an
-	// unmeasured count makes a revoked link whose channel sweep failed — permission gone,
-	// conversation still running — unreachable from the surface built to expose it.
-	if !strings.Contains(body, "/revoke") {
-		t.Fatal("no revoke control rendered when the live count is unknown")
-	}
-}
+// TestTheRevokeConfirmSaysUnknownRatherThanZero IS DELETED with the bound-by-key count. The
+// property it protected — never render 0 for "could not compute" — still holds for the count a
+// token OWNS, which is asserted by its neighbour.

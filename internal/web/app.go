@@ -180,8 +180,6 @@ func (a *app) routes() http.Handler {
 		mux.HandleFunc("GET /stations/{id}/locker", a.requireAuth(a.handleStationLocker))
 		mux.HandleFunc("POST /stations/requests/{id}/approve", a.requireAuth(a.handleStationApprove))
 		mux.HandleFunc("POST /stations/requests/{id}/deny", a.requireAuth(a.handleStationDeny))
-		mux.HandleFunc("POST /stations/{id}/key", a.requireAuth(a.handleStationKey))
-		mux.HandleFunc("POST /stations/keys/{id}/retire", a.requireAuth(a.handleStationKeyRetire))
 		mux.HandleFunc("POST /stations/{id}/rename", a.requireAuth(a.handleStationRename))
 		mux.HandleFunc("POST /stations/{id}/publish", a.requireAuth(a.handleStationPublish))
 		mux.HandleFunc("POST /stations/{id}/archive", a.requireAuth(a.handleStationArchive))
@@ -963,11 +961,10 @@ func (a *app) renderTokens(w http.ResponseWriter, r *http.Request, sess *store.S
 		if a.comm != nil && tr.RevokedAt == "" {
 			var n int
 			var err error
-			if tr.Station != "" {
-				n, err = a.comm.CountEndpointsBoundBy(r.Context(), tr.TokenID)
-			} else {
-				n, err = a.comm.CountEndpointsByToken(r.Context(), tr.TokenID)
-			}
+			// ONE QUESTION NOW: what this token OWNS. The other arm asked what a STATION KEY
+			// had BOUND, and station keys are retired — nothing binds, so that count would
+			// answer 0 for every row and read as "revoking this disconnects nobody".
+			n, err = a.comm.CountEndpointsByToken(r.Context(), tr.TokenID)
 			if err != nil {
 				// DEGRADE, never 500 — same reason as the link count on /stations: comm.db
 				// is the expendable database and the token list must not die with it.
@@ -1145,20 +1142,8 @@ func (a *app) handleTokenRevoke(w http.ResponseWriter, r *http.Request, sess *st
 		flashRedirect(w, r, "/tokens", "flash.token_revoke_failed", err.Error())
 		return
 	}
-	// S6: revoking a station key severs the endpoints it bound. The authoritative
-	// enforcement is at USE (store.IsStationKeyRevoked), because `ken token revoke`
-	// runs in a separate process and can never reach comm.db — but doing it eagerly
-	// HERE, where a comm handle exists, also RELEASES the claims those endpoints
-	// hold. A severed reader is never coming back to ack, so leaving its claims to
-	// expire would hide those messages from the station's other readers for the rest
-	// of the lease.
-	if a.comm != nil {
-		if n, err := a.comm.SeverEndpointsBoundBy(r.Context(), id); err != nil {
-			log.Printf("web: severing endpoints bound by %s: %v", id, err)
-		} else if n > 0 {
-			log.Printf("COMM: revoking station key %s severed %d bound endpoint(s) and released their claims", id, n)
-		}
-	}
+	// THE EAGER SEVER IS GONE with station keys. Nothing binds a mailbox, so a key revocation
+	// has nothing to sever and no claims to release.
 	flashRedirect(w, r, "/tokens", "flash.token_revoked", id)
 }
 

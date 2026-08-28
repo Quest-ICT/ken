@@ -24,8 +24,9 @@ func meVia(t *testing.T, srv string, key string) meOut {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prime(t, sess)
 	defer sess.Close()
-	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "station_me", Arguments: map[string]any{}})
+	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "station_me", Arguments: map[string]any{"session_key": harnessKey}})
 	if err != nil {
 		t.Fatal(err)
 	}

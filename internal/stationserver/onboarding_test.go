@@ -213,7 +213,7 @@ func TestStationMeMintsAWorkspaceForASessionThatHasNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(context.Background(), actor, "", "fresh", []string{ScopeStation})
+	key, err := st.IssueToken(context.Background(), actor, []string{ScopeStation}, "fresh")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,11 +358,11 @@ func TestEveryStationMePathCarriesTheVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	minting, err := st.IssueStationKey(ctx, actor, "", "minting-key", []string{ScopeStation})
+	minting, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "minting-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	established, err := st.IssueStationKey(ctx, actor, "", "established-key", []string{ScopeStation})
+	established, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "established-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +432,7 @@ func TestAConversationReturnsToItsOwnWorkspaceAfterAReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actor, "", "conv-key", []string{ScopeStation})
+	key, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "conv-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +492,7 @@ func TestDeclaringAConversationUnlocksToolsBehindRequireStation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actor, "", "conv-key-2", []string{ScopeStation})
+	key, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "conv-key-2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,7 +549,7 @@ func TestEveryStationMeResultSaysHowToKeepTheWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actor, "", "guidance-key", []string{ScopeStation})
+	key, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "guidance-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +593,7 @@ func TestAKeyedCallAdoptsTheWorkspaceThisConnectionJustMinted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actor, "", "adopt-key", []string{ScopeStation})
+	key, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "adopt-key")
 	if err != nil {
 		t.Fatal(err)
 	}

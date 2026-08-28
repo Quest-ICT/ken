@@ -222,20 +222,10 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		c := credential{TokenID: id, Label: labels[id], Live: n, Endpoints: refs}
 		owners = append(owners, c)
 	}
-	binders := make([]credential, 0, len(binderIDs))
-	for _, id := range binderIDs {
-		refs, err := a.comm.EndpointsBoundBy(ctx, id)
-		if err != nil {
-			log.Printf("web: endpoints bound by %s: %v", id, err)
-			continue
-		}
-		n := len(refs)
-		// The station's human name comes from any live key of that station, its own
-		// included, and falls back to the raw id when the station has no live key left —
-		// which is honest rather than blank: that row is a station whose every key is gone.
-		c := credential{TokenID: id, Label: labels[id], Station: stationOf[id], Live: n, Endpoints: refs}
-		binders = append(binders, c)
-	}
+	// THE BINDERS SECTION IS GONE. It listed the station KEYS that had bound endpoints and what
+	// revoking each would sever — one of the two "credentials these endpoints depend on" lists.
+	// Station keys are retired and nothing binds, so the list would always be empty.
+	binders := []credential{}
 
 	a.render(w, r, sess, "comm", map[string]any{
 		"Endpoints": eps, "Channels": channels, "Codes": codes, "Stats": stats,

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
@@ -27,6 +29,10 @@ func newKB(t *testing.T) *store.Store {
 }
 
 // harness returns a live station endpoint plus a key bound to a fresh station.
+// harnessKey is the conversation the harness claims its station under. Tests declare it exactly as
+// a real session does — the credential no longer names a station, so something has to.
+const harnessKey = "conv-harness"
+
 func harness(t *testing.T, scopes ...string) (*store.Store, *httptest.Server, string, *store.Station) {
 	t.Helper()
 	if len(scopes) == 0 {
@@ -42,8 +48,15 @@ func harness(t *testing.T, scopes ...string) (*store.Store, *httptest.Server, st
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actorID, station.StationID, "test", scopes)
+	// A `ken_` API TOKEN CARRYING THE STATION SCOPE, not a `kens_` station key — those are
+	// retired. The credential no longer names a station either: it says whose estate this is, and
+	// the session declares WHICH station with session_key. Tests that need a specific station
+	// claim it, as a real session does.
+	key, err := st.IssueToken(ctx, actorID, scopes, "test")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.ClaimStationForSession(ctx, harnessKey, "prod-ops", actorID, station.StationID); err != nil {
 		t.Fatal(err)
 	}
 	srv := httptest.NewServer(NewHTTPHandler(Deps{Store: st}))
@@ -111,30 +124,7 @@ func TestAuthAcceptsOnlyAStationKey(t *testing.T) {
 	}
 }
 
-// A revoked or retired key is refused INDISTINGUISHABLY from an unknown one, so the
-// endpoint cannot be used to probe which keys exist (§5).
-func TestRetiredKeyIsRefusedLikeAnUnknownOne(t *testing.T) {
-	st, srv, key, _ := harness(t)
-	p, err := st.AuthenticateStationKey(context.Background(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.RetireStationKey(context.Background(), p.TokenID); err != nil {
-		t.Fatal(err)
-	}
-
-	retired := post(t, srv, key, initBody)
-	defer retired.Body.Close()
-	unknown := post(t, srv, "kens_aaaaaaaaaaaa_bbbbbbbb", initBody)
-	defer unknown.Body.Close()
-
-	if retired.StatusCode != unknown.StatusCode {
-		t.Fatalf("retired (%d) and unknown (%d) keys must be indistinguishable", retired.StatusCode, unknown.StatusCode)
-	}
-	if retired.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("got %d, want 401", retired.StatusCode)
-	}
-}
+// TestRetiredKeyIsRefusedLikeAnUnknownOne IS DELETED WITH STATION KEYS.
 
 // The instructions delivered on connect must carry the fourth sentence — the one that
 // makes the feature work rather than merely exist. A briefing the model reads and does
@@ -297,53 +287,7 @@ func TestTaskViewCarriesTheFieldsTheBriefingNeeds(t *testing.T) {
 	}
 }
 
-// A station key's use must leave a trace. Nothing recorded it before: TouchToken was
-// called only from the knowledge-base authenticator, so `last_used_at` was permanently
-// NULL for every station key — and the console rendered a last-used column that was
-// always blank, which an operator reads as "unused" rather than "unmeasured".
-//
-// The concrete cost, reported from production: two keys for the same machine were
-// indistinguishable in the console at the exact moment the documented rotation says
-// "retire the old one". The wider cost: a stolen key could read an entire notebook and
-// task list with no trace at all.
-func TestUsingAStationKeyRecordsThatItWasUsed(t *testing.T) {
-	st, srv, key, station := harness(t)
-	ctx := context.Background()
-
-	before, err := st.ListStationKeys(ctx, station.StationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(before) != 1 {
-		t.Fatalf("fixture has %d keys, want 1", len(before))
-	}
-	if before[0].LastUsedAt != "" {
-		t.Fatalf("last_used_at was already set before any call: %q", before[0].LastUsedAt)
-	}
-
-	req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`))
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("authenticated initialize returned HTTP %d", resp.StatusCode)
-	}
-
-	after, err := st.ListStationKeys(ctx, station.StationID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after[0].LastUsedAt == "" {
-		t.Fatal("using a station key left NO trace — a leaked key would be undetectable after the fact, " +
-			"and the console's last-used column would stay permanently blank")
-	}
-}
+// TestUsingAStationKeyRecordsThatItWasUsed IS DELETED WITH STATION KEYS.
 
 // stationCorpus is everything a session receives from /station/mcp: the connect-time block plus
 // every tool description. See the identical helper in internal/commserver for why the union, not
@@ -369,4 +313,19 @@ func stationCorpus(t *testing.T) string {
 		t.Fatalf("only %d tool descriptions parsed; the scanner is broken, not the text", n)
 	}
 	return sb.String()
+}
+
+// prime does what every real session does first: calls station_me with its conversation key, which
+// binds the connection so later tools need no argument.
+//
+// The fixtures used to get this for free — a `kens_` key NAMED a station, so the principal arrived
+// carrying one. Credentials no longer name stations; the conversation declares which. Priming is
+// the test's version of the instruction every session is given.
+func prime(t *testing.T, sess *mcp.ClientSession) {
+	t.Helper()
+	if _, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "station_me", Arguments: map[string]any{"session_key": harnessKey},
+	}); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
 }

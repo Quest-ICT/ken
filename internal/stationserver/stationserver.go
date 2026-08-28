@@ -1150,7 +1150,7 @@ func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) 
 	if tok == "" {
 		return ctx
 	}
-	sp, err := st.AuthenticateStationKey(ctx, tok)
+	sp, err := principalFromToken(ctx, st, tok)
 	if err != nil || sp == nil || !hasScope(sp.Scopes, ScopeStation) {
 		return ctx
 	}

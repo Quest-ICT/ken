@@ -28,7 +28,7 @@ func roomAsker(t *testing.T) (*store.Store, context.Context, *mcp.ClientSession,
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actor, mine.StationID, "test", []string{ScopeStation})
+	key, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +43,7 @@ func roomAsker(t *testing.T) (*store.Store, context.Context, *mcp.ClientSession,
 	if err != nil {
 		t.Fatal(err)
 	}
+	prime(t, sess)
 	t.Cleanup(func() { sess.Close() })
 	return st, ctx, sess, mine.StationID
 }

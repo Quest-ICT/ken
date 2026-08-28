@@ -237,26 +237,8 @@ func TestTransferCollisionIsReportedWithTheCollidingNames(t *testing.T) {
 	}
 }
 
-// A minted key is shown exactly once, because only its hash is stored. If the page
-// did not render it, the operator would be holding a credential nobody can read.
-func TestMintedStationKeyIsShownOnceAndCarriesThePrefix(t *testing.T) {
-	st, ctx, cli, base, actorID := stationsHarness(t)
-	s, err := st.CreateStation(ctx, "prod-ops", "", actorID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
-	body := postForm(t, cli, base+"/stations/"+s.StationID+"/key",
-		url.Values{"csrf": {csrf}, "label": {"laptop"}})
-
-	if !strings.Contains(body, "kens_") {
-		t.Fatalf("the mint response does not show the key; it can never be shown again: %s", trunc(body))
-	}
-	// A later load must NOT show it — that is what "shown once" means.
-	if again := get(t, cli, base+"/stations"); strings.Contains(again, "kens_") {
-		t.Fatal("the station key is still on the page after a reload — it must appear exactly once")
-	}
-}
+// TestMintedStationKeyIsShownOnceAndCarriesThePrefix IS DELETED with station keys — there is no
+// key to mint, no `kens_` prefix and no one-time reveal.
 
 // TestEndpointRotationIsReachableOnlyByAnAuthenticatedCurator IS DELETED with rotation. There is
 // no secret to rotate, so there is no control to gate.

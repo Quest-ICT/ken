@@ -162,10 +162,6 @@ func (s *Store) EndpointsOwnedBy(ctx context.Context, tokenID string) ([]Endpoin
 	return s.endpointRefs(ctx, `token_id=? AND revoked_at IS NULL`, tokenID)
 }
 
-func (s *Store) EndpointsBoundBy(ctx context.Context, keyID string) ([]EndpointRef, error) {
-	return s.endpointRefs(ctx, `bound_by_station_key_id=? AND revoked_at IS NULL`, keyID)
-}
-
 func (s *Store) endpointRefs(ctx context.Context, where string, arg any) ([]EndpointRef, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT endpoint_id, COALESCE(label,''), COALESCE(station_id,'')
@@ -188,53 +184,6 @@ FROM endpoint WHERE `+where+` ORDER BY COALESCE(label,''), endpoint_id`, arg)
 // RotateEndpointSecret IS DELETED WITH THE SECRET IT ROTATED. It existed as the recovery for a
 // session that lost the value it was told to write to a file; there is no secret and no file, so
 // there is nothing to rotate and nothing to lose.
-
-// SeverEndpointsBoundBy revokes every endpoint a given station key bound, and
-// releases their claims. It reports how many were severed so the console can state
-// the count BEFORE the click, as S6 requires.
-//
-// This is what makes revoking a station key mean something. You revoke because the
-// key leaked; a revocation that stops future bindings but leaves the already-bound
-// sessions running until an idle sweep notices is theatre — and traffic keeps an
-// endpoint alive indefinitely, so the sweep may never come.
-//
-// Claims are released in the same statement rather than left to expire: a severed
-// reader is never coming back to ack, so holding its messages for the rest of the
-// lease would hide them from the station's remaining readers for no reason.
-func (s *Store) SeverEndpointsBoundBy(ctx context.Context, keyID string) (int, error) {
-	var n int64
-	err := s.tx(ctx, func(t *sql.Tx) error {
-		if _, err := t.ExecContext(ctx, `
-UPDATE delivery
-   SET claimed_by_endpoint=NULL, claim_expires_at=NULL
- WHERE acked_at IS NULL
-   AND claimed_by_endpoint IN (SELECT id FROM endpoint WHERE bound_by_station_key_id=?)`,
-			keyID); err != nil {
-			return err
-		}
-		res, err := t.ExecContext(ctx, `
-UPDATE endpoint SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
- WHERE bound_by_station_key_id=? AND revoked_at IS NULL`, keyID)
-		if err != nil {
-			return err
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	return int(n), err
-}
-
-// CountEndpointsBoundBy reports how many LIVE endpoints a station key bound, so the
-// console can say "this will disconnect N live sessions" before the operator clicks
-// (S6). A destructive action whose blast radius is only visible afterwards is one an
-// operator learns to fear rather than use.
-func (s *Store) CountEndpointsBoundBy(ctx context.Context, keyID string) (int, error) {
-	var n int
-	err := s.R.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM endpoint WHERE bound_by_station_key_id=? AND revoked_at IS NULL`,
-		keyID).Scan(&n)
-	return n, err
-}
 
 // RevokeEndpoint soft-revokes an endpoint, immediately denying further use.
 // Its channels stay queryable for the operator; its messages age out normally.

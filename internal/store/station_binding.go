@@ -68,38 +68,6 @@ const VoucherTTL = 5 * time.Minute
 // proven holder and tells a prober nothing.
 var ErrStationKeyRevoked = errors.New("the station key that bound this endpoint has been revoked — tell your human; you cannot reconnect with it, and a new key must be minted from the console")
 
-// IsStationKeyRevoked reports whether a station key has been revoked.
-//
-// This exists because severing cannot be made reliable at the REVOKING end. Both
-// revoke paths — the /tokens console and `ken token revoke` — go through
-// RevokeToken, and the CLI runs in a SEPARATE PROCESS with no comm.db handle at all,
-// so a revocation issued there can never reach into the message database to mark
-// endpoints. Making the check happen at USE instead means every revocation path
-// works, including ones added later that forget about stations: it fails closed by
-// construction rather than by remembering.
-//
-// The eager sweep (comm.SeverEndpointsBoundBy) still runs where a comm handle
-// exists, because it also RELEASES CLAIMS — a severed reader is never coming back to
-// ack, and leaving its claims to expire would hide those messages from the station's
-// remaining readers for the rest of the lease.
-func (s *Store) IsStationKeyRevoked(ctx context.Context, tokenID string) (bool, error) {
-	if tokenID == "" {
-		return false, nil
-	}
-	var revoked sql.NullString
-	err := s.R.QueryRowContext(ctx,
-		`SELECT revoked_at FROM api_token WHERE token_id=?`, tokenID).Scan(&revoked)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The key row is gone entirely. Treat as revoked: a binding whose authority
-		// cannot be produced must not keep working.
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return revoked.Valid && revoked.String != "", nil
-}
-
 // ActorCandidate is an actor that could own a station key, with whether it already
 // holds a comm token — which is the thing that has to match (S5).
 type ActorCandidate struct {

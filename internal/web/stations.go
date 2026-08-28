@@ -112,7 +112,6 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	type stationView struct {
 		store.Station
 		Usage *store.StationUsage
-		Keys  []store.StationKey
 		// Vault is metadata only — ListStationVault cannot return a value, so no
 		// rendering mistake here can spill one. A secret reaches this page only
 		// through handleStationVaultReveal, which logs the read.
@@ -129,12 +128,6 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 		usage, err := a.store.StationAssetUsage(ctx, s.StationID)
 		if err != nil {
 			log.Printf("web: station usage %s: %v", s.StationID, err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
-		keys, err := a.store.ListStationKeys(ctx, s.StationID)
-		if err != nil {
-			log.Printf("web: station keys %s: %v", s.StationID, err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -159,7 +152,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		views = append(views, stationView{Station: s, Usage: usage, Keys: keys,
+		views = append(views, stationView{Station: s, Usage: usage,
 			Vault: vault, VaultReads: reads, VaultTotal: total, Recoverable: recoverable})
 	}
 
@@ -520,47 +513,7 @@ func (a *app) handleStationDeny(w http.ResponseWriter, r *http.Request, sess *st
 	}
 }
 
-// handleStationKey mints a key for an existing station. Shown once, then never again —
-// so this renders the page directly instead of redirecting, exactly as pairing-code
-// minting and token creation do.
-func (a *app) handleStationKey(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	_ = r.ParseForm()
-	label := strings.TrimSpace(r.FormValue("label"))
-	if label == "" {
-		flashRedirect(w, r, "/stations", "flash.station_key_label_required", "")
-		return
-	}
-	// Both scopes, always. The locker is part of a station rather than an extra, and
-	// the server now gates it on `station` alone — station-locker is written only so
-	// the key's recorded scope list keeps describing what it can do.
-	scopes := []string{"station", "station-locker"}
-	key, err := a.store.IssueStationKey(r.Context(), sess.ActorID, r.PathValue("id"), label, scopes)
-	if err != nil {
-		flashRedirect(w, r, "/stations", "flash.station_key_failed", err.Error())
-		return
-	}
-	a.renderStations(w, r, sess, key, nil)
-}
-
-// handleStationKeyRetire stops a key binding new endpoints without touching live ones.
-// The severing verb (revoke) goes through the ordinary token path so it cannot diverge
-// from `ken token revoke` — see S6.
-func (a *app) handleStationKeyRetire(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	if err := a.store.RetireStationKey(r.Context(), r.PathValue("id")); err != nil {
-		flashRedirect(w, r, "/stations", "flash.station_key_retire_failed", err.Error())
-		return
-	}
-	flashRedirect(w, r, "/stations", "flash.station_key_retired", "")
-}
+// THE KEY-MINTING AND KEY-RETIRING CONSOLE CONTROLS ARE DELETED with station keys themselves.
 
 // handleStationRename gives the human the one thing they always own about a station: what
 // it is called. Vlad stated it as a requirement, `RenameStation` was written for it, and

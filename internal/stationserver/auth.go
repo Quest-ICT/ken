@@ -154,6 +154,34 @@ func (p *principal) withWorkspace(ws string) *principal {
 // What replaces them is session_key — declared in the CALL, per conversation, and proven across a
 // real client restart. See station.Resolve.
 
+// principalFromToken is the ONE place a bearer becomes a station principal.
+//
+// *** IT EXISTS BECAUSE THE TWO PLACES THAT DID THIS HAD ALREADY DRIFTED. *** The middleware
+// accepted three credential forms; withCaller — which re-derives the principal PER CALL so a
+// per-call bearer wins over the connection's — accepted only `kens_` station keys. Retiring
+// station keys would have left withCaller accepting nothing at all, silently: it returns the
+// unmodified context on failure, so every per-call token would simply have stopped being honoured
+// and the connection-time principal would have won again. That is the defect withCaller was
+// written to fix, re-created by a deletion.
+//
+// STATION KEYS ARE GONE FROM THE LADDER. `kens_` credentials are retired: /mcp requires an OAuth
+// grant carrying every capability, so a station key reached nothing even before this.
+func principalFromToken(ctx context.Context, st *store.Store, tok string) (*store.StationPrincipal, error) {
+	if ap, err := st.AuthenticateAPITokenForStation(ctx, tok); err == nil {
+		return ap, nil
+	}
+	op, err := st.ValidateOAuthAccessToken(ctx, tok)
+	if err != nil {
+		return nil, err
+	}
+	return &store.StationPrincipal{
+		ActorID: op.ActorID,
+		TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
+		Scopes:  store.GrantedCapabilities(op.Scope),
+		// StationID deliberately empty: a grant arrives with no station and station_me mints one.
+	}, nil
+}
+
 // authMiddleware authenticates a `kens_` bearer key or an OAuth grant, requires the station scope,
 // and resolves which workspace the session is working as.
 func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, next http.Handler) http.Handler {
@@ -187,30 +215,13 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 		// principal with no station id — so the notebook, tasks, locker and vault stay shut
 		// until a human approves a station. That refusal is the same one a station-less
 		// `kens_` key already met; nothing about it is new or weaker.
-		sp, err := st.AuthenticateStationKey(r.Context(), tok)
+		sp, err := principalFromToken(r.Context(), st, tok)
 		if err != nil {
-			if ap, aerr := st.AuthenticateAPITokenForStation(r.Context(), tok); aerr == nil {
-				// A plain `ken_` token carrying the station scope. The door for a client that
-				// CANNOT run an OAuth flow — Claude Code inside the desktop app is
-				// non-interactive, so every other path here was unreachable for exactly the
-				// session that reported the deadlock. It arrives with no station, like an
-				// OAuth grant, and station_me turns that into a workspace.
-				sp = ap
-			} else if op, oerr := st.ValidateOAuthAccessToken(r.Context(), tok); oerr == nil {
-				sp = &store.StationPrincipal{
-					ActorID: op.ActorID,
-					TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
-					Scopes:  store.GrantedCapabilities(op.Scope),
-					// StationID deliberately empty: see above.
-				}
-			} else {
-				// Unknown, retired and revoked keys are refused identically — extending
-				// COMM's unprobeability rule. A caller learns WHY only after its own
-				// credential has verified, which informs a holder and tells a prober
-				// nothing. An unknown OAuth token joins that same answer.
-				authFailReq(w, r, reg, "invalid station key")
-				return
-			}
+			// Unknown, retired and revoked credentials are refused identically — COMM's
+			// unprobeability rule. A caller learns WHY only after its own credential has
+			// verified, which informs a holder and tells a prober nothing.
+			authFailReq(w, r, reg, "invalid credential")
+			return
 		}
 		if !hasScope(sp.Scopes, ScopeStation) {
 			authFailReq(w, r, reg, "this token does not carry the station scope")

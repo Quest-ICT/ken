@@ -186,7 +186,7 @@ type StationUsage struct {
 	TotalTasks  int
 	LockerFiles int
 	LockerBytes int64
-	Keys        int // live keys: neither retired nor revoked
+	// The live-key count is GONE with station keys: a station has no credentials of its own.
 }
 
 // StationAssetUsage counts what a station is holding. Reported per station rather
@@ -206,10 +206,9 @@ SELECT
   (SELECT COUNT(*)                     FROM station_task   WHERE station_id=? AND state='open'),
   (SELECT COUNT(*)                     FROM station_task   WHERE station_id=?),
   (SELECT COUNT(*)                     FROM station_locker WHERE station_id=?),
-  (SELECT COALESCE(SUM(size_bytes),0)  FROM station_locker WHERE station_id=?),
-  (SELECT COUNT(*) FROM api_token WHERE station_id=? AND retired_at IS NULL AND revoked_at IS NULL)`,
-		stationID, stationID, stationID, stationID, stationID, stationID, stationID).
-		Scan(&u.Notes, &u.NoteBytes, &u.OpenTasks, &u.TotalTasks, &u.LockerFiles, &u.LockerBytes, &u.Keys)
+  (SELECT COALESCE(SUM(size_bytes),0)  FROM station_locker WHERE station_id=?)`,
+		stationID, stationID, stationID, stationID, stationID, stationID).
+		Scan(&u.Notes, &u.NoteBytes, &u.OpenTasks, &u.TotalTasks, &u.LockerFiles, &u.LockerBytes)
 	if err != nil {
 		return nil, err
 	}

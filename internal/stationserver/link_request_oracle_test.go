@@ -156,7 +156,7 @@ func TestLinkRequestToolCannotEnumerateHiddenStations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mine, err := st.CreateStation(ctx, "asker", "", actor)
+	_, err = st.CreateStation(ctx, "asker", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestLinkRequestToolCannotEnumerateHiddenStations(t *testing.T) {
 	if _, err := st.CreateStation(ctx, "hidden-peer", "", actor); err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actor, mine.StationID, "test", []string{ScopeStation})
+	key, err := st.IssueToken(ctx, actor, []string{ScopeStation}, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,6 +185,7 @@ func TestLinkRequestToolCannotEnumerateHiddenStations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	prime(t, sess)
 	t.Cleanup(func() { sess.Close() })
 
 	ask := func(name string) (bool, string) {

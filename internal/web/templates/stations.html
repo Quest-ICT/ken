@@ -141,18 +141,7 @@
 </div>
 {{end}}
 
-{{if .Data.NewKey}}
-<!-- One-time key reveal. Only the hash is stored, so this is the single moment the
-     secret exists in readable form — same contract as a pairing code or an API token. -->
-<div class="card card--accent" style="margin-bottom:var(--sp-5)">
-  <div class="card__head"><h2 class="h3">{{.T "stations.key_new"}}</h2></div>
-  <div class="card__body">
-    <p class="help">{{.T "stations.key_new_help"}}</p>
-    <p><code class="mono" style="font-size:1.15rem;letter-spacing:.04em">{{.Data.NewKey}}</code></p>
-    <p class="help"><b>{{.T "stations.key_new_warn"}}</b></p>
-  </div>
-</div>
-{{end}}
+<!-- THE ONE-TIME KEY REVEAL IS GONE with station keys. -->
 
 <!-- ============ the pile: every task waiting on the human, across stations ============
      This section is first on the page deliberately. It is the only surface where the
@@ -323,51 +312,13 @@
           <p class="help">
             {{$.T "stations.usage_notes"}}: {{.Usage.Notes}} ({{.Usage.NoteBytes}} B) ·
             {{$.T "stations.usage_tasks"}}: {{.Usage.OpenTasks}}/{{.Usage.TotalTasks}} ·
-            {{$.T "stations.usage_locker"}}: {{.Usage.LockerFiles}} ({{.Usage.LockerBytes}} B) ·
-            {{$.T "stations.usage_keys"}}: {{.Usage.Keys}}
+            {{$.T "stations.usage_locker"}}: {{.Usage.LockerFiles}} ({{.Usage.LockerBytes}} B)
           </p>
           {{if .LastActivityAt}}<p class="help">{{$.T "stations.last_activity"}}: {{localtime .LastActivityAt}}</p>{{end}}
 
-          <!-- keys -->
-          {{if .Keys}}
-          <table class="table">
-            <thead>
-              <tr>
-                <th data-col-key="label">{{$.T "stations.key_label"}}</th>
-                <th data-col-key="id">{{$.T "stations.key_id"}}</th>
-                <th data-col-key="actor">{{$.T "stations.key_actor"}}</th>
-                <th data-col-key="created">{{$.T "stations.key_created"}}</th>
-                <th data-col-key="used">{{$.T "stations.key_last_used"}}</th>
-                <th data-col-key="state">{{$.T "stations.key_state"}}</th>
-                <th data-nosort>{{$.T "stations.col_actions"}}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {{range .Keys}}
-              <tr>
-                <td>{{.Label}}</td>
-                <td class="mono">{{.TokenID}}</td>
-                <td>{{if .ActorName}}<span class="mono">{{.ActorKind}}:{{.ActorName}}</span>{{if not .ActorHasComm}} <span class="badge badge--warn" title="{{$.T "stations.key_actor_nocomm_help"}}">{{$.T "stations.key_actor_nocomm"}}</span>{{end}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
-                <td data-sort="{{.CreatedAt}}">{{localtime .CreatedAt}}</td>
-                <td data-sort="{{.LastUsedAt}}" title="{{$.T "stations.key_not_audited"}}">{{if .LastUsedAt}}{{localtime .LastUsedAt}}{{else}}<span class="muted">{{$.T "stations.key_unmeasured"}}</span>{{end}}</td>
-                <td>
-                  {{if .RevokedAt}}<span class="badge badge--warn">{{$.T "stations.key_revoked"}}</span>
-                  {{else if .RetiredAt}}<span class="badge badge--plain">{{$.T "stations.key_retired"}}</span>
-                  {{else}}<span class="badge">{{$.T "stations.key_live"}}</span>{{end}}
-                </td>
-                <td>
-                  {{if and (not .RevokedAt) (not .RetiredAt)}}
-                  <form method="post" action="/stations/keys/{{.TokenID}}/retire">
-                    <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-                    <button class="btn btn--sm" type="submit" title="{{$.T "stations.key_retire_help"}}">{{$.T "stations.key_retire"}}</button>
-                  </form>
-                  {{end}}
-                </td>
-              </tr>
-              {{end}}
-            </tbody>
-          </table>
-          {{end}}
+          <!-- THE KEYS TABLE IS GONE. A station has no credentials of its own; the session
+               that staffs it authenticates with the one OAuth grant. -->
+
 
           <!-- mint a key -->
           <form method="post" action="/stations/{{.StationID}}/key">

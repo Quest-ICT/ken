@@ -988,11 +988,9 @@ func requireFileScope(ctx context.Context) error {
 // Both are ordered AFTER authentication for the reason the originals give: the answer must reach
 // a proven holder and tell a prober nothing.
 func afterEndpointAuth(ctx context.Context, d Deps, ep *comm.Endpoint) (*comm.Endpoint, error) {
-	if ep.BoundByStationKeyID != "" {
-		if revoked, rerr := d.Store.IsStationKeyRevoked(ctx, ep.BoundByStationKeyID); rerr == nil && revoked {
-			return nil, store.ErrStationKeyRevoked
-		}
-	}
+	// THE STATION-KEY SEVER CHECK IS GONE with station keys. A mailbox names no authorising key,
+	// so there is nothing to re-check at use; the station's own liveness is checked in
+	// station.Resolve, which every comm call already passes through.
 	// Fails OPEN on a database error, matching the secret path: ken.db being briefly unreadable
 	// should not cut messaging for every station at once.
 	if ep.StationID != "" {

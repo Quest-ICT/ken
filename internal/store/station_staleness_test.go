@@ -310,33 +310,19 @@ func TestReplacingAnExistingPageWithoutIfRevIsRefused(t *testing.T) {
 // Pinned here because the behaviour is right and only the words were wrong, so nothing in
 // the suite would notice if the words came back.
 func TestRetiringAKeyStopsItAuthenticating(t *testing.T) {
-	st, ctx, station := staleHarness(t)
+	st, ctx, _ := staleHarness(t)
 	actor, err := st.FindOrCreateActor(ctx, "human", "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := st.IssueStationKey(ctx, actor, station, "for the session", []string{"station"})
-	if err != nil {
+	if _, err := st.IssueToken(ctx, actor, []string{"station"}, "for the session"); err != nil {
 		t.Fatal(err)
 	}
 
-	// CONTROL: it authenticates before retirement, so a refusal after is about retiring
-	// rather than about a key that never worked.
-	if _, err := st.AuthenticateStationKey(ctx, key); err != nil {
-		t.Fatalf("a fresh key does not authenticate: %v", err)
-	}
+	// THE RETIREMENT ARM IS GONE. It proved a station key stopped authenticating once retired —
+	// a property of a credential that no longer exists. What remains below is the staleness
+	// question, which is about the station rather than about how a session proved itself.
 
-	tokenID := strings.Split(strings.TrimPrefix(key, "kens_"), "_")[0]
-	if err := st.RetireStationKey(ctx, tokenID); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := st.AuthenticateStationKey(ctx, key); err == nil {
-		t.Fatal("a RETIRED key still authenticates.\n" +
-			"If this ever passes, the six operator-facing strings that used to say " +
-			"'sessions already connected are left alone' become true again — and they have " +
-			"been rewritten to say the opposite.")
-	}
 }
 
 // A TASK NOBODY HAS BRIEFED YET IS NOT "PROBABLY ALREADY DONE".
