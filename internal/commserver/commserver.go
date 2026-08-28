@@ -40,6 +40,7 @@ import (
 	"github.com/Quest-ICT/ken/internal/ratelimit"
 	"github.com/Quest-ICT/ken/internal/station"
 	"github.com/Quest-ICT/ken/internal/store"
+	"github.com/Quest-ICT/ken/internal/tooldoc"
 	"github.com/Quest-ICT/ken/internal/version"
 )
 
@@ -234,6 +235,12 @@ func newServer(d Deps, h *Handler) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ken-comm", Version: "1"},
 		&mcp.ServerOptions{Instructions: version.InstructionStamp() + instructions, KeepAlive: mcpKeepAlive})
 	RegisterTools(s, d, h)
+	// THE META TOOLS ARE REGISTERED HERE, NOT IN RegisterTools, and the distinction is what keeps
+	// the unified endpoint honest. RegisterTools is called three times against ONE server there,
+	// and mcp.AddTool replaces a tool of the same name without a word — so a pair registered per
+	// package collapsed to whichever package ran last, and ken_instructions answered for one
+	// surface while looking complete. allserver calls version.RegisterMetaTools itself, once.
+	version.RegisterMetaTools(s, func() string { return instructions })
 	return s
 }
 
@@ -944,28 +951,11 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		}, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
-		Name:        "ken_version",
-		Description: version.ToolDescription,
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in version.InstructionsIn) (*mcp.CallToolResult, version.Info, error) {
-		out := version.Current()
-		// THE ARGUMENT IS THE ESCAPE HATCH FOR SESSIONS THAT CANNOT SEE ken_instructions.
-		// Whole tools do not travel across the freeze; parameters do, because the server
-		// validates what ARRIVES rather than the client's captured schema. So a session
-		// frozen before ken_instructions existed can still ask for the current text here.
-		if in.Wants() {
-			i := version.InstructionsFor("/comm/mcp", instructions)
-			out.Instructions = &i
-		}
-		return nil, out, nil
-	})
-
-	addTool(s, d.Metrics, &mcp.Tool{
-		Name:        "ken_instructions",
-		Description: version.InstructionsToolDescription,
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, version.InstructionsInfo, error) {
-		return nil, version.InstructionsFor("/comm/mcp", instructions), nil
-	})
+	// ken_version AND ken_instructions ARE NOT REGISTERED HERE ANY MORE. All three packages
+	// registered their own pair, which was right when there were three servers; on the one server
+	// there is now, mcp.AddTool REPLACES a tool of the same name, so the last package to register
+	// silently won and ken_instructions returned one surface's block as if it were all of them.
+	// version.RegisterMetaTools registers the pair once, for the whole server.
 
 }
 
@@ -1152,6 +1142,14 @@ func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
 			return res, out, err
 		}
 	}
+	// THE DESCRIPTION IS SHORTENED HERE, AND THE FULL TEXT IS KEPT WHERE IT STAYS CURRENT.
+	//
+	// Each tool's rules are written once, in full, at its registration site above. tooldoc holds
+	// them for ken_instructions{tool:"…"} — a RESULT, computed per call — and the tool list gets
+	// the first sentence plus a pointer. A description pins when the conversation begins and never
+	// refreshes; a result never does either of those things.
+	tooldoc.Register(t.Name, t.Description)
+	t.Description = tooldoc.Brief(t.Name, t.Description)
 	mcp.AddTool(s, t, handler)
 }
 

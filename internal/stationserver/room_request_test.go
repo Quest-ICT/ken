@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Quest-ICT/ken/internal/store"
+	"github.com/Quest-ICT/ken/internal/tooldoc"
 )
 
 // roomAsker stands a real station surface up and returns a client already holding a station key,
@@ -181,9 +182,25 @@ func TestStationRoomRequestIsAdvertised(t *testing.T) {
 		t.Fatal("station_room_request is not in the tool list, so no session can ever call it")
 	}
 	// It must say the session does NOT choose the members — that is the property migration 0017's
-	// surviving argument turns on, and the description is where a session learns it.
-	if !strings.Contains(found.Description, "human decides membership") {
-		t.Errorf("the description does not tell the session its human decides who is in the room: %q",
-			found.Description)
+	// surviving argument turns on.
+	//
+	// READ OFF THE FULL RULES, not the one-line description. Per-tool detail moved to
+	// ken_instructions{tool:"…"} because a description freezes at conversation start while a result
+	// is computed per call; the description now carries the first sentence and a pointer. The
+	// property is unchanged — a session must be able to learn this — and the channel that carries
+	// it is better than the one that did.
+	//
+	// The SCHEMA is what actually enforces it: roomRequestIn has no member field, so a session
+	// cannot name anyone whatever it believes. This text governs what it EXPECTS, which is why it
+	// is worth asserting and why it does not need to arrive unasked.
+	full, ok := tooldoc.Full("station_room_request")
+	if !ok {
+		t.Fatal("station_room_request has no rules registered, so ken_instructions{tool:\"station_room_request\"} would answer nothing")
+	}
+	if !strings.Contains(full, "human decides membership") {
+		t.Errorf("nothing tells the session its human decides who is in the room: %q", full)
+	}
+	if !strings.Contains(found.Description, `ken_instructions{tool:"station_room_request"}`) {
+		t.Errorf("the tool list entry does not point at those rules, so a session has no way to reach them: %q", found.Description)
 	}
 }

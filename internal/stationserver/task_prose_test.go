@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/Quest-ICT/ken/internal/tooldoc"
 )
 
 // THE LAYER MATTERS HERE. Both strings under test are sent to a client in `tools/list`
@@ -97,6 +99,14 @@ func TestTaskAddAdvertisesNoMergeVerb(t *testing.T) {
 		t.Fatal(err)
 	}
 	blob := string(b)
+	// PLUS THE FULL RULES, because that is where per-tool detail lives now: a description freezes
+	// at conversation start and a result does not, so the rules moved to
+	// ken_instructions{tool:"…"} and the description kept a sentence and a pointer. Both halves are
+	// in the corpus deliberately — the absence check below must hold across EVERYTHING a session
+	// can read, not only the half that happens to be short.
+	if full, ok := tooldoc.Full("station_task_add"); ok {
+		blob += "\n" + full
+	}
 
 	// POSITIVE CONTROLS. Without these, "merge does not appear" would pass just as
 	// happily if the description were empty or the output schema were not advertised

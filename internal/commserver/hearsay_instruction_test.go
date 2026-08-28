@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Quest-ICT/ken/internal/comm"
+	"github.com/Quest-ICT/ken/internal/tooldoc"
 )
 
 // deliveredCommInstructions returns the instruction block a real client receives in
@@ -70,6 +71,20 @@ func deliveredCommInstructions(t *testing.T) string {
 	for _, tl := range tools.Tools {
 		sb.WriteString("\n")
 		sb.WriteString(tl.Description)
+		// AND THE RULES BEHIND EACH DESCRIPTION, which is where per-tool detail moved a second
+		// time. It went instructions -> descriptions when the client was found to truncate the
+		// instructions field; it went descriptions -> ken_instructions{tool:"…"} when the deeper
+		// problem was faced, which is that a description pins at conversation start and can never
+		// be corrected. That is the very sentence this test's failure message used to end with.
+		//
+		// So the corpus is still "everything a session can receive", and what changed is that some
+		// of it now arrives through a CALL. The brief carries a pointer to it, and that the pointer
+		// is present on every tool is asserted in allserver — here it is taken as given, so this
+		// test can keep asking its own question: does the rule exist anywhere a session can read it.
+		if full, ok := tooldoc.Full(tl.Name); ok {
+			sb.WriteString("\n")
+			sb.WriteString(full)
+		}
 	}
 	return sb.String()
 }
@@ -126,9 +141,9 @@ func TestTheHearsayRuleNamesTheDurableIdentity(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("nothing a session receives says %s.\n"+
-				"A session captures this once, at conversation start, and can never be sent a "+
-				"correction — it will attribute peer knowledge this way for the whole conversation.", c.property)
+			t.Errorf("nothing a session can receive says %s.\n"+
+				"Attribution is not recoverable after the fact: an entry filed against an endpoint "+
+				"cites a row the idle sweep will delete, and the knowledge base has no TTL to notice.", c.property)
 		}
 	}
 

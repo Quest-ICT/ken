@@ -3,6 +3,8 @@ package version
 import (
 	"strings"
 	"testing"
+
+	"github.com/Quest-ICT/ken/internal/tooldoc"
 )
 
 // TestInstructionsResultCarriesWhatTheConnectTimeCopyCannot.
@@ -21,21 +23,27 @@ func TestInstructionsResultCarriesWhatTheConnectTimeCopyCannot(t *testing.T) {
 	// A block deliberately LONGER than what a client delivers, because that is the case the
 	// tool exists for: the result must not be trimmed to the budget the connect-time copy obeys.
 	long := strings.Repeat("x", InstructionBudget+500)
-	got := InstructionsFor("/comm/mcp", long)
+	// A registered tool, so the `tools` assertion below has something to find. This package holds
+	// the registry's only other reader; nothing else here populates it.
+	tooldoc.Register("kb_search", "Search the knowledge base. Longer rules follow this sentence.")
+	got := InstructionsFor(long)
 
 	if got.Instructions != long {
 		t.Fatalf("the result carries %d characters of a %d-character block — a result that truncates "+
 			"is the connect-time field with extra steps", len(got.Instructions), len(long))
 	}
-	if got.Surface != "/comm/mcp" {
-		t.Errorf("surface = %q; a session holding several endpoints cannot tell the texts apart without it", got.Surface)
-	}
 	if got.Version != Version {
 		t.Errorf("version = %q, want %q — the number is what a session compares against its captured copy", got.Version, Version)
 	}
-	if len(got.Surfaces) == 0 {
-		t.Error("the answer names no surfaces; a session that asked only for instructions still needs " +
-			"to learn what else it could be given")
+	// THE SURFACE AND SURFACES FIELDS ARE GONE, with the endpoints they distinguished. /comm/mcp
+	// and /station/mcp were deleted; there is one machine surface and it carries every tool, so a
+	// field whose only job was telling several apart would go on answering a question no session
+	// can ask. What replaced them is the TOOL list, which is the thing a session now needs to be
+	// told: descriptions were shortened to one sentence and a pointer, so this is how it learns
+	// what it may ask about in full.
+	if len(got.Tools) == 0 {
+		t.Error("the answer names no tools; with per-tool rules behind ken_instructions{tool:\"…\"}, " +
+			"a session with no list has no way to discover what it can ask for")
 	}
 	// AND IT MUST SAY WHAT TO DO WITH A DIFFERENCE. A session that finds one and is told nothing
 	// reconnects, which does not help — the counter-intuitive fact the stamp exists to carry.

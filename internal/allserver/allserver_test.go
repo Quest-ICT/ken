@@ -57,16 +57,15 @@ func TestTheMergedInstructionsKeepWhatTheyExistToSay(t *testing.T) {
 }
 
 // THE BLOCK MUST NOT REGROW INTO THE THING IT REPLACED. Three surfaces' worth of per-tool detail
-// belongs in tool descriptions, which arrive intact; pulling it back here is how the budget gets
-// spent without anyone noticing. A generous ceiling, well under the hard budget, so ordinary edits
-// pass and a wholesale paste does not.
+// belongs in ken_instructions, where a result is never truncated and never stale; pulling it back
+// here is how the budget gets spent without anyone noticing. A generous ceiling, well under the
+// hard budget, so ordinary edits pass and a wholesale paste does not.
 func TestTheMergedInstructionsStaySmall(t *testing.T) {
 	const ceiling = 1600
 	if n := len([]rune(Instructions)); n > ceiling {
 		t.Errorf("the merged block is %d characters, over the %d ceiling. It is meant to ORIENT and "+
-			"POINT: per-tool rules go in the tool's own description, per-surface detail in "+
-			"ken_instructions. Growing here is how three blocks became 6100 characters in the "+
-			"first place.", n, ceiling)
+			"POINT: every per-tool rule belongs in ken_instructions{tool:\"…\"}, which is computed per "+
+			"call. Growing here is how three blocks became 6100 characters in the first place.", n, ceiling)
 	}
 }
 

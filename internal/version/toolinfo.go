@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+
+	"github.com/Quest-ICT/ken/internal/tooldoc"
 )
 
-// Info is what `ken_version` returns on every surface.
+// Info is what `ken_version` returns.
 //
-// One shape, one meaning, three registrations: a session may hold a credential for only
-// one of /mcp, /comm/mcp or /station/mcp, and "what am I talking to" is the same question
-// on all of them. Registering it three times with one answer beats three near-identical
-// tools whose wording drifts.
+// It was registered three times, once per surface, because a session could hold a credential for
+// only one of /mcp, /comm/mcp or /station/mcp. There is one endpoint now and one registration; see
+// version.RegisterMetaTools for why three registrations of one name on one server was worse than
+// it sounds.
 type Info struct {
 	// Version is what is running RIGHT NOW, computed per call. This is the number to
 	// compare against the one in your connect-time instructions.
@@ -35,31 +37,24 @@ type Info struct {
 	// so a fork reports its own.
 	Platform  string `json:"platform"`
 	SourceURL string `json:"source_url"`
-	// Surfaces names every MCP endpoint this deployment serves.
+	// SURFACES IS DELETED, AND THE PROBLEM IT SOLVED IS DELETED WITH IT.
 	//
-	// WHY IT IS IN A RESULT. A session holding only /mcp had no way to learn that COMM and
-	// stations exist: the knowledge-base instructions never mentioned either, and the two
-	// blocks that would have said so are on endpoints it cannot reach. A Claude Code session
-	// spent a conversation probing four paths and reading three 404s to find /station/mcp,
-	// then correctly refused to assert Station did not exist because it could not tell
-	// "absent" from "undocumented".
+	// It named every MCP endpoint this deployment served, because a session holding only /mcp had
+	// no way to learn that COMM and stations existed — the knowledge-base instructions mentioned
+	// neither, and the blocks that would have said so were on endpoints it could not reach. A
+	// Claude Code session spent a conversation probing four paths and reading three 404s to find
+	// /station/mcp, then correctly refused to assert Station did not exist, because it could not
+	// tell "absent" from "undocumented".
 	//
-	// Instructions cannot fix that for a RUNNING session — they pin at connect. A result can.
-	// This is the same reasoning as HowToCheck one level out: the answer a session needs about
-	// the shape of the server has to arrive through the one channel that is never stale and
-	// never truncated.
-	Surfaces []string `json:"surfaces"`
+	// There is one endpoint now and it carries every tool, so no session can hold a partial view
+	// to be told about. Keeping the field would mean answering that question forever with a list
+	// of one — or worse, with the three-entry default below, which is what it held until this
+	// change and would have named two URLs that 404.
 	// Instructions is present only when the caller passed include_instructions. Omitted
 	// otherwise: ken_version is called often and cheaply, and a couple of kilobytes on every
 	// call would make sessions stop calling the one tool that tells them they are stale.
 	Instructions *InstructionsInfo `json:"instructions,omitempty"`
 }
-
-// Surfaces is set once at startup by the process that decides which endpoints to serve.
-// Defaulted rather than left nil so a source build, a test, or any embedding that forgets to
-// set it still describes the shipped shape instead of reporting that Ken has no surfaces —
-// which a session would read as "this deployment has none", the worse of the two errors.
-var Surfaces = []string{"/mcp", "/comm/mcp", "/station/mcp"}
 
 // Current builds the answer.
 func Current() Info {
@@ -74,7 +69,6 @@ func Current() Info {
 		ReleaseBuild: IsReleaseBuild(),
 		Platform:     runtime.GOOS + "/" + runtime.GOARCH,
 		SourceURL:    SourceURL(),
-		Surfaces:     append([]string(nil), Surfaces...),
 	}
 }
 
@@ -93,10 +87,9 @@ const ToolDescription = "What version of Ken you are actually talking to, comput
 	"is not in your list and you have no handle to call it, however much you know about it — which is why " +
 	"the running version also rides inside results you already call. Nothing is broken: reading an older " +
 	"manual is the ordinary condition of a long conversation, and reconnecting does not help. " +
-	"The result also names every MCP surface this deployment serves — /mcp (kb_*, the knowledge base), " +
-	"/comm/mcp (comm_*, messaging between AI sessions), /station/mcp (station_*, a durable working " +
-	"identity) — each a SEPARATE MCP server entry your human configures. Holding one tells you nothing " +
-	"about the others, so if you need a surface you do not have, ask your human for it by name."
+	"Ken serves ONE machine surface, /mcp, and it carries every tool: kb_* the knowledge base, comm_* " +
+	"messaging between AI sessions, station_* a durable working identity. If you hold the connector you " +
+	"have all three; none is optional and there is no second endpoint to ask your human for."
 
 // --- re-fetching the instructions, which is the one thing the freeze cannot block ---
 
@@ -162,49 +155,91 @@ func (in InstructionsIn) Wants() bool {
 	return false
 }
 
+// InstructionsRequest is ken_instructions' input: nothing, or the name of one tool.
+type InstructionsRequest struct {
+	// Tool asks for ONE tool's complete rules instead of the connect-time block.
+	//
+	// This is where per-tool detail lives now. It used to live in the tool DESCRIPTION, which was
+	// an improvement on living in the connect instructions (the client truncates those) but not a
+	// cure: a description is captured when the conversation begins and never refreshes, so a rule
+	// written there is permanently as old as the session reading it. A result is computed per call.
+	//
+	// A PARAMETER RATHER THAN A TOOL PER SUBJECT, deliberately. Whole tools do not cross the
+	// freeze — one added after a conversation began is absent from that conversation forever — but
+	// arguments do, because the server validates what ARRIVES rather than the client's captured
+	// schema. So a session whose tool list predates this field can still pass it.
+	Tool string `json:"tool,omitempty" jsonschema:"optional; the name of ONE tool, to get its complete and CURRENT rules instead of the connect-time block. Omit it to get the connect-time instructions plus the list of tools you may ask about. Pass it even if your captured schema does not list this property: the server reads what you send"`
+}
+
 // InstructionsInfo is what ken_instructions returns, and what ken_version returns alongside the
 // version when asked.
 type InstructionsInfo struct {
-	// Surface is which endpoint this text belongs to, so a session holding several can tell
-	// them apart without guessing from the content.
-	Surface string `json:"surface"`
 	// Version wrote the text below. Compare it with the version your connect-time copy names.
 	Version string `json:"version"`
-	// Instructions is the CURRENT text, in full and never truncated.
+	// Instructions is the CURRENT text, in full and never truncated: the connect-time block, or
+	// one tool's complete rules when `tool` was passed.
 	//
 	// The connect-time copy of this is cut at InstructionBudget characters by the client. That
-	// is why the blocks are written to fit, and why this exists anyway: fitting protects a
+	// is why the block is written to fit, and why this exists anyway: fitting protects a
 	// session that connects today, and only a RESULT reaches one that connected before.
 	Instructions string `json:"instructions"`
-	// Surfaces names every endpoint this deployment serves, repeated here so a session that
-	// asked only for instructions still learns what else it could be given.
-	Surfaces []string `json:"surfaces"`
+	// Tool echoes which tool was asked about, so an answer cannot be mistaken for the block.
+	Tool string `json:"tool,omitempty"`
+	// Tools names every tool whose full rules can be fetched here, returned when none was named.
+	//
+	// IT IS THE POINT OF THE NO-ARGUMENT CALL, not a courtesy. Tool descriptions were shortened to
+	// one line plus a pointer, so this list is how a session learns what it can ask about — and it
+	// arrives in a result, which means a session whose tool list is a release out of date still
+	// gets the current one.
+	Tools []string `json:"tools,omitempty"`
 	// Note says what to do with a difference, because a session that finds one and is told
 	// nothing will reconnect — which does not help.
 	Note string `json:"note"`
 }
 
-// InstructionsFor builds the answer for one surface.
-func InstructionsFor(surface, text string) InstructionsInfo {
+// InstructionsFor builds the answer carrying the connect-time block.
+//
+// THE `surface` PARAMETER IS GONE, with the three endpoints it named. /comm/mcp and /station/mcp
+// were deleted; there is one machine surface, /mcp, and it carries every tool. A field whose only
+// job was telling apart endpoints that no longer exist is not harmless to keep — it would go on
+// answering a question nobody can ask, in a session's context, forever.
+func InstructionsFor(text string) InstructionsInfo {
 	return InstructionsInfo{
-		Surface:      surface,
 		Version:      Version,
 		Instructions: text,
-		Surfaces:     append([]string(nil), Surfaces...),
+		Tools:        tooldoc.Names(),
 		Note: "This is the CURRENT text, in full. Your connect-time copy pins when the conversation " +
 			"begins, never refreshes, and is truncated by the client — so if it differs from this, this " +
-			"is the one to follow. Reconnecting does not update it; calling this does.",
+			"is the one to follow. Reconnecting does not update it; calling this does. " +
+			"`tools` lists every tool whose COMPLETE rules you can fetch with ken_instructions{tool:\"…\"} — " +
+			"each tool's list entry is one sentence, and the rest is there.",
 	}
 }
 
-// InstructionsToolDescription is shared by all three registrations, like ToolDescription, so the
-// wording cannot drift between surfaces.
-const InstructionsToolDescription = "Re-fetch this surface's connect-time instructions, CURRENT and in full. " +
-	"Call it when your instructions look truncated or cut off mid-sentence, when ken_version reports a version " +
-	"different from the one your instructions name, when you are unsure whether a rule you remember still applies, " +
-	"or at the start of a long session that may outlive its own manual. " +
-	"WHY IT EXISTS: the connect-time instructions field is captured by your client when the CONVERSATION begins and " +
-	"never refreshes — and the client also TRUNCATES it, so what you were given may be both old and incomplete. " +
-	"A tool result is neither: it is computed per call and is not cut. " +
-	"The answer also names every MCP surface this deployment serves, so a session holding one endpoint can learn " +
-	"what the others do and ask its human for them by name."
+// forTool re-labels an answer as one tool's rules rather than the connect-time block.
+//
+// The tool list is dropped from it on purpose: a session that named a tool asked a specific
+// question, and repeating forty-five names under the answer is the padding that trains sessions to
+// skim results.
+func (i InstructionsInfo) forTool(name string) InstructionsInfo {
+	i.Tool = name
+	i.Tools = nil
+	i.Note = "These are " + name + "'s COMPLETE rules, current as of this call. Its entry in your tool " +
+		"list is only the first sentence — that entry was captured when this conversation began and never " +
+		"refreshes, while this was computed just now. Call ken_instructions with no argument for the " +
+		"connect-time instructions and the list of every tool you can ask about."
+	return i
+}
+
+// InstructionsToolDescription introduces the tool that now carries every per-tool rule.
+const InstructionsToolDescription = "THE FULL RULES FOR ANY TOOL, and Ken's connect-time instructions, CURRENT and never truncated. " +
+	"Pass tool:\"<name>\" for one tool's complete rules — every tool's list entry is ONE SENTENCE plus a pointer here, " +
+	"and the rest of what it needs from you is behind this call. Call it with NO argument for the instructions in full " +
+	"plus the list of every tool you may ask about. " +
+	"WHY THE DETAIL LIVES HERE: a tool description and the instructions field are both captured by your client when the " +
+	"CONVERSATION begins and never refresh — not on reconnect, not when the server upgrades — and the client TRUNCATES " +
+	"the instructions on top of that. So anything written there is as old as your session and possibly cut in half. " +
+	"A tool result is neither old nor cut: it is computed on this call. " +
+	"Call it before using a tool you have not used in this conversation, when your instructions look cut off " +
+	"mid-sentence, when ken_version reports a version different from the one your instructions name, and whenever you " +
+	"are unsure whether a rule you remember still applies."

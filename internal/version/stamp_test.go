@@ -138,12 +138,21 @@ func TestEverySurfaceOffersTheVersionToolAndStampsItsInstructions(t *testing.T) 
 			t.Fatalf("%s: %v", name, err)
 		}
 		src := string(body)
-		// Matched on the REGISTRATION, not on a mention: the name appears in comments
-		// explaining the mechanism, and a test that cannot tell a use from an
+		// THE MATCH MOVED FROM THE REGISTRATION TO THE WIRING, because the registration moved.
+		//
+		// It used to look for `Name: "ken_version"` in each of the three sources: three servers,
+		// three registrations, and a package that forgot one left its sessions unable to ask what
+		// they were talking to. Those three endpoints are now one, and mcp.AddTool REPLACES a tool
+		// of the same name — so three registrations against one server silently became one, and a
+		// test asserting all three registered it was green while that happened.
+		//
+		// version.RegisterMetaTools is the single site now, and what each server must do is CALL
+		// it. Matched on the call rather than a mention, for the original reason: the name appears
+		// in comments explaining the mechanism, and a test that cannot tell a use from an
 		// explanation eventually forces the explanation out.
-		if !regexp.MustCompile(`Name:\s+"ken_version"`).MatchString(src) {
-			t.Errorf("the %s surface does not register ken_version — a session holding only that "+
-				"credential cannot ask what it is talking to", name)
+		if !regexp.MustCompile(`version\.RegisterMetaTools\(s,|RegisterMetaTools\(s,`).MatchString(src) {
+			t.Errorf("the %s server does not wire RegisterMetaTools — a session there cannot ask what "+
+				"it is talking to", name)
 		}
 		if !strings.Contains(src, "version.InstructionStamp()") {
 			t.Errorf("the %s surface does not stamp its instructions, so a session there has nothing "+

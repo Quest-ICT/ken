@@ -76,7 +76,7 @@ CALL station_me FIRST, EVERY SESSION, and pass session_key — a stable id for T
 
 Then, IN YOUR FIRST MESSAGE, tell your human in words what station_me says is waiting on them. A briefing nobody relays is the original problem with extra steps.
 
-THE RULES FOR EACH TOOL ARE IN THAT TOOL'S OWN DESCRIPTION, which arrives intact. NOW CALL ken_instructions FOR EACH SURFACE YOU WILL USE AND READ THEM BEFORE YOU START WORKING — this block is all you get here, and that is the only guidance that is never truncated and never stale.
+EACH TOOL'S LIST ENTRY IS ONE SENTENCE; its real rules are in ken_instructions{tool:"<name>"}. CALL THAT BEFORE YOU FIRST USE A TOOL HERE. This block and every description froze when the conversation began and never refresh — a tool result is computed now, so it is the only guidance that is never stale and never cut. With no argument it lists every tool you can ask about.
 
 SEARCH KEN BEFORE DEBUGGING ANYTHING NON-TRIVIAL (kb_search), record an outcome after you act on an entry (kb_record_outcome), and save durable lessons back (kb_save). Your writes are PROPOSALS; a human promotes them. You never curate.`
 
@@ -112,6 +112,12 @@ func NewHTTPHandler(d Deps) http.Handler {
 		commserver.RegisterTools(s, d.Comm, d.CommH)
 	}
 	stationserver.RegisterTools(s, d.Station)
+	// ONCE, AFTER THE THREE. Each package used to register its own ken_version and
+	// ken_instructions, which on this single server meant three tools fighting over two names —
+	// and mcp.AddTool replaces silently, so the pair that survived answered for one surface and
+	// looked complete. The closure hands back the block a session actually receives here, so what
+	// ken_instructions returns cannot drift from what was delivered at connect.
+	version.RegisterMetaTools(s, func() string { return Instructions })
 
 	inner := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return s },
