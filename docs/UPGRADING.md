@@ -34,6 +34,134 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+> **THE RECORD HAS A GAP: 3.30.0 THROUGH 3.42.0 SHIPPED WITHOUT ENTRIES HERE.** This file's own
+> maintenance rule says a break is written down in the change that causes it, "not reconstructed at
+> release time from commit messages", and thirteen releases went by without one. Saying so is worth
+> more than quietly starting again at the next heading: an operator reading a continuous list would
+> reasonably conclude those releases carried nothing. They carried the whole identity replacement,
+> which this entry now covers in one piece — but if you are upgrading FROM a version in that range
+> rather than to it, read `CHANGELOG.md` for those versions, because their breaks are recorded there
+> and nowhere else.
+
+### THE BREAKING WAVE — one release, and every session must reconnect
+
+**Read this first: after upgrading, every session that uses Ken must reconnect, and some must be
+reconfigured.** That is the intended cost, decided deliberately. Vlad: *"I prefer breaking them now
+that I can reconfigure every existing session rather than keep workspace laying around for future
+users. We just need to be sure it can be fixed with restarting/reinstalling Claude and/or the Ken
+connector, so at the end nothing keeps calling workspace_whatever without nobody noticing it."*
+
+**Nothing is migrated, and that is also deliberate.** *"Do not waste time on migrating existing
+'anything'. Anybody using Ken after this upgrade — including you — either is able to use it after
+the upgrade or just gets off-board and on-board again."* It extends to `comm.db`, which may start
+empty.
+
+**What survives untouched:** everything durable. Stations keep their ids, names, notebooks, tasks,
+lockers, vaults and links. The knowledge base is not affected at all.
+
+**What does not survive:** in-flight mail and channels in `comm.db`, and every session's configured
+connection.
+
+#### 1. Two of the three MCP endpoints are gone
+
+`/comm/mcp` and `/station/mcp` are **deleted**. `/mcp` carries every tool — `kb_*`, `comm_*` and
+`station_*`.
+
+**What an operator observes:** any connector pointed at the deleted paths gets a 404. A connector
+pointed at `/mcp` with a knowledge-base-only credential now gets a **401**, because `/mcp` requires
+every capability and fails closed at the transport.
+
+**What to do first:** in each client, remove the `ken-comm` and `ken-station` entries and keep one
+pointed at `https://<host>/mcp`. If that entry was created with a legacy scoped token, re-do the
+OAuth authorization — one grant carries the whole set.
+
+**Why the 401 rather than a partial tool list:** a credential that cannot use everything should be
+refused where the refusal is precise. The alternative — admitting it and failing per tool — would
+have turned the tool list into a reconnaissance surface.
+
+#### 2. "Workspace" is retired. The word is "station"
+
+No dual acceptance, by decision. The wire fields `how_to_keep_this_workspace`,
+`workspace_just_created` and `workspace_name` are now `how_to_keep_this_station`,
+`station_just_created` and `station_label`. The `X-Ken-Workspace` header and the `?workspace=`
+query parameter are deleted.
+
+**What a session observes:** an old client sending the old field name gets it ignored; a connector
+relying on the header or the query parameter no longer resolves a station. Both are loud, which is
+the point.
+
+**What to do first:** reconnect. Nothing else is required — a session states `session_key` on its
+first `station_me` call and lands in the same station it had.
+
+#### 3. Station keys are retired
+
+There is no `kens_` credential, no station binding, no binding voucher, and no
+`ken station key` subcommand. A session authenticates with the OAuth grant; `session_key` selects
+which station it staffs.
+
+**What an operator observes:** the Station column on the Tokens page is empty. Existing `kens_`
+tokens authenticate nothing.
+
+**What to do first:** nothing, unless you were scripting `ken station key`. Revoke the old `kens_`
+rows at your leisure — they are inert.
+
+#### 4. Both human gates on comm are removed
+
+- **A link is created by the first message**, born active. `station_link_request` and the console
+  approval are deleted, with the denial ladder and its mute.
+- **The pairing code is deleted entirely**, with `comm_join`, the console mint form, its one-time
+  reveal, the pending-codes table and the `comm_pairing_code_ttl_sec` setting.
+
+**What an operator observes:** the /comm page has no pairing panel; the /stations request queue
+holds station and room requests only.
+
+**What replaces the control:** **Suspend** on a link, in the /stations links table — and, unlike a
+code, **Resume**. Auto-linking will not resurrect a suspended link.
+
+**Shipped with it, and necessarily:** `station_directory` and `comm_directory` now list **every**
+live station rather than only the published and already-linked. Removing the gate without this
+would have moved the wall rather than removed it — a session would go from "cannot reach anyone
+because not linked" to "cannot reach anyone because it does not know who exists".
+
+#### 5. A mailbox belongs to a station, not a session
+
+`comm_register`, `comm_bind` and `comm_unbind` are deleted, with the `endpoint_id` /
+`endpoint_secret` pair, secret rotation, endpoint repointing and the console's reassign-a-mailbox
+form. A station comes with a mailbox; a successor session inherits its predecessor's unread mail
+with nothing to re-bind.
+
+**What an operator observes:** no Rotate button on /comm. Recovery of an unreachable mailbox is now
+the station reassignment on /stations, which moves mail, notebook, tasks, locker and vault together.
+
+**Also gone: the idle-mailbox sweep** and `comm_endpoint_idle_sec`. It bounded a row set that grew
+because sessions registered and never unregistered; there is no registration.
+
+#### 6. Per-tool rules moved into `ken_instructions`
+
+Each tool's list entry is now one sentence plus a pointer; `ken_instructions{tool:"<name>"}` returns
+its full rules. A tool description is captured when a conversation begins and never refreshes; a
+result is computed per call.
+
+**What a session observes:** shorter descriptions, and a `tool` argument on `ken_instructions`.
+Calling it with no argument returns the connect-time instructions plus the list of every tool it can
+ask about.
+
+#### Schema
+
+**ken.db 24 → 26**, **comm.db 19 → 20** (3.42.0 already carried `0024`, which is listed below for
+completeness because this is the first UPGRADING entry since 3.29.0). Rule 4 (a release carrying a migration carries nothing
+else) is **suspended for this wave by decision**, because staging it would have meant several
+reconnects — exactly what the wave exists to avoid.
+
+- `0024` — `station_request.kind` accepts `'room'`
+- `0025` — `station_link` gains `suspended`, loses `revoked`; `revoked_at` → `suspended_at`
+- `0026` — `station_request.kind` loses `'link'` and its rows; drops `station_link_denial` and the
+  long-inert `station_binding_voucher`
+- comm `0020` — drops `pairing_code`
+
+**Back up before upgrading.** `ken backup` snapshots ken.db; comm.db is expendable by design and is
+not backed up.
+
 ## 3.29.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17. The `station_binding_voucher` table
