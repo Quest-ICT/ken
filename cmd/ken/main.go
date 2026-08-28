@@ -508,21 +508,6 @@ func runServe(args []string) {
 			// contact. Without it the link exists and the gate that reads the MIRROR still refuses,
 			// so the first message between two stations would fail and the second would work — the
 			// worst possible shape, because it looks intermittent.
-			SyncLinkMirror: func(ctx context.Context) {
-				pairs, err := st.LinkMirrorRows(ctx)
-				if err != nil {
-					log.Printf("comm: read links for mirror: %v", err)
-					return
-				}
-				epoch, err := st.RosterEpoch(ctx)
-				if err != nil {
-					log.Printf("comm: read roster epoch: %v", err)
-					return
-				}
-				if err := commStore.ReplaceLinkMirror(ctx, pairs, epoch); err != nil {
-					log.Printf("comm: push link mirror: %v", err)
-				}
-			},
 		}
 		commDepsOut = commDeps
 		commHandler = commserver.NewHTTPHandler(commDeps)

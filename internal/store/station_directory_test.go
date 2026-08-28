@@ -48,11 +48,7 @@ func TestTheDirectoryListsTheWholeEstate(t *testing.T) {
 	arch := mk("archived-but-published", true)
 
 	// An active link between me and the unpublished peer.
-	reqID, err := s.CreateStationLinkRequest(ctx, "tok", me.StationID, linked.StationID, "work", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.ApproveLinkRequest(ctx, reqID, actor); err != nil {
+	if _, err := s.EnsureStationLink(ctx, me.StationID, linked.StationID, actor); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ArchiveStation(ctx, arch.StationID, true); err != nil {

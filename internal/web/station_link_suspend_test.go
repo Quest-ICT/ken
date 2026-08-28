@@ -15,13 +15,18 @@ import (
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
-// The console is the operator's brake on a standing relationship.
+// The console is the operator's brake on a standing relationship — and since links are created
+// automatically on first contact, it is the ONLY brake there is.
 //
-// `stations.link_help` has promised since links shipped that "one click revokes it
-// later" — and until now there was no click: RevokeStationLink had zero callers. This
-// asserts the whole round trip, because a store function with no route is the same
-// kind of unfinished as a flag with no reader.
-func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
+// This asserts the whole round trip, because a store function with no route is the same kind of
+// unfinished as a flag with no reader; the earlier version of this test caught exactly that, when
+// the console promised "one click" and no click existed.
+//
+// SUSPEND, NOT REVOKE, and the word is the decision: "'suspend' button instead of revoke button (I
+// want to be able to 'resume' it). 'revoke' concept is out of the table." A relationship between
+// two of one human's own stations is never terminal, so the operation that ends traffic must be
+// one they can undo.
+func TestStationsConsoleSuspendsALinkAndItsLiveChannels(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "k.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -58,14 +63,10 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID, err := st.CreateStationLinkRequest(ctx, "tok", devSt.StationID, prodSt.StationID, "work together", false)
-	if err != nil {
+	if _, err := st.EnsureStationLink(ctx, devSt.StationID, prodSt.StationID, actorID); err != nil {
 		t.Fatal(err)
 	}
-	link, err := st.ApproveLinkRequest(ctx, reqID, actorID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	link := linkBetween(t, ctx, st, devSt.StationID, prodSt.StationID)
 
 	// And a live channel between them, which is the thing the link authorised.
 	epA, err := cs.MailboxFor(ctx, devSt.StationID, comm.Owner{TokenID: "tok-a", ActorID: actorID})
@@ -79,11 +80,11 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	if _, err := cs.OpenLinkedChannel(ctx, epA, epB, actorID, "dev <-> prod"); err != nil {
 		t.Fatal(err)
 	}
-	// PRE-CHECK, so the post-revoke assertion cannot pass vacuously: if the channel
+	// PRE-CHECK, so the post-suspend assertion cannot pass vacuously: if the channel
 	// were never opened, "0 open channels afterwards" would be true for the wrong
-	// reason and this test would certify a revoke that does nothing.
+	// reason and this test would certify a suspend that does nothing.
 	if n, err := cs.CountOpenChannelsBetweenStations(ctx, devSt.StationID, prodSt.StationID); err != nil || n != 1 {
-		t.Fatalf("setup: %d open channel(s) before revoke (err=%v), want 1", n, err)
+		t.Fatalf("setup: %d open channel(s) before suspend (err=%v), want 1", n, err)
 	}
 
 	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
@@ -94,13 +95,13 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
 
 	// The page must offer the control, and must show the blast radius before the
-	// click. A revoke button with no number is one people avoid or press twice.
+	// click. A suspend button with no number is one people avoid or press twice.
 	page := get(t, cli, srv.URL+"/stations")
 	if !strings.Contains(page, "/stations/links/"+link.LinkID+"/suspend") {
-		t.Fatal("the links table renders no revoke control — the store function stays unreachable and stations.link_help keeps promising a click that does not exist")
+		t.Fatal("the links table renders no suspend control — the store function stays unreachable, and an off-switch nobody can reach is the same as no off-switch")
 	}
 	if !strings.Contains(page, "data-confirm=") {
-		t.Fatal("the revoke control carries no confirmation")
+		t.Fatal("the suspend control carries no confirmation")
 	}
 
 	csrf := extract(t, cli, srv.URL+"/stations", `name="csrf" value="([^"]+)"`)
@@ -111,7 +112,9 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.State != "suspended" {
-		t.Fatalf("link state is %q after revoke, want %q", got.State, "revoked")
+		// The message used to say `want "revoked"` while the check compared against "suspended" —
+		// a failure that would have reported the wrong expectation to whoever hit it.
+		t.Fatalf("link state is %q after suspend, want %q", got.State, "suspended")
 	}
 	// The permission AND its traffic. Ending one without the other is the defect.
 	n, err := cs.CountOpenChannelsBetweenStations(ctx, devSt.StationID, prodSt.StationID)
@@ -119,13 +122,17 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Fatalf("%d channel(s) still open after the link was revoked — the permission ended and the conversation did not", n)
+		t.Fatalf("%d channel(s) still open after the link was suspended — the permission stopped and the conversation did not", n)
 	}
 }
 
-// With COMM off there is nothing to sever, and the link revoke must still work rather
-// than 500 on a nil comm handle. Stations run with COMM off by design.
-func TestStationLinkRevokeWorksWithCommOff(t *testing.T) {
+// WITH NO COMM HANDLE THERE IS NOTHING TO SEVER, and the suspend must still land rather than 500.
+//
+// This is a FAULT PATH, not a configuration: nothing in Ken turns COMM off — "IN KEN NOTHING IS
+// OPTIONAL" — so a nil handle means comm.db failed to open, which is exactly when the human most
+// needs the durable half of the console to keep working. The link lives in ken.db and the decision
+// is recorded there whether or not the message database is reachable.
+func TestStationLinkSuspendWorksWithNoCommHandle(t *testing.T) {
 	st, ctx, cli, base, actorID := stationsHarness(t)
 
 	devSt, err := st.CreateStation(ctx, "dev", "", actorID)
@@ -136,14 +143,10 @@ func TestStationLinkRevokeWorksWithCommOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqID, err := st.CreateStationLinkRequest(ctx, "tok", devSt.StationID, prodSt.StationID, "r", false)
-	if err != nil {
+	if _, err := st.EnsureStationLink(ctx, devSt.StationID, prodSt.StationID, actorID); err != nil {
 		t.Fatal(err)
 	}
-	link, err := st.ApproveLinkRequest(ctx, reqID, actorID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	link := linkBetween(t, ctx, st, devSt.StationID, prodSt.StationID)
 
 	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
 	postForm(t, cli, base+"/stations/links/"+link.LinkID+"/suspend", url.Values{"csrf": {csrf}})

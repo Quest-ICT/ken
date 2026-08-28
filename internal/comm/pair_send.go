@@ -45,23 +45,36 @@ import (
 // linked to it" — a typo the session fixes in one call versus a human approval it cannot retry into
 // existence.
 
-// ErrNotAStation refuses a pair send from an endpoint with no station.
+// ErrNotAStation refuses a pair send from a mailbox with no station.
 //
-// Named, and specific about the remedy, because the alternative is the worst error this
-// surface can give: "you are not linked to X" would send a reader looking for a missing
-// human approval when the actual problem is that this session has no station identity to
-// be linked WITH. Two very different next actions.
-var ErrNotAStation = CallerSafe(errors.New("to_station addresses one station from another, and this endpoint is not bound to a station. " +
-	"Bind it first (comm_bind, with the X-Ken-Workspace header set), or address this message with channel_id instead"))
+// IT SHOULD NO LONGER BE REACHABLE, and it is kept anyway. A mailbox is now created by
+// MailboxFor against a resolved station, so there is no supported way to hold one without a
+// station behind it — but the party key is a string in a row, and a guard that reads it is
+// cheaper than the alternative: an unbound sender would otherwise take the linked path and
+// address a peer as nobody. Kept as an assertion, not as a workflow.
+//
+// ITS TEXT NAMED comm_bind AND THE X-Ken-Workspace HEADER UNTIL 2026-08-27, both deleted in the
+// same wave that made this state unreachable. An error telling a session to call a tool that no
+// longer exists is worse than no error: it is a confident instruction into a dead end.
+var ErrNotAStation = CallerSafe(errors.New("to_station addresses one station from another, and this mailbox has no station behind it. " +
+	"That should not be possible — tell your human, and address this message with channel_id meanwhile"))
 
-// ErrNotLinked refuses a pair send with no approved link behind it.
+// ErrNotLinked now means ONE THING: a human turned this relationship off.
 //
-// SAYS WHAT TO DO, because the remedy is a human action and the session cannot take it:
-// station_link_request files the ask, and a human approves it at the console. A session
-// that reads only "not linked" tends to retry, which produces nothing forever.
-var ErrNotLinked = CallerSafe(errors.New("no approved link joins you to that station, so nothing was sent. " +
-	"A link is a human decision: file station_link_request and ask your human to approve it at Ken's /stations console. " +
-	"A link that was REVOKED looks identical here, which is intended — revocation is meant to be one click"))
+// It used to mean "no human has approved you yet", and its text told the session to file
+// station_link_request and wait. Both halves are gone: links are created on first contact by the
+// send path itself, and the tool that filed the ask was deleted with the approval it fed. The only
+// way to arrive here is a link a human SUSPENDED — auto-linking will not resurrect one, which is
+// the whole point of having an off-switch.
+//
+// SO THE REMEDY CHANGED SHAPE, and saying so matters more than it looks: under the old text a
+// session read "not linked" and retried, or asked again, forever. Under the new one there is
+// nothing to retry and nothing to file — a human decided, and the only correct next action is to
+// tell them. An error that suggests a retry where none can work is how a session burns a
+// conversation on a wall it cannot see.
+var ErrNotLinked = CallerSafe(errors.New("that link is SUSPENDED, so nothing was sent. Links are created automatically on " +
+	"first contact, so this one exists and was deliberately turned off by your human at Ken's /stations console. " +
+	"Do not retry: tell them you tried to reach that station and why, and let them decide whether to resume it"))
 
 // ErrSelfSend refuses a station addressing itself.
 //
@@ -70,15 +83,20 @@ var ErrNotLinked = CallerSafe(errors.New("no approved link joins you to that sta
 // looks like the peer answering.
 var ErrSelfSend = CallerSafe(errors.New("that is your own station — a message to yourself would come back as mail from a peer"))
 
-// ErrUnknownStation separates "no such station" from "not linked to it".
+// ErrUnknownStation separates "no such station" from "that link is suspended".
 //
-// The mirror holds links between ACTIVE stations only, so both failures arrive as an
-// absent row and the temptation is to answer both with ErrNotLinked. They need
-// different sentences: a typo in a station id is fixed by the session in one call,
-// while an unlinked peer needs a human. Distinguished by asking whether ANY link
-// mentions the id, which is the only evidence comm.db has.
-var ErrUnknownStation = CallerSafe(errors.New("no station with that id appears in any approved link here — check the id with comm_directory, " +
-	"which lists the stations you can address by name"))
+// The mirror holds links between ACTIVE stations only, so both failures arrive as an absent row
+// and the temptation is to answer both the same way. They still need different sentences, and the
+// gap between them WIDENED when auto-linking shipped: a suspended link is a human decision the
+// session must not retry, while an unknown id is a typo it fixes in one call — and since first
+// contact now creates the link itself, an id the session got right essentially cannot land here.
+// Which makes this the "you mistyped it" error almost every time it fires.
+//
+// Distinguished by asking whether ANY link mentions the id, which is the only evidence comm.db
+// has. A station that exists but has never been contacted has no row either — so the remedy named
+// here is the directory, which lists every live station whether or not a link exists yet.
+var ErrUnknownStation = CallerSafe(errors.New("no station with that id is known here — check the id with comm_directory, " +
+	"which lists every station you can address and hands back the exact id to use"))
 
 // SendToStation delivers one body to another station over the pair scope their link
 // authorises.

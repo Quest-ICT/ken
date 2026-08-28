@@ -89,37 +89,18 @@ func (s *Store) StationByID(ctx context.Context, stationID string) (*Station, er
 // reading, a correct guess FILED A REQUEST, putting an agent-authored ask for an unpublished
 // post in front of its human. Found by sweep and confirmed by execution on 2026-08-19.
 //
-// The remedy is StationByNameVisibleTo below, not a filter here: the console legitimately
-// resolves any name in this instance, including archived and unpublished ones, and narrowing this
-// would break the surface the rule reserves it for.
+// BOTH HALVES OF THAT ARE NOW HISTORY, and the reason is worth keeping: the remedy at the time was
+// StationByNameVisibleTo, a resolver narrowed to what the asker could already see. It was deleted
+// with station_link_request, its only agent-facing caller — links are created on first contact, so
+// there is no name for an agent to resolve and no request for a guess to file. The directory lists
+// the whole estate to the one human who owns it, which is the same reasoning that retired the
+// narrowed resolver: there is no other tenant to enumerate to.
+//
+// This function stays reserved for the console and CLI, which legitimately resolve any name in the
+// instance, archived and unpublished included. If an agent-facing path ever needs to route by name
+// again, it needs its own resolver — not this one.
 func (s *Store) StationByName(ctx context.Context, name string) (*Station, error) {
 	return s.stationWhere(ctx, `name=?`, name)
-}
-
-// StationByNameVisibleTo resolves a name ONLY among the stations the asker may already see —
-// the same predicate station_directory lists by. It is the agent-safe counterpart to
-// StationByName, and the only name-resolution an agent-facing path may use.
-//
-// WHAT IT GUARANTEES, stated as the property rather than the query: a station the caller
-// cannot see is indistinguishable from one that does not exist. Both return sql.ErrNoRows, so
-// the caller's single refusal covers both and a guessed name yields nothing — not a filed
-// request, not a different error, not a timing difference worth having.
-//
-// The predicate is a deliberate copy of ListStationsVisibleTo's (published OR linked, never
-// archived, never yourself). Two readers of one visibility rule can drift, and if a third
-// appears this pair is what should be factored — but a shared helper today would have to
-// serve one query returning a list and one returning a row, and the duplication is currently
-// the honest cost of keeping both readable.
-func (s *Store) StationByNameVisibleTo(ctx context.Context, fromStation, name string) (*Station, error) {
-	return s.stationWhere(ctx, `name=?1
-   AND state <> 'archived'
-   AND station_id <> ?2
-   AND (published=1 OR EXISTS(
-         SELECT 1 FROM station_link l
-          WHERE l.state='active'
-            AND ((l.station_a=?2 AND l.station_b=station.station_id)
-              OR (l.station_b=?2 AND l.station_a=station.station_id))))`,
-		name, fromStation)
 }
 
 func (s *Store) stationWhere(ctx context.Context, where string, args ...any) (*Station, error) {

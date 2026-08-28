@@ -135,16 +135,10 @@ WHERE t.token_id = ?`, tokenID).Scan(&actorID, &scopesJSON, &revoked)
 	return 0, ErrNotACommToken
 }
 
-// ErrNotAStationKey refuses a re-point target that cannot have authorised a binding.
-//
-// The mirror of ErrNotACommToken, and the two are NOT interchangeable: a comm token owns an
-// endpoint, a station key authorised its binding, and the console can move either. Pointing a
-// binding at a plain comm token would name an authority that can never be revoked as a station
-// key, which is a control that reads as present and is not.
-var ErrNotAStationKey = errors.New("that token cannot have bound an endpoint — it must exist, be unrevoked, and be a station key")
-
-// StationKeyStation IS DELETED. It answered "which station did this key bind for", asked only by
-// the console's rebind picker — and there is no binding to move.
+// ErrNotAStationKey AND StationKeyStation ARE BOTH DELETED, along with the station keys they
+// described. The error refused a re-point target that could not have authorised a binding; the
+// function answered "which station did this key bind for". There are no station keys, no bindings,
+// and no rebind picker — a mailbox belongs to a station and nothing re-points it.
 
 // ListTokens lists all API tokens, newest first.
 func (s *Store) ListTokens(ctx context.Context) ([]TokenRow, error) {

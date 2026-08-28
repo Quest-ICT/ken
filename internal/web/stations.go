@@ -410,53 +410,11 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 
-	// A LINK request has no name to type — the human is approving a relationship
-	// between two stations that already exist, not creating one. Routed on the form's
-	// declared kind rather than on whether a name happens to be present, so a
-	// mis-filled form fails loudly instead of taking the wrong branch.
-	if r.FormValue("kind") == "link" {
-		l, err := a.store.ApproveLinkRequest(r.Context(), id, sess.ActorID)
-		switch {
-		case errors.Is(err, store.ErrRequestNotPending):
-			flashRedirect(w, r, "/stations", "flash.station_request_gone", "")
-		case err != nil:
-			flashRedirect(w, r, "/stations", "flash.station_approve_failed", err.Error())
-		default:
-			// P3: SPEND THE LINK IMMEDIATELY. A link recorded and never materialised is a
-			// human decision that still costs a pairing code to use — which is the step the
-			// link exists to remove. Approving is the gate; there is nothing left to wait
-			// for, so the conversation comes into existence here.
-			//
-			// BEST EFFORT, AND NEVER FATAL TO THE APPROVAL. Both stations must be staffed
-			// for a channel to exist at all, and one may not be — `proxmox-servers` had a
-			// station and no endpoint for five days. The link is still correct and still
-			// worth recording; comm_open_channel materialises it later when someone shows
-			// up. Failing the human's decision over a messaging detail would be the wrong
-			// thing to fail on.
-			//
-			// P2: THE MIRROR REFRESH IS THE PART THAT ALWAYS WORKS. Opening a channel
-			// needs both stations staffed; authorising the PAIR SCOPE needs neither,
-			// because a pair conversation is addressed by name and has no row to
-			// create. So the approval lands as a usable permission even when nobody is
-			// connected — which is the case P3 had to log and move past.
-			a.syncRoomMirror(r)
-			flash := "flash.link_approved"
-			if a.comm != nil {
-				epA, errA := a.comm.LiveEndpointForStation(r.Context(), l.StationA)
-				epB, errB := a.comm.LiveEndpointForStation(r.Context(), l.StationB)
-				if errA == nil && errB == nil && epA != nil && epB != nil {
-					if _, err := a.comm.OpenLinkedChannel(r.Context(), epA, epB, sess.ActorID,
-						l.NameA+" ↔ "+l.NameB); err == nil {
-						flash = "flash.link_approved_open"
-					} else {
-						log.Printf("stations: link %s approved but channel not opened: %v", id, err)
-					}
-				}
-			}
-			flashRedirect(w, r, "/stations", flash, l.NameA+" ↔ "+l.NameB)
-		}
-		return
-	}
+	// A LINK REQUEST CANNOT ARRIVE ANY MORE, and the branch that approved one is gone with the
+	// tool that filed it. Links are created on first contact now; there is no pending relationship
+	// for a human to decide on. A form that still submits kind=link therefore falls through to the
+	// unknown-kind refusal below and SAYS SO, which is the outcome worth having: silence there
+	// would mean a console still offering a button that quietly does nothing.
 
 	// *** AN UNKNOWN KIND FAILS LOUDLY RATHER THAN FALLING IN HERE. ***
 	//

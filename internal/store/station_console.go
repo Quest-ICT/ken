@@ -135,34 +135,21 @@ UPDATE station_request
 		return err
 	}
 
-	// THREE KINDS, THREE DENIAL POLICIES — and this comment described two until room requests
-	// shipped, which would have read as complete while silently omitting a case.
+	// TWO KINDS, TWO DENIAL POLICIES — and this comment described three until link requests were
+	// retired, which is the shape that goes stale silently: prose that still explains a branch the
+	// code no longer has reads as documentation, not as a leftover.
 	//
-	//   link    escalates the mute below, keyed on the unordered PAIR, so a session that keeps
-	//           asking waits longer each time.
-	//   room    also escalates, on the SAME ladder, but CreateRoomRequest computes it from the
-	//           asking station's own denied rows rather than from a table — station_link_denial is
-	//           keyed on a pair and a room request has none, so storing (x,x) there would be a lie
-	//           in the schema. Nothing to do here; the mute is read at ask time.
+	//   room    escalates a mute, but CreateRoomRequest computes it from the asking station's own
+	//           denied rows rather than from a table — station_link_denial was keyed on a PAIR and
+	//           a room request has none, so storing (x,x) there would have been a lie in the
+	//           schema. Nothing to do here; the mute is read at ask time. That table is gone with
+	//           migration 0026 and this is the reason nothing surviving needed it.
 	//   station does NOT mute: there is nothing to key it against, and a session with no station
 	//           has no other way to ask.
-	if kind == "link" && fromStation != nil && toStation != nil {
-		a, b := orderPair(*fromStation, *toStation)
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO station_link_denial(station_a, station_b, denial_count, muted_until, last_denied_at)
-VALUES(?,?,1, strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 hour'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-ON CONFLICT(station_a, station_b) DO UPDATE SET
-  denial_count   = station_link_denial.denial_count + 1,
-  last_denied_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-  muted_until    = strftime('%Y-%m-%dT%H:%M:%fZ','now',
-                     CASE station_link_denial.denial_count
-                       WHEN 1 THEN '+6 hours'
-                       WHEN 2 THEN '+24 hours'
-                       ELSE '+7 days'
-                     END)`, a, b); err != nil {
-			return err
-		}
-	}
+	//
+	// `kind`, fromStation and toStation are still read above because the state transition needs the
+	// row; nothing branches on them here any more.
+	_, _, _ = kind, fromStation, toStation
 	return tx.Commit()
 }
 
@@ -444,91 +431,6 @@ SELECT l.link_id, l.station_a, l.station_b,
 	return out, rows.Err()
 }
 
-// Link requests (docs/STATIONS.md S9).
-//
-// The pairing code authorizes one CONVERSATION; what the human actually decides is
-// that two posts may talk. A link makes the durable object match the decision, which
-// removes a step per conversation without removing the decision.
-
-// CreateStationLinkRequest files a request for a peer relationship.
-//
-// Three properties, and each is load-bearing:
-//
-//   - THE REASON IS NEVER DELIVERED TO THE TARGET before approval. It is stored for
-//     the human and shown only in the console. Without that rule, every request is a
-//     one-shot unauthorized message channel: A cannot talk to B, but A could put a
-//     paragraph in front of B merely by asking to.
-//   - A MUTED PAIR IS SILENTLY DROPPED, and the caller receives the ordinary
-//     "submitted, pending review" answer. Telling the caller it was muted would let a
-//     persistent session PROBE the human's past decisions, one request at a time.
-//     The mute is on the UNORDERED pair, because muting an ordered one would let the
-//     same relationship be re-asked from the other side.
-//   - hearsay MARKS THE TRANSITIVE PATH. A cannot create a channel, but A can talk B
-//     into requesting one to C, and B's request then reaches the human looking like
-//     B's own idea. Recording whether the requester was mid-conversation is the only
-//     signal the human gets that the idea may not be B's.
-//
-// Returns the request id, or ("", nil) when it was silently dropped — the caller must
-// report success either way.
-func (s *Store) CreateStationLinkRequest(ctx context.Context, tokenID, fromStation, toStation, reason string, hearsay bool) (string, error) {
-	if fromStation == "" || toStation == "" {
-		return "", errors.New("a link request needs both stations")
-	}
-	if fromStation == toStation {
-		return "", errors.New("a station cannot link to itself")
-	}
-	if _, err := s.StationByID(ctx, toStation); err != nil {
-		// Unknown target: refused, and deliberately with the SAME wording a caller
-		// would get for a station that exists but is not published, so the tool
-		// cannot be used to enumerate stations.
-		return "", errors.New("no such station is available to link to — ask your human for the exact name")
-	}
-
-	a, b := orderPair(fromStation, toStation)
-	var muted bool
-	err := s.R.QueryRowContext(ctx, `
-SELECT EXISTS(
-  SELECT 1 FROM station_link_denial
-   WHERE station_a=? AND station_b=?
-     AND muted_until IS NOT NULL
-     AND muted_until > strftime('%Y-%m-%dT%H:%M:%fZ','now'))`, a, b).Scan(&muted)
-	if err != nil {
-		return "", err
-	}
-	if muted {
-		// Silently dropped. The caller is told what every caller is told.
-		return "", nil
-	}
-
-	// An existing pending request for the same pair is not duplicated: a session that
-	// asks twice should not put two rows in front of the human to decide identically.
-	var existing string
-	err = s.R.QueryRowContext(ctx, `
-SELECT request_id FROM station_request
- WHERE kind='link' AND state='pending'
-   AND ((from_station=? AND to_station=?) OR (from_station=? AND to_station=?))`,
-		fromStation, toStation, toStation, fromStation).Scan(&existing)
-	if err == nil {
-		return existing, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
-	}
-
-	id, err := randBase62(12)
-	if err != nil {
-		return "", err
-	}
-	if _, err := s.W.ExecContext(ctx, `
-INSERT INTO station_request(request_id, kind, from_station, to_station,
-                            from_token_id, reason, prompted_by_peer_traffic)
-VALUES(?,'link',?,?,?,?,?)`,
-		id, fromStation, toStation, tokenID, reason, boolOrNilStore(hearsay)); err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
 // boolOrNilStore writes 1 or NULL rather than 1 or 0, so "not marked" and "marked
 // clean" stay distinguishable. With COMM off there is no hearsay signal at all, and a
 // column reading 0 would claim knowledge the server does not have.
@@ -537,81 +439,6 @@ func boolOrNilStore(b bool) any {
 		return 1
 	}
 	return nil
-}
-
-// ApproveLinkRequest turns a pending link request into an active link. Either side
-// may then materialize a channel without a fresh pairing code.
-func (s *Store) ApproveLinkRequest(ctx context.Context, requestID string, actorID int64) (*StationLink, error) {
-	tx, err := s.W.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var kind string
-	var from, to *string
-	err = tx.QueryRowContext(ctx,
-		`SELECT kind, from_station, to_station FROM station_request
-		  WHERE request_id=? AND state='pending'`, requestID).Scan(&kind, &from, &to)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrRequestNotPending
-	}
-	if err != nil {
-		return nil, err
-	}
-	if kind != "link" || from == nil || to == nil {
-		return nil, fmt.Errorf("request %s is not a link request", requestID)
-	}
-
-	a, b := orderPair(*from, *to)
-	linkID, err := randBase62(16)
-	if err != nil {
-		return nil, err
-	}
-	// An approval CLEARS any past denial for the pair: the human has changed their
-	// mind, and leaving the mute in place would silently drop the next request for a
-	// relationship they just allowed.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM station_link_denial WHERE station_a=? AND station_b=?`, a, b); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO station_link(link_id, station_a, station_b, approved_by_actor_id)
-VALUES(?,?,?,?)
-ON CONFLICT DO NOTHING`, linkID, a, b, actorID); err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE station_request
-   SET state='approved', decided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), decided_by_actor_id=?
- WHERE request_id=? AND state='pending'`, actorID, requestID); err != nil {
-		return nil, err
-	}
-	// THE ROSTER EPOCH MOVES. A link changes who a message can reach, which is the same
-	// kind of fact as a room membership change and is carried by the same counter — the
-	// station-link mirror in comm.db is refreshed alongside the room mirror and stamped
-	// with this generation. Without the bump a consumer comparing epochs concludes it is
-	// looking at the roster it already had, and a link approved a second ago reads as
-	// absent. Same argument, verbatim, as the archive path in stations.go.
-	if _, err := tx.ExecContext(ctx, `
-UPDATE comm_roster_epoch SET epoch = epoch + 1,
-       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1`); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-
-	var l StationLink
-	err = s.R.QueryRowContext(ctx, `
-SELECT l.link_id, l.station_a, l.station_b,
-       COALESCE(sa.name,''), COALESCE(sb.name,''), l.state, l.approved_at
-  FROM station_link l
-  LEFT JOIN station sa ON sa.station_id=l.station_a
-  LEFT JOIN station sb ON sb.station_id=l.station_b
- WHERE l.station_a=? AND l.station_b=?`, a, b).
-		Scan(&l.LinkID, &l.StationA, &l.StationB, &l.NameA, &l.NameB, &l.State, &l.ApprovedAt)
-	return &l, err
 }
 
 // AreStationsLinked reports whether an ACTIVE link joins two stations. This is the

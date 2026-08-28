@@ -55,13 +55,6 @@ type Deps struct {
 	TokenLimiter ratelimit.Limiter
 	// Metrics is optional.
 	Metrics *metrics.Registry
-	// SyncLinkMirror pushes ken.db's links into comm.db's projection. Optional; nil skips the
-	// push, and the next boot or console write rebuilds it anyway.
-	//
-	// A FUNCTION RATHER THAN A STORE HANDLE, because the projection is owned by the web layer and
-	// stamped with a roster epoch it computes. Handing this package the ability to rebuild the
-	// mirror itself would give it a second author for a table that must have exactly one.
-	SyncLinkMirror func(context.Context)
 	// MaxPollWaitSeconds bounds a long poll. Clamped server-side regardless of
 	// what an operator configures, because a wait that ties or exceeds the client's
 	// tool timeout turns a successful empty poll into a tool ERROR, which models
@@ -660,9 +653,7 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 				if created, lerr := d.Store.EnsureStationLink(ctx, ep.StationID, in.ToStation, p.ActorID); lerr != nil {
 					log.Printf("comm: auto-link %s <-> %s: %v", ep.StationID, in.ToStation, lerr)
 				} else if created {
-					if d.SyncLinkMirror != nil {
-						d.SyncLinkMirror(ctx)
-					}
+					syncLinkMirror(ctx, d)
 					log.Printf("COMM: link %s <-> %s created on first contact (actor %d) — no approval required",
 						ep.StationID, in.ToStation, p.ActorID)
 				}
@@ -1115,16 +1106,17 @@ func commError(err error) error {
 		return errors.New("file storage quota exceeded — retry later, offer a smaller file, or use a same-host path transfer")
 	case errors.Is(err, comm.ErrBadName):
 		return errors.New("invalid file name — use a bare filename: no directories, no '..', no control characters")
-	// TWO STORE SENTINELS, NAMED HERE RATHER THAN MARKED CallerSafe, because CallerSafe
-	// lives in `comm` and these are raised by `store` — which must not import the expendable
-	// package (S7's pointer rule runs comm -> store, never back). Both carry an instruction
-	// only their own text can deliver, and both reached the caller as "internal error":
-	// a session whose station was archived was told nothing, and had no way to learn that
-	// its notebook and credentials were intact and one console click would restore messaging.
+	// A STORE SENTINEL, NAMED HERE RATHER THAN MARKED CallerSafe, because CallerSafe lives in
+	// `comm` and this is raised by `store` — which must not import the expendable package (S7's
+	// pointer rule runs comm -> store, never back). It carries an instruction only its own text can
+	// deliver, and it reached the caller as "internal error": a session whose station was archived
+	// was told nothing, and had no way to learn that its notebook and credentials were intact and
+	// one console click would restore messaging.
+	//
+	// IT WAS TWO. store.ErrStationKeyRevoked went with the station keys — nothing raises it, so a
+	// case for it here would be a branch no input can reach, which reads as coverage and is not.
 	case errors.Is(err, store.ErrStationArchived):
 		return errors.New(store.ErrStationArchived.Error())
-	case errors.Is(err, store.ErrStationKeyRevoked):
-		return errors.New(store.ErrStationKeyRevoked.Error())
 	case err == nil:
 		return nil
 	default:
@@ -1225,4 +1217,42 @@ func workspaceFrom(req *mcp.CallToolRequest) string {
 		return ""
 	}
 	return strings.TrimSpace(req.Extra.Header.Get(WorkspaceHeader))
+}
+
+// syncLinkMirror pushes ken.db's active links into comm.db's projection, stamped with the current
+// roster epoch. Two reads and one write — the same three calls the console makes.
+//
+// *** IT IS A FUNCTION IN THIS PACKAGE, NOT AN INJECTED HOOK, AND THAT IS THE WHOLE POINT. ***
+//
+// It began as an optional `SyncLinkMirror func(context.Context)` on Deps, documented as "nil skips
+// the push, and the next boot or console write rebuilds it anyway". That sentence was false where
+// it mattered most: the push exists to make the link usable by the send happening ON THE NEXT LINE,
+// and a nil hook meant the row landed in ken.db while comm.db never heard, so the send refused with
+// "no approved link joins you to that station" — naming a permission as missing while it sat in
+// ken.db, created a microsecond earlier, by this handler.
+//
+// It was caught the way this class always gets caught: a test was passing for the wrong reason. The
+// HTTP send test built Deps with only Comm and Store, so its "unlinked station is refused" arm was
+// green because the harness lacked wiring production has — a refusal asserted as correct behaviour
+// that no deployment would produce.
+//
+// The original rationale was that the projection is "owned by the web layer" and one table should
+// have one author. Real, and it did not survive contact: boot writes this mirror, the console
+// writes it, and now the send path must. Three authors already, and the indirection only hid the
+// third behind a field that could be nil. Nothing here is a second AUTHORITY — the rows come from
+// ken.db, which remains the only place a link is decided.
+func syncLinkMirror(ctx context.Context, d Deps) {
+	pairs, err := d.Store.LinkMirrorRows(ctx)
+	if err != nil {
+		log.Printf("comm: read links for mirror: %v", err)
+		return
+	}
+	epoch, err := d.Store.RosterEpoch(ctx)
+	if err != nil {
+		log.Printf("comm: read roster epoch: %v", err)
+		return
+	}
+	if err := d.Comm.ReplaceLinkMirror(ctx, pairs, epoch); err != nil {
+		log.Printf("comm: push link mirror: %v", err)
+	}
 }

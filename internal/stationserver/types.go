@@ -388,20 +388,9 @@ type okOut struct {
 	OK bool `json:"ok"`
 }
 
-type linkRequestIn struct {
-	ToStation string `json:"to_station" jsonschema:"required; the station you want to be able to talk to, by NAME as your human refers to it"`
-	Reason    string `json:"reason" jsonschema:"required; why this relationship should exist. Written for YOUR HUMAN, who decides — it is never shown to the other station before they approve, so do not address it to them"`
-}
-
-type linkRequestOut struct {
-	Status string `json:"status"`
-	Note   string `json:"note,omitempty"`
-}
-
 // roomRequestIn CARRIES NO STATION, and its absence is the design rather than an omission. A room
 // request that named members would put an agent in charge of who talks to whom — the one thing
-// migration 0017's surviving argument says an agent must not decide — and would reintroduce the
-// enumeration oracle StationByNameVisibleTo exists to close on the link path.
+// migration 0017's surviving argument says an agent must not decide.
 type roomRequestIn struct {
 	Reason   string `json:"reason" jsonschema:"required; why a room should exist and who it is for, in words. Written for YOUR HUMAN, who decides — it is never delivered to anyone else, so do not address it to a peer"`
 	NameHint string `json:"name_hint" jsonschema:"optional; a suggested name. NON-BINDING — your human types the real one and may ignore this entirely"`

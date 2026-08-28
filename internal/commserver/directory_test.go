@@ -65,11 +65,7 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 	peer := mk("linked-peer", false)
 	mk("unpublished-stranger", false)
 
-	reqID, err := st.CreateStationLinkRequest(ctx, "tok", mine.StationID, peer.StationID, "r", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.ApproveLinkRequest(ctx, reqID, actor); err != nil {
+	if _, err := st.EnsureStationLink(ctx, mine.StationID, peer.StationID, actor); err != nil {
 		t.Fatal(err)
 	}
 

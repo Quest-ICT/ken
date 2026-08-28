@@ -63,7 +63,6 @@ func TestEveryCallerFacingRefusalSurvivesTheMapper(t *testing.T) {
 		{"comm.ErrUnknownStation", comm.ErrUnknownStation},
 		{"comm.ErrRoomEmpty", comm.ErrRoomEmpty},
 		{"comm.ErrNoAudience", comm.ErrNoAudience},
-		{"store.ErrStationKeyRevoked", store.ErrStationKeyRevoked},
 		{"store.ErrStationArchived", store.ErrStationArchived},
 		{"CallerSafe ChannelFor room-as-channel", comm.CallerSafe(fmt.Errorf("%w: %q is a ROOM, not a channel", comm.ErrNotFound, "r1"))},
 	}

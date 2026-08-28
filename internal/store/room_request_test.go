@@ -186,33 +186,37 @@ func TestARoomRequestNeedsAReason(t *testing.T) {
 	}
 }
 
-// APPROVING WITH THE WRONG FUNCTION FAILS LOUDLY, like its siblings. The console dispatches on a
+// APPROVING WITH THE WRONG FUNCTION FAILS LOUDLY, like its sibling. The console dispatches on a
 // form field, and a mis-filled form must not take the wrong branch silently.
+//
+// The other kind used to be 'link'. Link requests are retired — links are created on first contact
+// — so the surviving pair is 'station' against 'room', and that is what this crosses now. The
+// property is unchanged: each approval names the kind it actually found.
 func TestApproveRoomRequestRefusesOtherKinds(t *testing.T) {
 	st, ctx, actorID, from := roomReqFixture(t)
 	other, err := st.CreateStation(ctx, "peer", "", actorID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	linkID, err := st.CreateStationLinkRequest(ctx, "tok", from, other.StationID, "let us talk", false)
+	stationID, err := st.CreateStationRequest(ctx, "tok", from, "a-post", "I need a post")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = st.ApproveRoomRequest(ctx, linkID, "ops", actorID)
+	_, err = st.ApproveRoomRequest(ctx, stationID, "ops", actorID)
 	if err == nil {
-		t.Fatal("a LINK request was approved as a room — the console would create a room for a request that asked for a relationship")
+		t.Fatal("a STATION request was approved as a room — the console would create a room for a request that asked for a post")
 	}
-	if !strings.Contains(err.Error(), "link") {
+	if !strings.Contains(err.Error(), "station") {
 		t.Errorf("the refusal does not say what kind it actually is: %v", err)
 	}
 
-	// And the mirror: a room request must not be approvable as a link.
+	// And the mirror: a room request must not be approvable as a station.
 	roomID, err := st.CreateRoomRequest(ctx, "tok", other.StationID, "", "we need a room", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ApproveLinkRequest(ctx, roomID, actorID); err == nil {
-		t.Error("a ROOM request was approved as a link")
+	if _, err := st.ApproveStationRequest(ctx, roomID, "some-name", actorID); err == nil {
+		t.Error("a ROOM request was approved as a station")
 	}
 }
 

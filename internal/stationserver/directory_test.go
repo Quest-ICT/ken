@@ -60,11 +60,7 @@ func dirSession(t *testing.T, staffing func(context.Context) (map[string]Station
 	ids["mine"], ids["published-stranger"] = mine.StationID, pub.StationID
 	ids["linked-peer"], ids["unpublished-stranger"] = peer.StationID, hidden.StationID
 
-	reqID, err := st.CreateStationLinkRequest(ctx, "tok", mine.StationID, peer.StationID, "r", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.ApproveLinkRequest(ctx, reqID, actorID); err != nil {
+	if _, err := st.EnsureStationLink(ctx, mine.StationID, peer.StationID, actorID); err != nil {
 		t.Fatal(err)
 	}
 	key, err := st.IssueToken(ctx, actorID, []string{ScopeStation}, "test")

@@ -230,56 +230,6 @@ func newServer(d Deps) *mcp.Server {
 func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
-		Name: "station_link_request",
-		Description: "Ask your human to let this station talk to another one. An approved link is a standing " +
-			"relationship: either side can then open a channel when it needs one, with no pairing code. The reason " +
-			"you give is shown to YOUR HUMAN only and is never delivered to the other station, so write it for the " +
-			"person deciding, not for the peer. You will be told it is pending either way — do not re-ask in a loop.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in linkRequestIn) (*mcp.CallToolResult, linkRequestOut, error) {
-		p, err := requireStation(ctx, req)
-		if err != nil {
-			return nil, linkRequestOut{}, err
-		}
-		if strings.TrimSpace(in.Reason) == "" {
-			return nil, linkRequestOut{}, errors.New("a reason is required — your human decides on it, and an unexplained request is one they cannot judge")
-		}
-		// RESOLVED AMONG WHAT THIS CALLER CAN ALREADY SEE, never by bare name.
-		//
-		// StationByName's own contract says "For CONSOLE and CLI use only: a name is not an
-		// address, and no agent-facing path may route by it (S3)" — and this line called it
-		// until 2026-08-19. Because that query filters on name alone, a name that
-		// existed produced a filed request and one that did not produced a refusal: an
-		// enumeration oracle over every station name in the space, INCLUDING the ones
-		// withheld from station_directory. And the filed request was the worse half — a
-		// correct guess put an agent-authored ask for an unpublished post in front of its
-		// human, which is exactly the unsolicited approach publication exists to prevent.
-		//
-		// Now a station the caller cannot see is indistinguishable from one that does not
-		// exist: both arrive here as an error and both get the single refusal below. The
-		// discovery surface is station_directory, gated per asker, which is where finding
-		// out that a station exists is supposed to happen.
-		target, err := d.Store.StationByNameVisibleTo(ctx, p.StationID, strings.TrimSpace(in.ToStation))
-		if err != nil {
-			return nil, linkRequestOut{}, errors.New("no such station is available to link to — ask your human for the exact name")
-		}
-		// The hearsay marker, resolved the same way a note or task resolves it. This
-		// is the ONLY signal the human gets that the request may not be this session's
-		// own idea: a peer cannot open a channel, but it can talk this session into
-		// asking for one, and the request then arrives looking like its own.
-		if _, err := d.Store.CreateStationLinkRequest(ctx, p.TokenID,
-			p.StationID, target.StationID, in.Reason, hearsayFor(ctx, d, p)); err != nil {
-			return nil, linkRequestOut{}, err
-		}
-		// Identical answer whether the request was filed or silently dropped against a
-		// muted pair. A caller that could tell the difference could probe the human's
-		// past refusals one request at a time.
-		return nil, linkRequestOut{
-			Status: "pending",
-			Note:   "Submitted for your human to decide. Tell them in words that you asked and why — this tool result reaches nobody otherwise. Do not ask again for this station.",
-		}, nil
-	})
-
-	addTool(s, d, &mcp.Tool{
 		Name: "station_room_request",
 		Description: "Ask your human to create a ROOM — a group your station can broadcast to, where one message " +
 			"reaches every member and each of them acknowledges for itself. Use it when you need to reach SEVERAL " +

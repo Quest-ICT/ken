@@ -237,15 +237,6 @@
             </div>
             <button class="btn btn--primary" type="submit" title="{{$.T "stations.room_approve_help"}}">{{$.T "stations.room_approve"}}</button>
           </form>
-          {{else if eq .Kind "link"}}
-          <p class="cell-title"><b class="mono">{{.FromName}}</b> {{$.T "stations.link_wants"}} <b class="mono">{{.ToName}}</b></p>
-          <p class="help">{{$.T "stations.link_help"}}</p>
-          <p class="help">{{$.T "stations.link_grants"}}</p>
-          <form method="post" action="/stations/requests/{{.RequestID}}/approve">
-            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-            <input type="hidden" name="kind" value="link">
-            <button class="btn btn--primary" type="submit" title="{{$.T "stations.link_approve_help"}}">{{$.T "stations.link_approve"}}</button>
-          </form>
           {{else}}
           <form method="post" action="/stations/requests/{{.RequestID}}/approve">
             <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
@@ -316,21 +307,14 @@
           </p>
           {{if .LastActivityAt}}<p class="help">{{$.T "stations.last_activity"}}: {{localtime .LastActivityAt}}</p>{{end}}
 
-          <!-- THE KEYS TABLE IS GONE. A station has no credentials of its own; the session
-               that staffs it authenticates with the one OAuth grant. -->
+          <!-- THE KEYS TABLE AND THE MINT FORM ARE BOTH GONE. A station has no credentials of its
+               own; the session that staffs it authenticates with the one OAuth grant.
 
-
-          <!-- mint a key -->
-          <form method="post" action="/stations/{{.StationID}}/key">
-            <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-            <div class="field">
-              <label for="k-{{.StationID}}">{{$.T "stations.key_new_label"}}</label>
-              <input class="input" id="k-{{.StationID}}" name="label" type="text" required
-                     placeholder="laptop" title="{{$.T "stations.key_new_label_help"}}">
-              <span class="help">{{$.T "stations.key_new_label_help"}}</span>
-            </div>
-            <button class="btn" type="submit" title="{{$.T "stations.key_mint_help"}}">{{$.T "stations.key_mint"}}</button>
-          </form>
+               The table was removed with the keys and this comment was written to say so — while
+               the mint form sat four lines below it, still POSTing to /stations/{id}/key, a route
+               that no longer existed. A comment asserting completeness, immediately contradicted
+               by the markup it introduced. TestEveryFormActionHasARoute now checks this class
+               mechanically, because prose plainly cannot. -->
 
           <!-- VAULT. Metadata only: the view model is ListStationVault, which cannot
                return a value, so no rendering mistake here can spill one. A secret

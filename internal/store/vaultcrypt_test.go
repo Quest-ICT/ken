@@ -261,11 +261,7 @@ func TestASecretCannotBeSentToTheSendersOwnVault(t *testing.T) {
 // predicate rather than on a fixture that fakes it.
 func linkStations(t *testing.T, st *Store, ctx context.Context, a, b string, actor int64) {
 	t.Helper()
-	id, err := st.CreateStationLinkRequest(ctx, "tok", a, b, "test", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.ApproveLinkRequest(ctx, id, actor); err != nil {
+	if _, err := st.EnsureStationLink(ctx, a, b, actor); err != nil {
 		t.Fatal(err)
 	}
 }

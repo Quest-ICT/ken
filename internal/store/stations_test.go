@@ -119,23 +119,23 @@ func TestSelfDescriptionIsStoredInClaimNamedColumns(t *testing.T) {
 	}
 }
 
-// *** AN UNPUBLISHED, UNLINKED STATION IS NOT REACHABLE BY NAME — THE PRECONDITION §6 OMITS. ***
+// *** AN UNPUBLISHED, UNLINKED STATION IS REACHABLE NOW — THE PRECONDITION IS GONE. ***
 //
-// ken-prod-ops found this while planning the acceptance test and said plainly that they had NOT
-// watched it fail: "the code says it cannot resolve; I did not watch it fail." This is that
-// watching, because a gate nobody has seen refuse is a gate nobody has tested.
+// This test used to assert the opposite, and it was right to: station_link_request resolved names
+// through a narrowed lookup so that a correct guess could not "put an agent-authored ask for an
+// unpublished post in front of its human". ken-prod-ops had found the gate untested and said
+// plainly they had not watched it fail — "the code says it cannot resolve; I did not watch it
+// fail" — and this was that watching.
 //
-// IT IS DELIBERATE, NOT A DEFECT. station_link_request's own comment: a correct guess would "put
-// an agent-authored ask for an unpublished post in front of its human, which is exactly the
-// unsolicited approach publication exists to prevent." So publication is the control that stops a
-// session cold-calling a human it found by guessing a name.
+// Both the tool and the narrowed resolver are gone. There is no request to file, so a guessed name
+// buys nothing, and the directory lists the estate to the one human who owns all of it.
 //
-// WHAT IT COSTS, AND WHY IT IS WORTH A TEST: IDENTITY.md §6 promises "two workspaces talking →
-// one, once per pair" and does not mention that the target must first be published. Publication is
-// once per STATION rather than once per pair — amortised, not repeated — but it is a real console
-// action, and an acceptance test counting approvals against §6 alone would score a correct system
-// as one approval over budget.
-func TestAnUnpublishedUnlinkedStationCannotBeFoundByName(t *testing.T) {
+// WHAT THE OLD TEST WAS REALLY MEASURING was a COST: IDENTITY.md §6 promised "two stations talking
+// → one approval, once per pair" and did not mention that the target must first be published, so
+// an acceptance test counting approvals against §6 would score a correct system as one over
+// budget. That cost is now zero, which is the fact worth pinning — a station nobody published and
+// nobody linked is discoverable, and discoverable is what §6's count depends on.
+func TestAnUnpublishedUnlinkedStationIsStillDiscoverable(t *testing.T) {
 	st, ctx, actorID := stationFixture(t)
 	seeker, err := st.CreateStation(ctx, "seeker", "", actorID)
 	if err != nil {
@@ -146,40 +146,39 @@ func TestAnUnpublishedUnlinkedStationCannotBeFoundByName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// DEFAULT IS UNPUBLISHED. Asserted rather than assumed — the whole finding rests on it.
+	// DEFAULT IS UNPUBLISHED. Asserted rather than assumed — without it this test would pass on a
+	// system where every new station is published, which would prove nothing about the filter.
 	var published int
 	if err := st.R.QueryRowContext(ctx,
 		`SELECT published FROM station WHERE station_id=?`, target.StationID).Scan(&published); err != nil {
 		t.Fatal(err)
 	}
 	if published != 0 {
-		t.Fatalf("a new station is published=%d; this test and the finding behind it assume 0", published)
+		t.Fatalf("a new station is published=%d; this test assumes 0, or it is not testing an unpublished station at all", published)
 	}
 
-	if _, err := st.StationByNameVisibleTo(ctx, seeker.StationID, "quiet-post"); err == nil {
-		t.Fatal("an unpublished, unlinked station resolved by name — a session could file a link " +
-			"request against a human who never advertised that post")
-	}
-
-	// CONTROL 1: publishing makes it resolvable. Without this the refusal above could be caused
-	// by a typo, a missing fixture, or any other error, and would pass for the wrong reason.
-	if err := st.SetStationPublished(ctx, target.StationID, true); err != nil {
+	list, err := st.ListStationsVisibleTo(ctx, seeker.StationID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.StationByNameVisibleTo(ctx, seeker.StationID, "quiet-post"); err != nil {
-		t.Fatalf("after publishing, the same lookup must succeed — otherwise the refusal proved "+
-			"nothing about publication: %v", err)
+	var found *DirectoryEntry
+	for i := range list {
+		if list[i].Name == "quiet-post" {
+			found = &list[i]
+		}
 	}
-
-	// CONTROL 2: an ACTIVE LINK is the other half of the predicate, so an unpublished station
-	// already linked to the seeker stays reachable. This is what makes publication a ONE-TIME
-	// cost rather than a permanent requirement.
-	if err := st.SetStationPublished(ctx, target.StationID, false); err != nil {
-		t.Fatal(err)
+	if found == nil {
+		t.Fatal("an unpublished, unlinked station is absent from the directory — a session cannot " +
+			"address a peer it was never told about, and removing the approval gate would have " +
+			"moved the wall rather than removed it")
 	}
-	linkStations(t, st, ctx, seeker.StationID, target.StationID, actorID)
-	if _, err := st.StationByNameVisibleTo(ctx, seeker.StationID, "quiet-post"); err != nil {
-		t.Errorf("an unpublished station the seeker is LINKED to must stay visible, or a pair "+
-			"would need re-publishing forever: %v", err)
+	// AND IT IS HONEST ABOUT THE TWO FACTS IT DID NOT CHANGE. Listing a station is not claiming a
+	// relationship with it; if these came back true the directory would be reporting a permission
+	// nobody granted.
+	if found.Published {
+		t.Error("the unpublished station reports published=true")
+	}
+	if found.Linked {
+		t.Error("a station with no link reports linked=true — discovery and permission are being conflated")
 	}
 }

@@ -88,26 +88,19 @@ func TestSendToStationOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reqID, err := st.CreateStationLinkRequest(ctx, "tok", alpha.StationID, beta.StationID, "because", false)
-	if err != nil {
+	if _, err := st.EnsureStationLink(ctx, alpha.StationID, beta.StationID, actor); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.ApproveLinkRequest(ctx, reqID, actor); err != nil {
-		t.Fatal(err)
-	}
-	// A FOURTH STATION, LINKED TO BETA BUT NOT TO ALPHA. Without it "not linked" and
-	// "unknown station" cannot be told apart in a test, and telling them apart is the
-	// entire reason there are two errors: a typo the session fixes in one call versus a
-	// human approval it cannot retry into existence.
+	// A FOURTH STATION, LINKED TO BETA BUT NOT TO ALPHA. It used to exist so "not linked" and
+	// "unknown station" could be told apart. Auto-linking took that job away — a station alpha has
+	// never contacted is now the FIRST-CONTACT case, not a refusal — so delta is the subject of
+	// that arm instead, and afterwards of the suspended-link arm which is the only way to reach
+	// ErrNotLinked at all now.
 	delta, err := st.CreateStation(ctx, "delta", "", actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqBD, err := st.CreateStationLinkRequest(ctx, "tok", beta.StationID, delta.StationID, "because", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.ApproveLinkRequest(ctx, reqBD, actor); err != nil {
+	if _, err := st.EnsureStationLink(ctx, beta.StationID, delta.StationID, actor); err != nil {
 		t.Fatal(err)
 	}
 
@@ -345,8 +338,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 		name, toStation, want string
 	}{
 		{"self", alpha.StationID, "that is your own station"},
-		{"unknown", "st-no-such-station-here", "no station with that id appears in any approved link"},
-		{"unlinked", delta.StationID, "no approved link joins you to that station"},
+		{"unknown", "st-no-such-station-here", "no station with that id is known here"},
 	} {
 		res, err := sessA.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "comm_send",
@@ -375,6 +367,79 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	// address one — a fact about a state that no longer exists, since a station comes with a
 	// mailbox and there is no way to hold one without the other.
 
+	// *** THE "UNLINKED" ARM IS NOW A SUCCESS ARM, AND IT WAS GREEN FOR THE WRONG REASON. ***
+	//
+	// It asserted that a send to delta — a station linked to beta, never to alpha — was refused
+	// with "no approved link joins you to that station". It kept passing after auto-linking
+	// shipped, because this harness built Deps with only Comm and Store while the auto-link push
+	// went through an OPTIONAL SyncLinkMirror hook that was nil here. So the link landed in ken.db,
+	// comm.db never heard, and the send refused — a refusal no deployment would ever produce,
+	// asserted as correct behaviour.
+	//
+	// That is the same silent-instrument shape this file already carries two scars from: the check
+	// and the thing being checked rendered identically. The hook is gone; the send path pushes the
+	// mirror itself, so no harness can be missing the wiring production has.
+	//
+	// FIRST CONTACT IS ASSERTED END TO END, and the link is read back from ken.db afterwards. A
+	// send that succeeded would be worth little on its own: what makes it the acceptance test for
+	// this whole wave is that the ROW EXISTS, active, created by nothing but the message.
+	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{
+		Name: "comm_send",
+		Arguments: map[string]any{"session_key": credA, "to_station": delta.StationID,
+			"body": "first contact", "idempotency_key": "p2-first-contact"},
+	})
+	if err != nil {
+		t.Fatalf("first contact was rejected before the handler ran: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("a send to a station with NO prior link was refused: %s.\n"+
+			"Links are created on first contact now — a refusal here means the send path created "+
+			"the row and never told comm.db, which is a permission that exists and cannot be spent.",
+			textOf(res))
+	}
+	linksNow, err := st.ListStationLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var madeByContact bool
+	for _, l := range linksNow {
+		if (l.StationA == alpha.StationID && l.StationB == delta.StationID) ||
+			(l.StationA == delta.StationID && l.StationB == alpha.StationID) {
+			madeByContact = true
+			if l.State != "active" {
+				t.Errorf("the link created on first contact is %q, want active", l.State)
+			}
+		}
+	}
+	if !madeByContact {
+		t.Error("the message went through and left no link — the audit trail Vlad kept the concept " +
+			"for is the only record that these two stations ever started talking")
+	}
+
+	// AND THE OFF-SWITCH STILL STOPS IT, which is the half that makes the success above safe.
+	// Without this arm, "everything is permitted" would pass this test just as well.
+	suspendMe := linkBetweenStations(t, st, ctx, alpha.StationID, delta.StationID)
+	if err := st.SetStationLinkSuspended(ctx, suspendMe, true); err != nil {
+		t.Fatal(err)
+	}
+	syncLinkMirror(ctx, Deps{Comm: cs, Store: st})
+	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{
+		Name: "comm_send",
+		Arguments: map[string]any{"session_key": credA, "to_station": delta.StationID,
+			"body": "after suspension", "idempotency_key": "p2-after-suspend"},
+	})
+	if err != nil {
+		t.Fatalf("transport error on the suspended-link arm: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("a send over a SUSPENDED link succeeded — auto-linking re-created what a human " +
+			"turned off, which makes the off-switch a button that does nothing")
+	}
+	if got := textOf(res); !strings.Contains(got, "SUSPENDED") {
+		t.Errorf("the refusal for a suspended link reads %q — it must say a human turned this off, "+
+			"because the one thing a session must NOT do here is retry", got)
+	}
+
 	// THE ARITHMETIC. Two addresses together must be REFUSED — this is the case the old
 	// two-way boolean identity would have admitted once a third address existed.
 	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{
@@ -392,4 +457,20 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	if err == nil && !res.IsError {
 		t.Fatal("comm_send accepted a message with no address")
 	}
+}
+
+// linkBetweenStations returns the link id joining two stations, failing loudly when there is none.
+func linkBetweenStations(t *testing.T, st *store.Store, ctx context.Context, x, y string) string {
+	t.Helper()
+	all, err := st.ListStationLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range all {
+		if (l.StationA == x && l.StationB == y) || (l.StationA == y && l.StationB == x) {
+			return l.LinkID
+		}
+	}
+	t.Fatalf("no link between %s and %s", x, y)
+	return ""
 }

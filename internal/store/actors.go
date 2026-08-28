@@ -2,74 +2,11 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
-	"time"
 )
 
-// voucherHash is what is stored. Same treatment as every other secret in this
-// codebase — see IssueStationKey and the session-id hashing added in 1.4.1.
-func voucherHash(v string) string {
-	sum := sha256.Sum256([]byte(v))
-	return hex.EncodeToString(sum[:])
-}
-
-// Binding vouchers (docs/STATIONS.md S5).
-//
-// The problem this solves: an endpoint should belong to a station, but the only
-// credential that proves station membership is the station key — and that key must
-// never appear as a tool argument. Tool arguments are model output; they land in
-// transcripts, harness logs and scrollback, and via the notebook potentially in a
-// backup. The key travels as an Authorization header on /station and nowhere else.
-//
-// So the session asks /station — where its key already is, in the header — for a
-// short-lived single-use voucher, and passes THAT to comm_register on the other
-// surface. The blast radius of a leaked voucher is one binding inside a few
-// minutes; the blast radius of a leaked station key is the station.
-
-// VoucherTTL is deliberately short. A voucher is redeemed by the same session that
-// asked for it, in its very next tool call, so minutes is generous — and every
-// additional minute is time a value sitting in a transcript stays live.
-const VoucherTTL = 5 * time.Minute
-
-// --- THE BINDING-VOUCHER CHAIN WAS DELETED HERE, 2026-08-25 (docs/IDENTITY.md §10 step 3) ---
-//
-// It was the single largest safe deletion the design identified, and §9.2 stated its one
-// condition: "The voucher exists SOLELY so a station key never crosses to the comm surface as a
-// tool argument. Nothing to hand across, nothing to hand it with."
-//
-// Step 2 gave one identity all three surfaces. Step 4 replaced the per-folder station KEY with a
-// workspace id in a header that authorises nothing. So there stopped being a key to keep off the
-// comm surface, and the voucher had nothing left to carry.
-//
-// What went: IssueBindingVoucher, RedeemBindingVoucher, SweepBindingVouchers, the 5-minute TTL,
-// single-use redemption, endpoint pinning, actor matching, hash-at-rest, the hourly janitor sweep,
-// and ErrVoucherInvalid / ErrVoucherNotForThisEndpoint / ErrVoucherNotYours — four sentinels whose
-// careful wording existed only to tell a session which way a voucher had failed.
-//
-// WHAT REPLACES IT IS NOT A SMALLER CREDENTIAL, IT IS NO CREDENTIAL. comm_bind reads
-// X-Ken-Workspace off the request, checks the workspace is live, and binds with an EMPTY
-// bound_by_station_key_id — no key authorised it, so no key can sever it. Revocation moved to the
-// credential that owns the endpoint.
-//
-// THE TABLE IS STILL THERE. Dropping station_binding_voucher is a schema change, and Rule 4 says a
-// release carrying one carries nothing else — so it ships alone, later. Nothing reads it now; the
-// rows are inert.
-//
-// The chain is recoverable from git if the design ever reverses: it lived in this file up to
-// commit c447808.
-// ErrStationKeyRevoked is returned to a caller whose station key has been revoked.
-// It is DISTINGUISHABLE from an ordinary auth failure on purpose (S6): a model that
-// is told its key was revoked reports that to its human, while one that merely sees
-// "invalid" retries in a loop. This does not weaken §5's unprobeability, because it
-// is returned only AFTER the endpoint's own secret has verified — it informs a
-// proven holder and tells a prober nothing.
-var ErrStationKeyRevoked = errors.New("the station key that bound this endpoint has been revoked — tell your human; you cannot reconnect with it, and a new key must be minted from the console")
-
-// ActorCandidate is an actor that could own a station key, with whether it already
-// holds a comm token — which is the thing that has to match (S5).
+// ActorCandidate is an actor the console can act on, with whether it already holds a comm token.
 type ActorCandidate struct {
 	ID       int64
 	Kind     string
