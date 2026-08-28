@@ -73,31 +73,14 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 		t.Fatal(err)
 	}
 
-	// One endpoint, bound to the caller's own station. Nobody staffs the peer, which
-	// is the third refusal branch.
-	// The endpoint must be OWNED BY THE TOKEN that will call the tools; every tool
-	// re-checks that binding. Deriving the owner from the authenticated principal is
-	// what the real registration path does, and inventing a token id here would make
-	// every call fail with "endpoint does not belong to this token" instead of
-	// reaching the code under test.
+	// NO ENDPOINT TO REGISTER AND NOTHING TO BIND. A station comes with a mailbox, so the fixture
+	// claims the caller's station for a conversation and passes that key. What used to be four
+	// steps — register, mint a station key, bind, remember the secret — is one.
 	prin, err := authenticate(ctx, st, tok, ScopeComm)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID}, "me", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A REAL station key, not an invented id. Binding records the key that did it and
-	// every later call re-checks whether that key was revoked (S6, fail-closed by
-	// construction) — so a fabricated id makes every subsequent tool call fail at
-	// AUTH, which would make any test of a later refusal pass for the wrong reason.
-	keyStr, err := st.IssueStationKey(ctx, actor, mine.StationID, "test", []string{"station"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyID := strings.Split(strings.TrimPrefix(keyStr, "kens_"), "_")[0]
-	if err := cs.BindEndpointToStation(ctx, ep.EndpointID, mine.StationID, keyID); err != nil {
+	if _, _, err := st.ClaimStationForSession(ctx, "conv-dir", "mine", prin.ActorID, mine.StationID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,14 +99,14 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 	}
 	t.Cleanup(func() { sess.Close() })
 
-	dirEP, dirSecret, dirComm, dirStation = ep.EndpointID, secret, cs, mine.StationID
+	dirComm, dirStation = cs, mine.StationID
 	return sess, st, ctx
 }
 
-// Set by dirHarness. Tests in this file run sequentially within the package, and each
-// builds its own harness, so a package-level pair is simpler than threading creds
-// through every call site.
-var dirEP, dirSecret string
+// dirKey is the conversation key the harness claimed the caller's station with. It replaces the
+// endpoint id and secret this file used to carry: there is no endpoint credential, and a station is
+// named by the conversation holding it.
+const dirKey = "conv-dir"
 
 // dirComm is the harness's comm store, exposed so a test can seed room membership
 // through ReplaceRoomMirror — the same projection the running server reads — rather than
@@ -135,7 +118,7 @@ var dirComm *comm.Store
 var dirStation string
 
 func dirCreds() map[string]any {
-	return map[string]any{"endpoint_id": dirEP, "endpoint_secret": dirSecret}
+	return map[string]any{"session_key": dirKey}
 }
 
 // comm_open_channel must refuse every unavailable target IDENTICALLY.
@@ -263,4 +246,13 @@ func TestCommDirectoryListsOnlyWhatTheAskerMaySee(t *testing.T) {
 	} else if *e.Staffed {
 		t.Error("a station with no endpoint reports staffed=true")
 	}
+}
+
+// dirMailbox returns the harness station's mailbox.
+//
+// It replaces AuthenticateEndpoint(dirEP, dirSecret). There is no endpoint credential to
+// authenticate with — a station comes with a mailbox, so the lookup is by station.
+func dirMailbox(t *testing.T, ctx context.Context) (*comm.Endpoint, error) {
+	t.Helper()
+	return dirComm.MailboxFor(ctx, dirStation, comm.Owner{TokenID: "tok", ActorID: 1})
 }

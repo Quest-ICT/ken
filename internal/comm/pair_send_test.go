@@ -160,25 +160,8 @@ func TestRevokingTheLinkStopsTheNextSend(t *testing.T) {
 	}
 }
 
-// An endpoint with no station has no identity to be linked WITH, and the error must say
-// so rather than blame a missing human approval.
-func TestAnUnboundEndpointCannotAddressAStation(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	ep, secret, err := st.RegisterEndpoint(ctx, owner("tok-x"), "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bound, err := st.AuthenticateEndpoint(ctx, ep.EndpointID, secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	linkFixture(t, st, [2]string{"st-alpha", "st-beta"})
-
-	if _, err := st.SendToStation(ctx, bound, "st-beta", "hi", SendOpts{}); !errors.Is(err, ErrNotAStation) {
-		t.Fatalf("err = %v, want ErrNotAStation", err)
-	}
-}
+// TestAnUnboundEndpointCannotAddressAStation IS DELETED. A mailbox cannot exist without a station,
+// so the sender it guarded against cannot be constructed.
 
 // A station addressing itself would receive its own message back as peer mail.
 func TestAStationCannotAddressItself(t *testing.T) {
@@ -257,11 +240,11 @@ func TestPairsForListsTheLinkedPeersAndTheirPendingMail(t *testing.T) {
 func TestPairsForIsEmptyRatherThanFailingForAnUnboundEndpoint(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
-	ep, secret, err := st.RegisterEndpoint(ctx, owner("tok-x"), "", "")
+	ep, err := st.MailboxFor(ctx, "tok-x", owner("tok-x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	bound, err := st.AuthenticateEndpoint(ctx, ep.EndpointID, secret)
+	bound, err := st.MailboxFor(ctx, ep.StationID, owner("tok"))
 	if err != nil {
 		t.Fatal(err)
 	}

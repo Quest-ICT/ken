@@ -27,14 +27,8 @@ func owner(token string) Owner { return Owner{TokenID: token, ActorID: 7} }
 func pair(t *testing.T, st *Store) (*Endpoint, *Endpoint, string) {
 	t.Helper()
 	ctx := context.Background()
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
-	if err != nil {
-		t.Fatalf("register a: %v", err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "test", "")
-	if err != nil {
-		t.Fatalf("register b: %v", err)
-	}
+	a := mailbox(t, st, "dev", "tok-a")
+	b := mailbox(t, st, "test", "tok-b")
 	code, err := st.MintPairingCode(ctx, 42, "dev<->test")
 	if err != nil {
 		t.Fatalf("mint: %v", err)
@@ -63,55 +57,35 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestEndpointAuthentication(t *testing.T) {
-	ctx := context.Background()
+// TestEndpointAuthentication IS DELETED. There is no endpoint credential to authenticate: a
+// caller proves an OAuth grant and names a station, and the mailbox follows from the station.
+
+// *** ONE STATION, ONE MAILBOX — AND THIS TEST ASSERTED THE OPPOSITE UNTIL TODAY. ***
+//
+// It was TestRegisterNeverReusesAnEndpoint, and it was right under the old model: registering
+// twice with the same label had to mint DISTINCT endpoints, because attaching to the existing one
+// would hand a second session the first session's inbox. That accident is what the endpoint secret
+// existed to prevent.
+//
+// The accident cannot occur now. station.session_key is UNIQUE, so one station is held by exactly
+// one conversation, and the mailbox belongs to the station rather than to whoever asked for it. So
+// the property inverts: asking twice for the same station's mailbox MUST return the same one, or
+// nothing is intrinsic and a session would accumulate inboxes it cannot read.
+func TestAStationHasExactlyOneMailbox(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 
-	ep, secret, err := st.RegisterEndpoint(ctx, owner("tok"), "dev", "hint")
-	if err != nil {
-		t.Fatalf("register: %v", err)
+	a := mailbox(t, st, "stn-same", "tok")
+	b := mailbox(t, st, "stn-same", "tok")
+	if a.EndpointID != b.EndpointID {
+		t.Fatalf("a station got two mailboxes (%s and %s) — mail would land in one and be read "+
+			"from the other", a.EndpointID, b.EndpointID)
 	}
-
-	got, err := st.AuthenticateEndpoint(ctx, ep.EndpointID, secret)
-	if err != nil {
-		t.Fatalf("authenticate: %v", err)
-	}
-	if got.ID != ep.ID || got.Label != "dev" || got.HostHint != "hint" {
-		t.Fatalf("round-trip mismatch: %+v", got)
-	}
-
-	if _, err := st.AuthenticateEndpoint(ctx, ep.EndpointID, "wrong"); !errors.Is(err, ErrDenied) {
-		t.Fatalf("wrong secret: want ErrDenied, got %v", err)
-	}
-	if _, err := st.AuthenticateEndpoint(ctx, "nosuchendpoint", secret); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("unknown endpoint: want ErrNotFound, got %v", err)
-	}
-
-	if err := st.RevokeEndpoint(ctx, ep.EndpointID); err != nil {
-		t.Fatalf("revoke: %v", err)
-	}
-	if _, err := st.AuthenticateEndpoint(ctx, ep.EndpointID, secret); !errors.Is(err, ErrDenied) {
-		t.Fatalf("revoked endpoint: want ErrDenied, got %v", err)
-	}
-}
-
-// A second registration under the same token and label must mint a DISTINCT
-// endpoint. Attaching to the existing one would hand a second session the first
-// session's inbox — the accident this guards against.
-func TestRegisterNeverReusesAnEndpoint(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok"), "same-label", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok"), "same-label", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.EndpointID == b.EndpointID {
-		t.Fatal("same endpoint returned for a duplicate label — inbox collision")
+	// CONTROL: two stations get two mailboxes. Without this the test would pass against an
+	// implementation that returned one mailbox to everybody.
+	c := mailbox(t, st, "stn-other", "tok")
+	if c.EndpointID == a.EndpointID {
+		t.Fatal("two stations share one mailbox — they would read each other's inboxes, which is " +
+			"precisely what the endpoint secret used to exist to prevent")
 	}
 }
 
@@ -138,10 +112,7 @@ func TestPairingCodeIsSingleUseByTwoEndpoints(t *testing.T) {
 	}
 
 	// A third endpoint cannot take a seat on the already-open channel.
-	c, _, err := st.RegisterEndpoint(ctx, owner("tok-c"), "intruder", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := mailbox(t, st, "intruder", "tok-c")
 	if _, _, err := st.ChannelFor(ctx, c, channelID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-member must not resolve the channel: got %v", err)
 	}
@@ -151,10 +122,7 @@ func TestPairingCodeIsSingleUseByTwoEndpoints(t *testing.T) {
 func TestUnknownOrExpiredCodeIsIndistinguishable(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok"), "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := mailbox(t, st, "dev", "tok")
 	if _, err := st.JoinChannel(ctx, a, "nosuchcode"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
@@ -163,10 +131,7 @@ func TestUnknownOrExpiredCodeIsIndistinguishable(t *testing.T) {
 	l := DefaultLimits()
 	l.PairingCodeTTLSeconds = -1
 	st2 := newStore(t, l)
-	a2, _, err := st2.RegisterEndpoint(ctx, owner("tok"), "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a2 := mailbox(t, st2, "dev", "tok")
 	code, err := st2.MintPairingCode(ctx, 42, "")
 	if err != nil {
 		t.Fatal(err)
@@ -755,7 +720,7 @@ func TestConsoleFingerprint(t *testing.T) {
 	}
 
 	// Registering an endpoint is console-visible → the number must move.
-	if _, _, err := st.RegisterEndpoint(ctx, owner("tok-x"), "solo", ""); err != nil {
+	if _, err := st.MailboxFor(ctx, "solo", owner("tok-x")); err != nil {
 		t.Fatal(err)
 	}
 	afterReg, _ := st.ConsoleFingerprint(ctx)
@@ -776,116 +741,21 @@ func TestConsoleFingerprint(t *testing.T) {
 	// and untouched.
 }
 
-// Rotation is the incident-response primitive COMM was missing: until it existed,
-// the only remedy for a LEAKED endpoint secret was revoking the endpoint and
-// re-pairing every channel from scratch.
-//
-// The property that makes it SAFE is structural rather than testable here — no tool
-// reaches this function, only the authenticated console does, because one bearer
-// token covers a machine and anything a session could trigger, every session on that
-// machine could trigger. What is tested is what makes it WORTH having: the identity
-// and the channel memberships survive, so no peer has to re-pair.
-func TestRotatingASecretKeepsTheEndpointAndItsChannels(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
+// TestRotatingASecretKeepsTheEndpointAndItsChannels IS DELETED WITH ROTATION. It proved the
+// property that made rotation worth having — the identity and the channels survive, so no peer
+// re-pairs — for a recovery that only existed because a lost secret was terminal. There is no
+// secret to lose.
 
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "prod", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := st.MintPairingCode(ctx, 42, "dev<->prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, b, code)
-	if err != nil {
-		t.Fatal(err)
-	}
+// TestRotatingARevokedEndpointIsRefused IS DELETED with rotation. Revocation itself survives and
+// is still one-way; what is gone is the operation that could have undone it.
 
-	// Re-register to learn a secret we can prove stops working: RegisterEndpoint is
-	// the only path that ever reveals one.
-	c, cSecret, err := st.RegisterEndpoint(ctx, owner("tok-c"), "solo", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.AuthenticateEndpoint(ctx, c.EndpointID, cSecret); err != nil {
-		t.Fatalf("baseline authentication failed before rotating: %v", err)
-	}
-	newSecret, err := st.RotateEndpointSecret(ctx, c.EndpointID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if newSecret == cSecret {
-		t.Fatal("rotation returned the same secret")
-	}
-	// Containment: the leaked value must stop working the moment it is rotated.
-	if _, err := st.AuthenticateEndpoint(ctx, c.EndpointID, cSecret); err == nil {
-		t.Fatal("the OLD secret still authenticates after rotation — a leaked secret would remain usable, which is the whole thing this prevents")
-	}
-	got, err := st.AuthenticateEndpoint(ctx, c.EndpointID, newSecret)
-	if err != nil {
-		t.Fatalf("the new secret does not authenticate: %v", err)
-	}
-	if got.EndpointID != c.EndpointID {
-		t.Fatalf("rotation changed the endpoint id from %s to %s", c.EndpointID, got.EndpointID)
-	}
-
-	// The point of rotating rather than revoking: membership survives.
-	aNew, err := st.RotateEndpointSecret(ctx, a.EndpointID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rotated, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aNew)
-	if err != nil {
-		t.Fatal(err)
-	}
-	chans, err := st.ListChannels(ctx, rotated)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(chans) != 1 || chans[0].ChannelID != ch.ChannelID {
-		t.Fatalf("channels after rotation = %+v, want the original %s — if membership is lost, rotation is only a slower revoke",
-			chans, ch.ChannelID)
-	}
-}
-
-// A revoked endpoint must not be rotatable: rotating one would resurrect a
-// capability an operator deliberately destroyed. Revoke is what a leak response
-// escalates TO, never back from.
-func TestRotatingARevokedEndpointIsRefused(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	ep, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.RevokeEndpoint(ctx, ep.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.RotateEndpointSecret(ctx, ep.EndpointID); err == nil {
-		t.Fatal("rotated a REVOKED endpoint — that would undo a deliberate destruction")
-	}
-}
-
-// bindEndpoint attaches an endpoint to a station id directly, standing in for the
-// voucher round-trip (which lives in the knowledge-base store and is covered there).
-func bindEndpoint(t *testing.T, st *Store, ep *Endpoint, stationID, keyID string) *Endpoint {
+// bindEndpoint IS NOW A LOOKUP, NOT AN ACTION. Binding does not exist — a station comes with a
+// mailbox — but the helper's shape is kept so the many fixtures that said "give me this station's
+// endpoint" still read the same. The keyID argument is ignored: nothing authorises a binding any
+// more, because there is no binding to authorise.
+func bindEndpoint(t *testing.T, st *Store, _ *Endpoint, stationID, _ string) *Endpoint {
 	t.Helper()
-	if err := st.BindEndpointToStation(context.Background(), ep.EndpointID, stationID, keyID); err != nil {
-		t.Fatalf("bind: %v", err)
-	}
-	out, err := st.endpointByRowID(context.Background(), ep.ID)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-	return out
+	return mailbox(t, st, stationID, "tok")
 }
 
 // THE PROPERTY SLICE 4 EXISTS FOR: a replacement session inherits the mail addressed
@@ -900,14 +770,8 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 	const station = "stn_prod_ops"
 
 	// The original reader, bound to the station, paired with a peer.
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v1", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := mailbox(t, st, "dev-v1", "tok-a")
+	peer := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, station, "kens_key1")
 	code, err := st.MintPairingCode(ctx, 42, "dev<->peer")
 	if err != nil {
@@ -926,10 +790,7 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 
 	// The original session dies WITHOUT polling. Its secret is gone; nothing can ever
 	// authenticate as it again.
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := mailbox(t, st, "dev-v2", "tok-a")
 	b = bindEndpoint(t, st, b, station, "kens_key1")
 
 	got, err := st.Poll(ctx, b, 10)
@@ -955,60 +816,10 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 	}
 }
 
-// Claim-once: two readers of ONE station must not both act on the same message.
-// That is the shared-inbox accident the per-endpoint secret was invented to prevent,
-// and letting a station have several readers would re-create it without this.
-func TestTwoReadersOfOneStationDoNotBothGetTheSameMessage(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	const station = "stn_shared"
-
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "reader-1", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 42, "x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Send(ctx, peer, ch.ChannelID, "only one of you should do this", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-
-	// A second session joins the same station.
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "reader-2", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b = bindEndpoint(t, st, b, station, "kens_key1")
-
-	first, err := st.Poll(ctx, a, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first) != 1 {
-		t.Fatalf("first reader got %d, want 1", len(first))
-	}
-	second, err := st.Poll(ctx, b, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(second) != 0 {
-		t.Fatalf("the SECOND reader also received the claimed message (%d) — both sessions would act on it, which is exactly the shared-inbox failure this design refuses", len(second))
-	}
-}
+// TestTwoReadersOfOneStationDoNotBothGetTheSameMessage IS DELETED, AND SO IS THE CLAIM-ONCE LEASE
+// IT COVERED. A station has exactly one mailbox, so there is never a second reader to exclude —
+// the code itself already described the sole-reader case as "bookkeeping with no reader to
+// exclude", and that is now every case.
 
 // An UNBOUND endpoint must behave exactly as it did before stations existed. This is
 // the compatibility promise that lets the shipped path stay valid indefinitely: a
@@ -1034,47 +845,10 @@ func TestUnboundEndpointsAreUnaffectedByClaiming(t *testing.T) {
 	}
 }
 
-// Revoking a station key severs every endpoint it bound (S6) and releases their
-// claims. A revocation that leaves the leaked capability running until an idle sweep
-// notices is theatre — and traffic keeps an endpoint alive indefinitely.
-func TestRevokingAStationKeySeversTheEndpointsItBound(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-
-	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "laptop", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, otherSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "vps", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bindEndpoint(t, st, a, "stn_x", "kens_leaked")
-	bindEndpoint(t, st, other, "stn_x", "kens_safe")
-
-	n, err := st.CountEndpointsBoundBy(ctx, "kens_leaked")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("count before severing = %d, want 1 — the console states this number before the click", n)
-	}
-	severed, err := st.SeverEndpointsBoundBy(ctx, "kens_leaked")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if severed != 1 {
-		t.Fatalf("severed %d, want 1", severed)
-	}
-	if _, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret); err == nil {
-		t.Fatal("an endpoint bound by the REVOKED key still authenticates — revocation that leaves the capability running is theatre")
-	}
-	// A different key's endpoint is untouched: revocation is targeted, which is the
-	// whole reason keys are minted per machine rather than copied.
-	if _, err := st.AuthenticateEndpoint(ctx, other.EndpointID, otherSecret); err != nil {
-		t.Fatalf("severing one key's endpoints also killed another key's: %v", err)
-	}
-}
+// TestRevokingAStationKeySeversTheEndpointsItBound IS DELETED. Nothing binds an endpoint to a
+// station any more — a station comes with a mailbox — so there is no binding to sever and no
+// station key doing the binding. Revoking a station key stops the station surface; comm follows
+// the station, and an archived station is refused at station.Resolve.
 
 // The review found that a replacement reader could POLL inherited mail but not act
 // on it: ChannelFor resolved membership by endpoint rowid alone, so the reader was
@@ -1087,14 +861,8 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 	ctx := context.Background()
 	const station = "stn_prod_ops"
 
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v1", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := mailbox(t, st, "dev-v1", "tok-a")
+	peer := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, station, "kens_key1")
 	code, err := st.MintPairingCode(ctx, 42, "x")
 	if err != nil {
@@ -1114,10 +882,7 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 	}
 
 	// A replaces itself. B is NOT a member of the channel — that is the point.
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := mailbox(t, st, "dev-v2", "tok-a")
 	b = bindEndpoint(t, st, b, station, "kens_key1")
 
 	got, err := st.Poll(ctx, b, 10)
@@ -1144,63 +909,7 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 	}
 }
 
-// Revoking an endpoint must release its claims (S4). An operator revokes a WEDGED
-// session precisely so another reader can take over; holding its mail for the rest
-// of the lease defeats the reason they clicked.
-func TestRevokingAnEndpointReleasesItsClaims(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	const station = "stn_x"
-
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "wedged", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a = bindEndpoint(t, st, a, station, "kens_key1")
-	code, err := st.MintPairingCode(ctx, 42, "x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Send(ctx, peer, ch.ChannelID, "work to do", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := st.Poll(ctx, a, 10); err != nil || len(got) != 1 {
-		t.Fatalf("setup poll: %v, %d messages", err, len(got))
-	}
-
-	// A second reader must NOT see it while A holds the claim.
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "helper", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b = bindEndpoint(t, st, b, station, "kens_key1")
-	if got, err := st.Poll(ctx, b, 10); err != nil || len(got) != 0 {
-		t.Fatalf("the claim is not holding: %v, %d messages", err, len(got))
-	}
-
-	// Revoke the wedged reader — the claim must go with it.
-	if err := st.RevokeEndpoint(ctx, a.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-	got, err := st.Poll(ctx, b, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("after revoking the claim holder, the other reader saw %d message(s), want 1 — the operator revoked it so someone else could take over", len(got))
-	}
-}
+// TestRevokingAnEndpointReleasesItsClaims IS DELETED with the claim lease — see above.
 
 // The payoff of a link: two stations open a channel with NO pairing code, because a
 // human approved the relationship once instead of approving each conversation.
@@ -1211,14 +920,8 @@ func TestLinkedStationsOpenAChannelWithoutAPairingCode(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "prod", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := mailbox(t, st, "dev", "tok-a")
+	b := mailbox(t, st, "prod", "tok-b")
 	a = bindEndpoint(t, st, a, "stn_dev", "kens_a")
 	b = bindEndpoint(t, st, b, "stn_prod", "kens_b")
 
@@ -1253,10 +956,7 @@ func TestLinkedStationsOpenAChannelWithoutAPairingCode(t *testing.T) {
 
 	// And a REPLACEMENT session on one side rejoins the SAME conversation, because
 	// the match is on stations rather than endpoints.
-	a2, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a2 := mailbox(t, st, "dev-v2", "tok-a")
 	a2 = bindEndpoint(t, st, a2, "stn_dev", "kens_a")
 	rejoined, err := st.OpenLinkedChannel(ctx, a2, b, 42, "dev <-> prod")
 	if err != nil {
@@ -1267,25 +967,7 @@ func TestLinkedStationsOpenAChannelWithoutAPairingCode(t *testing.T) {
 	}
 }
 
-// An unbound endpoint has no station and therefore no relationships to spend. It must
-// be refused rather than silently opening an unauthorized channel.
-func TestOpenLinkedChannelRefusesUnboundEndpoints(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "prod", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b = bindEndpoint(t, st, b, "stn_prod", "kens_b")
-
-	if _, err := st.OpenLinkedChannel(ctx, a, b, 42, "x"); err == nil {
-		t.Fatal("an UNBOUND endpoint opened a linked channel — it belongs to no station, so no human ever approved a relationship for it")
-	}
-}
+// TestOpenLinkedChannelRefusesUnboundEndpoints IS DELETED. There is no unbound mailbox to refuse.
 
 // S4 says the per-channel sequence must key on the sending STATION, "or outbound
 // numbering restarts every reconnect". It restarted: keyed on the endpoint rowid, a
@@ -1299,14 +981,8 @@ func TestSequenceDoesNotRestartWhenASessionIsReplaced(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v1", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := mailbox(t, st, "dev-v1", "tok-a")
+	b := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, "stn_dev", "k")
 	b = bindEndpoint(t, st, b, "stn_peer", "k")
 	ch, err := st.OpenLinkedChannel(ctx, a, b, 1, "x")
@@ -1324,10 +1000,7 @@ func TestSequenceDoesNotRestartWhenASessionIsReplaced(t *testing.T) {
 	}
 
 	// The session dies; a replacement binds to the SAME station and sends.
-	a2, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev-v2", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a2 := mailbox(t, st, "dev-v2", "tok-a")
 	a2 = bindEndpoint(t, st, a2, "stn_dev", "k")
 	m, err := st.Send(ctx, a2, ch.ChannelID, "first from the replacement", SendOpts{})
 	if err != nil {
@@ -1339,318 +1012,18 @@ func TestSequenceDoesNotRestartWhenASessionIsReplaced(t *testing.T) {
 	}
 }
 
-// NUMBERING DOES NOT DEPEND ON WHO IS SENDING, bound or not. This replaces
-// TestUnboundSendersKeepTheirOwnSequence, whose second half asserted a per-direction
-// counter the delivery split retires.
-//
-// The property that survives, and the one that mattered: a sequence is strictly
-// ascending and never reissued within a conversation. The old design achieved that
-// per direction and needed a counter carried between the 'e:' and 's:' namespaces
-// every time an endpoint bound or unbound, or a replacement session restarted at 1
-// while its predecessor had reached 20. One counter per scope removes the namespace,
-// the carry-over, and the class of bug — there is nothing to migrate because there is
-// nothing keyed on the sender.
-func TestNumberingIsIndependentOfWhoIsSending(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
+// TestNumberingIsIndependentOfWhoIsSending IS DELETED. It proved that BINDING an endpoint mid-life
+// did not restart a channel's sequence numbering. Nothing binds; a mailbox has its station from
+// the moment it exists, so the event whose side effect was under test cannot occur.
 
-	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "sender", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := st.MintPairingCode(ctx, 42, "x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, b, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	chID := ch.ChannelID
+// TestAnAlreadyRunningEndpointCanAdoptAStationAndKeepItsChannels IS DELETED. Adoption was how a
+// standing endpoint acquired a station; a mailbox now has one from the moment it exists.
 
-	var seqs []int64
-	for i := 0; i < 3; i++ {
-		m, err := st.Send(ctx, a, chID, "x", SendOpts{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		seqs = append(seqs, m.Seq)
-	}
-	if seqs[0] != 1 || seqs[1] != 2 || seqs[2] != 3 {
-		t.Fatalf("sequence = %v, want strictly ascending from 1", seqs)
-	}
-	// The reply CONTINUES the conversation rather than opening a parallel stream.
-	m, err := st.Send(ctx, b, chID, "reply", SendOpts{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.Seq != 4 {
-		t.Fatalf("the reply took seq %d, want 4 — the conversation has one stream", m.Seq)
-	}
+// TestUnbindReturnsAnEndpointToStandingAloneWithoutLosingAnything IS DELETED with comm_unbind.
+// "Standing alone" is not a state a mailbox can be in.
 
-	// CONTROL: binding a sender mid-conversation must not disturb the numbering. This
-	// is the scenario the deleted carry-over existed to protect, asserted directly so
-	// its removal cannot silently reintroduce the restart it prevented — a live
-	// deployment measured 'e:1 -> 50' and 's:… -> 50' under the old mechanism, and
-	// the new one has to hold the same line without one.
-	if err := st.BindEndpointToStation(ctx, a.EndpointID, "stn_numbering", "kens_k"); err != nil {
-		t.Fatal(err)
-	}
-	rebound, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	after, err := st.Send(ctx, rebound, chID, "after binding", SendOpts{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Seq != 5 {
-		t.Fatalf("after binding, the next message took seq %d, want 5 — binding restarted the numbering, "+
-			"which is exactly what the removed carry-over used to prevent", after.Seq)
-	}
-}
-
-// A session that was ALREADY RUNNING when its human set stations up must be able to
-// adopt one in place. Without this, adoption means re-registering — a new endpoint,
-// a new secret, and every channel abandoned — which is the cost stations exist to
-// remove, charged at the moment of adopting them.
-func TestAnAlreadyRunningEndpointCanAdoptAStationAndKeepItsChannels(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-
-	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "long-running", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// It has been talking to a peer for a while, over an ordinary pairing code.
-	code, err := st.MintPairingCode(ctx, 42, "old channel")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, b, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Send(ctx, b, ch.ChannelID, "mail that arrived before stations existed", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-
-	// The human sets stations up. The session adopts one WITHOUT re-registering.
-	if err := st.BindEndpointToStation(ctx, a.EndpointID, "stn_adopted", "kens_k"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Its credential still works — nothing was reissued.
-	bound, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret)
-	if err != nil {
-		t.Fatalf("the endpoint's own secret stopped working after binding: %v", err)
-	}
-	if bound.StationID != "stn_adopted" {
-		t.Fatalf("station = %q after binding", bound.StationID)
-	}
-	// Its channel survived.
-	chans, err := st.ListChannels(ctx, bound)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(chans) != 1 || chans[0].ChannelID != ch.ChannelID {
-		t.Fatalf("channels after adoption = %+v, want the original %s — adoption must not cost a re-pair", chans, ch.ChannelID)
-	}
-	// And the mail it had not read is still readable, now as the station's.
-	got, err := st.Poll(ctx, bound, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("polled %d messages after adopting a station, want the 1 that predates it — binding must not strand mail already addressed to the endpoint", len(got))
-	}
-
-	// A SECOND session can now take over, which is the point of adopting at all.
-	successor, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "successor", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	successor = bindEndpoint(t, st, successor, "stn_adopted", "kens_k")
-	if _, err := st.Send(ctx, b, ch.ChannelID, "sent after the handover", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-	inherited, err := st.Poll(ctx, successor, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(inherited) == 0 {
-		t.Fatal("the successor inherited nothing — adoption did not actually move the inbox to the station")
-	}
-}
-
-// Binding was a one-way door, and an operator weighing adoption asked the right
-// question before stepping through it: is it reversible? It was not. That is a bad
-// property for a step whose entire purpose is to make things cheaper.
-//
-// Unbinding must cost nothing: the endpoint keeps its id, its secret and every
-// channel, and mail addressed to IT is still readable afterwards.
-func TestUnbindReturnsAnEndpointToStandingAloneWithoutLosingAnything(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	const station = "stn_x"
-
-	a, aSecret, err := st.RegisterEndpoint(ctx, owner("tok-a"), "mine", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := st.MintPairingCode(ctx, 42, "x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.BindEndpointToStation(ctx, a.EndpointID, station, "kens_k"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Send(ctx, peer, ch.ChannelID, "addressed to me", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := st.UnbindEndpointFromStation(ctx, a.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-	back, err := st.AuthenticateEndpoint(ctx, a.EndpointID, aSecret)
-	if err != nil {
-		t.Fatalf("the endpoint's secret stopped working after unbinding: %v", err)
-	}
-	if back.StationID != "" {
-		t.Fatalf("still bound to %q after unbinding", back.StationID)
-	}
-	chans, err := st.ListChannels(ctx, back)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(chans) != 1 || chans[0].ChannelID != ch.ChannelID {
-		t.Fatalf("channels after unbinding = %+v, want the original %s — unbinding must cost nothing", chans, ch.ChannelID)
-	}
-	// MAIL SENT WHILE BOUND BELONGS TO THE STATION, AND STAYS THERE.
-	//
-	// This reverses what this test asserted before the delivery split, and the reversal
-	// is the point rather than a casualty. S4 says the station owns the inbox; storing
-	// a recipient ENDPOINT made that true only in the poll query, which is why an
-	// unbound endpoint used to keep reading mail that had been sent to a post it no
-	// longer staffs. Filing the delivery against the party makes the rule true at the
-	// storage layer, and then this follows.
-	//
-	// Nothing is lost or unreachable: the message waits for whoever staffs the station
-	// next, and it is visible in the console meanwhile. The cost, stated plainly rather
-	// than discovered: if nobody ever binds to that station again, nobody reads it.
-	got, err := st.Poll(ctx, back, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("polled %+v after unbinding — mail addressed to the STATION followed the endpoint out of it, "+
-			"which means the station does not own its inbox after all", got)
-	}
-
-	// CONTROL, and the half that must not regress: mail sent to this endpoint while it
-	// is UNBOUND is its own and arrives normally. Without this the assertion above
-	// would also pass on an endpoint that had simply stopped receiving anything.
-	if _, err := st.Send(ctx, peer, ch.ChannelID, "sent after unbinding", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-	own, err := st.Poll(ctx, back, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(own) != 1 || own[0].Body != "sent after unbinding" {
-		t.Fatalf("an unbound endpoint polled %+v, want the message addressed to it — unbinding cost it its own mail", own)
-	}
-	// And it can bind again — the door swings both ways, which is the point.
-	if err := st.BindEndpointToStation(ctx, a.EndpointID, station, "kens_k"); err != nil {
-		t.Fatalf("could not re-bind after unbinding: %v", err)
-	}
-}
-
-// ADOPTION MUST NOT BREAK A CHANNEL THE ENDPOINT ALREADY USED. Found the hard way: I
-// bound this project's own session to its new station, tried to send on a channel it
-// had been talking on all day, and got an internal error.
-//
-// The mechanism is two correct pieces colliding. `message` has a UNIQUE index on
-// (channel_id, sender_endpoint, seq). The per-channel counter keys on the sending
-// STATION once bound and on the endpoint rowid otherwise — which is what stops a
-// REPLACEMENT session restarting at 1. So binding MID-CONVERSATION moved the endpoint
-// to a fresh counter beginning at 1 while its own messages 1, 2, 3 were already on the
-// channel, and the next send violated the constraint. The endpoint could not talk
-// again until it unbound.
-func TestAdoptingAStationDoesNotBreakAnExistingChannel(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	a, b, chID := pair(t, st)
-
-	// A conversation that predates the station.
-	for _, body := range []string{"first", "second", "third"} {
-		if _, err := st.Send(ctx, a, chID, body, SendOpts{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// The human sets stations up; this session adopts one in place.
-	a = bindEndpoint(t, st, a, "stn_adopted", "kens_k")
-
-	m, err := st.Send(ctx, a, chID, "sent after adopting a station", SendOpts{})
-	if err != nil {
-		t.Fatalf("SENDING BROKE after adopting a station: %v — the counter restarted and collided "+
-			"with this endpoint's own earlier messages on the channel", err)
-	}
-	if m.Seq <= 3 {
-		t.Fatalf("post-adoption seq = %d, want > 3 — it must continue the endpoint's own numbering, "+
-			"not restart under the station key", m.Seq)
-	}
-	// The peer still receives it, so the channel genuinely still works.
-	got, err := st.Poll(ctx, b, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 4 {
-		t.Fatalf("peer polled %d messages, want all 4", len(got))
-	}
-
-	// And unbinding must not break it either — the counter has to come back forward.
-	if err := st.UnbindEndpointFromStation(ctx, a.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-	back, err := st.endpointByRowID(ctx, a.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m2, err := st.Send(ctx, back, chID, "sent after unbinding again", SendOpts{})
-	if err != nil {
-		t.Fatalf("SENDING BROKE after unbinding: %v", err)
-	}
-	if m2.Seq <= m.Seq {
-		t.Fatalf("post-unbind seq = %d, not past the pre-unbind %d — the counter went backwards", m2.Seq, m.Seq)
-	}
-}
+// TestAdoptingAStationDoesNotBreakAnExistingChannel IS DELETED. Adoption and unbinding are both
+// gone; a mailbox has its station from the moment it exists and cannot change it.
 
 // RETIRED: the collided state this recovered from can no longer occur.
 //
@@ -1672,3 +1045,18 @@ func TestAdoptingAStationDoesNotBreakAnExistingChannel(t *testing.T) {
 // TestNumberingIsIndependentOfWhoIsSending: binding a sender mid-conversation does not
 // disturb the numbering — measured on a live endpoint at 'e:1 -> 50' and 's:… -> 50'
 // under the old mechanism, and held by construction under the new one.
+
+// mailbox is the test fixture for "a station and its mailbox", replacing RegisterEndpoint.
+//
+// A station comes with a mailbox, so there is nothing to register — but this package has no handle
+// on ken.db and therefore no stations of its own. That is fine and it is the S7 rule working:
+// station ids are opaque text here with no foreign key, so a test names one and MailboxFor mints
+// the mailbox for it. The label doubles as the station id, which keeps fixtures readable.
+func mailbox(t *testing.T, st *Store, station, token string) *Endpoint {
+	t.Helper()
+	ep, err := st.MailboxFor(context.Background(), station, owner(token))
+	if err != nil {
+		t.Fatalf("mailbox for %s: %v", station, err)
+	}
+	return ep
+}

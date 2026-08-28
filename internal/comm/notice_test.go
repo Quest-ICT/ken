@@ -21,7 +21,7 @@ func TestASenderLearnsTheirMessageExpiredUnread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	senderParty := endpointPartyKey(a.ID)
+	senderParty := PartyOf(a)
 
 	// Nothing has happened yet: a notice before the fact would be a false alarm.
 	n, err := st.NoticesFor(ctx, senderParty, 10)
@@ -92,7 +92,7 @@ func TestNoNoticeForAMessageThatWasActuallyRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	n, err := st.NoticesFor(ctx, PartyOf(a), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestTheWatermarkClearsWhatWasSeenAndNothingElse(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 	a, _, chID := pair(t, st)
-	senderParty := endpointPartyKey(a.ID)
+	senderParty := PartyOf(a)
 
 	first, err := st.Send(ctx, a, chID, "one", SendOpts{})
 	if err != nil {
@@ -192,7 +192,7 @@ func TestAPollDoesNotClearTheNoticesItIsShowing(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 	a, _, chID := pair(t, st)
-	party := endpointPartyKey(a.ID)
+	party := PartyOf(a)
 
 	m, err := st.Send(ctx, a, chID, "nobody home", SendOpts{})
 	if err != nil {
@@ -262,7 +262,7 @@ func TestConfirmingTheLastPollDoesNotSwallowAFailureThatArrivedSince(t *testing.
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 	a, _, chID := pair(t, st)
-	party := endpointPartyKey(a.ID)
+	party := PartyOf(a)
 
 	first, err := st.Send(ctx, a, chID, "one", SendOpts{})
 	if err != nil {
@@ -378,7 +378,7 @@ func TestReplyOverdueIgnoresDeliveriesOlderThanTheMechanism(t *testing.T) {
 	// CONTROL: a delivery from AFTER the mechanism existed still produces the notice.
 	// Without this arm, a predicate that excluded everything would read as a pass — which
 	// is exactly the failure mode of the bug being fixed, in the other direction.
-	got, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	got, err := st.NoticesFor(ctx, PartyOf(a), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ WHERE message_row = (SELECT id FROM message WHERE message_id=?)`, sent.MessageID
 		t.Fatal(err)
 	}
 
-	got, err = st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	got, err = st.NoticesFor(ctx, PartyOf(a), 10)
 	if err != nil {
 		t.Fatal(err)
 	}

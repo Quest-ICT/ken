@@ -52,11 +52,11 @@ func newFileFixture(t *testing.T) *fileFixture {
 		t.Fatal(err)
 	}
 	owner := comm.Owner{TokenID: p.TokenID, ActorID: p.ActorID}
-	a, _, err := cs.RegisterEndpoint(ctx, owner, "sender", "")
+	a, err := cs.MailboxFor(ctx, "sender", owner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, err := cs.RegisterEndpoint(ctx, owner, "receiver", "")
+	b, err := cs.MailboxFor(ctx, "receiver", owner)
 	if err != nil {
 		t.Fatal(err)
 	}

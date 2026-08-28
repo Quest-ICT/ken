@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/passwd"
 	"github.com/Quest-ICT/ken/internal/store"
 )
@@ -259,84 +258,5 @@ func TestMintedStationKeyIsShownOnceAndCarriesThePrefix(t *testing.T) {
 	}
 }
 
-// Rotation exists ONLY behind curator authentication, and that placement is the
-// entire security argument — not a detail of it.
-//
-// One COMM bearer token covers a whole machine, so the endpoint pair is the only
-// thing separating two sessions that share it. Any reissue a SESSION could trigger
-// would let any session on that machine seize any endpoint on it, which is why an
-// equivalent MCP tool was refused outright. This test pins the two gates that make
-// the console version safe: an unauthenticated caller cannot reach it, and neither
-// can a forged cross-site POST.
-func TestEndpointRotationIsReachableOnlyByAnAuthenticatedCurator(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cs.Close()
-	if err := cs.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	hash, _ := passwd.Hash("supersecret", passwd.Standard)
-	if _, err := st.CreateHumanUser(ctx, "admin", hash); err != nil {
-		t.Fatal(err)
-	}
-	ep, epSecret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok", ActorID: 7}, "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
-	defer srv.Close()
-
-	// Unauthenticated: bounced to login, and the secret must be untouched afterwards.
-	noAuth := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := noAuth.PostForm(srv.URL+"/comm/endpoints/"+ep.EndpointID+"/rotate", url.Values{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		t.Fatal("an UNAUTHENTICATED POST rotated an endpoint secret — this route is the one place rotation is allowed precisely because it needs a curator")
-	}
-	if _, err := cs.AuthenticateEndpoint(ctx, ep.EndpointID, epSecret); err != nil {
-		t.Fatal("the secret changed despite the request being refused")
-	}
-
-	jar, _ := cookiejar.New(nil)
-	cli := &http.Client{Jar: jar}
-	lcsrf := extract(t, cli, srv.URL+"/login", `name="lcsrf" value="([^"]+)"`)
-	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
-
-	// Authenticated but forged: a bad CSRF token must not rotate either.
-	bad := rawPostForm(t, cli, srv.URL+"/comm/endpoints/"+ep.EndpointID+"/rotate", url.Values{"csrf": {"wrong"}})
-	if bad.StatusCode != http.StatusForbidden {
-		t.Fatalf("rotate with a bad CSRF token = HTTP %d, want 403", bad.StatusCode)
-	}
-	if _, err := cs.AuthenticateEndpoint(ctx, ep.EndpointID, epSecret); err != nil {
-		t.Fatal("a CSRF-rejected POST still rotated the secret")
-	}
-
-	// The real thing: rotates, reveals once, and the old secret dies.
-	csrf := extract(t, cli, srv.URL+"/comm", `name="csrf" value="([^"]+)"`)
-	body := postForm(t, cli, srv.URL+"/comm/endpoints/"+ep.EndpointID+"/rotate", url.Values{"csrf": {csrf}})
-	if !strings.Contains(body, ep.EndpointID) {
-		t.Fatalf("the reveal omits the endpoint id; both halves are needed to use it: %s", trunc(body))
-	}
-	if _, err := cs.AuthenticateEndpoint(ctx, ep.EndpointID, epSecret); err == nil {
-		t.Fatal("the old secret still works after a console rotation")
-	}
-	// Shown once: a plain reload must not carry it.
-	if again := get(t, cli, srv.URL+"/comm"); strings.Contains(again, "New endpoint secret") {
-		t.Fatal("the rotated secret survives a reload — it must appear exactly once")
-	}
-}
+// TestEndpointRotationIsReachableOnlyByAnAuthenticatedCurator IS DELETED with rotation. There is
+// no secret to rotate, so there is no control to gate.

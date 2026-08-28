@@ -73,7 +73,7 @@ func TestANonMemberLearnsNothingAboutARoomThatExists(t *testing.T) {
 	cs, _, roomID := roomFixture(t)
 
 	// A second endpoint, in no room at all.
-	outsider, _, err := cs.RegisterEndpoint(context.Background(), comm.Owner{ActorID: 1}, "outsider", "")
+	outsider, err := cs.MailboxFor(context.Background(), "stn-outsider", comm.Owner{ActorID: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func roomFixture(t *testing.T) (*comm.Store, *comm.Endpoint, string) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{ActorID: 1}, "member", "")
+	ep, err := cs.MailboxFor(ctx, "member", comm.Owner{ActorID: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

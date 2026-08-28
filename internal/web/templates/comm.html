@@ -19,28 +19,6 @@
   </div>
 </div>
 
-{{if .Data.Rotated.Secret}}
-<!-- One-time reveal of a rotated endpoint secret. Only the hash is stored, so this
-     is the single moment it exists in readable form — same contract as a pairing
-     code. Both halves are shown because every comm tool needs the PAIR. -->
-<div class="card card--accent" id="reveal-card" data-unsaved-secret style="margin-bottom:var(--sp-5)">
-  <div class="card__head"><h2 class="h3">{{.T "comm.rotated_heading"}}</h2></div>
-  <div class="card__body">
-    <p class="help">{{.T "comm.rotated_help_body"}}</p>
-    <p>{{.T "comm.col_endpoint"}}: <code class="mono">{{.Data.Rotated.EndpointID}}</code></p>
-    <p><code class="mono" id="rotated-secret" style="font-size:1.15rem;letter-spacing:.04em">{{.Data.Rotated.Secret}}</code></p>
-    <p class="help"><b>{{.T "comm.rotated_warn"}}</b></p>
-    <p class="help"><b>{{.T "comm.rotated_dont_leave"}}</b></p>
-    <div class="inline">
-      <button class="btn btn--sm" type="button" data-copy="#rotated-secret"
-              data-copied="{{.T "comm.copied"}}" title="{{.T "comm.copy_help"}}">{{.T "comm.copy"}}</button>
-      <button class="btn btn--sm" type="button" data-dismiss-reveal
-              title="{{.T "comm.saved_it_help"}}">{{.T "comm.saved_it"}}</button>
-    </div>
-  </div>
-</div>
-{{end}}
-
 <div class="grid-2">
   <!-- mint a pairing code: the human act the design depends on -->
   <section>
@@ -184,17 +162,7 @@
             <td>{{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}</td>
             <td class="mono">{{.Live}}</td>
             <td>
-              {{if .Targets}}
-              <form class="inline" method="post" action="/comm/tokens/{{.TokenID}}/repoint"
-                    data-confirm="{{$.T "comm.repoint_all_confirm"}}&#10;&#10;{{$.T "comm.col_owner"}}: {{.TokenID}}&#10;{{$.T "comm.confirm_will_move"}} ({{.Live}}):{{range .Endpoints}}&#10;  · {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{end}}">
-                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-                <select class="input" name="to_token" title="{{$.T "comm.repoint_all_help"}}" style="width:auto;font-size:.82rem">
-                  {{range .Targets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
-                </select>
-                <button class="btn btn--sm" type="submit" title="{{$.T "comm.repoint_all_help"}}">{{$.T "comm.repoint_all"}}</button>
-              </form>
-              {{else}}<span class="muted">{{$.T "comm.no_other_token"}}</span>{{end}}
-            </td>
+                          </td>
           </tr>
         {{end}}
         </tbody>
@@ -216,17 +184,7 @@
             <td>{{.Station}}</td>
             <td class="mono">{{.Live}}</td>
             <td>
-              {{if .Targets}}
-              <form class="inline" method="post" action="/comm/keys/{{.TokenID}}/rebind"
-                    data-confirm="{{$.T "comm.rebind_all_confirm"}}&#10;&#10;{{$.T "comm.col_binder"}}: {{.TokenID}}&#10;{{$.T "comm.confirm_will_move"}} ({{.Live}}):{{range .Endpoints}}&#10;  · {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{end}}">
-                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-                <select class="input" name="to_key" title="{{$.T "comm.rebind_all_help"}}" style="width:auto;font-size:.82rem">
-                  {{range .Targets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
-                </select>
-                <button class="btn btn--sm" type="submit" title="{{$.T "comm.rebind_all_help"}}">{{$.T "comm.rebind_all"}}</button>
-              </form>
-              {{else}}<span class="muted">{{$.T "comm.no_other_key"}}</span>{{end}}
-            </td>
+                          </td>
           </tr>
         {{end}}
         </tbody>
@@ -268,25 +226,10 @@
             <td class="mono">{{localtime .LastSeenAt}}</td>
             <td class="mono">{{localtime .CreatedAt}}</td>
             <td>
-              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/rotate" data-confirm="{{$.T "comm.rotate_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{$.T "comm.confirm_channels"}}: {{.ChannelsLine}}{{end}}">
-                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-                <button class="btn btn--sm" type="submit" title="{{$.T "comm.rotate_help"}}">{{$.T "comm.rotate"}}</button>
-              </form>
-              <!-- RE-POINT: change which token may drive this endpoint, keeping its id, its
+                            <!-- RE-POINT: change which token may drive this endpoint, keeping its id, its
                    secret, its channels, its station binding and its queued mail. A picker
                    rather than a text field, filtered to tokens the operation will accept. -->
-              {{if .RepointTargets}}
-              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/repoint"
-                    data-confirm="{{$.T "comm.repoint_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}&#10;{{$.T "comm.col_owner"}}: {{.Owner.TokenID}}">
-                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-                <input type="hidden" name="from_token" value="{{.Owner.TokenID}}">
-                <select class="input" name="to_token" title="{{$.T "comm.repoint_help"}}" style="width:auto;font-size:.82rem">
-                  {{range .RepointTargets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
-                </select>
-                <button class="btn btn--sm" type="submit" title="{{$.T "comm.repoint_help"}}">{{$.T "comm.repoint"}}</button>
-              </form>
-              {{end}}
-              <!-- RE-ASSIGN: point this mailbox at a CONVERSATION, keeping its id, its channels,
+                            <!-- RE-ASSIGN: point this mailbox at a CONVERSATION, keeping its id, its channels,
                    its station binding and its queued mail. This is the comm half of workspace
                    recovery: rotate was the only way back into an abandoned mailbox and it hands
                    the session a secret to write to disk, which a chat session cannot do. The key
@@ -304,18 +247,7 @@
                    station itself. Offered only when the station has another live key, and
                    only ever that station's keys — a binding moved to another station's key
                    would hand that operator a sever lever over this session. -->
-              {{if .RebindTargets}}
-              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/rebind"
-                    data-confirm="{{$.T "comm.rebind_confirm"}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}&#10;{{$.T "comm.col_binder"}}: {{.BoundByStationKeyID}}">
-                <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
-                <input type="hidden" name="from_key" value="{{.BoundByStationKeyID}}">
-                <select class="input" name="to_key" title="{{$.T "comm.rebind_help"}}" style="width:auto;font-size:.82rem">
-                  {{range .RebindTargets}}<option value="{{.TokenID}}">{{.TokenID}}{{if .Label}} · {{.Label}}{{end}}</option>{{end}}
-                </select>
-                <button class="btn btn--sm" type="submit" title="{{$.T "comm.rebind_help"}}">{{$.T "comm.rebind"}}</button>
-              </form>
-              {{end}}
-              <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{if .Bound}}{{$.T "comm.revoke_bound_endpoint_confirm"}}{{else}}{{$.T "comm.revoke_endpoint_confirm"}}{{end}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{if .Bound}}{{$.T "comm.confirm_station_keeps"}}{{else}}{{$.T "comm.confirm_will_close"}}{{end}} ({{.OpenChannels}}): {{.ChannelsLine}}{{end}}">
+                            <form class="inline" method="post" action="/comm/endpoints/{{.EndpointID}}/revoke" data-confirm="{{if .Bound}}{{$.T "comm.revoke_bound_endpoint_confirm"}}{{else}}{{$.T "comm.revoke_endpoint_confirm"}}{{end}}&#10;&#10;{{$.T "comm.confirm_endpoint"}}: {{if .Label}}{{.Label}}{{else}}{{.EndpointID}}{{end}}{{if .ChannelsLine}}&#10;{{if .Bound}}{{$.T "comm.confirm_station_keeps"}}{{else}}{{$.T "comm.confirm_will_close"}}{{end}} ({{.OpenChannels}}): {{.ChannelsLine}}{{end}}">
                 <input type="hidden" name="csrf" value="{{$.Session.CSRF}}">
                 <button class="btn btn--danger btn--sm" type="submit" title="{{$.T "comm.revoke_endpoint_help"}}">{{$.T "comm.revoke"}}</button>
               </form>

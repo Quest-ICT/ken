@@ -554,7 +554,7 @@ func TestCommCountEndpoint(t *testing.T) {
 
 	// A registered endpoint (space 1, the console's space) is a console-visible
 	// change: the number the poller compares must move off 0.
-	if _, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok", ActorID: 7}, "solo", ""); err != nil {
+	if _, err := cs.MailboxFor(ctx, "solo", comm.Owner{TokenID: "tok", ActorID: 7}); err != nil {
 		t.Fatal(err)
 	}
 	if got := get(t, cli, srv.URL+"/comm/count"); strings.TrimSpace(got) == `{"count":0}` {

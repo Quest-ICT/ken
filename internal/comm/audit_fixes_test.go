@@ -12,14 +12,8 @@ import (
 func TestRevokedPendingChannelCannotBeReopened(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "test", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := mailbox(t, st, "dev", "tok-a")
+	b := mailbox(t, st, "test", "tok-b")
 	code, err := st.MintPairingCode(ctx, 42, "")
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +137,7 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 	// DERIVED, not delivered (slice 4). The property is unchanged — a requester whose
 	// peer went silent must not wait forever — but the sweep no longer writes them a
 	// message to say so, because a pass that deletes must not also insert.
-	n, err := st.NoticesForPoll(ctx, endpointPartyKey(a.ID), 10)
+	n, err := st.NoticesForPoll(ctx, PartyOf(a), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +158,7 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 	}
 	// A SECOND POLL is what confirms the first one's display — that is where the
 	// exactly-once property lives, and it is the path a session actually takes.
-	again, err := st.NoticesForPoll(ctx, endpointPartyKey(a.ID), 10)
+	again, err := st.NoticesForPoll(ctx, PartyOf(a), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +187,7 @@ func TestSenderIsNotifiedWhenAMessageExpires(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	n, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	n, err := st.NoticesFor(ctx, PartyOf(a), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +241,7 @@ func TestASenderAtTheBackpressureCapIsStillTold(t *testing.T) {
 	if _, _, err := st.Sweep(ctx); err != nil {
 		t.Fatalf("sweep with a full channel: %v", err)
 	}
-	n, err := st.NoticesFor(ctx, endpointPartyKey(a.ID), 10)
+	n, err := st.NoticesFor(ctx, PartyOf(a), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,10 +432,7 @@ func TestSweepRemovesIdleEndpoints(t *testing.T) {
 	l := DefaultLimits()
 	l.EndpointIdleTTLSeconds = 60 // a real, positive idle window
 	st := newStore(t, l)
-	ep, _, err := st.RegisterEndpoint(ctx, owner("tok"), "ghost", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ep := mailbox(t, st, "ghost", "tok")
 	if eps, _ := st.ListEndpoints(ctx); len(eps) != 1 {
 		t.Fatalf("setup: %d endpoints", len(eps))
 	}
@@ -521,7 +512,7 @@ func TestEndpointSweepFailsSafeOnZeroWindow(t *testing.T) {
 	l := DefaultLimits()
 	l.EndpointIdleTTLSeconds = 0 // the dropped-mapping shape
 	st := newStore(t, l)
-	if _, _, err := st.RegisterEndpoint(ctx, owner("tok"), "fresh", ""); err != nil {
+	if _, err := st.MailboxFor(ctx, "fresh", owner("tok")); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := st.Sweep(ctx); err != nil {
@@ -542,14 +533,8 @@ func TestEndpointSweepFailsSafeOnZeroWindow(t *testing.T) {
 func TestChannelCarriesPairingLabel(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
-	a, _, err := st.RegisterEndpoint(ctx, owner("tok-a"), "public-dev", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _, err := st.RegisterEndpoint(ctx, owner("tok-b"), "ken-prod-ops", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	a := mailbox(t, st, "public-dev", "tok-a")
+	b := mailbox(t, st, "ken-prod-ops", "tok-b")
 	code, err := st.MintPairingCode(ctx, 42, "Ken dev <-> prod")
 	if err != nil {
 		t.Fatal(err)
@@ -580,14 +565,8 @@ func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st) // pair() mints a code with a label, so re-do plainly
 	_ = channelID
-	c, _, err := st.RegisterEndpoint(ctx, owner("tok-c"), "x", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	d, _, err := st.RegisterEndpoint(ctx, owner("tok-d"), "y", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := mailbox(t, st, "x", "tok-c")
+	d := mailbox(t, st, "y", "tok-d")
 	code, err := st.MintPairingCode(ctx, 42, "") // no label
 	if err != nil {
 		t.Fatal(err)
@@ -633,19 +612,13 @@ func TestSweepDoesNotDeleteAChannelByCollectingItsIdleSeat(t *testing.T) {
 	st := newStore(t, l)
 
 	a, b, channelID := pair(t, st)
-	ghost, _, err := st.RegisterEndpoint(ctx, owner("tok-ghost"), "ghost", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ghost := mailbox(t, st, "ghost", "tok-ghost")
 
 	// A HALF-JOINED CHANNEL, so that `channel.endpoint_b` actually contains a NULL. Without
 	// one, the NULL arm of the guard is untested and the control below cannot fail — every
 	// channel in the fixture would have both seats filled, which is not the state a pairing
 	// passes through.
-	halfJoiner, _, err := st.RegisterEndpoint(ctx, owner("tok-half"), "half", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	halfJoiner := mailbox(t, st, "half", "tok-half")
 	pendingCode, err := st.MintPairingCode(ctx, 42, "never-completed")
 	if err != nil {
 		t.Fatal(err)

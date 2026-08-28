@@ -150,18 +150,11 @@ func commOf(t *testing.T) *comm.Store {
 func boundEndpoint(t *testing.T, cs *comm.Store, stationID string) *comm.Endpoint {
 	t.Helper()
 	ctx := context.Background()
-	ep, secret, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-" + stationID, ActorID: 7}, stationID, "")
+	ep, err := cs.MailboxFor(ctx, stationID, comm.Owner{TokenID: "tok-" + stationID, ActorID: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := cs.BindEndpointToStation(ctx, ep.EndpointID, stationID, "kens_k"); err != nil {
-		t.Fatal(err)
-	}
-	bound, err := cs.AuthenticateEndpoint(ctx, ep.EndpointID, secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return bound
+	return ep
 }
 
 func deliveriesFor(t *testing.T, cs *comm.Store, messageID, party string) int {

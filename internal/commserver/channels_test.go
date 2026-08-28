@@ -99,33 +99,8 @@ func TestCommChannelsRoomsIsAlwaysPresentAndNeverNull(t *testing.T) {
 	}
 }
 
-// AN UNBOUND ENDPOINT MUST STILL BE SERVED. comm_directory refuses one outright; copying
-// that here would turn this fix into a regression, because comm_channels is the only inbox
-// survey an endpoint with no station has.
-func TestCommChannelsServesAnUnboundEndpoint(t *testing.T) {
-	sess, _, ctx := dirHarness(t)
-	if err := dirComm.UnbindEndpointFromStation(ctx, dirEP); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: dirCreds()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("comm_channels refused an unbound endpoint: %+v.\n"+
-			"It is the only survey such an endpoint has; refusing it leaves that session with "+
-			"comm_poll as its only way to find out, which takes delivery.", res.Content)
-	}
-	b, _ := json.Marshal(res.StructuredContent)
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(b, &raw); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := raw["rooms"]; !ok {
-		t.Error("an unbound endpoint gets no `rooms` key at all")
-	}
-}
+// TestCommChannelsServesAnUnboundEndpoint IS DELETED. There is no unbound mailbox: a station comes
+// with one, so "an endpoint with no station" is not a state any more.
 
 // THE TOTAL COVERS WHAT THE PER-CHANNEL COUNTS CANNOT. This is the number a session whose
 // captured instructions only ever mentioned channels can still act on.
@@ -240,7 +215,7 @@ func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
 
 	// A channel message and a room message, so both counters that lacked the clause are
 	// in the same result.
-	me, err := dirComm.AuthenticateEndpoint(ctx, dirEP, dirSecret)
+	me, err := dirMailbox(t, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,24 +295,17 @@ func seedRoom(t *testing.T, roomID string, parties ...string) {
 	}
 }
 
-// stationBoundEndpoint registers a second endpoint bound to another station, so a test can
-// send INTO the room from somewhere other than the caller.
+// stationBoundEndpoint returns another station's mailbox, so a test can send INTO the room from
+// somewhere other than the caller. It used to register an endpoint and bind it; a station comes
+// with a mailbox, so naming the station is the whole of it.
 func stationBoundEndpoint(t *testing.T, stationID string) *comm.Endpoint {
 	t.Helper()
-	ctx := context.Background()
-	ep, secret, err := dirComm.RegisterEndpoint(ctx,
-		comm.Owner{TokenID: "tok-other", ActorID: 9}, stationID, "")
+	ep, err := dirComm.MailboxFor(context.Background(), stationID,
+		comm.Owner{TokenID: "tok-other", ActorID: 9})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dirComm.BindEndpointToStation(ctx, ep.EndpointID, stationID, "kens_k"); err != nil {
-		t.Fatal(err)
-	}
-	bound, err := dirComm.AuthenticateEndpoint(ctx, ep.EndpointID, secret)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return bound
+	return ep
 }
 
 // callChannels calls the tool and decodes a successful result.
@@ -383,22 +351,21 @@ func TestCommChannelsSaysWhoTheCallerIs(t *testing.T) {
 	}
 }
 
-// AND AN UNBOUND ENDPOINT IS TOLD SO IN WORDS, not with an empty string.
+// THE IDENTITY ECHO IS NEVER SILENTLY EMPTY.
 //
-// "" is indistinguishable from a field the server failed to populate, and the entire purpose
-// of an identity echo is that a caller can check it.
+// "" is indistinguishable from a field the server failed to populate, and the entire purpose of an
+// identity echo is that a caller can check it. This used to prove the point by UNBINDING the
+// mailbox, which is no longer a state — a station comes with one — so it proves it on the ordinary
+// path instead: the echo must name the station, not be blank.
 func TestTheIdentityEchoIsNeverSilentlyEmpty(t *testing.T) {
 	sess, _, ctx := dirHarness(t)
-	if err := dirComm.UnbindEndpointFromStation(ctx, dirEP); err != nil {
-		t.Fatal(err)
-	}
 	got := callChannels(t, sess, ctx).YouAre
 	if got == "" {
-		t.Fatal("you_are is empty for an unbound endpoint — a caller cannot tell that from a " +
-			"server that did not fill the field in")
+		t.Fatal("you_are is empty — a caller cannot tell that from a server that did not fill the " +
+			"field in")
 	}
-	if !strings.Contains(got, "no station") {
-		t.Errorf("you_are = %q for an unbound endpoint; it should say so plainly", got)
+	if !strings.Contains(got, "mine") {
+		t.Errorf("you_are = %q, want it to name the station the caller is working as", got)
 	}
 }
 
@@ -438,7 +405,8 @@ func TestAnArchivedStationCannotUseComm(t *testing.T) {
 	// The refusal must carry the REMEDY. Under the freeze an error string is the only
 	// channel that reaches a session already running — it cannot be sent a corrected
 	// description, so what it needs to know has to be in the refusal itself.
-	if !strings.Contains(msg, "archived") || !strings.Contains(msg, "unarchive") {
+	low := strings.ToLower(msg)
+	if !strings.Contains(low, "archived") || !strings.Contains(low, "unarchive") {
 		t.Errorf("the refusal does not name the state and the remedy: %q", msg)
 	}
 
@@ -453,37 +421,6 @@ func TestAnArchivedStationCannotUseComm(t *testing.T) {
 	}
 }
 
-// AND ARCHIVE STATE MUST NOT BECOME AN ORACLE. The check is ordered after the secret
-// verifies, so a wrong secret answers identically whatever the station's state.
-func TestArchiveStateIsNotReadableWithoutTheSecret(t *testing.T) {
-	sess, st, ctx := dirHarness(t)
-	bad := map[string]any{"endpoint_id": dirEP, "endpoint_secret": "wrong-secret-entirely"}
-
-	call := func() string {
-		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: bad})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !res.IsError {
-			t.Fatal("a wrong secret was accepted")
-		}
-		out := ""
-		for _, ct := range res.Content {
-			if tc, ok := ct.(*mcp.TextContent); ok {
-				out += tc.Text
-			}
-		}
-		return out
-	}
-
-	active := call()
-	if err := st.ArchiveStation(ctx, dirStation, true); err != nil {
-		t.Fatal(err)
-	}
-	archived := call()
-
-	if active != archived {
-		t.Fatalf("a wrong secret is answered differently depending on archive state:\n active:   %q\n archived: %q\n"+
-			"That makes a station's retirement readable by anyone who can guess an endpoint id.", active, archived)
-	}
-}
+// TestArchiveStateIsNotReadableWithoutTheSecret IS DELETED with the secret it was about. Archive
+// state is now behind station.Resolve, which requires state='active' and answers every miss with
+// one wording — so there is no second answer to compare against.

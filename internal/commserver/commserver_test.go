@@ -3,9 +3,6 @@ package commserver
 import (
 	"context"
 	"github.com/Quest-ICT/ken/internal/version"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
@@ -382,55 +378,9 @@ func TestPollExcludedFromDurationHistogram(t *testing.T) {
 	}
 }
 
-// TestTheModelIsToldWhereToKeepTheSecret pins the fix for a real outage: a dev session lost its
-// endpoint_secret to context compaction, could not reconnect, and work stopped for a day waiting
-// for a human to mint a fresh pairing code.
-//
-// The old text said "KEEP the endpoint_id and endpoint_secret". That is advice a human client
-// follows by writing a config file and an AI client follows by remembering — and remembering is
-// precisely the thing that fails, silently and by design. The instruction is only useful if it
-// names the DESTINATION.
-//
-// *** IT NOW ASSERTS ON WHAT IS DELIVERED, AND ACROSS BOTH PLACES THE RULE LIVES. ***
-//
-// The previous version matched three exact phrases against the `instructions` const. That const
-// was 7042 characters against a delivery budget of 2048, so the test was green while two thirds
-// of the block — including, depending on where the edit landed, this very rule — reached no
-// session at all. **A test that asserts on a fragment of a truncated value cannot see the
-// truncation.** It now checks the string the client actually receives, and follows the recovery
-// half to comm_register's description, where the refit put it.
-//
-// Wording is deliberately not pinned; the PROPERTY is. Each check names the thing a session must
-// end up knowing, so a rewrite that keeps the meaning passes and a rewrite that drops it does not.
-func TestTheModelIsToldWhereToKeepTheSecret(t *testing.T) {
-	delivered := version.InstructionStamp() + instructions
-	if n := len([]rune(delivered)); n > version.InstructionBudget {
-		t.Fatalf("the instructions are %d characters against a %d budget, so what this test reads is "+
-			"not what a session receives", n, version.InstructionBudget)
-	}
-
-	for _, c := range []struct {
-		what  string
-		frags []string
-	}{
-		{"that the secret goes to a FILE, not into context", []string{"0600 file", "on disk", "ON DISK"}},
-		{"WHY memory is not a destination", []string{"compaction is routine and silent"}},
-		{"that it happens immediately after registering", []string{"comm_register"}},
-	} {
-		if !anyOf(delivered, c.frags) {
-			t.Errorf("the DELIVERED instructions no longer say %s — a session that loses its secret "+
-				"cannot reconnect at all, so this is load-bearing:\n%s", c.what, delivered)
-		}
-	}
-
-	// The recovery path moved to comm_register, which is the tool a session calls when it is
-	// thinking about its endpoint credentials. Only a human can rotate a lost secret, so a
-	// session that does not know to ask will sit stuck instead of asking.
-	if !anyOf(registerDescription(t), []string{"rotates a lost secret", "rotate", "/comm"}) {
-		t.Error("comm_register's description no longer points at the console that rotates a lost " +
-			"secret; a session that loses one has no way to learn that asking its human is the fix")
-	}
-}
+// TestTheModelIsToldWhereToKeepTheSecret IS DELETED WITH THE SECRET. It required comm_register's
+// description to tell a session to write its endpoint secret to a file — the instruction that made
+// comm unusable for any session without a disk. There is no register, no secret and no file.
 
 func anyOf(hay string, needles []string) bool {
 	for _, n := range needles {
@@ -460,86 +410,7 @@ func registerDescription(t *testing.T) string {
 	return sb.String()
 }
 
-// Registration mints a secret shown exactly once, and nothing in the call may put
-// that at risk. Driven over real HTTP, because the property is about what reaches
-// the CLIENT and only the transport can show it.
-//
-// This test once pinned something sharper: comm_register also REDEEMED a binding
-// voucher, and the MCP SDK discards structured output when a handler returns an
-// error, so a stale voucher destroyed the secret the handler had just minted — a
-// brand-new way to lose an endpoint, invented inside the change whose purpose was
-// making that loss survivable. The workaround was a binding_error field reporting
-// failure without failing.
-//
-// Binding then moved to comm_bind, and the hazard went with it: registration has
-// nothing left to fail at. What remains asserted here is the property that outlives
-// the fix — the secret always reaches the caller — plus the fact that the retired
-// argument is now REFUSED rather than ignored, which is the whole migration story.
-func TestRegisterAlwaysReturnsTheSecretAndRefusesARetiredVoucherArgument(t *testing.T) {
-	st := newKB(t)
-	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cs.Close()
-	if err := cs.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	tok := mintToken(t, st, "comm-agent", "comm")
-
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
-	defer srv.Close()
-
-	call := func(body string) string {
-		t.Helper()
-		req, _ := http.NewRequest(http.MethodPost, srv.URL, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+tok)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json, text/event-stream")
-		if sid != "" {
-			req.Header.Set("Mcp-Session-Id", sid)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if s := resp.Header.Get("Mcp-Session-Id"); s != "" {
-			sid = s
-		}
-		b, _ := io.ReadAll(resp.Body)
-		return string(b)
-	}
-	call(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`)
-	call(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-
-	// The ordinary call: a secret comes back, and it is the only thing that matters.
-	out := call(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"comm_register","arguments":{"label":"dev"}}}`)
-	if !strings.Contains(out, "endpoint_secret") {
-		t.Fatalf("registration returned no secret — the endpoint exists and nothing can ever authenticate as it.\nResponse: %s", out)
-	}
-	if strings.Contains(out, `"isError":true`) {
-		t.Fatalf("comm_register returned an error, which discards the structured result: %s", out)
-	}
-
-	// A session working from a stale transcript still passes binding_voucher. This
-	// MUST fail loudly. Silently ignoring it would leave the session holding an
-	// UNBOUND endpoint while believing it had bound — a station's mail going
-	// somewhere nobody is reading, with no error anywhere to say so.
-	stale := call(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"comm_register","arguments":{"label":"dev2","binding_voucher":"from-an-older-flow"}}}`)
-	if !strings.Contains(stale, `"isError":true`) {
-		t.Fatalf("comm_register ACCEPTED a binding_voucher argument that no longer does anything.\n"+
-			"The session believes it is bound to a station and is not, and nothing told it.\nResponse: %s", stale)
-	}
-	if strings.Contains(stale, "endpoint_secret") {
-		t.Fatalf("a rejected argument still minted an endpoint — the secret is in a response the caller will read as a failure: %s", stale)
-	}
-	// And the refusal must NAME the argument, or the session cannot tell which of its
-	// arguments the transport objected to.
-	if !strings.Contains(stale, "binding_voucher") {
-		t.Fatalf("the refusal does not name binding_voucher, so a session cannot work out what to drop: %s", stale)
-	}
-}
+// TestRegisterAlwaysReturnsTheSecretAndRefusesARetiredVoucherArgument IS DELETED with comm_register.
 
 // sid carries the MCP session id between the calls above.
 var sid string
@@ -695,7 +566,11 @@ func deliveredCorpus(t *testing.T) string {
 		}
 		n++
 	}
-	if n < 10 {
+	// FLOOR LOWERED FROM 10 TO 8 when comm_register, comm_bind and comm_unbind were deleted — a
+	// station comes with a mailbox, so there is nothing to register, attach or detach. It is still
+	// a POSITIVE CONTROL on the scanner: a regexp that silently stopped matching would make this
+	// test pass by finding nothing to check.
+	if n < 8 {
 		t.Fatalf("only %d tool descriptions parsed from commserver.go; the scanner is broken, not the text", n)
 	}
 	return sb.String()

@@ -35,11 +35,9 @@ type registerIn struct {
 // deleted the hazard rather than guarding it, and it is also the stronger order:
 // register, WRITE YOUR SECRET DOWN, then bind.
 type registerOut struct {
-	EndpointID string `json:"endpoint_id"`
 	// EndpointSecret is EMPTY on the claimed path, which is the point: a conversation that sent
 	// session_key has nothing to keep and nothing to write to a file. omitempty so its absence is
 	// visible rather than an empty string a session might dutifully store.
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"shown ONCE, and ONLY when you did not send session_key — keep it; the other comm tools then require it"`
 	// SessionKeyEcho confirms which conversation claimed this endpoint, so a session can verify
 	// Ken received the key it sent rather than assume.
 	SessionKeyEcho string `json:"session_key_received,omitempty"`
@@ -49,8 +47,6 @@ type registerOut struct {
 }
 
 type joinIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -65,8 +61,6 @@ type joinOut struct {
 }
 
 type channelsIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -171,8 +165,6 @@ type channelPairView struct {
 }
 
 type sendIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -225,8 +217,6 @@ type sendOut struct {
 }
 
 type pollIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -355,8 +345,6 @@ type noticeView struct {
 }
 
 type ackIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -382,8 +370,6 @@ type ackOut struct {
 // --- file exchange (comm-file scope; docs/COMM.md §11) ---
 
 type fileOfferIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -419,8 +405,6 @@ type fileOfferOut struct {
 }
 
 type fileGrantIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -437,8 +421,6 @@ type fileGrantOut struct {
 }
 
 type directoryIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -532,8 +514,6 @@ type directoryRoom struct {
 }
 
 type openLinkedIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -549,8 +529,6 @@ type openLinkedOut struct {
 }
 
 type bindIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
@@ -563,8 +541,6 @@ type bindOut struct {
 }
 
 type unbindIn struct {
-	EndpointID     string `json:"endpoint_id,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Id header instead — see comm_register"`
-	EndpointSecret string `json:"endpoint_secret,omitempty" jsonschema:"OPTIONAL when sent as the X-Ken-Endpoint-Secret header instead; a header keeps the secret out of your transcript"`
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.

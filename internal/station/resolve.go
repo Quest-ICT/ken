@@ -35,6 +35,12 @@ import (
 // which shape it got wrong. The code this replaces had two different answers — a bare "denied"
 // on one path and a descriptive sentence on another — which is a probe asymmetry a persistent
 // caller can walk.
+// ErrStationArchived is the one distinguishable refusal — see Resolve for why it is safe to
+// distinguish and why it has to be.
+var ErrStationArchived = errors.New("that station is ARCHIVED, so it does not send or receive. " +
+	"Nothing is lost and nothing needs re-pairing: ask your human to UNARCHIVE it in Ken's console " +
+	"at /stations, and the same session carries on with the same mail")
+
 var ErrNoWorkspace = errors.New("this connection has not said which station it is, or that station is not yours or is archived. " +
 	"Call station_me ONCE with session_key — a stable id for THIS conversation — and send the SAME session_key on every call that needs it. " +
 	"Calling station_me repeatedly with NO session_key is not the fix: that mints a new station each time and strands the previous one")
@@ -110,27 +116,45 @@ func Bound(req *mcp.CallToolRequest) string {
 // once" — a justification that was already void, because the OAuth token is validated against
 // ken.db at the transport and refuses every call before a handler runs. The fail-open could not
 // fire; it only read as protection.
-func Resolve(ctx context.Context, st *store.Store, req *mcp.CallToolRequest, actorID int64, sessionKey string) (string, error) {
+func Resolve(ctx context.Context, st *store.Store, req *mcp.CallToolRequest, _ int64, sessionKey string) (string, error) {
 	var sid string
 	switch {
 	case strings.TrimSpace(sessionKey) != "":
-		s, err := st.StationBySessionKey(ctx, strings.TrimSpace(sessionKey))
+		// RESOLVED WITHOUT FILTERING ON STATE, so archive stays visible to the check below.
+		// StationBySessionKey excludes archived rows — correct for its own callers, wrong here:
+		// it turns "your station is archived" into "you never said which station", and those
+		// have completely different remedies.
+		id, err := st.StationIDBySessionKeyAnyState(ctx, strings.TrimSpace(sessionKey))
 		if err != nil {
 			return "", ErrNoWorkspace
 		}
-		sid = s.StationID
+		sid = id
 	default:
 		sid = Bound(req)
 	}
 	if sid == "" {
 		return "", ErrNoWorkspace
 	}
-	// ONE OWNERSHIP QUESTION, ASKED ONCE. This replaces three phrasings of the same thing that had
-	// drifted apart: an owner-token comparison that was vacuous for every OAuth caller (one grant
-	// means one token id, so it compared a value to itself), an archived check reading `state`, and
-	// an existence check reading `archived_at`.
-	ok, err := st.StationForActor(ctx, sid, actorID)
-	if err != nil || !ok {
+	// ONE LIVENESS QUESTION, ASKED ONCE — see StationIsLive for why it does not compare actors.
+	ok, err := st.StationIsLive(ctx, sid)
+	if err != nil {
+		return "", ErrNoWorkspace
+	}
+	if !ok {
+		// *** ARCHIVED IS ANSWERED SEPARATELY, AND THAT IS SAFE HERE. ***
+		//
+		// Everywhere else in Ken a distinguishable refusal is a probe, and the rule is that a
+		// caller learns WHY only after its own credential verifies. Both conditions hold: the
+		// caller has already proven an OAuth grant at the transport, and under one human, one
+		// account there is no other tenant whose station state could leak. It is the same
+		// reasoning that retires StationByNameVisibleTo's enumeration guard.
+		//
+		// It earns its place because the remedy is real and the session cannot guess it: an
+		// archived station is REVERSIBLE, and a session told only "you have not said which
+		// station" would re-declare forever against a station that will never answer.
+		if archived, aerr := st.StationIsArchived(ctx, sid); aerr == nil && archived {
+			return "", ErrStationArchived
+		}
 		return "", ErrNoWorkspace
 	}
 	return sid, nil

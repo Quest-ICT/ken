@@ -30,7 +30,7 @@ func TestPollScopeFilterDrainsOneConversationAndHidesTheRest(t *testing.T) {
 	seedRoom(t, "ops", "s:"+dirStation, "s:sender-station")
 	sender := stationBoundEndpoint(t, "sender-station")
 
-	me, err := dirComm.AuthenticateEndpoint(ctx, dirEP, dirSecret)
+	me, err := dirMailbox(t, ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

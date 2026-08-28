@@ -143,44 +143,8 @@ WHERE t.token_id = ?`, tokenID).Scan(&actorID, &scopesJSON, &revoked)
 // key, which is a control that reads as present and is not.
 var ErrNotAStationKey = errors.New("that token cannot have bound an endpoint — it must exist, be unrevoked, and be a station key")
 
-// StationKeyStation resolves a station key to the station it belongs to, refusing any token
-// that could not have authorised a binding.
-//
-// WHY THE STATION COMES BACK RATHER THAN A BARE OK. `endpoint.bound_by_station_key_id` is the
-// lever that severs a session when its key is revoked (S6), so moving a binding onto a key of
-// a DIFFERENT station would hand that station's operator a lever over someone else's session —
-// and would take the real station's lever away. The caller passes this station id into the
-// re-point statement's WHERE clause, so the endpoint's own station has to match for any row to
-// move. The rule is enforced by the UPDATE rather than by a check preceding it (§9.5 of
-// docs/IDENTITY.md), which is what makes a stale console page fail loudly instead of laundering
-// an authority.
-//
-// REFUSING A REVOKED KEY IS THE POINT OF THE OPERATION, not a nicety. `IsStationKeyRevoked`
-// treats a revoked key — and a MISSING one — as severing every endpoint it bound, so
-// re-pointing onto a dead key produces a session that is refused on its next call and fails
-// identically to one whose key leaked. That is the defect class this control exists to cure.
-//
-// A RETIRED KEY IS DELIBERATELY ACCEPTED, and this is the one place the retire/revoke split works
-// in the caller's favour. `IsStationKeyRevoked` reads `revoked_at` alone, so a retired key severs
-// nothing on the COMM surface and stays a perfectly good lever for a binding — refusing it would
-// remove a legal destination for no gain. What matters is that the key chosen here is the one a
-// future REVOKE will act through; retirement state lives on /stations, where it belongs.
-func (s *Store) StationKeyStation(ctx context.Context, tokenID string) (string, error) {
-	var stationID sql.NullString
-	var revoked sql.NullString
-	err := s.R.QueryRowContext(ctx,
-		`SELECT station_id, revoked_at FROM api_token WHERE token_id = ?`, tokenID).Scan(&stationID, &revoked)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotAStationKey
-	}
-	if err != nil {
-		return "", err
-	}
-	if revoked.Valid || !stationID.Valid || stationID.String == "" {
-		return "", ErrNotAStationKey
-	}
-	return stationID.String, nil
-}
+// StationKeyStation IS DELETED. It answered "which station did this key bind for", asked only by
+// the console's rebind picker — and there is no binding to move.
 
 // ListTokens lists all API tokens, newest first.
 func (s *Store) ListTokens(ctx context.Context) ([]TokenRow, error) {

@@ -63,23 +63,14 @@ func TestSendToStationOverHTTP(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ep, secret, err := cs.RegisterEndpoint(ctx,
-			comm.Owner{TokenID: prin.TokenID, ActorID: prin.ActorID}, name, "")
-		if err != nil {
+		// NOTHING TO REGISTER AND NOTHING TO BIND. A station comes with a mailbox, so claiming the
+		// station for a conversation is the whole setup — where this used to register an endpoint,
+		// mint a station key and bind the two together.
+		key := "conv-" + name
+		if _, _, err := st.ClaimStationForSession(ctx, key, name, prin.ActorID, station.StationID); err != nil {
 			t.Fatal(err)
 		}
-		// A REAL station key. Binding records the key that did it and every later call
-		// re-checks whether that key was revoked, so a fabricated id makes every tool
-		// call fail at AUTH — a refusal that would look exactly like the one under test.
-		keyStr, err := st.IssueStationKey(ctx, actor, station.StationID, name, []string{"station"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		keyID := strings.Split(strings.TrimPrefix(keyStr, "kens_"), "_")[0]
-		if err := cs.BindEndpointToStation(ctx, ep.EndpointID, station.StationID, keyID); err != nil {
-			t.Fatal(err)
-		}
-		return tok, ep.EndpointID + "|" + secret
+		return tok, key
 	}
 	tokA, credA := register("pair-a", alpha)
 	tokB, credB := register("pair-b", beta)
@@ -141,15 +132,12 @@ func TestSendToStationOverHTTP(t *testing.T) {
 
 	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
 	t.Cleanup(srv.Close)
-	connect := func(tok, cred string) *mcp.ClientSession {
+	connect := func(tok, _ string) *mcp.ClientSession {
 		t.Helper()
-		id, secret, _ := strings.Cut(cred, "|")
 		cli := mcp.NewClient(&mcp.Implementation{Name: "pair", Version: "0"}, nil)
 		sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
-			Endpoint: srv.URL,
-			HTTPClient: &http.Client{Transport: hdrRT{
-				token: tok, epID: id, epSecret: secret, base: http.DefaultTransport,
-			}},
+			Endpoint:             srv.URL,
+			HTTPClient:           &http.Client{Transport: bearerRT{token: tok, base: http.DefaultTransport}},
 			DisableStandaloneSSE: true,
 		}, nil)
 		if err != nil {
@@ -175,7 +163,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	// B failed.
 	res, err := sessA.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "comm_send",
-		Arguments: map[string]any{"to_station": beta.StationID, "body": "over http", "idempotency_key": "p2-http-1"},
+		Arguments: map[string]any{"session_key": credA, "to_station": beta.StationID, "body": "over http", "idempotency_key": "p2-http-1"},
 	})
 	if err != nil {
 		t.Fatalf("comm_send{to_station} was rejected before the handler ran: %v.\n"+
@@ -199,7 +187,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	// THE PEER RECEIVES IT, and is told how to answer.
 	sessB := connect(tokB, credB)
 	res, err = sessB.CallTool(ctx, &mcp.CallToolParams{
-		Name: "comm_poll", Arguments: map[string]any{"wait_seconds": 0},
+		Name: "comm_poll", Arguments: map[string]any{"session_key": credB, "wait_seconds": 0},
 	})
 	if err != nil || res.IsError {
 		t.Fatalf("comm_poll failed: %v %s", err, textOf(res))
@@ -233,7 +221,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 
 	// comm_channels LISTS THE PAIR. The listing and the send read the same mirror, so a
 	// peer named here is always one the send would accept.
-	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: map[string]any{}})
+	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{Name: "comm_channels", Arguments: map[string]any{"session_key": credA}})
 	if err != nil || res.IsError {
 		t.Fatalf("comm_channels failed: %v %s", err, textOf(res))
 	}
@@ -289,7 +277,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	// the day it shipped — and frozen into every session that connected after it. The fix
 	// was to make the sentence true, so this asserts the ROUND TRIP rather than the field:
 	// read an id out of comm_directory and spend it on comm_send, with nothing in between.
-	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{Name: "comm_directory", Arguments: map[string]any{}})
+	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{Name: "comm_directory", Arguments: map[string]any{"session_key": credA}})
 	if err != nil || res.IsError {
 		t.Fatalf("comm_directory failed: %v %s", err, textOf(res))
 	}
@@ -331,7 +319,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	// held — otherwise this proves the field exists and not that it is the right value.
 	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{
 		Name: "comm_send",
-		Arguments: map[string]any{"to_station": fromDirectory, "body": "addressed from the directory",
+		Arguments: map[string]any{"session_key": credA, "to_station": fromDirectory, "body": "addressed from the directory",
 			"idempotency_key": "p2-from-directory"},
 	})
 	if err != nil {
@@ -362,7 +350,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 	} {
 		res, err := sessA.CallTool(ctx, &mcp.CallToolParams{
 			Name:      "comm_send",
-			Arguments: map[string]any{"to_station": c.toStation, "body": "refusal probe " + c.name},
+			Arguments: map[string]any{"session_key": credA, "to_station": c.toStation, "body": "refusal probe " + c.name},
 		})
 		if err != nil {
 			t.Fatalf("%s: transport error rather than a tool error: %v", c.name, err)
@@ -383,39 +371,15 @@ func TestSendToStationOverHTTP(t *testing.T) {
 		}
 	}
 
-	// AND THE UNBOUND CASE, which needs its own endpoint because it is a fact about the
-	// SENDER rather than about the target.
-	tokU := mintToken(t, st, "pair-unbound", "comm")
-	prinU, err := authenticate(ctx, st, tokU, ScopeComm)
-	if err != nil {
-		t.Fatal(err)
-	}
-	epU, secretU, err := cs.RegisterEndpoint(ctx,
-		comm.Owner{TokenID: prinU.TokenID, ActorID: prinU.ActorID}, "unbound", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessU := connect(tokU, epU.EndpointID+"|"+secretU)
-	res, err = sessU.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "comm_send",
-		Arguments: map[string]any{"to_station": beta.StationID, "body": "from an unbound endpoint"},
-	})
-	if err != nil {
-		t.Fatalf("unbound: transport error rather than a tool error: %v", err)
-	}
-	if !res.IsError {
-		t.Fatal("unbound: an endpoint with no station was allowed to address one")
-	}
-	if got := textOf(res); strings.Contains(got, "internal error") ||
-		!strings.Contains(got, "not bound to a station") {
-		t.Errorf("unbound: caller received %q, want the bind-first guidance", got)
-	}
+	// THE UNBOUND-SENDER ARM IS DELETED. It asserted that an endpoint with no station could not
+	// address one — a fact about a state that no longer exists, since a station comes with a
+	// mailbox and there is no way to hold one without the other.
 
 	// THE ARITHMETIC. Two addresses together must be REFUSED — this is the case the old
 	// two-way boolean identity would have admitted once a third address existed.
 	res, err = sessA.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "comm_send",
-		Arguments: map[string]any{"to_station": beta.StationID, "channel_id": "c-whatever", "body": "two addresses"},
+		Arguments: map[string]any{"session_key": credA, "to_station": beta.StationID, "channel_id": "c-whatever", "body": "two addresses"},
 	})
 	if err == nil && !res.IsError {
 		t.Fatal("comm_send accepted BOTH channel_id and to_station — with three addresses the " +

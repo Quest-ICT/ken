@@ -166,7 +166,7 @@ func TestUploadOfferDeliversOnlyAfterCompletion(t *testing.T) {
 		msg.MessageID).Scan(&party); err != nil {
 		t.Fatal(err)
 	}
-	if want := endpointPartyKey(b.ID); party != want {
+	if want := PartyOf(b); party != want {
 		t.Fatalf("delivery party = %q, want %q", party, want)
 	}
 

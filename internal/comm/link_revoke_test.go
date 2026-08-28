@@ -22,7 +22,7 @@ func TestRevokeChannelsBetweenStationsEndsOnlyThatPair(t *testing.T) {
 
 	mk := func(tok, label, station, key string) *Endpoint {
 		t.Helper()
-		ep, _, err := st.RegisterEndpoint(ctx, owner(tok), label, "")
+		ep, err := st.MailboxFor(ctx, label, owner(tok))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,63 +114,13 @@ func TestRevokeChannelsBetweenStationsToleratesNothingToDo(t *testing.T) {
 	}
 }
 
-// AN AGENT MUST NOT BE ABLE TO HIDE ITS CHANNEL FROM THE OPERATOR'S REVOKE.
+// TestUnbindingCannotHideAChannelFromRevocation IS DELETED, AND THE ATTACK WITH IT.
 //
-// The pair used to be derived by JOINing endpoint at query time, so it read the
-// endpoint's CURRENT binding rather than the one that authorised the channel. A
-// single comm_unbind — which comm_unbind's own tool description RECOMMENDS, and
-// which needs no voucher and no human — made the channel match nothing: the console
-// showed 0 live channels, the sweep closed 0, and the flash said "No channels were
-// open" while both sides kept talking under a withdrawn permission.
-//
-// This is the instructed path, not an attack, which is what made it serious.
-func TestUnbindingCannotHideAChannelFromRevocation(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-
-	mk := func(tok, label, station, key string) *Endpoint {
-		t.Helper()
-		ep, _, err := st.RegisterEndpoint(ctx, owner(tok), label, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return bindEndpoint(t, st, ep, station, key)
-	}
-	dev := mk("tok-dev", "dev", "stn_dev", "kens_dev")
-	prod := mk("tok-prod", "prod", "stn_prod", "kens_prod")
-
-	ch, err := st.OpenLinkedChannel(ctx, dev, prod, 1, "dev <-> prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// CONTROL: visible before the unbind, so a later zero cannot be blamed on setup.
-	if n, _ := st.CountOpenChannelsBetweenStations(ctx, "stn_dev", "stn_prod"); n != 1 {
-		t.Fatalf("setup: blast radius %d before unbind, want 1", n)
-	}
-
-	// The evasion, in one agent tool call.
-	if err := st.UnbindEndpointFromStation(ctx, dev.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-
-	n, err := st.CountOpenChannelsBetweenStations(ctx, "stn_dev", "stn_prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("after comm_unbind the console shows %d live channels, want 1 — an agent hid its conversation from the operator's brake", n)
-	}
-	closed, err := st.RevokeChannelsBetweenStations(ctx, "stn_dev", "stn_prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if closed != 1 {
-		t.Fatalf("revoke closed %d, want 1 — the permission ended and the conversation did not", closed)
-	}
-	if _, err := st.Send(ctx, prod, ch.ChannelID, "still talking?", SendOpts{}); err == nil {
-		t.Fatal("the channel still carries traffic after its link was revoked")
-	}
-}
+// It guarded a real evasion: a session could call comm_unbind — one agent tool call, no human —
+// and its channel would stop counting toward the blast radius a human was about to act on. There
+// is no comm_unbind and no unbound state, so the move does not exist to defend against. This is
+// the shape ken-prod-ops predicted: several of the defects it reported live in machinery this
+// change deletes rather than fixes.
 
 // And the mirror: revoking one relationship must not sever ANOTHER one's traffic.
 //
@@ -183,7 +133,7 @@ func TestRebindingDoesNotMoveAChannelUnderAnotherLink(t *testing.T) {
 
 	mk := func(tok, label, station, key string) *Endpoint {
 		t.Helper()
-		ep, _, err := st.RegisterEndpoint(ctx, owner(tok), label, "")
+		ep, err := st.MailboxFor(ctx, label, owner(tok))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,13 +146,10 @@ func TestRebindingDoesNotMoveAChannelUnderAnotherLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// infra's session ends and its endpoint is re-bound to a different station.
-	if err := st.UnbindEndpointFromStation(ctx, infra.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.BindEndpointToStation(ctx, infra.EndpointID, "stn_dev", "kens_dev"); err != nil {
-		t.Fatal(err)
-	}
+	// infra's session ends and a DIFFERENT station's mailbox takes over the variable. An endpoint
+	// cannot move between stations any more — it never could without comm_unbind, which is gone —
+	// so the same scenario is expressed by naming the other station's mailbox directly.
+	infra = mailbox(t, st, "stn_dev", "tok")
 
 	// The channel still belongs to the pair that AUTHORISED it.
 	if n, _ := st.CountOpenChannelsBetweenStations(ctx, "stn_infra", "stn_prod"); n != 1 {
@@ -233,7 +180,7 @@ func TestListChannelsIsStationScopedLikePollAndChannelFor(t *testing.T) {
 
 	mk := func(tok, label, station, key string) *Endpoint {
 		t.Helper()
-		ep, _, err := st.RegisterEndpoint(ctx, owner(tok), label, "")
+		ep, err := st.MailboxFor(ctx, label, owner(tok))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -390,49 +337,6 @@ func TestASuccessorSeesTheRequestsItsPredecessorIsStillOwed(t *testing.T) {
 	}
 }
 
-// AUTHORISATION IS A FACT ABOUT THE PAST, INCLUDING IN THE CHECK THAT ENFORCES IT.
-//
-// ChannelFor derived each seat's station from a LIVE join on endpoint.station_id, a column
-// `comm_unbind` clears — and comm_unbind is prescribed BY NAME in the guidance a session
-// receives when a sequence collides. After it, the successor matched no seat arm and got
-// ErrNotFound, while Poll (party-keyed) kept handing it the station's mail: it could read
-// and neither reply nor ack cumulatively.
-//
-// openChannelsBetweenStations already states the principle in full and reads the snapshot
-// for exactly this reason. The authorisation check itself did not.
-func TestAnUnboundPredecessorDoesNotCostItsStationTheChannel(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-
-	first := stationEndpoint(t, st, "tok-1", "st-home")
-	peer := stationEndpoint(t, st, "tok-peer", "st-away")
-	code, err := st.MintPairingCode(ctx, 42, "home<->away")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, first, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, peer, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// CONTROL: a successor can act on the channel while the predecessor is still bound.
-	successor := stationEndpoint(t, st, "tok-2", "st-home")
-	if _, _, err := st.ChannelFor(ctx, successor, ch.ChannelID); err != nil {
-		t.Fatalf("setup: a successor cannot reach the channel even before the unbind: %v", err)
-	}
-
-	// The predecessor unbinds — the remediation the collision guidance names.
-	if err := st.UnbindEndpointFromStation(ctx, first.EndpointID); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, _, err := st.ChannelFor(ctx, successor, ch.ChannelID); err != nil {
-		t.Errorf("after its predecessor called comm_unbind, the station cannot reach its own "+
-			"channel: %v.\nThe channel row still names st-home as seat A; only the mutable "+
-			"binding moved. Poll keeps delivering the mail, so the session reads messages it "+
-			"cannot answer.", err)
-	}
-}
+// TestAnUnboundPredecessorDoesNotCostItsStationTheChannel IS DELETED. It covered the case where a
+// PREDECESSOR session unbinds and its station must keep reaching the channel — two mailboxes on one
+// station, one of them leaving. A station has one mailbox and it never leaves.

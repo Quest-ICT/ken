@@ -12,14 +12,12 @@ import (
 func stationEndpoint(t *testing.T, st *Store, token, stationID string) *Endpoint {
 	t.Helper()
 	ctx := context.Background()
-	ep, secret, err := st.RegisterEndpoint(ctx, owner(token), stationID, "")
+	ep, err := st.MailboxFor(ctx, stationID, owner(token))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.BindEndpointToStation(ctx, ep.EndpointID, stationID, "kens_k"); err != nil {
-		t.Fatal(err)
-	}
-	bound, err := st.AuthenticateEndpoint(ctx, ep.EndpointID, secret)
+	ep = mailbox(t, st, stationID, "tok")
+	bound, err := st.MailboxFor(ctx, ep.StationID, owner("tok"))
 	if err != nil {
 		t.Fatal(err)
 	}

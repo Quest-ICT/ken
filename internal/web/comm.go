@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -32,21 +31,15 @@ import (
 const spaceForSession = int64(1)
 
 func (a *app) handleComm(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.renderComm(w, r, sess, "", reveal{})
+	a.renderComm(w, r, sess, "")
 }
 
-// reveal carries a just-rotated endpoint secret to the page. Both fields are set
-// together or neither is: a secret with no endpoint id beside it is unusable, since
-// every comm tool needs the pair.
-type reveal struct {
-	EndpointID string
-	Secret     string
-}
+// The `reveal` type is deleted with secret rotation: nothing is ever shown once any more.
 
 // renderComm draws the console. newCode, when non-empty, is a just-minted pairing
 // code shown ONCE — only its hash is stored, so it can never be shown again. rot
 // carries a just-rotated endpoint secret under the same one-time contract.
-func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Session, newCode string, rot reveal) {
+func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Session, newCode string) {
 	if a.comm == nil {
 		http.NotFound(w, r)
 		return
@@ -107,17 +100,7 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		Bound bool
 		// RebindTargets are the OTHER live station keys of this endpoint's own station —
 		// the only legal destinations for its binding. Computed here rather than filtered
-		// in the template, and empty when the station has no alternative key, so the
-		// control appears only where it can do something. A picker whose single option is
-		// the value already set is a button that does nothing.
-		RebindTargets []binderTarget
-		// RepointTargets are the other comm tokens, for the same reason: the picker shipped
-		// in 3.19.0 listed EVERY comm token including this endpoint's own, and it sorts
-		// first, so the default selection was "move it to where it already is". Clicking
-		// Re-point then flashed "Endpoint X re-pointed. …the session needs the new token in
-		// its config and a restart" over a row nothing had touched — a success message for a
-		// no-op, with instructions attached.
-		RepointTargets []repointTarget
+		// (RebindTargets and RepointTargets are gone with repoint/rebind.)
 	}
 	// credential is one credential that can end a live endpoint, with how many it would
 	// take. Two lists, because there are two welds and they are different questions.
@@ -171,8 +154,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 			}
 		}
 	}
-	commTokens := a.repointTargets(ctx)
-	keys := a.binderTargets(ctx)
 
 	eps := make([]epView, 0, len(endpoints))
 	for _, ep := range endpoints {
@@ -183,18 +164,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		v := epView{
 			Endpoint: ep, OpenChannels: len(names), ChannelsLine: strings.Join(names, ", "),
 			Bound: ep.StationID != "",
-		}
-		if ep.StationID != "" {
-			for _, k := range keys {
-				if k.Station == ep.StationID && k.TokenID != ep.BoundByStationKeyID {
-					v.RebindTargets = append(v.RebindTargets, k)
-				}
-			}
-		}
-		for _, ct := range commTokens {
-			if ct.TokenID != ep.Owner.TokenID {
-				v.RepointTargets = append(v.RepointTargets, ct)
-			}
 		}
 		eps = append(eps, v)
 	}
@@ -251,11 +220,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		}
 		n := len(refs)
 		c := credential{TokenID: id, Label: labels[id], Live: n, Endpoints: refs}
-		for _, other := range commTokens {
-			if other.TokenID != id {
-				c.Targets = append(c.Targets, other)
-			}
-		}
 		owners = append(owners, c)
 	}
 	binders := make([]credential, 0, len(binderIDs))
@@ -270,15 +234,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		// included, and falls back to the raw id when the station has no live key left —
 		// which is honest rather than blank: that row is a station whose every key is gone.
 		c := credential{TokenID: id, Label: labels[id], Station: stationOf[id], Live: n, Endpoints: refs}
-		for _, k := range keys {
-			if k.Station != stationOf[id] {
-				continue
-			}
-			c.Station = k.StationName
-			if k.TokenID != id {
-				c.Targets = append(c.Targets, k)
-			}
-		}
 		binders = append(binders, c)
 	}
 
@@ -286,7 +241,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		"Endpoints": eps, "Channels": channels, "Codes": codes, "Stats": stats,
 		"Owners": owners, "Binders": binders,
 		"NewCode": newCode, "CommURL": a.publicCommURL(r), "Fingerprint": fp,
-		"Rotated": rot,
 	})
 }
 
@@ -337,7 +291,7 @@ func (a *app) handleCommPair(w http.ResponseWriter, r *http.Request, sess *store
 	}
 	// Render directly rather than redirecting, so the one-time code survives to the
 	// page — the same reason token creation does.
-	a.renderComm(w, r, sess, code, reveal{})
+	a.renderComm(w, r, sess, code)
 }
 
 // handleCommRevokeChannel is the brake: it closes a channel permanently.
@@ -358,40 +312,9 @@ func (a *app) handleCommRevokeChannel(w http.ResponseWriter, r *http.Request, se
 	flashRedirect(w, r, "/comm", "flash.comm_channel_revoked", id)
 }
 
-// handleCommRotateEndpoint replaces an endpoint's secret while keeping its identity
-// and every channel it belongs to.
-//
-// The security property lives in WHERE this handler is, not in what it does: it is
-// behind requireAuth + CSRF, so triggering it needs curator authentication — a
-// credential no session holds. A session that has the COMM bearer token cannot reach
-// it, which is exactly why an equivalent tool was refused. See
-// comm.RotateEndpointSecret for the full argument.
-//
-// Rendered rather than redirected, because the new secret is shown once — the same
-// contract as a minted pairing code.
-func (a *app) handleCommRotateEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if a.comm == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	id := r.PathValue("id")
-	secret, err := a.comm.RotateEndpointSecret(r.Context(), id)
-	if err != nil {
-		flashRedirect(w, r, "/comm", "flash.comm_rotate_failed", err.Error())
-		return
-	}
-	// The authoritative audit record. comm.db is expendable and deliberately not
-	// backed up, so the counters on the row are console display state and THIS is
-	// the trace that survives — it names who did it, because a rotation an operator
-	// did not perform is the signal that matters.
-	log.Printf("COMM: endpoint %s secret rotated by %q (actor %d) — the previous secret no longer authenticates",
-		id, sess.ActorName, sess.ActorID)
-	a.renderComm(w, r, sess, "", reveal{EndpointID: id, Secret: secret})
-}
+// handleCommRotateEndpoint IS DELETED. It was the console half of secret rotation — the one
+// control only a human could reach, existing because a lost secret was otherwise terminal. A
+// station comes with a mailbox and holds no secret at all.
 
 // handleCommReassignEndpoint points a mailbox at a CONVERSATION — the comm half of workspace
 // recovery.
@@ -442,254 +365,10 @@ func (a *app) handleCommReassignEndpoint(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// repointTarget is one token an endpoint may be moved onto.
-type repointTarget struct {
-	TokenID string
-	Label   string
-	Actor   string
-}
-
-// repointTargets lists the tokens a re-point may legally name, so the console offers a CHOICE
-// rather than a free-text field.
-//
-// Filtered by the SAME rule the operation enforces — present, unrevoked, carrying `comm` —
-// because a picker that offers an option the action then refuses teaches an operator that the
-// control is unreliable. The store still re-checks: this list is convenience, not the gate,
-// and a stale page must fail rather than succeed.
-func (a *app) repointTargets(ctx context.Context) []repointTarget {
-	rows, err := a.store.ListTokens(ctx)
-	if err != nil {
-		return nil
-	}
-	out := make([]repointTarget, 0, len(rows))
-	for _, t := range rows {
-		if t.RevokedAt != "" {
-			continue
-		}
-		if _, err := a.store.CommTokenOwner(ctx, t.TokenID); err != nil {
-			continue
-		}
-		out = append(out, repointTarget{TokenID: t.TokenID, Label: t.Label, Actor: t.ActorName})
-	}
-	return out
-}
-
-// handleCommRepointEndpoint moves ONE endpoint to a different owning token.
-//
-// The security property is WHERE this handler is, exactly as for rotation: behind
-// requireAuth + CSRF, so it needs curator authentication — a credential no session holds and
-// none can obtain from the machine. An equivalent MCP tool was refused for rotation with an
-// argument that applies here even more strongly: a secret at least has to be handed over,
-// while an `endpoint_id` is NOT a secret. It is the routing address, rendered on this very
-// page and printed throughout the runbooks. A self-service re-point would let any session on
-// a shared machine seize any endpoint on it, with nothing to steal first.
-func (a *app) handleCommRepointEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.repoint(w, r, sess, r.PathValue("id"), "")
-}
-
-// handleCommRepointToken moves EVERY live endpoint of one token at once.
-//
-// Not convenience. Eleven endpoints on one token is the shape that makes a per-endpoint
-// control feel like the ceremony it was built to remove, and a half-moved estate is the state
-// nobody has a recovery story for.
-func (a *app) handleCommRepointToken(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.repoint(w, r, sess, "", r.PathValue("id"))
-}
-
-// repoint validates the TARGET and then performs one of the two moves.
-//
-// THE VALIDATION LIVES HERE AND NOWHERE ELSE, and that is a placement decision rather than
-// convenience. `internal/comm` cannot check an api_token: it does not import `internal/store`
-// and must not learn to, because S7's pointer rule runs comm -> store and never back. This
-// package holds both handles already.
-//
-// AND IT IS PART OF THE AUTHORISATION, not a nicety. Re-pointing onto a revoked or non-comm
-// token produces an endpoint that authenticates NOWHERE and fails indistinguishably from one
-// whose secret leaked — a missing scope is a 401 at the transport, a revoked target is the bare
-// ownership string, and neither says "you re-pointed onto a dead token". That is the hunted
-// defect class, manufactured by the control built to cure it.
-func (a *app) repoint(w http.ResponseWriter, r *http.Request, sess *store.Session, endpointID, fromToken string) {
-	if a.comm == nil {
-		http.NotFound(w, r)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	_ = r.ParseForm()
-	target := strings.TrimSpace(r.FormValue("to_token"))
-	if target == "" {
-		flashRedirect(w, r, "/comm", "flash.comm_repoint_no_target", "")
-		return
-	}
-
-	to, ok := a.commTokenOwner(r.Context(), target)
-	if !ok {
-		flashRedirect(w, r, "/comm", "flash.comm_repoint_bad_target", target)
-		return
-	}
-
-	if endpointID != "" {
-		from := strings.TrimSpace(r.FormValue("from_token"))
-		if err := a.comm.RepointEndpointOwner(r.Context(), endpointID, from, to); err != nil {
-			flashRedirect(w, r, "/comm", "flash.comm_repoint_failed", err.Error())
-			return
-		}
-		// THE AUDIT RECORD, and it is the one that survives: comm.db is expendable and not
-		// backed up, so the row carries no history and this line is the trace. It names both
-		// tokens because "which credential does this endpoint answer to now" is the whole
-		// question a re-point changes.
-		log.Printf("COMM: endpoint %s re-pointed from token %s to token %s (actor %d) by %q — id, secret, channels, binding and queued mail unchanged",
-			endpointID, from, to.TokenID, to.ActorID, sess.ActorName)
-		flashRedirect(w, r, "/comm", "flash.comm_repointed", endpointID)
-		return
-	}
-
-	n, err := a.comm.RepointEndpointsOfToken(r.Context(), fromToken, to)
-	if err != nil {
-		flashRedirect(w, r, "/comm", "flash.comm_repoint_failed", err.Error())
-		return
-	}
-	log.Printf("COMM: %d live endpoint(s) re-pointed from token %s to token %s (actor %d) by %q",
-		n, fromToken, to.TokenID, to.ActorID, sess.ActorName)
-	flashRedirect(w, r, "/comm", "flash.comm_repointed_bulk", fmt.Sprint(n))
-}
-
-// binderTarget is one station key an endpoint's BINDING may be moved onto.
-//
-// It carries the station, which the template needs: a binding may only move to a key of the
-// same station, so the picker for one endpoint must offer that station's keys and no others.
-type binderTarget struct {
-	TokenID     string
-	Label       string
-	Station     string // station id the key belongs to
-	StationName string // what a human recognises; falls back to the id
-}
-
-// binderTargets lists the station keys a binding re-point may legally name.
-//
-// Filtered by the SAME rule store.StationKeyStation enforces — present, unrevoked, a station
-// key — for the reason repointTargets gives: a picker offering an option the action then
-// refuses teaches an operator the control is unreliable. The store still re-checks, and the
-// same-station rule is enforced by the UPDATE rather than by this list, so a stale page fails
-// instead of laundering an authority.
-func (a *app) binderTargets(ctx context.Context) []binderTarget {
-	rows, err := a.store.ListTokens(ctx)
-	if err != nil {
-		return nil
-	}
-	out := make([]binderTarget, 0, len(rows))
-	for _, t := range rows {
-		if t.RevokedAt != "" {
-			continue
-		}
-		station, err := a.store.StationKeyStation(ctx, t.TokenID)
-		if err != nil {
-			continue
-		}
-		out = append(out, binderTarget{TokenID: t.TokenID, Label: t.Label, Station: station, StationName: t.Station})
-	}
-	return out
-}
-
-// handleCommRepointBinder moves ONE bound endpoint's binding onto a different station key.
-//
-// The second weld, and the reason it needs its own control rather than riding along with the
-// first: `token_id` and `bound_by_station_key_id` are two different credentials pointing at
-// the same row, each independently fatal when REVOKED. Moving one leaves the other welded.
-//
-// Revoked, not retired — retiring a station key stops the station surface and leaves the COMM
-// endpoints it bound running (store.RetireStationKey, and stations.key_retire_help says exactly
-// that to the operator). Two strings on this page said otherwise for one release.
-func (a *app) handleCommRepointBinder(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.repointBinder(w, r, sess, r.PathValue("id"), "")
-}
-
-// handleCommRepointKey moves EVERY live endpoint one station key bound at once.
-func (a *app) handleCommRepointKey(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	a.repointBinder(w, r, sess, "", r.PathValue("id"))
-}
-
-// repointBinder validates the TARGET KEY and then performs one of the two moves.
-//
-// Structurally the twin of repoint above, and deliberately not merged with it. The two verbs
-// answer different questions — which credential may DRIVE this endpoint, versus which key
-// AUTHORISED its binding — and share only their shape. A single handler taking a "which
-// column" flag would put the two welds one typo apart.
-//
-// THE STATION COMES BACK FROM THE VALIDATION AND IS PASSED INTO THE MOVE. That is the whole
-// same-station rule: whatever station the target key belongs to is the station the endpoint
-// must already be on, checked inside the UPDATE. Nothing here compares them, so there is no
-// window between the check and the write.
-func (a *app) repointBinder(w http.ResponseWriter, r *http.Request, sess *store.Session, endpointID, fromKey string) {
-	if a.comm == nil {
-		http.NotFound(w, r)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	_ = r.ParseForm()
-	target := strings.TrimSpace(r.FormValue("to_key"))
-	if target == "" {
-		flashRedirect(w, r, "/comm", "flash.comm_rebind_no_target", "")
-		return
-	}
-	station, err := a.store.StationKeyStation(r.Context(), target)
-	if err != nil {
-		flashRedirect(w, r, "/comm", "flash.comm_rebind_bad_target", target)
-		return
-	}
-
-	if endpointID != "" {
-		from := strings.TrimSpace(r.FormValue("from_key"))
-		if err := a.comm.RepointEndpointBinder(r.Context(), endpointID, from, target, station); err != nil {
-			// EXPLAIN AFTER THE REFUSAL, NEVER BEFORE THE WRITE. The same-station rule lives
-			// in the statement's WHERE, so a target belonging to another station simply moves
-			// no rows — and the bare answer is ErrNotFound, which tells the operator an
-			// endpoint they can see on the page does not exist. That is the defect class this
-			// project keeps finding, worn by the control built to cure it.
-			//
-			// So the diagnosis is derived from what was already refused. It cannot re-open a
-			// check-then-act window because the write has definitively not happened, and it
-			// names the four states honestly rather than guessing which one applies: the store
-			// deliberately collapses them so they never become a probe.
-			if errors.Is(err, comm.ErrNotFound) {
-				flashRedirect(w, r, "/comm", "flash.comm_rebind_nothing_moved", station)
-				return
-			}
-			flashRedirect(w, r, "/comm", "flash.comm_rebind_failed", err.Error())
-			return
-		}
-		// The audit record, and the one that survives: comm.db is expendable and carries no
-		// history of this column, so this line is the trace. It names the station because the
-		// same-station rule is the property a reader will want to confirm afterwards.
-		log.Printf("COMM: endpoint %s binding re-pointed from station key %s to %s (station %s) by %q — id, secret, channels, station and queued mail unchanged",
-			endpointID, from, target, station, sess.ActorName)
-		flashRedirect(w, r, "/comm", "flash.comm_rebound", endpointID)
-		return
-	}
-
-	n, err := a.comm.RepointEndpointsBoundBy(r.Context(), fromKey, target, station)
-	if err != nil {
-		flashRedirect(w, r, "/comm", "flash.comm_rebind_failed", err.Error())
-		return
-	}
-	// The bulk verb reports a count rather than an error, so zero is its refusal — and the
-	// overwhelmingly likely cause is the same one: a key of another station. Same reasoning
-	// as above, same honest enumeration.
-	if n == 0 {
-		flashRedirect(w, r, "/comm", "flash.comm_rebind_nothing_moved", station)
-		return
-	}
-	log.Printf("COMM: %d live endpoint binding(s) re-pointed from station key %s to %s (station %s) by %q",
-		n, fromKey, target, station, sess.ActorName)
-	flashRedirect(w, r, "/comm", "flash.comm_rebound_bulk", fmt.Sprint(n))
-}
+// THE REPOINT AND REBIND CONSOLE MACHINERY IS DELETED — the handlers, the target pickers and the
+// helpers underneath them. Both existed for the per-machine credential model: repoint moved a
+// mailbox to another owning TOKEN, rebind moved a binding onto another STATION KEY. There is one
+// credential and no binding.
 
 // commTokenOwner resolves a target token through the store, which owns the question.
 //

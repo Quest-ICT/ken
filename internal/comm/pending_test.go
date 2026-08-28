@@ -135,10 +135,7 @@ func TestASuccessorEndpointSeesTheCountOnTheChannelItInherited(t *testing.T) {
 	ctx := context.Background()
 
 	first := stationEndpoint(t, st, "tok-1", "st-ops")
-	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-peer"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	peer := mailbox(t, st, "peer", "tok-peer")
 	code, err := st.MintPairingCode(ctx, 42, "ops<->peer")
 	if err != nil {
 		t.Fatal(err)
@@ -182,10 +179,7 @@ func TestThePendingCountDoesNotLeakChannelsTheStationIsNotOn(t *testing.T) {
 	ctx := context.Background()
 
 	mine := stationEndpoint(t, st, "tok-mine", "st-mine")
-	peer, _, err := st.RegisterEndpoint(ctx, owner("tok-peer"), "peer", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	peer := mailbox(t, st, "peer", "tok-peer")
 	code, err := st.MintPairingCode(ctx, 42, "mine<->peer")
 	if err != nil {
 		t.Fatal(err)
@@ -198,14 +192,8 @@ func TestThePendingCountDoesNotLeakChannelsTheStationIsNotOn(t *testing.T) {
 	}
 
 	// A channel between two OTHER endpoints, with mail on it.
-	x, _, err := st.RegisterEndpoint(ctx, owner("tok-x"), "x", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	y, _, err := st.RegisterEndpoint(ctx, owner("tok-y"), "y", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	x := mailbox(t, st, "x", "tok-x")
+	y := mailbox(t, st, "y", "tok-y")
 	code2, err := st.MintPairingCode(ctx, 42, "x<->y")
 	if err != nil {
 		t.Fatal(err)
@@ -358,7 +346,7 @@ func TestPendingCountersMatchBothPartyForms(t *testing.T) {
 	// leaves behind.
 	if _, err := st.W.ExecContext(ctx,
 		`UPDATE delivery SET party_key=? WHERE party_key=?`,
-		endpointPartyKey(alpha.ID), stationParty("st-alpha")); err != nil {
+		PartyOf(alpha), stationParty("st-alpha")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -779,12 +767,20 @@ func TestWakeTargetsSkipRevokedEndpoints(t *testing.T) {
 	ctx := context.Background()
 	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
 	dead := stationEndpoint(t, st, "tok-dead", "st-beta")
-	live := stationEndpoint(t, st, "tok-live", "st-beta")
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
+	// THE SUCCESSOR IS BUILT BY REVOKING FIRST, and that ordering is now the only way to build it.
+	// This used to mint two mailboxes for one station and revoke one; a station has exactly one, so
+	// asking twice returns the same row. Revoking it and asking again is what actually produces a
+	// dead mailbox and a live successor on the same station — which is the case the property is
+	// about, and it is still reachable.
 	if _, err := st.W.ExecContext(ctx,
 		`UPDATE endpoint SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, dead.ID); err != nil {
 		t.Fatal(err)
+	}
+	live := stationEndpoint(t, st, "tok-live", "st-beta")
+	if live.ID == dead.ID {
+		t.Fatal("setup: the successor is the revoked mailbox, so this test cannot distinguish them")
 	}
 	m, err := st.SendToRoom(ctx, alpha, "ops", "who is staffing beta", SendOpts{})
 	if err != nil {
@@ -851,39 +847,7 @@ func TestAPairingCodeChannelRecordsItsAuthorisingStations(t *testing.T) {
 	}
 }
 
-// AN UNBOUND JOINER LEAVES IT NULL, which is correct rather than a gap: there is no station
-// whose link could authorise the channel, so there is nothing for a revocation to reach.
-func TestAnUnboundJoinerRecordsNoAuthorisingStation(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	a := stationEndpoint(t, st, "tok-a", "st-alpha")
-	plain, _, err := st.RegisterEndpoint(ctx, owner("tok-plain"), "plain", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, err := st.MintPairingCode(ctx, 42, "alpha<->somebody")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.JoinChannel(ctx, a, code); err != nil {
-		t.Fatal(err)
-	}
-	ch, err := st.JoinChannel(ctx, plain, code)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sa, sb any
-	if err := st.R.QueryRowContext(ctx,
-		`SELECT station_a, station_b FROM channel WHERE channel_id=?`, ch.ChannelID).Scan(&sa, &sb); err != nil {
-		t.Fatal(err)
-	}
-	if sa == nil {
-		t.Error("the bound joiner's station was not recorded")
-	}
-	if sb != nil {
-		t.Errorf("an UNBOUND joiner recorded station_b=%v — the snapshot must be a fact, not a guess", sb)
-	}
-}
+// TestAnUnboundJoinerRecordsNoAuthorisingStation IS DELETED. Every joiner has a station.
 
 // THE OPERATOR'S COUNTERS MUST SEE ROOM AND BROADCAST MAIL.
 //

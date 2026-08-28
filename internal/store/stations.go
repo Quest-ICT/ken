@@ -995,21 +995,65 @@ func (s *Store) ReassignStationToSession(ctx context.Context, stationID, session
 	return res, nil
 }
 
-// StationForActor reports whether this station is this human's and is live.
+// StationIsLive reports whether a station exists and is not archived.
 //
-// ONE STATEMENT REPLACING THREE DRIFTED ONES. Before this, the same question was asked three ways
-// in three places: an owner-token comparison in comm's auth (vacuous for an OAuth caller — one
-// grant means one token id for every conversation on the account, so it compared a value to
-// itself), IsStationArchived reading `state`, and StationExists reading `archived_at`. Two columns,
-// three answers, for one fact.
+// ONE STATEMENT REPLACING THREE DRIFTED ONES. The same question was asked three ways in three
+// places: an owner-token comparison in comm's auth, IsStationArchived reading `state`, and
+// StationExists reading `archived_at`. Two columns, three answers, for one fact.
 //
 // `state` IS THE ONE TO READ: it carries a CHECK constraint (migration 0012), so an invalid value
 // is impossible rather than merely unwritten.
-func (s *Store) StationForActor(ctx context.Context, stationID string, actorID int64) (bool, error) {
+//
+// *** IT DOES NOT COMPARE ACTORS, AND THAT IS DELIBERATE — I TRIED IT AND IT WAS WRONG. ***
+//
+// The first version required `created_by_actor_id = <the caller's actor>`. It refuses the ordinary
+// case: a station created by a HUMAN in the console carries the human's actor id, while the agent
+// staffing it authenticates as its own. Every console-created station would have been unreachable
+// by the session that works in it.
+//
+// And there is nothing for an actor comparison to protect. IDENTITY.md §4: the security boundary
+// is the OAuth grant — whose estate — and single-user is what makes selection sufficient, because
+// "there is no other tenant to protect against". Within one instance there is one estate, so
+// "belongs to this human" is true of every station by construction. The check it replaced was
+// vacuous in a worse way: it compared a per-grant constant to itself.
+//
+// IF KEN EVER BECOMES MULTI-TENANT, THIS IS THE FUNCTION THAT MUST GROW THE OWNER CHECK. It is the
+// single place every surface asks the question, which is why it is worth saying here.
+func (s *Store) StationIsLive(ctx context.Context, stationID string) (bool, error) {
 	var ok bool
 	err := s.R.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM station
-                        WHERE station_id=?1 AND created_by_actor_id=?2 AND state='active')`,
-		stationID, actorID).Scan(&ok)
+		`SELECT EXISTS(SELECT 1 FROM station WHERE station_id=?1 AND state='active')`,
+		stationID).Scan(&ok)
 	return ok, err
+}
+
+// StationIsArchived distinguishes "archived" from "does not exist", for the ONE caller allowed to
+// tell them apart — see station.Resolve, which asks it only after an OAuth grant has verified and
+// only because an archived station has a remedy a session cannot guess.
+func (s *Store) StationIsArchived(ctx context.Context, stationID string) (bool, error) {
+	var ok bool
+	err := s.R.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM station WHERE station_id=?1 AND state='archived')`,
+		stationID).Scan(&ok)
+	return ok, err
+}
+
+// StationIDBySessionKeyAnyState resolves a conversation key WITHOUT filtering on state.
+//
+// StationBySessionKey excludes archived stations, which is right for its callers — an archived
+// post must not be re-entered. But it makes archive INVISIBLE to a resolver: the key simply fails
+// to resolve, and the session is told it never said which station it is, when in fact it said so
+// correctly and the station is archived. The remedy differs completely between those two, so the
+// resolver has to be able to tell them apart.
+//
+// It returns an id only. Nothing may act on the row; the sole caller uses it to choose which
+// refusal to give.
+func (s *Store) StationIDBySessionKeyAnyState(ctx context.Context, sessionKey string) (string, error) {
+	var id string
+	err := s.R.QueryRowContext(ctx,
+		`SELECT station_id FROM station WHERE session_key=?1`, sessionKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return id, err
 }

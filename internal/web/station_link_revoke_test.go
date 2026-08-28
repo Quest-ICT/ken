@@ -68,25 +68,12 @@ func TestStationsConsoleRevokesALinkAndItsLiveChannels(t *testing.T) {
 	}
 
 	// And a live channel between them, which is the thing the link authorised.
-	epA, secretA, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-a", ActorID: actorID}, "dev", "")
+	epA, err := cs.MailboxFor(ctx, devSt.StationID, comm.Owner{TokenID: "tok-a", ActorID: actorID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	epB, secretB, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: "tok-b", ActorID: actorID}, "prod", "")
+	epB, err := cs.MailboxFor(ctx, prodSt.StationID, comm.Owner{TokenID: "tok-b", ActorID: actorID})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.BindEndpointToStation(ctx, epA.EndpointID, devSt.StationID, "kens_a"); err != nil {
-		t.Fatal(err)
-	}
-	if err := cs.BindEndpointToStation(ctx, epB.EndpointID, prodSt.StationID, "kens_b"); err != nil {
-		t.Fatal(err)
-	}
-	// Re-read so each carries its StationID; OpenLinkedChannel refuses unbound ones.
-	if epA, err = cs.AuthenticateEndpoint(ctx, epA.EndpointID, secretA); err != nil {
-		t.Fatal(err)
-	}
-	if epB, err = cs.AuthenticateEndpoint(ctx, epB.EndpointID, secretB); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := cs.OpenLinkedChannel(ctx, epA, epB, actorID, "dev <-> prod"); err != nil {

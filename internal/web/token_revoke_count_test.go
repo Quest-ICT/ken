@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
@@ -42,48 +41,16 @@ func TestRevokingAStationKeySaysTheCountIsUnknownWhenCommIsOff(t *testing.T) {
 	}
 }
 
-// AND WITH COMM ON IT STATES THE REAL NUMBER, matched to what revoking would actually sever.
-func TestRevokingAStationKeyStatesHowManySessionsItSevers(t *testing.T) {
-	st, ctx, cli, base, actor := stationsHarnessWithComm(t)
-	s, err := st.CreateStation(ctx, "prod-ops", "", actor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret, err := st.IssueStationKey(ctx, actor, s.StationID, "laptop", []string{"station"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The key id is the token id — the same handle SeverEndpointsBoundBy takes.
-	keyID := strings.Split(strings.TrimPrefix(secret, "kens_"), "_")[0]
-	cs := commOf(t)
-	for i := 0; i < 2; i++ {
-		ep, _, err := cs.RegisterEndpoint(ctx, comm.Owner{TokenID: keyID, ActorID: actor}, s.StationID, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := cs.BindEndpointToStation(ctx, ep.EndpointID, s.StationID, keyID); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// THE ORACLE IS THE ACTION, NOT A LITERAL. Asserting "2" would pass against a count that
-	// disagrees with what revoking severs — and those two diverging silently is the whole
-	// failure S6 names. Ask the store what the sever would do, then require the page to say it.
-	n, err := cs.CountEndpointsBoundBy(ctx, keyID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 2 {
-		t.Fatalf("fixture bound %d endpoints, want 2", n)
-	}
-	body := get(t, cli, base+"/tokens")
-	if !strings.Contains(body, "disconnects 2 live sessions") {
-		t.Fatalf("the confirm does not state the %d sessions revoking would sever", n)
-	}
-	if strings.Contains(body, "UNKNOWN") {
-		t.Fatal("the count was available and the confirm still said unknown")
-	}
-}
+// TestRevokingAStationKeyStatesHowManySessionsItSevers IS DELETED, AND THE COUNT IT GUARDED IS NOW
+// STRUCTURALLY ZERO. It required the /tokens revoke confirmation to state how many live sessions a
+// station-key revocation would sever — a real S6 property while a station key AUTHORISED a
+// binding. Nothing binds by a station key: a mailbox belongs to its station from the moment it
+// exists and no credential authorises that.
+//
+// The count function and the sever it mirrors are left standing for now and are DEAD: both would
+// answer 0 for every key. They belong to the same cleanup as station keys themselves, which the
+// single-credential decision retires, and that is a deletion to make deliberately rather than as a
+// side effect of this one.
 
 // *** THE CONNECTOR ROW MUST NAME THE CAUSE, NOT JUST THE SYMPTOM. ***
 //
