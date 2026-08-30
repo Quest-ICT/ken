@@ -59,7 +59,7 @@
       </form>
     </div>
 
-    {{if .Members}}
+    {{if .MemberList}}
     <table class="table">
       <thead><tr>
         <th data-col-key="station">{{$.T "rooms.member"}}</th>
@@ -67,7 +67,7 @@
         <th data-nosort>{{$.T "stations.col_actions"}}</th>
       </tr></thead>
       <tbody>
-        {{range .Members}}
+        {{range .MemberList}}
         <tr>
           <td class="mono">{{.StationName}}
             {{if and .BoundKnown (not .Bound)}}<span class="badge badge--warn" title="{{$.T "rooms.member_deaf_help"}}">{{$.T "rooms.member_deaf"}}</span>{{end}}

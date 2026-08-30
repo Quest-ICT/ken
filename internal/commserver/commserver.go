@@ -30,7 +30,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -223,9 +222,9 @@ Files need the comm-file scope, which the operator may have disabled. NEVER past
 // The cost is that a legitimate caller cannot tell a typo from an unstaffed peer.
 // That is comm_directory's job: discovery belongs in a surface gated per asker, not
 // in an error string handed to whoever guessed.
-const errStationUnavailable = "no station by that name is available to you — call comm_directory, which lists every station " +
-	"and hands back the exact id to use. If the one you want is there and this still refuses, its link is SUSPENDED: your " +
-	"human turned that relationship off at Ken's console, so tell them rather than retrying."
+const errStationUnavailable = "no station by that NAME exists here — comm_open_channel takes a name, and " +
+	"comm_directory lists every station with both its name and its id. (Note the asymmetry: comm_send takes an ID.) " +
+	"This is the only cause now; a link that is missing, dormant or suspended each gets its own answer."
 
 // mcpKeepAlive matches the interval on the other MCP surfaces. The measurement behind the 30s,
 // and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
@@ -461,12 +460,32 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			return nil, openLinkedOut{}, err
 		}
 		if !linked {
-			return nil, openLinkedOut{}, errors.New(errStationUnavailable)
+			// THE ONE-REFUSAL RULE IS RETIRED HERE, BECAUSE THE ORACLE IT CLOSED IS GONE.
+			//
+			// errStationUnavailable exists so a caller cannot separate "exists" from "does not"
+			// and so a guessed name is worth nothing — correct while the directory was gated per
+			// asker. The directory now lists EVERY live station, so there is nothing to enumerate
+			// and nothing a precise refusal can reveal that comm_directory does not hand over on
+			// request.
+			//
+			// The cost of keeping it was concrete: a peer nobody has ever written to was told
+			// "its link is SUSPENDED — your human turned that relationship off", which is the one
+			// refusal a session must not retry and must escalate. Sending a human after a
+			// relationship that never existed is worse than any leak this const now prevents.
+			return nil, openLinkedOut{}, commError(
+				refineStationRefusal(ctx, d, ep.StationID, target.StationID, comm.ErrNotLinked))
 		}
 		// Someone must be staffing the other side for a channel to have two ends.
 		peer, err := d.Comm.LiveEndpointForStation(ctx, target.StationID)
 		if err != nil {
-			return nil, openLinkedOut{}, errors.New(errStationUnavailable)
+			// DISTINCT FROM "not linked", and it has to be: an unstaffed peer is a matter of
+			// timing that resolves itself when somebody arrives, while an unlinked one is a
+			// standing fact. Collapsing them told a session to wait when it should act, and to
+			// act when it should wait.
+			return nil, openLinkedOut{}, comm.CallerSafe(errors.New("nobody is staffing that station " +
+				"right now, so a channel has no second end to open. Use comm_send{to_station:\"" +
+				target.StationID + "\"} instead — station-addressed mail waits for whoever arrives — " +
+				"or try again once a session is there"))
 		}
 		label := strings.TrimSpace(in.Label)
 		if label == "" {
@@ -920,31 +939,23 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		if err := requireFileScope(ctx); err != nil {
 			return nil, fileOfferOut{}, err
 		}
-		// *** FIRST CONTACT WORKS HERE TOO, AND IT DID NOT. ***
+		// *** FIRST CONTACT WORKS HERE TOO — AND ONLY IF THE OFFER IS OTHERWISE VALID. ***
 		//
-		// EnsureStationLink had exactly one non-console caller — the comm_send arm — so an offer to
-		// a station never written to found no link and was refused. Worse, it was refused with the
-		// SUSPENDED sentence: "deliberately turned off by your human… Do not retry: tell them."
-		// Nobody had turned anything off; there had never been a link. The session was told to stop
-		// and escalate over a relationship one comm_send would have created.
+		// EnsureStationLink had exactly one non-console caller, the comm_send arm, so an offer to a
+		// station never written to found no link and was refused — with the SUSPENDED sentence:
+		// "deliberately turned off by your human… Do not retry: tell them." Nobody had turned
+		// anything off; there had never been a link. The session was told to stop and escalate over
+		// a relationship one comm_send would have created.
 		//
-		// resolveOfferScope's own doc states the invariant that was broken: "a pair offer is legal
-		// exactly when a pair send is. Two rules for the same relationship is how they drift."
-		if in.ToStation != "" {
-			if p := principalFrom(ctx); p != nil {
-				created, lerr := d.Store.EnsureStationLink(ctx, ep.StationID, in.ToStation, p.ActorID)
-				if lerr != nil {
-					log.Printf("comm: auto-link for offer %s <-> %s: %v", ep.StationID, in.ToStation, lerr)
-				}
-				if created || lerr != nil {
-					syncLinkMirror(ctx, d)
-				}
-				if created {
-					log.Printf("COMM: link %s <-> %s created on first contact via file offer (actor %d)",
-						ep.StationID, in.ToStation, p.ActorID)
-				}
-			}
-		}
+		// resolveOfferScope's own doc states the invariant: "a pair offer is legal exactly when a
+		// pair send is. Two rules for the same relationship is how they drift."
+		//
+		// LINK-ON-RETRY RATHER THAN LINK-FIRST, and the ordering is the fix to the fix. The first
+		// version created the link BEFORE OfferFile ran — so a malformed offer, or one refused
+		// because comm_files_enabled is off, still left a durable active link in ken.db. Measured:
+		// the offer correctly refused and the relationship existed anyway. Now the offer is tried
+		// first, and the link is only created when the sole remaining obstacle is that it does not
+		// exist yet.
 		// EXACTLY ONE ADDRESS, enforced in the store rather than here — the store owns the
 		// link mirror and the room roster, so it is the only layer that can say whether the
 		// address is one the caller may use, and splitting "is it well-formed" from "is it
@@ -956,6 +967,28 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			Transfer: in.Transfer, NonceSHA256: in.NonceSHA256, Note: in.Note,
 			IdempotencyKey: in.IdempotencyKey, TTLSeconds: in.TTLSeconds,
 		})
+		if errors.Is(err, comm.ErrNotLinked) && in.ToStation != "" {
+			if p := principalFrom(ctx); p != nil {
+				created, lerr := d.Store.EnsureStationLink(ctx, ep.StationID, in.ToStation, p.ActorID)
+				if lerr != nil {
+					log.Printf("comm: auto-link for offer %s <-> %s: %v", ep.StationID, in.ToStation, lerr)
+				}
+				if created || lerr != nil {
+					syncLinkMirror(ctx, d)
+				}
+				if created {
+					log.Printf("COMM: link %s <-> %s created on first contact via file offer (actor %d)",
+						ep.StationID, in.ToStation, p.ActorID)
+					res, err = d.Comm.OfferFile(ctx, ep, comm.FileAddr{
+						ChannelID: in.ChannelID, RoomID: in.ToRoom, StationID: in.ToStation,
+					}, comm.FileOffer{
+						Name: in.Name, SizeBytes: in.SizeBytes, SHA256: in.SHA256,
+						Transfer: in.Transfer, NonceSHA256: in.NonceSHA256, Note: in.Note,
+						IdempotencyKey: in.IdempotencyKey, TTLSeconds: in.TTLSeconds,
+					})
+				}
+			}
+		}
 		if err != nil {
 			// The same disambiguation the send path uses, for the same reason: a refusal that
 			// names the wrong cause sends a session to its human over nothing.
@@ -1280,44 +1313,26 @@ func stationLabel(ctx context.Context, d Deps, stationID string) string {
 // writes it, and now the send path must. Three authors already, and the indirection only hid the
 // third behind a field that could be nil. Nothing here is a second AUTHORITY — the rows come from
 // ken.db, which remains the only place a link is decided.
-// mirrorPush serialises the read-then-replace so two concurrent pushes cannot interleave.
+// syncLinkMirror rebuilds comm.db's link projection from ken.db.
 //
-// *** THE RACE IS IN THE SHAPE, NOT IN THE SQL. *** syncLinkMirror reads LinkMirrorRows from ken.db
-// and hands the snapshot to ReplaceLinkMirror, which DELETEs the whole table and reinserts it. Two
-// pushes overlapping means the older snapshot can land last and rewrite the table to a state that
-// was already stale when it was read.
-//
-// Both directions were measured during the 4.0.0 pre-release work, and the one that fires in
-// practice is the one nobody predicted:
-//
-//	DE-AUTHORISE — 4 to 10% of CONCURRENT FIRST CONTACTS. Session A and session B each write to a
-//	new peer; A reads the mirror rows, B inserts its link and pushes, then A's older snapshot lands
-//	and deletes B's link. B's sends are refused permanently, across retries with fresh idempotency
-//	keys, until some unrelated write rebuilds the mirror.
-//
-//	RE-AUTHORISE — a pre-suspend snapshot landing after a console suspend puts the pair back. Sends
-//	over a suspended link then succeed indefinitely while /stations renders it suspended. Rarer, and
-//	worse, because suspend is now the ONLY operator control over who may talk to whom.
-//
-// A mutex is enough because both databases are single-writer and every push is on this process.
-// It is NOT enough if Ken is ever run as more than one process against one data dir — which nothing
-// supports today, and which would need the epoch ReplaceLinkMirror currently discards.
-var mirrorPush sync.Mutex
-
+// THE LOCK MOVED INTO internal/comm, and that is the point: this package took a mutex of its own
+// while the web console pushed the same projection without one, so a console suspend still raced a
+// session's first contact. comm.Store.SyncLinkMirror holds the lock across the READ as well as the
+// write — the read is where a snapshot ages — and both callers now go through it, which is the only
+// arrangement that cannot drift.
 func syncLinkMirror(ctx context.Context, d Deps) {
-	mirrorPush.Lock()
-	defer mirrorPush.Unlock()
-	pairs, err := d.Store.LinkMirrorRows(ctx)
+	err := d.Comm.SyncLinkMirror(ctx, func(ctx context.Context) ([][2]string, int64, error) {
+		pairs, err := d.Store.LinkMirrorRows(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		epoch, err := d.Store.RosterEpoch(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		return pairs, epoch, nil
+	})
 	if err != nil {
-		log.Printf("comm: read links for mirror: %v", err)
-		return
-	}
-	epoch, err := d.Store.RosterEpoch(ctx)
-	if err != nil {
-		log.Printf("comm: read roster epoch: %v", err)
-		return
-	}
-	if err := d.Comm.ReplaceLinkMirror(ctx, pairs, epoch); err != nil {
 		log.Printf("comm: push link mirror: %v", err)
 	}
 }
@@ -1366,7 +1381,12 @@ func refineStationRefusal(ctx context.Context, d Deps, fromStation, toStation st
 			"message-routing table was briefly out of date. It has been rebuilt: send the same " +
 			"message again and it will go through. Nothing was delivered"))
 	}
-	// Stations exist and no link joins them: first contact should have created one, so this is a
-	// genuine failure to link rather than a permission decision.
-	return comm.ErrUnknownStation
+	// BOTH STATIONS EXIST AND NO LINK JOINS THEM. On the send path this is nearly unreachable,
+	// because first contact creates the link before the send. On comm_open_channel it is the
+	// ORDINARY case — that tool spends a relationship rather than making one — and answering it
+	// with "no station with that id is known here" would send a session hunting for a typo in an id
+	// comm_directory had just handed it.
+	return comm.CallerSafe(errors.New("that station exists and you have no link with it yet. " +
+		"Nothing needs approving: send it anything with comm_send{to_station} and the relationship " +
+		"is created on that first message. Then this call will work"))
 }

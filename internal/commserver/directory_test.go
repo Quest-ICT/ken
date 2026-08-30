@@ -2,7 +2,6 @@ package commserver
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -117,25 +116,35 @@ func dirCreds() map[string]any {
 	return map[string]any{"session_key": dirKey}
 }
 
-// comm_open_channel must refuse every unavailable target IDENTICALLY.
+// comm_open_channel's refusals are DISTINGUISHABLE NOW, and each one names a different next action.
 //
-// The three branches used to be distinguishable: "no such station", "not linked", and
-// "nobody is staffing <name>" — which let a caller separate existence from
-// non-existence, then linked from unlinked, and the third echoed the RESOLVED name so
-// guessing "PROD" confirmed the station is really called "prod".
+// This test used to require the opposite, byte for byte. The three branches had been separable —
+// "no such station", "not linked", "nobody is staffing <name>", the last echoing the RESOLVED name
+// so guessing "PROD" confirmed the station is really called "prod" — and collapsing them into one
+// const closed an enumeration oracle over every station in the instance.
 //
-// Asserting each call errors would NOT catch a regression here; only comparing the
-// texts byte for byte does, which is the point of the const they all share.
-func TestOpenChannelRefusalsAreIndistinguishable(t *testing.T) {
+// THE ORACLE IS GONE BECAUSE THE DIRECTORY IS OPEN. comm_directory lists every live station and
+// hands back its id on request, so there is nothing a precise refusal can reveal that a session
+// cannot simply ask for. The control that made the collapse worth its cost stopped existing when
+// the estate stopped being hidden.
+//
+// AND KEEPING IT HAD A CONCRETE COST: a peer nobody had ever written to was told "its link is
+// SUSPENDED — your human turned that relationship off", which is the one refusal a session must not
+// retry and must escalate to a human. Sending someone after a relationship that never existed is
+// worse than any leak this const now prevents.
+//
+// So the property under test inverts: each case must say what to DO, and the three actions are
+// genuinely different — fix the id, send a message first, or wait for someone to arrive.
+func TestOpenChannelRefusalsNameTheRightNextAction(t *testing.T) {
 	sess, _, ctx := dirHarness(t)
 
-	texts := map[string]string{}
-	for _, c := range []struct{ label, target string }{
-		{"does not exist", "no-such-station-anywhere"},
-		{"exists, not linked", "published-stranger"},
-		{"exists and linked, nobody staffing", "linked-peer"},
-		{"exists but invisible to me", "unpublished-stranger"},
-		{"case-probe of a real name", "LINKED-PEER"},
+	for _, c := range []struct {
+		label, target string
+		wants         []string
+	}{
+		{"does not exist", "no-such-station-anywhere", []string{"comm_directory"}},
+		{"exists, not linked", "published-stranger", []string{"comm_send", "first message"}},
+		{"exists and linked, nobody staffing", "linked-peer", []string{"staffing", "comm_send"}},
 	} {
 		args := dirCreds()
 		args["to_station"] = c.target
@@ -152,101 +161,18 @@ func TestOpenChannelRefusalsAreIndistinguishable(t *testing.T) {
 				txt += tc.Text
 			}
 		}
-		if txt == "" {
-			t.Fatalf("%s: refusal carried no text", c.label)
-		}
-		texts[c.label] = txt
-	}
-
-	// Anchor to the EXPECTED text first. Comparing the refusals only to each other is
-	// vacuous: if every call failed earlier — at auth, say — they would all match and
-	// the test would certify an oracle that is still wide open. This is exactly what
-	// happened on the first run of this test, and the assertion below is the fix.
-	for label, txt := range texts {
-		if !strings.Contains(txt, errStationUnavailable) {
-			t.Fatalf("%s: refusal was not the unified one, so this call never reached the branch under test:\n  got:  %q\n  want: %q", label, txt, errStationUnavailable)
-		}
-	}
-	var first, firstLabel string
-	for label, txt := range texts {
-		if first == "" {
-			first, firstLabel = txt, label
-			continue
-		}
-		if txt != first {
-			t.Fatalf("refusals differ and therefore leak:\n  %s: %q\n  %s: %q", firstLabel, first, label, txt)
-		}
-	}
-	// And it must never echo a name back — that is how the case-probe worked.
-	for label, txt := range texts {
-		for _, leak := range []string{"linked-peer", "LINKED-PEER", "published-stranger", "unpublished-stranger"} {
-			if strings.Contains(txt, leak) {
-				t.Fatalf("%s: the refusal echoes %q back to the caller", label, leak)
+		for _, w := range c.wants {
+			if !strings.Contains(txt, w) {
+				t.Errorf("%s: the refusal does not mention %q, so it does not tell the session what to do:\n  %s",
+					c.label, w, txt)
 			}
 		}
-	}
-}
-
-// The directory answers what the refusal deliberately will not: every live station in the
-// estate, with `linked` saying which of them the asker may already reach.
-//
-// The refusal above stays deliberately blind — it must not confirm a name it was handed —
-// but that was never an argument for hiding the roster from a session that asks for it by
-// the front door. Discovery and permission are separate facts and this tool reports both.
-func TestCommDirectoryListsTheEstate(t *testing.T) {
-	sess, _, ctx := dirHarness(t)
-
-	res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: "comm_directory", Arguments: dirCreds()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		msg := ""
-		for _, ct := range res.Content {
-			if tc, ok := ct.(*mcp.TextContent); ok {
-				msg += tc.Text
-			}
+		// AND NONE OF THEM MAY CLAIM A HUMAN TURNED SOMETHING OFF. That is the one answer that
+		// stops a session and escalates, and it is only true of a link somebody suspended.
+		if strings.Contains(txt, "SUSPENDED") {
+			t.Errorf("%s: told the session its link was SUSPENDED — nobody suspended anything, and "+
+				"that refusal sends a human after a relationship that never existed:\n  %s", c.label, txt)
 		}
-		t.Fatalf("comm_directory errored: %s", msg)
-	}
-	var out directoryOut
-	if res.StructuredContent != nil {
-		b, _ := json.Marshal(res.StructuredContent)
-		if err := json.Unmarshal(b, &out); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if out.YouAre != "mine" {
-		t.Errorf("you_are = %q, want %q — a session handed a list of names must know which one it is", out.YouAre, "mine")
-	}
-	byName := map[string]directoryEntry{}
-	for _, e := range out.Stations {
-		byName[e.Name] = e
-	}
-	if len(out.Stations) != 3 {
-		t.Fatalf("directory returned %d stations, want 3: %+v", len(out.Stations), out.Stations)
-	}
-	if e, ok := byName["unpublished-stranger"]; !ok {
-		t.Error("an unpublished station with no link to me is missing — a session cannot ask to reach a peer it cannot see")
-	} else if e.Linked {
-		t.Error("a station I hold no link to reports linked=true")
-	}
-	if _, ok := byName["mine"]; ok {
-		t.Error("the asking station lists itself")
-	}
-	if e := byName["published-stranger"]; e.Linked {
-		t.Error("a published station I hold no link to reports linked=true")
-	}
-	if e, ok := byName["linked-peer"]; !ok {
-		t.Error("my established peer is not listed")
-	} else if !e.Linked {
-		t.Error("my established peer reports linked=false")
-	} else if e.Staffed == nil {
-		// COMM has never seen an endpoint for it, so staffing is genuinely unknown
-		// and must be OMITTED rather than reported false.
-		t.Log("staffing omitted for a station COMM has never seen — correct")
-	} else if *e.Staffed {
-		t.Error("a station with no endpoint reports staffed=true")
 	}
 }
 

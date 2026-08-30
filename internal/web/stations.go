@@ -238,7 +238,12 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	}
 	type roomView struct {
 		store.Room
-		Members []roomMemberView
+		// MemberList SHADOWED store.Room.Members WHEN IT WAS CALLED `Members`, and the template
+		// asks for `.Members` in two places meaning two different things: a COUNT in the summary
+		// line and a LIST in the expanded panel. Go promotes the outer field, so the summary
+		// rendered the whole slice — `[{id name timestamp} false true] members`. Renamed so each
+		// site gets what it asks for.
+		MemberList []roomMemberView
 		// Deaf is how many members cannot receive. Surfaced on the room itself so an
 		// operator sees it without expanding the member list.
 		Deaf int
@@ -262,7 +267,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		rv := roomView{Room: rm, Members: make([]roomMemberView, 0, len(members))}
+		rv := roomView{Room: rm, MemberList: make([]roomMemberView, 0, len(members))}
 		for _, m := range members {
 			mv := roomMemberView{RoomMember: m}
 			if staffing != nil {
@@ -272,7 +277,7 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 					rv.Deaf++
 				}
 			}
-			rv.Members = append(rv.Members, mv)
+			rv.MemberList = append(rv.MemberList, mv)
 		}
 		roomViews = append(roomViews, rv)
 	}
@@ -419,7 +424,11 @@ func (a *app) handleStationApprove(w http.ResponseWriter, r *http.Request, sess 
 			// Sent to /rooms rather than back to /stations: the next thing the human must do is
 			// add members, and the room they just made is empty until they do. A flash saying
 			// "approved" on a page with no members visible would read as finished.
-			flashRedirect(w, r, "/rooms", "flash.room_created_from_request", room.Name)
+			// TO /stations, NOT /rooms. There is no `GET /rooms` — only POST handlers — so this
+			// redirected the operator to a bare HTTP 405 and the flash was never rendered in any
+			// locale. Approving a room request therefore looked identical to failing to. Rooms are
+			// managed on the stations console, which is where the request was approved from.
+			flashRedirect(w, r, "/stations", "flash.room_created_from_request", room.Name)
 		}
 		return
 	}

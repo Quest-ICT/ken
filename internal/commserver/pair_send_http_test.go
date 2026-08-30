@@ -594,3 +594,78 @@ func TestConcurrentFirstContactKeepsEveryLink(t *testing.T) {
 			len(peers), n)
 	}
 }
+
+// A REFUSED FILE OFFER MUST NOT LEAVE A RELATIONSHIP BEHIND.
+//
+// The first version of the offer's first-contact support created the link BEFORE OfferFile ran, so
+// an offer refused for any other reason — a malformed argument, or comm_files_enabled being off —
+// still wrote a durable active station_link into ken.db. The operator then saw a relationship on
+// /stations that no session had ever successfully used, created by a call that failed.
+//
+// The order is the fix: try the offer, and create the link only when the sole remaining obstacle is
+// that it does not exist yet.
+func TestARefusedOfferLeavesNoLink(t *testing.T) {
+	ctx := context.Background()
+	st := newKB(t)
+	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	if err := cs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	actor, err := st.FindOrCreateActor(ctx, "human", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	me, err := st.CreateStation(ctx, "offerer", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := st.CreateStation(ctx, "offeree", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.ClaimStationForSession(ctx, "conv-offer", "offerer", actor, me.StationID); err != nil {
+		t.Fatal(err)
+	}
+	tok := mintToken(t, st, "offer-a", "comm", "comm-file")
+	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
+	t.Cleanup(srv.Close)
+	cli := mcp.NewClient(&mcp.Implementation{Name: "offer", Version: "0"}, nil)
+	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             srv.URL,
+		HTTPClient:           &http.Client{Transport: bearerRT{token: tok, base: http.DefaultTransport}},
+		DisableStandaloneSSE: true,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+
+	// A MALFORMED offer to a station we have never written to: no name, so it cannot succeed.
+	res, err := sess.CallTool(ctx, &mcp.CallToolParams{
+		Name: "comm_file_offer",
+		Arguments: map[string]any{
+			"session_key": "conv-offer", "to_station": peer.StationID,
+			"name": "", "size_bytes": 3, "sha256": "abc", "transfer": "upload",
+		},
+	})
+	if err != nil {
+		t.Fatalf("transport error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("an offer with no filename succeeded, so this test cannot show what a REFUSED offer leaves behind")
+	}
+
+	links, err := st.ListStationLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 0 {
+		t.Errorf("a refused offer left %d link(s) in ken.db: %+v\n"+
+			"The operator sees a relationship on /stations that no session ever successfully used, "+
+			"created by a call that failed.", len(links), links)
+	}
+}

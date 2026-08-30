@@ -3,6 +3,7 @@ package comm
 import (
 	"context"
 	"database/sql"
+	"sync"
 )
 
 // The station-link mirror (internal/comm/migrations/0015_station_link_mirror.sql).
@@ -95,4 +96,45 @@ SELECT CASE WHEN station_a = ?1 THEN station_b ELSE station_a END AS peer
 		out = append(out, peer)
 	}
 	return out, rows.Err()
+}
+
+// linkMirrorPush serialises the read-then-replace that rebuilds the projection.
+//
+// *** THE RACE IS IN THE SHAPE, AND IT HAS TWO CALLERS THAT MUST SHARE ONE LOCK. ***
+//
+// A push reads the authoritative rows from ken.db and hands the snapshot to ReplaceLinkMirror,
+// which DELETEs the whole table and reinserts it. Two pushes overlapping means the older snapshot
+// can land last and rewrite the table to a state that was already stale when it was read.
+//
+// Both directions were measured on the built binary. DE-AUTHORISE: 4–10% of concurrent first
+// contacts had their brand-new link deleted by another session's older snapshot, and every
+// subsequent send was refused as an unknown station. RE-AUTHORISE: a pre-suspend snapshot landing
+// after a console suspend puts the pair back, so sends succeed indefinitely while /stations renders
+// the link suspended — rarer, and worse, because suspend is the only operator control over who may
+// talk to whom.
+//
+// commserver took a mutex of its own and the WEB CONSOLE did not, so a console suspend still raced
+// a session's first contact — while rooms.go's comment claimed it was "the ONE place either
+// projection is pushed". The lock lives here, in the package both callers already import, and it
+// covers the READ as well as the write because the read is where the snapshot ages.
+//
+// A MUTEX IS ENOUGH ONLY BECAUSE KEN IS ONE PROCESS against one data dir. Nothing supports running
+// it otherwise; if that ever changes this needs the roster epoch ReplaceLinkMirror currently
+// discards.
+var linkMirrorPush sync.Mutex
+
+// SyncLinkMirror rebuilds the link projection from the durable database, atomically.
+//
+// `read` returns the authoritative pairs and the roster epoch — a callback rather than a store
+// handle because internal/comm must not import internal/store (S7: the expendable side points at
+// the durable one, never the reverse). The callback runs under the lock, so no other push can
+// interleave between reading the rows and writing them.
+func (s *Store) SyncLinkMirror(ctx context.Context, read func(context.Context) ([][2]string, int64, error)) error {
+	linkMirrorPush.Lock()
+	defer linkMirrorPush.Unlock()
+	pairs, epoch, err := read(ctx)
+	if err != nil {
+		return err
+	}
+	return s.ReplaceLinkMirror(ctx, pairs, epoch)
 }

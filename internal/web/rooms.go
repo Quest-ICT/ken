@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -54,13 +55,17 @@ func (a *app) syncRoomMirror(r *http.Request) {
 	// INDEPENDENT OF THE ROOM PUSH, not chained to it. A failure reading rooms must not
 	// silently skip the link refresh: they are separate authorities over separate
 	// scopes, and the one that would be skipped here is the one that gates revocation.
-	pairs, err := a.store.LinkMirrorRows(ctx)
-	if err != nil {
-		log.Printf("web: read station links: %v", err)
-		return
-	}
+	// THROUGH comm.Store.SyncLinkMirror, WHICH HOLDS THE LOCK ACROSS THE READ.
+	//
+	// This used to read the rows here and call ReplaceLinkMirror directly, while commserver held a
+	// mutex of its own — so a console suspend could still interleave with a session's first
+	// contact, and the older snapshot won. The comment above this function claimed it was "the ONE
+	// place either projection is pushed"; it was one of two.
 	linkOK := true
-	if err := a.comm.ReplaceLinkMirror(ctx, pairs, epoch); err != nil {
+	if err := a.comm.SyncLinkMirror(ctx, func(ctx context.Context) ([][2]string, int64, error) {
+		pairs, rerr := a.store.LinkMirrorRows(ctx)
+		return pairs, epoch, rerr
+	}); err != nil {
 		log.Printf("web: sync station-link mirror: %v", err)
 		linkOK = false
 	}
