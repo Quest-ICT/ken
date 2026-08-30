@@ -16,13 +16,24 @@ that matters most: **the AI authors and proposes; only a human promotes.**
 
 ## 1. Get a token
 
-On the machine that runs Ken, mint an agent token (default scopes `read,write-draft,propose` — never
-`curate`, which is the human-only curation gate):
+On the machine that runs Ken, mint an agent token. **It must carry every capability**, because
+`/mcp` serves `kb_*`, `comm_*` and `station_*` together and refuses a credential that cannot use
+all of them — with a 401 at the transport, not a shorter tool list:
 
 ```sh
-ken token add --actor "claude-code" --label "laptop"
+ken token add --actor "claude-code" --label "laptop" \
+    --scopes read,write-draft,propose,comm,comm-file,station
 # → prints the token ONCE; store it now
 ```
+
+Never `curate` — that exclusion IS the curation gate.
+
+**Until 4.0.0 the default scopes were enough**, because `/mcp` served the knowledge base alone and a
+token could hold knowledge-base OR comm scopes but never both. Both rules are gone; a token minted
+from the old recipe authenticates nothing.
+
+In practice you may not mint one at all: the **OAuth grant** a human approves when adding Ken as a
+connector already carries the whole set. A static token is for a CLI or a script.
 
 Put the printed token in `$KEN_TOKEN` wherever your agent runs. **Use one token per client
 (per machine, per AI) — never a single token shared everywhere; see *How many tokens?* below.**

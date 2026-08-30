@@ -145,6 +145,27 @@ func (h *Handler) SetStationLimits(task store.StationTaskLimits, note store.Stat
 }
 
 func NewHTTPHandler(d Deps) *Handler {
+	// *** ONE REQUEST, ONE CHARGE AGAINST THE BUCKET, ONE last_used_at WRITE. ***
+	//
+	// main.go hands the SAME limiter to all three dependency sets, and this endpoint chains all
+	// three middlewares — so every request was charged three times and the shipped default of
+	// 120/min burst 60 was really 40/20, while the boot log and the settings label both said 120.
+	// Measured on the built binary: six tokens of burst bought two requests.
+	//
+	// Each middleware's own comment justifies its bucket as SEPARATE from the others' ("comm's own
+	// rate accounting … a comm poll loop sharing the KB's budget could starve that machine's kb_*
+	// calls"). That reasoning was correct for three endpoints taking three credentials. On one
+	// endpoint taking one credential there is one caller and one budget, and three charges are not
+	// three budgets — they are one budget divided by three, silently.
+	//
+	// The OUTERMOST middleware keeps the limiter, so a refusal still happens before any inner
+	// authentication work. The same applies to TouchToken: comm and station each issued an
+	// unthrottled UPDATE on the single writer connection per request, defeating the throttle
+	// mcpserver documents as existing "to avoid acquiring the single-writer connection needlessly".
+	// The knowledge-base middleware records the use, throttled, for all three.
+	d.Comm.TokenLimiter, d.Station.TokenLimiter = nil, nil
+	d.Comm.SkipTokenTouch, d.Station.SkipTokenTouch = true, true
+
 	h := &Handler{d: d}
 	h.ptr.Store(buildServer(d))
 	inner := mcp.NewStreamableHTTPHandler(

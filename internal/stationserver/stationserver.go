@@ -43,6 +43,13 @@ type Deps struct {
 	Store *store.Store
 	// TokenLimiter is this endpoint's own rate bucket. Optional.
 	TokenLimiter ratelimit.Limiter
+	// SkipTokenTouch suppresses this middleware's last_used_at write.
+	//
+	// Set only by allserver, where all three middlewares run on one request: without it each issued
+	// its own unthrottled UPDATE on the single writer connection, three per request, defeating the
+	// throttle the knowledge-base middleware keeps for exactly that reason. The outermost
+	// middleware records the use for all of them.
+	SkipTokenTouch bool
 	// Metrics is optional.
 	Metrics *metrics.Registry
 	// Hearsay reports whether an actor recently RECEIVED inter-session traffic, so a
@@ -167,7 +174,7 @@ func NewHTTPHandler(d Deps) *Handler {
 	// the handler's point of view, for as long as the client held it.
 	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
 		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
-	h.Handler = authMiddleware(d.Store, d.TokenLimiter, d.Metrics, inner)
+	h.Handler = authMiddleware(d.Store, d.TokenLimiter, d.Metrics, d.SkipTokenTouch, inner)
 	return h
 }
 
@@ -205,7 +212,7 @@ const mcpKeepAlive = 30 * time.Second
 // AuthMiddleware exposes this surface's authentication for the unified endpoint. See
 // mcpserver.AuthMiddleware for why chaining is the mechanism.
 func AuthMiddleware(d Deps, next http.Handler) http.Handler {
-	return authMiddleware(d.Store, d.TokenLimiter, d.Metrics, next)
+	return authMiddleware(d.Store, d.TokenLimiter, d.Metrics, d.SkipTokenTouch, next)
 }
 
 func newServer(d Deps) *mcp.Server {

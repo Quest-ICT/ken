@@ -89,7 +89,7 @@ func principalFrom(ctx context.Context) *principal {
 //
 // Sharing the other package's authenticate() would mean a future token shape added
 // there silently gains access here. Keeping them separate makes that impossible.
-func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, next http.Handler) http.Handler {
+func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, skipTouch bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No CORS headers at all: unlike /mcp, this endpoint has no browser client,
 		// so a permissive Access-Control-Allow-Origin would be pure attack surface.
@@ -128,7 +128,9 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 		// NULL after 102 acknowledged messages, because TouchToken was only ever called
 		// from the knowledge-base authenticator. A token whose last use is unknown
 		// cannot be reasoned about during an incident.
-		st.TouchToken(r.Context(), p.TokenID)
+		if !skipTouch {
+			st.TouchToken(r.Context(), p.TokenID)
+		}
 
 		next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})

@@ -169,7 +169,7 @@ func principalFromToken(ctx context.Context, st *store.Store, tok string) (*stor
 
 // authMiddleware authenticates a `kens_` bearer key or an OAuth grant, requires the station scope,
 // and resolves which station the session is working as.
-func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, next http.Handler) http.Handler {
+func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, skipTouch bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No CORS headers: like /comm/mcp this endpoint has no browser client, so a
 		// permissive Access-Control-Allow-Origin would be pure attack surface.
@@ -255,7 +255,9 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 		// about once a minute, no per-read record — but the difference between "no
 		// timestamp" and "used four minutes ago" is the difference between an
 		// unanswerable incident and a scoped one.
-		st.TouchToken(r.Context(), sp.TokenID)
+		if !skipTouch {
+			st.TouchToken(r.Context(), sp.TokenID)
+		}
 
 		scopes := map[string]bool{}
 		for _, s := range sp.Scopes {
