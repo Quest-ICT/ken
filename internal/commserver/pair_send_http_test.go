@@ -3,10 +3,12 @@ package commserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -483,4 +485,112 @@ func linkBetweenStations(t *testing.T, st *store.Store, ctx context.Context, x, 
 	}
 	t.Fatalf("no link between %s and %s", x, y)
 	return ""
+}
+
+// CONCURRENT FIRST CONTACT MUST NOT DROP A LIVE LINK FROM THE MIRROR.
+//
+// syncLinkMirror reads ken.db's rows and hands the snapshot to ReplaceLinkMirror, which DELETEs the
+// whole table and reinserts it. Two pushes overlapping meant the older snapshot could land last and
+// delete a link created in between — measured at 4–10% of concurrent first contacts, with the
+// victim's sends refused permanently across retries, until some unrelated write rebuilt the mirror.
+//
+// The refusal it produced was "no station with that id is known here — check the id", the exact
+// sentence the suspended-link fix exists to prevent, arriving for a link that was live.
+//
+// RUN CONCURRENTLY AND REPEATEDLY, because a serialised version of this passes trivially. The loop
+// is what makes it a race test; a single pass proves nothing about interleaving.
+func TestConcurrentFirstContactKeepsEveryLink(t *testing.T) {
+	ctx := context.Background()
+	st := newKB(t)
+	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	if err := cs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	actor, err := st.FindOrCreateActor(ctx, "human", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := Deps{Comm: cs, Store: st}
+
+	const n = 12
+	var stations []string
+	for i := 0; i < n; i++ {
+		s, err := st.CreateStation(ctx, fmt.Sprintf("peer-%02d", i), "", actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stations = append(stations, s.StationID)
+	}
+	hubSt, err := st.CreateStation(ctx, "hub", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := hubSt.StationID
+
+	// COMPETING WRITERS ON comm.db, WHICH IS WHAT MAKES THE WINDOW WIDE ENOUGH TO SEE.
+	//
+	// The first attempt at this test ran the pushes alone and passed even with the serialisation
+	// removed — 0 failures in 5×12. comm.db has a single writer, so a push that has to WAIT for the
+	// write lock is one whose snapshot ages while it queues, which is exactly the interleaving that
+	// loses a link. Without contention the read and the write are close enough together that the
+	// race almost never lands, which is also why an earlier audit round called it "structurally real
+	// but unreproduced".
+	stop := make(chan struct{})
+	var noise sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		noise.Add(1)
+		go func() {
+			defer noise.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					_ = cs.ReplaceRoomMirror(ctx, map[string][]string{"r": {"s:" + hub}}, 1)
+				}
+			}
+		}()
+	}
+	defer func() { close(stop); noise.Wait() }()
+
+	// Every peer makes first contact with the hub at once — link, then push — which is exactly
+	// what the comm_send handler does.
+	var wg sync.WaitGroup
+	for _, peer := range stations {
+		wg.Add(1)
+		go func(p string) {
+			defer wg.Done()
+			if _, err := st.EnsureStationLink(ctx, hub, p, actor); err != nil {
+				t.Errorf("link %s: %v", p, err)
+				return
+			}
+			syncLinkMirror(ctx, d)
+		}(peer)
+	}
+	wg.Wait()
+
+	// CONTROL: ken.db has every link. If it does not, the mirror comparison below would be
+	// measuring a broken write rather than a lost projection.
+	links, err := st.ListStationLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != n {
+		t.Fatalf("ken.db holds %d links after %d first contacts, want %d", len(links), n, n)
+	}
+
+	peers, err := cs.LinkedStations(ctx, hub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(peers) != n {
+		t.Errorf("the mirror holds %d of %d links after concurrent first contact.\n"+
+			"Each missing one is a peer whose sends are refused with \"no station with that id is "+
+			"known here\" — permanently, across retries — for a relationship ken.db says is active.",
+			len(peers), n)
+	}
 }

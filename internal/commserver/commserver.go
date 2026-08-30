@@ -30,6 +30,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -760,6 +761,27 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 							"the link returns to active with it. Do not retry until they have"))
 					case !exists:
 						err = comm.ErrUnknownStation
+					case state == "active":
+						// *** ken.db SAYS THE LINK IS LIVE AND comm.db DISAGREES: THE MIRROR IS STALE. ***
+						//
+						// This arm was missing, so the code asked the authority, learned the station
+						// exists and the relationship is active, and still emitted check-your-id —
+						// discarding the answer in the one case that PROVES the mirror wrong.
+						//
+						// It happens: syncLinkMirror reads a snapshot and ReplaceLinkMirror rewrites
+						// the whole table, so a snapshot taken before another session's first contact
+						// can land after it and drop a live link. Measured at 4–10% of concurrent
+						// first contacts before the push below was made unconditional.
+						//
+						// REPAIRING IS BETTER THAN REPORTING. The row exists in the durable database;
+						// the projection is derivable from it. So push the mirror and say plainly
+						// that a retry will work — rather than telling a session to check an id
+						// comm_directory just handed it, which is the failure this whole refinement
+						// exists to stop.
+						syncLinkMirror(ctx, d)
+						err = comm.CallerSafe(errors.New("that station is linked to you and this server's " +
+							"message-routing table was briefly out of date. It has been rebuilt: send the same " +
+							"message again and it will go through. Nothing was delivered"))
 					}
 				}
 			}
@@ -1264,7 +1286,33 @@ func stationLabel(ctx context.Context, d Deps, stationID string) string {
 // writes it, and now the send path must. Three authors already, and the indirection only hid the
 // third behind a field that could be nil. Nothing here is a second AUTHORITY — the rows come from
 // ken.db, which remains the only place a link is decided.
+// mirrorPush serialises the read-then-replace so two concurrent pushes cannot interleave.
+//
+// *** THE RACE IS IN THE SHAPE, NOT IN THE SQL. *** syncLinkMirror reads LinkMirrorRows from ken.db
+// and hands the snapshot to ReplaceLinkMirror, which DELETEs the whole table and reinserts it. Two
+// pushes overlapping means the older snapshot can land last and rewrite the table to a state that
+// was already stale when it was read.
+//
+// Both directions were measured during the 4.0.0 pre-release work, and the one that fires in
+// practice is the one nobody predicted:
+//
+//	DE-AUTHORISE — 4 to 10% of CONCURRENT FIRST CONTACTS. Session A and session B each write to a
+//	new peer; A reads the mirror rows, B inserts its link and pushes, then A's older snapshot lands
+//	and deletes B's link. B's sends are refused permanently, across retries with fresh idempotency
+//	keys, until some unrelated write rebuilds the mirror.
+//
+//	RE-AUTHORISE — a pre-suspend snapshot landing after a console suspend puts the pair back. Sends
+//	over a suspended link then succeed indefinitely while /stations renders it suspended. Rarer, and
+//	worse, because suspend is now the ONLY operator control over who may talk to whom.
+//
+// A mutex is enough because both databases are single-writer and every push is on this process.
+// It is NOT enough if Ken is ever run as more than one process against one data dir — which nothing
+// supports today, and which would need the epoch ReplaceLinkMirror currently discards.
+var mirrorPush sync.Mutex
+
 func syncLinkMirror(ctx context.Context, d Deps) {
+	mirrorPush.Lock()
+	defer mirrorPush.Unlock()
 	pairs, err := d.Store.LinkMirrorRows(ctx)
 	if err != nil {
 		log.Printf("comm: read links for mirror: %v", err)

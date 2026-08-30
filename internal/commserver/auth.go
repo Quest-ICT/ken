@@ -168,8 +168,18 @@ func authenticate(ctx context.Context, st *store.Store, tok, requiredScope strin
 	//
 	// It stays as unsafe as it always was and no more: static, unrevocable, DEV ONLY, and main.go
 	// refuses to start with it set alongside any TLS posture.
-	if p := devPrincipal(tok); p != nil {
-		return p, nil
+	if isDevToken(tok) {
+		// A REAL ACTOR, for the reason stationserver gives at its own dev branch: a principal with
+		// ActorID 0 satisfies no foreign key, and a mailbox records its owner.
+		actorID, err := st.FindOrCreateActor(ctx, "ai", "dev-token")
+		if err != nil {
+			return nil, err
+		}
+		return &principal{
+			TokenID: "dev",
+			ActorID: actorID,
+			Scopes:  map[string]bool{ScopeComm: true, ScopeCommFile: true},
+		}, nil
 	}
 	if !strings.HasPrefix(tok, "ken_") {
 		return authenticateOAuth(ctx, st, tok, requiredScope)
@@ -283,15 +293,9 @@ func authenticateOAuth(ctx context.Context, st *store.Store, tok, requiredScope 
 	}, nil
 }
 
-// devPrincipal grants the KEN_DEV_TOKEN bearer this surface's capabilities. Nil for every other
-// token, and nil whenever the variable is unset — the ordinary case.
-func devPrincipal(tok string) *principal {
+// isDevToken reports whether this bearer is the KEN_DEV_TOKEN. False whenever the variable is
+// unset, which is the ordinary case.
+func isDevToken(tok string) bool {
 	dev := os.Getenv("KEN_DEV_TOKEN")
-	if dev == "" || subtle.ConstantTimeCompare([]byte(tok), []byte(dev)) != 1 {
-		return nil
-	}
-	return &principal{
-		TokenID: "dev",
-		Scopes:  map[string]bool{ScopeComm: true, ScopeCommFile: true},
-	}
+	return dev != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(dev)) == 1
 }

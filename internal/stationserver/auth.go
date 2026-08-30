@@ -147,8 +147,22 @@ func principalFromToken(ctx context.Context, st *store.Store, tok string) (*stor
 	// TokenID "dev" is deliberately a constant: it is what a station's session_key will be recorded
 	// against, so a dev-token session behaves like one identity rather than a new one per boot.
 	if dev := os.Getenv("KEN_DEV_TOKEN"); dev != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(dev)) == 1 {
+		// IT NEEDS A REAL ACTOR, and shipping without one made the bypass authenticate and then
+		// fail on the first call the server's own instructions mandate. The principal carried
+		// ActorID 0; station(created_by_actor_id) is NOT NULL REFERENCES actor(id) and SQLite
+		// rowids start at 1, so station_me died with a raw "FOREIGN KEY constraint failed" — and
+		// with it every station_* and comm_* call, since both resolve a station first.
+		//
+		// A 401 would at least have been legible. This was worse: the fix that made the bypass
+		// authenticate turned a clear refusal into a driver error, on the path README tells a new
+		// user to walk first.
+		actorID, err := st.FindOrCreateActor(ctx, "ai", "dev-token")
+		if err != nil {
+			return nil, err
+		}
 		return &store.StationPrincipal{
 			TokenID: "dev",
+			ActorID: actorID,
 			Scopes:  []string{"station", "station-locker"},
 		}, nil
 	}

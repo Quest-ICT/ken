@@ -38,6 +38,14 @@ func unified(t *testing.T) *mcp.ClientSession {
 // unifiedWithHandler additionally returns the served handler and a reconnect function, for the
 // tests that have to observe a LIVE settings change on the surface a request actually reaches.
 func unifiedWithHandler(t *testing.T) (*mcp.ClientSession, *Handler, func() *mcp.ClientSession) {
+	return unifiedAs(t, "")
+}
+
+// unifiedAs builds the endpoint and connects with an explicit bearer. An empty token means "mint a
+// full-capability one", which is what every ordinary test wants; passing KEN_DEV_TOKEN's value
+// exercises the dev bypass over the real transport, which is the only way to see that it
+// authenticates AND that a tool call then works.
+func unifiedAs(t *testing.T, asToken string) (*mcp.ClientSession, *Handler, func() *mcp.ClientSession) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "ken.db"))
@@ -66,6 +74,9 @@ func unifiedWithHandler(t *testing.T) (*mcp.ClientSession, *Handler, func() *mcp
 	tok, err := st.IssueToken(ctx, actor, []string{"read", "write-draft", "propose", "comm", "station"}, "wire test")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if asToken != "" {
+		tok = asToken
 	}
 	commDeps := commserver.Deps{Comm: cs, Store: st}
 	handler := NewHTTPHandler(Deps{
@@ -300,5 +311,39 @@ func TestALiveSettingChangeReachesTheServedSurface(t *testing.T) {
 		if !strings.Contains(got, "French") {
 			t.Errorf("%s carries a curation rule that does not name the configured language: %q", tool, got)
 		}
+	}
+}
+
+// THE DEV TOKEN MUST REACH TOOLS, NOT JUST THE HANDSHAKE.
+//
+// The fix that taught all three middlewares to honour KEN_DEV_TOKEN was verified with `initialize`
+// and `tools/list`, both of which returned exactly what they should — and the very next call, the
+// one the server's own instructions mandate FIRST, died with a raw driver error: the dev principal
+// carried ActorID 0, and `station(created_by_actor_id)` is NOT NULL REFERENCES actor(id) with
+// SQLite rowids starting at 1.
+//
+// That is worse than the 401 it replaced. A 401 is legible; "FOREIGN KEY constraint failed" on the
+// first mandated call, after a successful handshake, is not — and it sat on the path README tells a
+// new user to walk first.
+//
+// SO THE GATE CALLS TOOLS FROM ALL THREE FAMILIES over the real transport. A handshake proves the
+// credential was accepted; only a call proves it can be used.
+func TestTheDevTokenCanActuallyBeUsed(t *testing.T) {
+	t.Setenv("KEN_DEV_TOKEN", "dev-secret")
+	sess, _, _ := unifiedAs(t, "dev-secret")
+
+	var me struct {
+		StationID string `json:"station_id"`
+	}
+	if out := callJSON(t, sess, "station_me", map[string]any{"session_key": "conv-dev"}, &me); me.StationID == "" {
+		t.Fatalf("station_me returned no station for the dev token: %s", out)
+	}
+	// comm and kb too: a mailbox is resolved from the station, so a broken principal fails here as
+	// well, and the knowledge base is the one family the bypass was originally scoped to.
+	if out := callJSON(t, sess, "comm_directory", map[string]any{"session_key": "conv-dev"}, nil); strings.Contains(out, "constraint") {
+		t.Errorf("comm_directory failed for the dev token: %s", out)
+	}
+	if out := callJSON(t, sess, "kb_search", map[string]any{"query": "anything"}, nil); strings.Contains(out, "constraint") {
+		t.Errorf("kb_search failed for the dev token: %s", out)
 	}
 }
