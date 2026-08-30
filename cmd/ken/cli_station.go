@@ -21,11 +21,18 @@ import (
 // named.
 func runStation(args []string) {
 	if len(args) == 0 {
-		die("usage: ken station add|list|rename|key|requests")
+		die("usage: ken station add|list|rename|requests")
 	}
 	ctx := context.Background()
 
 	switch args[0] {
+	case "key":
+		// NAMED EXPLICITLY rather than falling into the usage default, so a script that called it
+		// gets a message about a RETIREMENT instead of one that reads like a typo. The two are
+		// indistinguishable otherwise, which is the whole failure mode this release keeps finding.
+		die("`ken station key` was retired in 4.0.0: there are no station keys. A session claims its " +
+			"station by passing session_key to station_me, and authenticates with the OAuth grant. " +
+			"See docs/UPGRADING.md")
 	case "add":
 		fs := flag.NewFlagSet("station add", flag.ExitOnError)
 		name := fs.String("name", "", "station name, e.g. prod-ops (required; YOU choose it, not the agent)")
@@ -44,8 +51,12 @@ func runStation(args []string) {
 		}
 		must(err)
 		fmt.Printf("station %s created (id %s)\n", s.Name, s.StationID)
-		fmt.Println("mint a key for a machine with:")
-		fmt.Printf("  ken station key --station %s --label laptop\n", s.Name)
+		// NO NEXT STEP TO PRINT, AND THAT IS THE FEATURE. This used to say "mint a key for a
+		// machine with: ken station key …" — a subcommand retired in 4.0.0, so the line handed the
+		// operator a command that dies with a usage string advertising the verb it just rejected.
+		// A session claims a station by stating its own conversation id on its first station_me
+		// call; there is nothing to mint, deliver or protect.
+		fmt.Println("a session claims it by passing session_key to station_me — nothing to mint")
 
 	// `rename` is the FALLBACK, not the surface. The console owns this (a name is the one
 	// thing about a station that is purely the human's, and it belongs where they can see
@@ -122,7 +133,7 @@ func runStation(args []string) {
 		fmt.Println("(`ken station add` creates an UNRELATED station and leaves the request pending.)")
 
 	default:
-		die("usage: ken station add|list|rename|key|requests")
+		die("usage: ken station add|list|rename|requests")
 	}
 }
 

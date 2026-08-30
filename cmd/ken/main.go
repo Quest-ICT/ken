@@ -114,7 +114,7 @@ Usage:
   ken backup snapshot|verify make/verify a consistent DB snapshot
   ken import --dir DIR       import flat memory .md files as curated entries
   ken embed backfill|status  compute embeddings for semantic search
-  ken station add|list|rename|key   create, name and RENAME stations, mint their keys (docs/STATIONS.md)
+  ken station add|list|rename       create, name and RENAME stations (docs/STATIONS.md)
   ken version                print the build version and source location
 
 Serve flags:
@@ -159,22 +159,27 @@ Rate limiting (env; on by default — loopback + KEN_RATELIMIT_ALLOW_CIDRS + /he
   KEN_RATELIMIT_LOCKOUT_SEC  auto-block duration, seconds (default 900)
   KEN_RATELIMIT_ALLOW_CIDRS  extra always-allowed CIDRs (comma-separated)
 
+One machine surface — /mcp, carrying every tool (kb_*, comm_* and station_*):
+                    a credential reaching it must carry EVERY capability, or it is refused
+                    at the transport with a 401 rather than shown a tool list it cannot use
+                    ken token add --actor my-agent \
+                        --scopes read,write-draft,propose,comm,comm-file,station
+                    in practice you will not mint one: the OAuth grant a human approves when
+                    adding Ken as a connector already carries the whole set. A static token
+                    is for a CLI or a script.
+                    (Until 4.0.0 a token held knowledge-base OR comm scopes and never both,
+                    and there were three endpoints. Both are gone — see docs/UPGRADING.md.)
+
 Inter-session communication — always on, not optional (see docs/COMM.md):
   KEN_COMM_DB       message database path (default <db dir>/comm/comm.db; NOT backed up — it is expendable)
-                    needs a DEDICATED token:  ken token add --actor comm-dev --scopes comm
-                    (add comm-file to that token for file exchange: --scopes comm,comm-file)
-                    a token may hold comm scopes or knowledge-base scopes, never both
                     file exchange is a separate live setting (Settings -> Inter-session comms)
 
 Stations — durable AI working identities; always on, not optional (see docs/STATIONS.md):
                     a station is created and NAMED by a human; a session staffs it
-                    create it, then mint its key:  ken station add --name prod-ops
-                                                   ken station key --station prod-ops --label laptop
-                    NOT ken token add: /station needs a kens_ key BOUND to a station,
-                    which only ken station key mints
-                    a token holds knowledge-base, comm, or station scopes — station and
-                    comm may combine, neither may mix with knowledge-base scopes
-                    works with COMM off: the notebook and task list need no peers
+                    create it with:  ken station add --name prod-ops
+                    there is no key to mint: a session claims a station by passing
+                    session_key (its own conversation id) to station_me
+                    the notebook and task list work even when comm.db cannot be opened
 
 Observability (health always on; metrics on by default, loopback-only):
   /healthz          liveness (public, plain "ok")

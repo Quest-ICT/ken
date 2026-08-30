@@ -40,7 +40,7 @@ const maxMCPBody = 4 << 20 // 4 MiB
 
 type principal struct {
 	ActorID  int64
-	TokenID  string // empty for the dev-token bypass; "oauth-<grantID>" for OAuth
+	TokenID  string // "dev" for the dev-token bypass; "oauth-<grantID>" for OAuth
 	Scopes   map[string]bool
 	APIToken bool // true only for a ken_ api_token (so last_used_at is bumped)
 }
@@ -183,7 +183,13 @@ func bearerFromHeader(h http.Header) string {
 // tokens are base62 with no '_', so they never collide with the api_token shape.
 func authenticate(ctx context.Context, st *store.Store, tok string) (*principal, error) {
 	if dev := os.Getenv("KEN_DEV_TOKEN"); dev != "" && constEq(tok, dev) {
-		return &principal{Scopes: scopeSet([]string{scopeRead, scopeWriteDraft, scopePropose})}, nil
+		// TokenID "dev" IS LOAD-BEARING, and its absence was a real hole. The dev principal used to
+		// carry an EMPTY token id, so every per-token control keyed on it silently did nothing:
+		// rate accounting bucketed under "", and the comm surface refused the bypass outright for
+		// exactly that reason. Now that /mcp chains all three middlewares the bypass has to work
+		// everywhere or nowhere, so it is accounted like any other credential instead of exempted
+		// from the accounting.
+		return &principal{TokenID: "dev", Scopes: scopeSet([]string{scopeRead, scopeWriteDraft, scopePropose})}, nil
 	}
 	if strings.HasPrefix(tok, "ken_") {
 		return authenticateAPIToken(ctx, st, tok)

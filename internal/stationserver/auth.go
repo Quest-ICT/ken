@@ -2,8 +2,10 @@ package stationserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"os"
 
 	"github.com/Quest-ICT/ken/internal/station"
 	"net/http"
@@ -137,6 +139,19 @@ func (p *principal) withStation(stationID string) *principal {
 // STATION KEYS ARE GONE FROM THE LADDER. `kens_` credentials are retired: /mcp requires an OAuth
 // grant carrying every capability, so a station key reached nothing even before this.
 func principalFromToken(ctx context.Context, st *store.Store, tok string) (*store.StationPrincipal, error) {
+	// THE DEV BYPASS, FOR THE SAME REASON IT NOW EXISTS ON THE COMM MIDDLEWARE: /mcp chains all
+	// three, so a bypass honoured by one of them is refused by the next and works nowhere. It was
+	// correct while /mcp served the knowledge base alone. Still static, unrevocable, DEV ONLY, and
+	// still refused at startup alongside any TLS posture.
+	//
+	// TokenID "dev" is deliberately a constant: it is what a station's session_key will be recorded
+	// against, so a dev-token session behaves like one identity rather than a new one per boot.
+	if dev := os.Getenv("KEN_DEV_TOKEN"); dev != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(dev)) == 1 {
+		return &store.StationPrincipal{
+			TokenID: "dev",
+			Scopes:  []string{"station", "station-locker"},
+		}, nil
+	}
 	if ap, err := st.AuthenticateAPITokenForStation(ctx, tok); err == nil {
 		return ap, nil
 	}

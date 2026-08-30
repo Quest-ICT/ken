@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -156,6 +157,18 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 // UNPROBEABILITY IS UNCHANGED. Both paths fail with the same opaque "invalid token" at the
 // middleware; nothing here tells a caller which shape it got wrong.
 func authenticate(ctx context.Context, st *store.Store, tok, requiredScope string) (*principal, error) {
+	// THE DEV BYPASS IS HONOURED HERE TOO, BECAUSE /mcp REQUIRES EVERY CAPABILITY.
+	//
+	// It lived only in mcpserver, which was correct while /mcp served the knowledge base alone. On
+	// the collapsed endpoint all three middlewares run, so a dev token authenticated against the
+	// first and was refused by this one — measured as a 401 on the very quickstart README hands a
+	// new user. A bypass that works on a third of the chain is a bypass that works nowhere.
+	//
+	// It stays as unsafe as it always was and no more: static, unrevocable, DEV ONLY, and main.go
+	// refuses to start with it set alongside any TLS posture.
+	if p := devPrincipal(tok); p != nil {
+		return p, nil
+	}
 	if !strings.HasPrefix(tok, "ken_") {
 		return authenticateOAuth(ctx, st, tok, requiredScope)
 	}
@@ -266,4 +279,17 @@ func authenticateOAuth(ctx context.Context, st *store.Store, tok, requiredScope 
 		TokenID: "oauth-" + strconv.FormatInt(op.GrantID, 10),
 		Scopes:  set,
 	}, nil
+}
+
+// devPrincipal grants the KEN_DEV_TOKEN bearer this surface's capabilities. Nil for every other
+// token, and nil whenever the variable is unset — the ordinary case.
+func devPrincipal(tok string) *principal {
+	dev := os.Getenv("KEN_DEV_TOKEN")
+	if dev == "" || subtle.ConstantTimeCompare([]byte(tok), []byte(dev)) != 1 {
+		return nil
+	}
+	return &principal{
+		TokenID: "dev",
+		Scopes:  map[string]bool{ScopeComm: true, ScopeCommFile: true},
+	}
 }

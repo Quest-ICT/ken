@@ -158,15 +158,39 @@ func mintOAuth(t *testing.T, st *store.Store, scope string) string {
 	return access
 }
 
-// The dev-token bypass has an empty token id and therefore escapes per-token rate
-// accounting, so it must not reach COMM even when set.
-func TestAuthRejectsTheDevTokenBypass(t *testing.T) {
+// THE DEV BYPASS MUST BE RATE-ACCOUNTED, WHICH IS WHAT THIS ALWAYS CARED ABOUT.
+//
+// It used to assert that COMM REFUSED the bypass, and gave its reason in one line: the dev
+// principal carried an EMPTY token id, so it escaped per-token rate accounting. That reason was
+// right and the assertion was the only remedy available while COMM was a separate endpoint a dev
+// token had no business reaching.
+//
+// /mcp chains all three middlewares now, so a bypass one of them refuses is a bypass that works
+// nowhere — measured as a 401 on the quickstart in README. Refusing it here would not contain it;
+// it would just break it. So the bypass is honoured on every surface and the hazard is closed at
+// its source: the principal carries a constant, non-empty token id and is bucketed like any other
+// credential.
+//
+// The assertion follows the reason rather than the old conclusion.
+func TestTheDevTokenBypassIsRateAccounted(t *testing.T) {
 	ctx := context.Background()
 	st := newKB(t)
 	t.Setenv("KEN_DEV_TOKEN", "dev-secret")
 
-	if _, err := authenticate(ctx, st, "dev-secret", ScopeComm); err == nil {
-		t.Fatal("KEN_DEV_TOKEN was accepted on the comm endpoint")
+	p, err := authenticate(ctx, st, "dev-secret", ScopeComm)
+	if err != nil {
+		t.Fatalf("the dev token is refused on comm, so /mcp — which chains this middleware — "+
+			"cannot accept it either: %v", err)
+	}
+	if p.TokenID == "" {
+		t.Error("the dev principal carries an empty token id, so every per-token control keyed on " +
+			"it silently does nothing — rate accounting buckets under \"\", which is the hole that " +
+			"made refusing the bypass the only available remedy")
+	}
+	// AND IT IS STILL OFF UNLESS THE OPERATOR SET IT. Without this, a build that accepted any
+	// bearer as the dev token would satisfy everything above.
+	if _, err := authenticate(ctx, st, "not-the-dev-token", ScopeComm); err == nil {
+		t.Error("an arbitrary bearer was accepted as the dev token")
 	}
 }
 
