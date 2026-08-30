@@ -53,10 +53,11 @@ var migrationFS embed.FS
 // Sentinel errors. Callers map these to their own surface (an MCP tool error, an
 // HTTP status); they are matched with errors.Is, never by string.
 var (
-	// ErrNotFound covers an unknown endpoint, channel, or pairing code.
+	// ErrNotFound covers an unknown mailbox, channel, room or attachment.
 	ErrNotFound = errors.New("not found")
-	// ErrDenied means authenticated but not entitled: a wrong endpoint secret, a
-	// revoked endpoint, or an endpoint acting on a channel it does not belong to.
+	// ErrDenied means resolved but not entitled: a mailbox acting on a channel it is not seated
+	// on, a station addressing itself, or a pair whose link does not authorise it. (It also covered
+	// "a wrong endpoint secret" until 4.0.0 retired the secret.)
 	ErrDenied = errors.New("denied")
 	// ErrBackpressure means the channel's un-acked depth is at its cap. Callers
 	// must surface this as "stop and wait", never as a retryable transport error:

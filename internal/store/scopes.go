@@ -20,10 +20,10 @@ var ValidScopes = map[string]bool{
 	"station": true, "station-locker": true,
 }
 
-// CommScopes belong to /comm/mcp and /comm/files.
+// CommScopes gate the comm_* tools on /mcp, and the byte relay at /comm/files.
 var CommScopes = map[string]bool{"comm": true, "comm-file": true}
 
-// StationScopes belong to /station/mcp.
+// StationScopes gate the station_* tools on /mcp. (/station/mcp was deleted in 4.0.0.)
 var StationScopes = map[string]bool{"station": true, "station-locker": true}
 
 // *** CheckScopeMix WAS DELETED HERE, 2026-08-26, DELIBERATELY. ***

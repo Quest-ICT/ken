@@ -361,7 +361,11 @@ type StationKey struct {
 // Gone with them: the binding they authorised, and the sever-on-revoke that made revoking one
 // meaningful. Archiving a station is the per-session control now.
 
-// StationPrincipal is what a verified station key resolves to.
+// StationPrincipal is what an authenticated credential resolves to on the station tools.
+//
+// It was "what a verified station key resolves to". Station keys are retired: the credential is the
+// OAuth grant (or a full-capability api_token), and which STATION it speaks for comes from the
+// conversation's session_key, resolved by internal/station.Resolve.
 type StationPrincipal struct {
 	TokenID   string
 	ActorID   int64

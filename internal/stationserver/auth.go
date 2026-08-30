@@ -181,8 +181,11 @@ func principalFromToken(ctx context.Context, st *store.Store, tok string) (*stor
 	}, nil
 }
 
-// authMiddleware authenticates a `kens_` bearer key or an OAuth grant, requires the station scope,
-// and resolves which station the session is working as.
+// authMiddleware authenticates an OAuth grant or a full-capability api_token, requires the station
+// scope, and resolves which station the session is working as.
+//
+// It said "a `kens_` bearer key or an OAuth grant" until 4.0.0. Station keys are retired and no code
+// path parses that prefix any more; the station comes from the conversation's session_key.
 func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Registry, skipTouch bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No CORS headers: like /comm/mcp this endpoint has no browser client, so a
@@ -227,28 +230,24 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			return
 		}
 
-		// *** THE STATION HEADER — docs/IDENTITY.md §4, step 4 of §10. ***
+		// *** THE STATION HEADER IS DELETED, AND SO IS EVERY BRANCH THAT READ IT. ***
 		//
-		//	X-Ken-Workspace: lhqBQKBpTSyJoZyu    <- permanent, meaningless, NOT a secret
+		// This block documented `X-Ken-Workspace` as the live station-selection mechanism, with the
+		// reasoning for why an id may sit in a config file in plain sight. The header went in 4.0.0:
+		// a claude.ai connector cannot set custom header names, so the population that most needed
+		// it could never use it, and the census before deleting found one test token and a single
+		// 39-minute window of use. The running binary ignores the header entirely.
 		//
-		// §4: "The human's OAuth grant proves WHO, and single-user makes that sufficient: within
-		// one instance there is one human and one Claude account, so a session declaring a
-		// station is that human's own session. There is no other tenant to protect against."
-		// The id selects; the grant authorises. That is why it can live in a config file, in
-		// plain sight, forever — "a name tag cannot leak, cannot be burned, never expires and
-		// never rotates", which is the whole point of replacing a per-folder station KEY.
+		// WHAT SURVIVES IS THE PRINCIPLE, and it now governs `session_key` instead — §4: "The
+		// human's OAuth grant proves WHO, and single-user makes that sufficient… There is no other
+		// tenant to protect against." The id SELECTS; the credential AUTHORISES. That is why it can
+		// travel as an ordinary tool argument: a name tag cannot leak, be burned, expire or rotate.
 		//
-		// A CREDENTIAL THAT CARRIES ITS OWN STATION WINS. A `kens_` key is bound to one station
-		// and that binding is a fact about the credential, not a preference; letting a header
-		// override it would let a station key read a station it was never issued for, which is
-		// authority the header must not have. So the header applies only to a principal that
-		// arrives with no station — which today means an OAuth grant.
-		//
-		// THE RESIDUAL RISK IS CONFUSION, NOT COMPROMISE (§4), and it is mitigated by visibility
-		// rather than by credentials: the claim is logged, and the console can show which
-		// station each session claimed. Vlad ruled on 2026-08-25 that the vault follows the
-		// station like everything else, rather than growing a second factor that would
-		// reintroduce the ceremony this design exists to remove.
+		// THE RESIDUAL RISK IS CONFUSION, NOT COMPROMISE (§4), mitigated by visibility rather than
+		// by credentials: the claim is logged and the console shows which station each conversation
+		// holds. Vlad ruled on 2026-08-25 that the vault follows the station like everything else,
+		// rather than growing a second factor that would reintroduce the ceremony this design
+		// exists to remove.
 		if limiter != nil {
 			if ok, retry := limiter.Allow(sp.TokenID); !ok {
 				w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
@@ -257,18 +256,19 @@ func authMiddleware(st *store.Store, limiter ratelimit.Limiter, reg *metrics.Reg
 			}
 		}
 
-		// Record that this key was used. Until now nothing did: TouchToken was called
-		// only from the knowledge-base authenticator, so `last_used_at` was NEVER
-		// written for a station key — and the console rendered a last-used column that
-		// was permanently blank. An operator reads a blank as "unused" rather than
-		// "unmeasured", which is the worse of the two readings, and it made "retire the
-		// key nothing is using" unanswerable even in principle.
+		// Record that this credential was used. Nothing did until 3.x: TouchToken was called only
+		// from the knowledge-base authenticator, so `last_used_at` was never written for a
+		// station-scoped credential and the console rendered a permanently blank column. An
+		// operator reads a blank as "unused" rather than "unmeasured", which is the worse of the
+		// two readings.
 		//
-		// It also means a stolen station key could read an entire notebook, task list
-		// and briefing with no trace at all. This is a coarse signal — throttled to
-		// about once a minute, no per-read record — but the difference between "no
-		// timestamp" and "used four minutes ago" is the difference between an
-		// unanswerable incident and a scoped one.
+		// It also means a stolen credential could read an entire notebook, task list and briefing
+		// with no trace. This is a coarse signal — throttled, no per-read record — but the
+		// difference between "no timestamp" and "used four minutes ago" is the difference between
+		// an unanswerable incident and a scoped one.
+		//
+		// SKIPPED WHEN ANOTHER MIDDLEWARE IN THE CHAIN IS RECORDING IT: /mcp runs all three, and
+		// three unthrottled writes per request on a single-writer database defeats the throttle.
 		if !skipTouch {
 			st.TouchToken(r.Context(), sp.TokenID)
 		}
