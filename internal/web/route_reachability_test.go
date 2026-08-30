@@ -82,7 +82,12 @@ func TestEveryPostRouteHasAConsoleSurface(t *testing.T) {
 		t.Fatalf("walk templates: %v", err)
 	}
 	hay := surface.String()
-	if !strings.Contains(hay, `action="/comm/endpoints/`) {
+	// THE ANCHOR IS A FORM THAT MUST KEEP EXISTING, and it earned a note by failing honestly.
+	// It used to be `action="/comm/endpoints/`, and it fired the moment those forms were deleted —
+	// correctly: the anchor's whole job is to prove the walk found real markup before any absence
+	// below is read as evidence. Re-anchored on the station rename form, which is the console's
+	// most permanent control (a human naming a post is the one act the design never delegates).
+	if !strings.Contains(hay, `action="/stations/`) {
 		t.Fatal("the template corpus does not contain a known-present form action; the walk is broken, not the routes")
 	}
 

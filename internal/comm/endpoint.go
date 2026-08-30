@@ -185,39 +185,14 @@ FROM endpoint WHERE `+where+` ORDER BY COALESCE(label,''), endpoint_id`, arg)
 // session that lost the value it was told to write to a file; there is no secret and no file, so
 // there is nothing to rotate and nothing to lose.
 
-// RevokeEndpoint soft-revokes an endpoint, immediately denying further use.
-// Its channels stay queryable for the operator; its messages age out normally.
-func (s *Store) RevokeEndpoint(ctx context.Context, endpointID string) error {
-	var n int64
-	err := s.tx(ctx, func(t *sql.Tx) error {
-		// Release whatever this endpoint was holding, in the same breath. S4 requires
-		// a claim to be released when its endpoint is revoked: a revoked reader is
-		// never coming back to ack, so holding its messages for the remainder of the
-		// lease would hide them from the station's other readers for no reason — the
-		// operator revoked a wedged session precisely so someone else could take over.
-		if _, err := t.ExecContext(ctx, `
-UPDATE delivery SET claimed_by_endpoint=NULL, claim_expires_at=NULL
- WHERE acked_at IS NULL
-   AND claimed_by_endpoint = (SELECT id FROM endpoint WHERE endpoint_id=?)`, endpointID); err != nil {
-			return err
-		}
-		res, err := t.ExecContext(ctx, `
-UPDATE endpoint SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE endpoint_id=? AND revoked_at IS NULL`, endpointID)
-		if err != nil {
-			return err
-		}
-		n, _ = res.RowsAffected()
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
+// *** RevokeEndpoint IS DELETED. IT COULD NOT DO WHAT ITS ONLY CALLER PROMISED. ***
+//
+// It stamped revoked_at and nothing else. Nothing in the auth path consults that column any more,
+// and MailboxFor recreates a station's mailbox on the next call — so the console button that used
+// it reported success and had no effect at all. A security-shaped control that lies is worse than
+// no control: an operator who believes a session is cut off stops looking for a way to cut it off.
+//
+// What stops a session now: archive its station, or withdraw the OAuth authorization.
 
 // ListEndpoints returns the endpoints owned by this instance, newest first. Scoped by
 // space from day 1 even though only one exists today: an unscoped listing would be
@@ -315,82 +290,17 @@ func (s *Store) EndpointIDsForStation(ctx context.Context, stationID string) ([]
 	return out, rows.Err()
 }
 
-// EndpointReassignResult reports what a console reassignment did, including the displacement the
-// operator did not ask for explicitly and must still be told about.
-type EndpointReassignResult struct {
-	Endpoint *Endpoint
-	// TakenFromID is the endpoint that LOST this conversation key, empty when nothing held it.
-	TakenFromID    string
-	TakenFromLabel string
-}
-
-// ReassignEndpointToSession points an EXISTING mailbox at a conversation, from the console.
+// *** ReassignEndpointToSession AND EndpointReassignResult ARE DELETED, AND THE DOCS HAD ALREADY
+// SAID SO. ***
 //
-// *** WHY: RECOVERING A STATION WITHOUT ITS MAIL IS HALF A RECOVERY. ***
+// They pointed a mailbox at a conversation from a console form — the comm half of station recovery,
+// back when a mailbox belonged to a SESSION. COMM.md, UPGRADING.md and CHANGELOG all recorded this
+// as removed in the 4.0.0 wave while the route, handler, form and this function stayed live. A
+// document asserting a deletion that did not happen is worse than no document: it is a claim an
+// operator plans around.
 //
-// Vlad, on station takeover: "it might even be used to re-establish comm channels." It has to
-// be, because the station half alone leaves the new session holding a post whose mailbox it cannot
-// open. A claimed endpoint is driven by the DEAD conversation's key; an unclaimed one by a secret
-// that was shown once, to a session that is gone. The only existing answer was `rotate` — which
-// mints a fresh secret for the human to relay and the session to write to disk, and a chat session
-// has no disk. That ceremony is the exact thing 3.36.0 removed.
-//
-// SO THE RECOVERY IS ONE STRING, USED TWICE: the session states its conversation key, the human
-// pastes it into the station form and this one, and the session's next poll reads the mail
-// waiting in the mailbox it just inherited. Channels, links and queued messages are untouched —
-// only the pointer that says which conversation drives this endpoint moves.
-//
-// THE OWNER TOKEN IS NOT TOUCHED, AND THAT IS LOAD-BEARING. `auth` re-checks at every use that the
-// bearer's token matches the endpoint's owner, so a key alone can never drive a mailbox from
-// another account. If the taking-over session bears a DIFFERENT Ken token — a claude.ai grant
-// recovering a station a CLI session left — the operator must also repoint the endpoint to that
-// token, which the console already does next to this control. Silently repointing here would move
-// an estate boundary as a side effect of a convenience.
-//
-// AN EMPTY KEY RELEASES, so a mailbox pointed at the wrong conversation is not stuck to it.
-func (s *Store) ReassignEndpointToSession(ctx context.Context, endpointID, sessionKey string) (*EndpointReassignResult, error) {
-	// endpointByIDNoSecret already refuses a REVOKED endpoint (ErrDenied), so revocation needs no
-	// second check here — and a second check that could disagree with the first is how a revoked
-	// mailbox would come back to life on one path and not the other.
-	ep, err := s.endpointByIDNoSecret(ctx, endpointID)
-	if err != nil {
-		return nil, err
-	}
-
-	key := strings.TrimSpace(sessionKey)
-	if key == "" {
-		if _, err := s.W.ExecContext(ctx,
-			`UPDATE endpoint SET session_key=NULL WHERE endpoint_id=?`, endpointID); err != nil {
-			return nil, err
-		}
-		ep.SessionKey = ""
-		return &EndpointReassignResult{Endpoint: ep}, nil
-	}
-
-	// TAKEN FROM WHOEVER HOLDS IT, AND REPORTED — the same ruling as the station form, for the
-	// same reason: a chat session asked for its key has usually already claimed a fresh empty
-	// mailbox under it, so refusing would fail the main path. Nothing is destroyed; the displaced
-	// endpoint keeps its channels and can be reassigned back.
-	res := &EndpointReassignResult{}
-	if other, err := s.endpointBySessionKey(ctx, key); err == nil && other.EndpointID != endpointID {
-		if _, err := s.W.ExecContext(ctx,
-			`UPDATE endpoint SET session_key=NULL WHERE endpoint_id=?`, other.EndpointID); err != nil {
-			return nil, err
-		}
-		res.TakenFromID, res.TakenFromLabel = other.EndpointID, other.Label
-	} else if err != nil && !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-
-	if _, err := s.W.ExecContext(ctx,
-		`UPDATE endpoint SET session_key=? WHERE endpoint_id=? AND revoked_at IS NULL`,
-		key, endpointID); err != nil {
-		return nil, err
-	}
-	ep.SessionKey = key
-	res.Endpoint = ep
-	return res, nil
-}
+// A mailbox belongs to a STATION, so recovery is reassigning the STATION — which moves its mail
+// together with its notebook, tasks, locker and vault, instead of separately from them.
 
 // MailboxFor returns the station's mailbox, creating it on first use.
 //

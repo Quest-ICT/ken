@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -276,91 +275,36 @@ func (a *app) handleCommRevokeChannel(w http.ResponseWriter, r *http.Request, se
 // control only a human could reach, existing because a lost secret was otherwise terminal. A
 // station comes with a mailbox and holds no secret at all.
 
-// handleCommReassignEndpoint points a mailbox at a CONVERSATION — the comm half of station
-// recovery.
+// *** handleCommReassignEndpoint IS DELETED. THE DOCS ALREADY SAID SO; THE CODE DID NOT. ***
 //
-// ROTATE WAS THE ONLY WAY BACK IN AND IT DOES NOT WORK FOR A CHAT SESSION. It mints a fresh secret
-// for the human to relay and the session to write to disk (mode 0600, outside any git repo), and a
-// claude.ai chat has no disk — that is the ceremony 3.36.0 removed from the register path. So a
-// mailbox whose conversation is gone was recoverable only by a session that could keep a file.
+// It pointed a MAILBOX at a conversation, back when a mailbox belonged to a session and a session
+// that died took its unread mail out of reach. COMM.md, UPGRADING.md and CHANGELOG all state this
+// form was removed in this wave — and the route, handler, store function and template form were all
+// still live, mutating endpoint.session_key, a column whose only remaining reader was the reassign
+// path itself. Documentation asserting a deletion that never happened is worse than no
+// documentation: it is a claim an operator plans around.
 //
-// With this, recovery is ONE STRING USED TWICE: the session states its conversation key, the human
-// pastes it into the station form and this one, and the next poll reads the mail that was
-// already waiting. Nothing secret is displayed, and the channels, links and queued messages are
-// untouched.
-func (a *app) handleCommReassignEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if a.comm == nil {
-		http.NotFound(w, r)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	_ = r.ParseForm()
-	id := r.PathValue("id")
-	key := strings.TrimSpace(r.FormValue("session_key"))
-
-	res, err := a.comm.ReassignEndpointToSession(r.Context(), id, key)
-	switch {
-	case err != nil:
-		flashRedirect(w, r, "/comm", "flash.comm_reassign_failed", err.Error())
-		return
-	case key == "":
-		// LOGGED LIKE A ROTATION, and for the same reason: comm.db is expendable and not backed
-		// up, so the server log is the record that survives. Who repointed a mailbox is exactly
-		// the fact an operator needs when mail turns up somewhere unexpected.
-		log.Printf("COMM: endpoint %s released from its conversation by %q (actor %d)",
-			id, sess.ActorName, sess.ActorID)
-		flashRedirect(w, r, "/comm", "flash.comm_released", id)
-	case res.TakenFromID != "":
-		log.Printf("COMM: endpoint %s reassigned to a conversation by %q (actor %d) — the key was taken from endpoint %s",
-			id, sess.ActorName, sess.ActorID, res.TakenFromID)
-		flashRedirect(w, r, "/comm", "flash.comm_reassigned_taken", res.TakenFromID)
-	default:
-		log.Printf("COMM: endpoint %s reassigned to a conversation by %q (actor %d)",
-			id, sess.ActorName, sess.ActorID)
-		flashRedirect(w, r, "/comm", "flash.comm_reassigned", id)
-	}
-}
-
-// THE REPOINT AND REBIND CONSOLE MACHINERY IS DELETED — the handlers, the target pickers and the
-// helpers underneath them. Both existed for the per-machine credential model: repoint moved a
-// mailbox to another owning TOKEN, rebind moved a binding onto another STATION KEY. There is one
-// credential and no binding.
-
-// commTokenOwner resolves a target token through the store, which owns the question.
+// A mailbox belongs to a STATION now, so recovery is reassigning the STATION at /stations, which
+// moves its mail together with its notebook, tasks, locker and vault — one form instead of two,
+// and no way for the two to disagree about who holds what.
 //
-// Deliberately a thin wrapper: the resolution and the refusal both live in
-// store.CommTokenOwner, using the SAME query the comm surface uses to build a principal. A
-// second resolution here would be a second answer to "who owns this token", and the drift
-// would be silent — the endpoint would simply stop authenticating.
-func (a *app) commTokenOwner(ctx context.Context, tokenID string) (comm.Owner, bool) {
-	actorID, err := a.store.CommTokenOwner(ctx, tokenID)
-	if err != nil {
-		return comm.Owner{}, false
-	}
-	return comm.Owner{TokenID: tokenID, ActorID: actorID}, true
-}
+// The one property worth carrying forward, because any future recovery control needs it: the owner
+// token was deliberately NOT touched by a reassignment. Repointing an estate boundary as a side
+// effect of a convenience is how a mailbox quietly changes accounts.
 
 // handleCommRevokeEndpoint revokes one session's endpoint, denying it further use.
-func (a *app) handleCommRevokeEndpoint(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if a.comm == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	id := r.PathValue("id")
-	if err := a.comm.RevokeEndpoint(r.Context(), id); err != nil {
-		flashRedirect(w, r, "/comm", "flash.comm_revoke_failed", err.Error())
-		return
-	}
-	flashRedirect(w, r, "/comm", "flash.comm_endpoint_revoked", id)
-}
+// *** handleCommRevokeEndpoint IS DELETED, BECAUSE IT COULD NOT DO WHAT ITS BUTTON PROMISED. ***
+//
+// RevokeEndpoint only stamps revoked_at. Nothing in auth() consults that column any more, and
+// MailboxFor recreates the mailbox on the station's next call — so an operator clicking Revoke to
+// cut off a session got a success flash and no effect whatsoever. Its confirmation dialog also
+// promised a binding voucher and a ROTATE control, both deleted in this wave.
+//
+// A SECURITY-SHAPED BUTTON THAT LIES IS WORSE THAN NO BUTTON. An operator who believes they have
+// cut off a session stops looking for another way to do it.
+//
+// The controls that genuinely stop a session are on /stations (archive the station) and /tokens
+// (withdraw the OAuth authorization — the master switch, and the only credential left).
 
 // publicCommURL is the externally-reachable MCP endpoint for a copy-paste registration example.
 //

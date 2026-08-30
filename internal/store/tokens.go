@@ -90,50 +90,16 @@ type TokenRow struct {
 // reveals nothing, and a bare refusal would leave an operator guessing between three states.
 var ErrNotACommToken = errors.New("that token cannot own a comm endpoint — it must exist, be unrevoked, and carry the `comm` scope")
 
-// CommTokenOwner resolves a token to the owner tuple a COMM endpoint carries, and refuses any
-// token that could not authenticate one.
+// *** CommTokenOwner IS DELETED WITH THE RE-POINTING IT VALIDATED. ***
 //
-// THE SAME QUERY THE COMM SURFACE ITSELF USES to build a principal — actor from the token — so a
-// re-point cannot produce an owner tuple that
-// differs from what authentication would compute for the same token. Two resolutions of one
-// question is how they drift, and the drift here would be silent: the endpoint would simply stop
-// authenticating, indistinguishably from a leaked secret.
+// It resolved a token to its actor and refused a revoked or non-comm target, for the console
+// control that moved an endpoint from one token to another. Endpoints are not owned by a token any
+// more — a mailbox belongs to a station — so there is nothing to re-point and nothing to validate.
 //
-// THE WHOLE TUPLE MATTERS, not just the id. A binding voucher compares `issued_to_actor` against
-// the endpoint's actor, so an endpoint re-pointed by token alone onto a token under a different
-// actor could never be re-bound afterwards — failing forever with a message that blames the
-// voucher rather than the re-point.
-//
-// REFUSING A REVOKED OR NON-COMM TARGET IS PART OF THE OPERATION, not a nicety: re-pointing onto
-// one produces an endpoint that authenticates NOWHERE and fails exactly like a compromised one.
-// A control that manufactures the defect class it exists to cure is worse than no control.
-func (s *Store) CommTokenOwner(ctx context.Context, tokenID string) (actorID int64, err error) {
-	var scopesJSON string
-	var revoked sql.NullString
-	err = s.R.QueryRowContext(ctx, `
-SELECT t.actor_id, t.scopes, t.revoked_at
-FROM api_token t
-WHERE t.token_id = ?`, tokenID).Scan(&actorID, &scopesJSON, &revoked)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotACommToken
-	}
-	if err != nil {
-		return 0, err
-	}
-	if revoked.Valid {
-		return 0, ErrNotACommToken
-	}
-	var scopes []string
-	if err := json.Unmarshal([]byte(scopesJSON), &scopes); err != nil {
-		return 0, err
-	}
-	for _, sc := range scopes {
-		if sc == "comm" {
-			return actorID, nil
-		}
-	}
-	return 0, ErrNotACommToken
-}
+// Its argument is worth keeping for any future control of this shape: refusing a revoked or
+// otherwise unusable target is PART of such an operation, not a nicety, because re-pointing onto
+// one produces something that authenticates nowhere and fails exactly like a compromised
+// credential. A control that manufactures the defect class it exists to cure is worse than none.
 
 // ErrNotAStationKey AND StationKeyStation ARE BOTH DELETED, along with the station keys they
 // described. The error refused a re-point target that could not have authorised a binding; the

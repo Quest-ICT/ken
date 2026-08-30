@@ -475,7 +475,7 @@ func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
 	}
 }
 
-// THE PREDECESSOR IS REVOKED, WHICH IS THE ORDINARY REASON A SUCCESSOR EXISTS.
+// A SUCCESSOR SESSION READS ITS STATION'S FILES — AND NOW DOES SO BY CONSTRUCTION.
 //
 // The test above says "the predecessor goes away" and then does nothing to it — a death
 // leaves the row untouched, so it exercises the mildest version of a takeover. An operator
@@ -488,7 +488,7 @@ func TestAnUnrelatedStationStillCannotDownload(t *testing.T) {
 // the seat rowid ChannelFor returns, and the seat never moves, so a file offered AFTER the
 // revocation carried the same dead rowid — the denial belonged to the channel, not to one
 // stale attachment, and re-offering could not clear it.
-func TestARevokedPredecessorDoesNotStrandItsStationsFiles(t *testing.T) {
+func TestASuccessorSessionIsNotStrandedFromItsStationsFiles(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, fileLimits())
 
@@ -524,10 +524,25 @@ func TestARevokedPredecessorDoesNotStrandItsStationsFiles(t *testing.T) {
 		t.Fatalf("setup: the original recipient cannot download: %v", err)
 	}
 
-	if err := st.RevokeEndpoint(ctx, first.EndpointID); err != nil {
-		t.Fatal(err)
-	}
+	// THE PREDECESSOR CANNOT BE REVOKED ANY MORE, BECAUSE IT IS NOT A SEPARATE ROW.
+	//
+	// This used to call RevokeEndpoint on the first session's endpoint — the ordinary operator
+	// action that produced a successor. A mailbox belongs to a STATION now: MailboxFor is
+	// get-or-create by station, so a second session staffing st-recv resolves to the SAME row, and
+	// RevokeEndpoint is deleted (it only stamped a column nothing reads).
+	//
+	// That makes the defect this test was written for STRUCTURALLY IMPOSSIBLE rather than fixed:
+	// the download re-check joined `endpoint` on the attachment's frozen recipient rowid, and the
+	// rowid can no longer go stale because it never changes. So the assertion moves onto the
+	// invariant that now carries the property, and is asserted rather than assumed — if a station
+	// ever acquired a second mailbox, every file offered to the first would strand exactly as it
+	// used to.
 	successor := stationEndpoint(t, st, "tok-2", "st-recv")
+	if successor.ID != first.ID {
+		t.Fatalf("two sessions staffing st-recv resolved to different mailboxes (%d, %d). "+
+			"A station has ONE mailbox; two would re-create the stranding this test was written "+
+			"for, because an attachment freezes the recipient rowid at offer time.", first.ID, successor.ID)
+	}
 
 	if _, _, err := st.GrantDownload(ctx, successor, before); err != nil {
 		t.Errorf("a successor cannot download a file offered BEFORE its predecessor was "+
