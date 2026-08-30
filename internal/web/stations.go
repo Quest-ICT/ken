@@ -339,6 +339,20 @@ func (a *app) handleStationLinkSuspend(w http.ResponseWriter, r *http.Request, s
 	}
 
 	pair := link.NameA + " / " + link.NameB
+
+	// *** RESUME HAS ITS OWN EXIT, BECAUSE EVERY PATH BELOW SPEAKS THE REVOKE VOCABULARY. ***
+	//
+	// `suspend` was the only place the two verbs were distinguished, so pressing Resume — the wave's
+	// headline reversible control — rendered "Link ended: dev / prod. No channels were open." in all
+	// three locales. There is also nothing for the channel sweep to do on the way back: resuming
+	// restores the PERMISSION, and the channels a suspension closed stay closed because the sessions
+	// that held them are gone. Sweeping again would be a pointless write with a misleading name.
+	if !suspend {
+		a.syncRoomMirror(r)
+		flashRedirect(w, r, "/stations", "flash.station_link_resumed", pair)
+		return
+	}
+
 	closed := 0
 	// P2: WITHDRAW THE PAIR SCOPE FIRST, before anything that can fail. Every exit path
 	// below returns, and one of them returns on an error — so a refresh placed after the

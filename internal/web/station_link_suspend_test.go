@@ -159,3 +159,54 @@ func TestStationLinkSuspendWorksWithNoCommHandle(t *testing.T) {
 		t.Fatalf("link state is %q with COMM off, want %q", got.State, "suspended")
 	}
 }
+
+// RESUME MUST NOT REPORT THAT THE LINK ENDED.
+//
+// `suspend := r.FormValue("resume") != "1"` was the only place the two verbs were distinguished, so
+// every exit path below it flashed a revoke-era key and pressing Resume — the whole point of
+// replacing revoke with a reversible control — told the operator "Link ended". The state change was
+// correct; only the sentence was wrong, which is the kind of defect a suite full of state
+// assertions never sees.
+func TestResumeDoesNotTellTheOperatorTheLinkEnded(t *testing.T) {
+	st, ctx, cli, base, actorID := stationsHarness(t)
+	a, err := st.CreateStation(ctx, "dev", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateStation(ctx, "prod", "", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureStationLink(ctx, a.StationID, b.StationID, actorID); err != nil {
+		t.Fatal(err)
+	}
+	link := linkBetween(t, ctx, st, a.StationID, b.StationID)
+
+	csrf := extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
+	postForm(t, cli, base+"/stations/links/"+link.LinkID+"/suspend", url.Values{"csrf": {csrf}})
+	csrf = extract(t, cli, base+"/stations", `name="csrf" value="([^"]+)"`)
+	// THE FLASH IS READ OFF THE REDIRECT'S OWN BODY. A flash is consumed by the page that renders
+	// it, so a later GET sees nothing and "the wrong message is absent" would be true of every
+	// build, including one that says nothing at all.
+	page := postForm(t, cli, base+"/stations/links/"+link.LinkID+"/suspend",
+		url.Values{"csrf": {csrf}, "resume": {"1"}})
+	// CONTROL: the state actually changed, so a passing message assertion is not covering an
+	// operation that silently did nothing.
+	got, err := st.StationLinkByID(ctx, link.LinkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "active" {
+		t.Fatalf("link state is %q after Resume, want active", got.State)
+	}
+	for _, ended := range []string{"Link ended", "Enlace terminado", "Lien terminé"} {
+		if strings.Contains(page, ended) {
+			t.Errorf("the page after Resume says %q — the control exists precisely because the "+
+				"relationship did NOT end, and an operator reading that will not trust it again", ended)
+		}
+	}
+	if !strings.Contains(page, "Link resumed") {
+		t.Error("the page after Resume does not say the link was resumed, so a successful reversal " +
+			"is indistinguishable from a no-op")
+	}
+}
