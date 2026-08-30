@@ -171,6 +171,38 @@ observations, listed because several were introduced BY this wave.
   `store.ErrStationArchived`, and internal/audit's reachability check was green over
   `store.IsStationArchived` only because this uncalled function called it.
 
+### Fixed after the second audit round
+
+The first round's fixes were then re-verified by EXECUTION, and the areas that round admitted it had
+never examined were covered. Several fixes turned out to be incomplete, and one — a migration
+written during the fix round — was actively dangerous.
+
+- **comm migration 0021 broke real upgraded databases three ways.** Nine columns reference
+  `endpoint(id)` and it re-pointed four, leaving dangling references that failed the boot; a station
+  whose endpoints were all revoked aborted it permanently; and rows pointing at a revoked endpoint
+  were silently re-attributed. Rewritten to drive everything off an explicit list of the rows about
+  to be deleted, and verified against databases built by the real v3.42.0 binary.
+- **A failed migration hid itself on the next boot.** Each migration file commits before the
+  foreign-key check runs, and a boot with nothing pending returned before reaching the check — so
+  DEGRADED became healthy on restart with nothing repaired. The check now runs every boot.
+- **The link mirror lost links under concurrency.** A snapshot read then whole-table replace meant
+  an older snapshot could land last: 4–10% of concurrent first contacts had their link deleted and
+  their sends refused permanently. Serialised. The test for it passed without the fix until it had
+  writer contention, which is what stretches the window.
+- **The dev token authenticated and then failed on the first call the server mandates**, with a raw
+  FOREIGN KEY error, because the principal carried no actor.
+- **A lowered station cap did not bind an already-open session.** comm reads its limits per call;
+  stations baked them into tool closures at registration. Both read per call now.
+- **A file offer could not make first contact** and refused with the SUSPENDED sentence — telling a
+  session to stop and escalate over a relationship one comm_send would have created.
+- **Auto-naming ran out after 50 stations**, so every new label-less conversation's first mandated
+  call failed permanently with an error naming no remedy.
+- **Seven console strings and four consent-screen sentences** described mechanisms this deployment
+  does not have — including a consent screen offering per-surface choices on a page with no
+  checkboxes, which is the narrowing action a cautious operator would reach for.
+- Two gates were widened rather than left: the console-prose check read six lines out of two
+  thousand, and nothing compared the consent prose against the consent markup.
+
 ### Documentation
 
 - `IDENTITY.md` says what runs rather than what was planned, with the three places the build
