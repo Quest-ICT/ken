@@ -61,6 +61,39 @@ func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
 		return err
 	}
 
+	// *** A DATABASE FROM THE FUTURE IS REFUSED, LOUDLY, BEFORE ANYTHING TOUCHES IT. ***
+	//
+	// `pending` is "embedded files not yet applied", so a binary older than the database computes
+	// an EMPTY pending set and reports success. Ken documents rollback as supported — INSTALL.md
+	// says to point `current` at a previous release and restart, with data/ "preserved untouched" —
+	// and measured against 4.0.0's databases the v3.42.0 binary booted with a completely ordinary
+	// startup log and then 500ed on /comm with "no such table: pairing_code". On a populated
+	// database it is worse than a 500: the old code writes columns that migration 0025 dropped and
+	// inserts request kinds 0026's rebuilt CHECK rejects.
+	//
+	// FORWARD-ONLY IS THE RULE THIS ENFORCES, not a new one — the package comment has always said
+	// upgrades only add migrations and downgrading after one has run is unsupported. What was
+	// missing is that "unsupported" was indistinguishable from "fine" at startup, which is the
+	// difference between an operator restoring their pre-upgrade snapshot and one discovering the
+	// problem from a user.
+	var highestEmbedded, highestApplied int
+	for _, f := range files {
+		if v := Version(f); v > highestEmbedded {
+			highestEmbedded = v
+		}
+	}
+	for v := range applied {
+		if v > highestApplied {
+			highestApplied = v
+		}
+	}
+	if highestApplied > highestEmbedded {
+		return fmt.Errorf("this database is at schema %d and this binary only knows %d: it was "+
+			"written by a NEWER Ken and downgrading is not supported. Restore the snapshot taken "+
+			"before the upgrade (see docs/BACKUP.md), or run the newer binary",
+			highestApplied, highestEmbedded)
+	}
+
 	pending := make([]string, 0, len(files))
 	for _, f := range files {
 		if v := Version(f); v != 0 && !applied[v] {

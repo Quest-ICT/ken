@@ -162,6 +162,25 @@ reconnects — exactly what the wave exists to avoid.
 **Back up before upgrading.** `ken backup` snapshots ken.db; comm.db is expendable by design and is
 not backed up.
 
+#### Rollback — READ THIS BEFORE YOU NEED IT
+
+**You cannot roll back to 3.42.0 by pointing `current` at the previous release**, which is what
+INSTALL.md describes and what works for every earlier upgrade. 4.0.0 rebuilds two tables and drops
+four; the 3.42.0 binary will open the migrated database, log an entirely ordinary startup, and then
+fail on the first query that touches something the migration removed — `/comm` returns 500 with
+"no such table: pairing_code". On a populated database it is worse than a 500: the old code writes
+`station_link.revoked_at`, dropped by 0025, and inserts `station_request` rows with `kind='link'`,
+which 0026's rebuilt CHECK rejects.
+
+**The way back is the snapshot taken before the upgrade** (`ken backup`, and `scripts/install.sh`
+takes one automatically). Restore it and run the old binary against it.
+
+**From 4.0.0 onward this failure is loud.** The migration runner now refuses to start when the
+database reports a schema higher than the binary knows, naming both numbers and pointing at the
+snapshot. That check ships IN 4.0.0, so it protects every future downgrade — it cannot protect the
+downgrade to 3.42.0, because that binary was built without it. This entry is the only warning for
+that one hop.
+
 ## 3.29.0
 
 **MINOR. NO SCHEMA CHANGE.** ken.db stays at 20, comm.db at 17. The `station_binding_voucher` table

@@ -105,3 +105,45 @@ func TestRunIsANoOpWhenEverythingIsApplied(t *testing.T) {
 		t.Errorf("schema_migration has %d rows / %d distinct after two runs, want 1/1", rows, distinct)
 	}
 }
+
+// A DATABASE FROM THE FUTURE MUST BE REFUSED RATHER THAN QUIETLY ACCEPTED.
+//
+// `pending` is "embedded files not yet applied", so an older binary against a newer database
+// computes an empty set and returns nil — reporting success while every schema assumption it holds
+// is wrong. Ken documents rollback as supported (INSTALL.md: point `current` at a previous release
+// and restart), and measured against 4.0.0's databases the v3.42.0 binary booted with an entirely
+// ordinary startup log before failing on the first query touching a dropped table.
+//
+// The rule itself is old — forward-only, downgrade unsupported. What was missing is that
+// "unsupported" looked exactly like "fine".
+func TestADatabaseNewerThanTheBinaryIsRefused(t *testing.T) {
+	ctx := context.Background()
+	w, r := openPools(t)
+	files := fstest.MapFS{"0001_init.sql": &fstest.MapFile{Data: []byte(baseSchema)}}
+
+	// CONTROL: an ordinary run succeeds, and re-running an up-to-date database is a no-op. If
+	// either failed, the refusal below would prove nothing about version ordering.
+	if err := dbmigrate.Run(ctx, w, r, files, "*.sql"); err != nil {
+		t.Fatalf("control: an ordinary migration run failed: %v", err)
+	}
+	if err := dbmigrate.Run(ctx, w, r, files, "*.sql"); err != nil {
+		t.Fatalf("control: re-running an up-to-date database failed: %v", err)
+	}
+
+	// Now claim a version this binary has never heard of, exactly as a newer Ken would leave it.
+	if _, err := w.ExecContext(ctx, `INSERT INTO schema_migration(version) VALUES (9999)`); err != nil {
+		t.Fatal(err)
+	}
+	err := dbmigrate.Run(ctx, w, r, files, "*.sql")
+	if err == nil {
+		t.Fatal("a database at schema 9999 was accepted by a binary that knows nothing about it — " +
+			"an operator rolling back gets a clean startup log and a broken deployment")
+	}
+	// The message must name both numbers and the remedy: whoever meets this is mid-rollback and
+	// needs to know that restoring the pre-upgrade snapshot is the way out.
+	for _, want := range []string{"9999", "downgrading is not supported", "snapshot"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not mention %q: %v", want, err)
+		}
+	}
+}
