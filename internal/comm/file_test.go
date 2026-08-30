@@ -558,3 +558,59 @@ func TestASuccessorSessionIsNotStrandedFromItsStationsFiles(t *testing.T) {
 			"re-offering cannot clear it.", err)
 	}
 }
+
+// A ROOM OR PAIR ATTACHMENT MUST BE TRANSFERABLE, AND NEITHER WAS.
+//
+// ConsumeGrant scanned the NULLABLE `a.recipient_endpoint` into a plain int64, so every attachment
+// addressed to a party rather than to a channel seat failed the scan — the exact trap CompleteUpload
+// documents for the same column, for the same reason (0017: a room or pair attachment carries no
+// recipient endpoint). Both upload and download then 404ed, because the handler cannot tell a scan
+// fault from "no such grant": the opacity is deliberate so a prober learns nothing, which means
+// total silence when the cause is a bug.
+//
+// The CHANNEL case worked throughout, which is why nothing caught it — and why this test covers all
+// three addressing modes rather than the one that broke.
+func TestAGrantIsConsumableForEveryAddressingMode(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t, fileLimits())
+	sender := stationEndpoint(t, st, "tok-send", "st-sender")
+	peer := stationEndpoint(t, st, "tok-peer", "st-peer")
+	ch := openChannel(t, st, sender, peer, "sender<->peer")
+
+	if err := st.ReplaceRoomMirror(ctx,
+		map[string][]string{"room-1": {"s:st-sender", "s:st-peer"}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceLinkMirror(ctx, [][2]string{{"st-peer", "st-sender"}}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range []struct {
+		name string
+		addr FileAddr
+	}{
+		{"channel", FileAddr{ChannelID: ch.ChannelID}},
+		{"room", FileAddr{RoomID: "room-1"}},
+		{"pair", FileAddr{StationID: "st-peer"}},
+	} {
+		content := []byte("payload for " + c.name)
+		res, err := st.OfferFile(ctx, sender, c.addr, FileOffer{
+			Name: c.name + ".bin", SizeBytes: int64(len(content)), SHA256: shaOf(content),
+			Transfer: "upload",
+		})
+		if err != nil {
+			t.Errorf("%s: offer refused: %v", c.name, err)
+			continue
+		}
+		gi, err := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
+		if err != nil {
+			t.Errorf("%s: the upload grant could not be consumed: %v.\n"+
+				"The HTTP handler renders this as a 404, indistinguishable from a grant that never "+
+				"existed, so the transfer fails in total silence.", c.name, err)
+			continue
+		}
+		if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
+			t.Errorf("%s: completing the upload failed: %v", c.name, err)
+		}
+	}
+}

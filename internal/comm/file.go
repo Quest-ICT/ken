@@ -665,14 +665,31 @@ WHERE g.grant_sha256=? AND g.kind=? AND g.consumed_at IS NULL
 UPDATE transfer_grant SET consumed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, grantRow); err != nil {
 			return err
 		}
-		return t.QueryRowContext(ctx, `
+		// recipient_endpoint IS NULLABLE AND WAS SCANNED AS AN int64, so every ROOM and PAIR
+		// attachment failed here — the exact trap CompleteUpload documents thirty lines below,
+		// which scans the same column as sql.NullInt64 for the same reason (migration 0017: a
+		// room or pair attachment is addressed to a party and carries no recipient endpoint).
+		//
+		// The scan error surfaced as a 404 from the handler, which cannot tell a scan fault from
+		// "no such grant" — deliberate opacity, so a prober learns nothing, and therefore total
+		// silence when the cause is a bug. comm_file_offer{to_room|to_station, transfer:"upload"}
+		// could never move a byte in either direction, and nothing was logged.
+		//
+		// It predates this release, but 4.0.0 makes to_station the PRIMARY way to address a peer
+		// and the tool's own text teaches the broken path.
+		var recipient sql.NullInt64
+		if err := t.QueryRowContext(ctx, `
 SELECT a.id, a.attachment_id, e.token_id, a.recipient_endpoint, a.name, a.size_bytes, a.sha256, a.state
 FROM attachment a
 JOIN transfer_grant g ON g.attachment_id = a.id
 JOIN endpoint e ON e.id = g.endpoint_id
 WHERE g.id=?`, grantRow).
-			Scan(&gi.AttachmentRow, &gi.AttachmentID, &gi.EndpointToken, &gi.RecipientRow,
-				&gi.Name, &gi.SizeBytes, &gi.SHA256, &gi.State)
+			Scan(&gi.AttachmentRow, &gi.AttachmentID, &gi.EndpointToken, &recipient,
+				&gi.Name, &gi.SizeBytes, &gi.SHA256, &gi.State); err != nil {
+			return err
+		}
+		gi.RecipientRow = recipient.Int64 // 0 for a room or pair attachment: there is no one seat
+		return nil
 	})
 	if err != nil {
 		return nil, err
