@@ -101,7 +101,19 @@ func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
 		}
 	}
 	if len(pending) == 0 {
-		return nil
+		// *** THE INTEGRITY CHECK RUNS ON EVERY BOOT, NOT ONLY WHEN SOMETHING IS APPLIED. ***
+		//
+		// Each migration file carries its own BEGIN/COMMIT, so a file COMMITS before the
+		// foreign_key_check below ever runs. A migration that left a dangling reference therefore
+		// recorded its version, failed the boot — and on the NEXT boot computed an empty pending
+		// set and returned from here, reporting an ordinary healthy startup over a database whose
+		// foreign_key_check still fails. Measured during the 4.0.0 pre-release work: one restart
+		// apart, DEGRADED then healthy, with nothing repaired in between.
+		//
+		// A fault that heals itself by being restarted is the worst shape a fault can take, because
+		// the operator's first instinct is exactly the thing that hides it. One PRAGMA per boot is
+		// a small price for the failure staying visible until somebody fixes it.
+		return checkForeignKeys(ctx, r)
 	}
 
 	conn, err := w.Conn(ctx)
@@ -187,4 +199,35 @@ func Version(path string) int {
 	}
 	n, _ := strconv.Atoi(base)
 	return n
+}
+
+// checkForeignKeys reports every dangling reference in the database, as a single error naming the
+// first few. Used both after a migration run and on a boot with nothing pending — see Run for why
+// the second call matters more than it looks.
+func checkForeignKeys(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return fmt.Errorf("foreign key check: %w", err)
+	}
+	defer rows.Close()
+	var broken []string
+	for rows.Next() {
+		var table, parent sql.NullString
+		var rowid, fkid sql.NullInt64
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			return err
+		}
+		if len(broken) < 5 {
+			broken = append(broken, fmt.Sprintf("%s row %d -> %s", table.String, rowid.Int64, parent.String))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(broken) > 0 {
+		return fmt.Errorf("database has %d or more dangling foreign key reference(s), first: %s — "+
+			"this is not repaired by restarting; restore the pre-upgrade snapshot (docs/BACKUP.md)",
+			len(broken), strings.Join(broken, "; "))
+	}
+	return nil
 }
