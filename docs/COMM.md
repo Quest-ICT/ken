@@ -687,7 +687,7 @@ disk, the process, or the readiness signal. These are enforced rules, each with 
 
 ## 6. Tool surface (sketch)
 
-Nine tools, all `comm_*`, served from **`/mcp`** alongside `kb_*` and `station_*`
+Eight tools, all `comm_*`, served from **`/mcp`** alongside `kb_*` and `station_*`
 (`internal/commserver` registers them; `internal/allserver` builds the one server). The two file
 tools additionally require `comm-file`.
 

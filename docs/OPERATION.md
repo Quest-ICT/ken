@@ -50,7 +50,7 @@ is gone from the page.
 
 | Task | Surface |
 |---|---|
-| Every setting the console can change — 45 of 47 (`tls_mode` and `tls_email` are display-only; see §2.1) | Console → **Settings** |
+| Every setting the console can change — 43 of 45 (`tls_mode` and `tls_email` are display-only; see §2.1) | Console → **Settings** |
 | Review, promote, reject proposals | Console → **Proposals** |
 | Browse, search, read entries | Console → **Browse** / **Search** |
 | Stations, **rooms**, station vault, links (suspend/resume), station reassignment, station + room + promotion queues | Console → **Stations** |
@@ -170,13 +170,13 @@ exception: it prints either `rate limit: OFF` or the effective rate-limiting num
 saved overrides were folded in — so it answers "is the limiter on, and at what?" for the moment
 the process started, and for nothing since.
 
-**There is no such thing as a restart-level setting** (re-verified at v3.9.0). Of 47 fields, **45 are
+**There is no such thing as a restart-level setting** (re-verified at 4.0.0). Of 45 fields, **43 are
 `Live: true`** and the other two — `tls_mode` and `tls_email` — are `ReadOnly: true`,
 display-only, set through `KEN_TLS` / `KEN_TLS_EMAIL` in the unit. The console form still
 contains a "restart to apply" branch; it is unreachable dead code. If you are
 waiting for a restart to make a saved setting take effect, you are waiting for nothing.
 
-**Only 13 of the 47 fields read an environment variable at all.** Every COMM field, every
+**Only 13 of the 45 fields read an environment variable at all.** Every COMM field, every
 Station field, and `login_max_fails` / `login_lockout_sec` / `session_ttl_hours` are
 literals in code — so there is no `KEN_*` variable to set them from the unit, and looking
 for one is a dead end.
@@ -358,7 +358,7 @@ check are the shortest ones.**
 **COMM is always on and cannot be switched off.** `KEN_COMM_ENABLED` was deleted in 2.0.0
 and setting it has no effect. The only state in which these settings are inert is the
 **degraded** case where `comm.db` could not be opened — a failure, logged as such, not a
-configuration choice. All 18 fields are live.
+configuration choice. All 16 are live.
 
 | Label | Key | Default | Range |
 |---|---|---|---|
@@ -377,7 +377,6 @@ configuration choice. All 18 fields are live.
 | Free-space floor (MB) | `comm_file_min_free_mb` | 512 | 0–1000000 |
 | File lifetime (seconds) | `comm_file_ttl_sec` | 86400 | 60–2592000 |
 | Transfer grant lifetime (seconds) | `comm_grant_ttl_sec` | 300 | 60–3600 |
-| Idle session cleanup (seconds) | `comm_endpoint_idle_sec` | 604800 | 300–7776000 |
 | Station claim lease (seconds) | `comm_claim_lease_sec` | 900 | 30–3600 |
 
 **`comm_message_ttl_sec` was renamed and its meaning changed with it.** It was "Message
@@ -675,7 +674,7 @@ ken user  add|list          human users for web login
 ken backup snapshot|verify  make or verify a consistent database snapshot
 ken import --dir DIR        import flat .md memory files as curated entries
 ken embed backfill|status   compute embeddings for semantic search
-ken station add|list|key|requests   create stations, mint keys, list pending requests
+ken station add|list|rename|requests   create, name and rename stations; list pending requests
 ken version                 build version and source location
 ken help                    this list
 ```

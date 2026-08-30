@@ -688,6 +688,11 @@ transfer collides on it, and every station is expected to have one.
 
 ## 6. Tool surface (sketch)
 
+> **PARTLY SUPERSEDED BY 4.0.0.** `station_link_request` is deleted — a link is created by the first
+> message — and `station_directory` lists EVERY live station rather than the published-or-linked
+> subset described below. The surface is `/mcp`, not `/station/mcp`, and there is no `kens_` key: a
+> session claims its station with `session_key` on `station_me`. The rest of the table is current.
+
 | Tool | Purpose |
 |---|---|
 | `station_me` | Who am I, my links, my counts — the briefing on demand. Sets `self_described_*`. |
@@ -791,6 +796,12 @@ At every cap: **refuse, naming the cap in the message** (S12).
 ---
 
 ## 10. Operator surface
+
+> **SUPERSEDED BY 4.0.0 IN THREE PLACES.** There is no link-approval queue (links are automatic, and
+> the human's control is **Suspend**/**Resume** on the links table); there is no station-key list and
+> no Retire or Revoke on a key, because station keys are retired; and there are no endpoint bindings
+> or vouchers to display. What the console does have is described in
+> [OPERATION.md](OPERATION.md) §2.5, which is maintained.
 
 A `/stations` console page, always registered — stations are core and there is no flag to gate it
 on, and it was never gated on COMM's state either, because stations work with COMM off:
@@ -1157,6 +1168,12 @@ rather than merely exist:
 ---
 
 ## 12. Migration — and the statements elsewhere that must change
+
+> **SUPERSEDED WHOLE BY 4.0.0.** This is an adoption procedure built out of verbs that no longer
+> exist — minting a station key, binding an endpoint, redeeming a voucher. **Nothing is migrated**
+> in 4.0.0 by decision; a station keeps its id, notebook, tasks, locker, vault and links, and a
+> session re-onboards by reconnecting. The operator briefing is
+> [UPGRADING.md](UPGRADING.md). Kept for the reasoning, which is why the replacement was cheap.
 
 ### Adopting it where sessions are already running
 

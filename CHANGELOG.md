@@ -34,7 +34,7 @@ Net **−6,377 lines** across 129 files. The operator briefing is
 
 ### Removed
 
-- **`/comm/mcp` and `/station/mcp`.** `/mcp` carries all **39** tools. The three-way split existed
+- **`/comm/mcp` and `/station/mcp`.** `/mcp` carries all **41** tools (39 feature tools plus `ken_version` and `ken_instructions`; counted off `tools/list`, not off the registry that omits the meta pair). The three-way split existed
   because the surfaces took mutually exclusive credentials — a knowledge-base token could not send
   messages, a comm token could not write knowledge — and that stopped being true when one OAuth
   grant began carrying every scope family. What remained was three connectors, three consents and

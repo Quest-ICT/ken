@@ -138,6 +138,13 @@ The measurable form: **the copy count stops growing.** Today it is 352 and rises
 
 ## 5. How far today's design is from that
 
+> **EVERY ROW OF THE GAP TABLE BELOW IS NOW CLOSED, and reading it as current inverts its meaning.**
+> It was written on 2026-08-18 to measure the distance between what Vlad wanted and what Ken was.
+> The identity replacement shipped across 3.32.0–4.0.0: one connector, one credential, no station
+> keys, no pairing codes, no vouchers, and a station a session claims by stating its own conversation
+> id. The table is kept as the record of what the distance WAS — which is the only reason the
+> decisions that closed it are legible.
+
 Recorded as fact, not as a verdict on what to do about it.
 
 | requirement | today |

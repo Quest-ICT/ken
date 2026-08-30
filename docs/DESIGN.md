@@ -430,6 +430,11 @@ and makes channel establishment two-sided from day 1 — all cheap now, all MAJO
 
 ## 10. Implementation status & open items
 
+> **THE "BUILT" INVENTORY BELOW PREDATES 4.0.0.** It records `/comm/mcp` as COMM's endpoint, the
+> pairing code as the way a channel is created, and an eight-tool `/mcp`. All three are now wrong:
+> there is ONE machine surface carrying 41 tools, no pairing code, and a link created by the first
+> message. See [CHANGELOG.md](../CHANGELOG.md) and [UPGRADING.md](UPGRADING.md) for what changed.
+
 **Built (git `main`, tests green):** MVP (MCP `kb_search`/`kb_get` + write path + promotion) · token/user CLI · human web UI · backup + deploy · flat-memory importer · **semantic embeddings** · **first-run wizard** · **v1 tools** (`kb_diff`, `kb_record_outcome`, `kb_recent_context`) · **in-process TLS/ACME** (`internal/webtls`) · **per-IP/per-token rate limiting** (`internal/ratelimit`, `internal/clientip`) · **web token admin** (`/tokens`) + **live editable settings** (`/settings`, `internal/settings` — rate limits/login/session/trusted-proxies/ACME-domains applied without a restart via an atomically-swapped snapshot) · **home dashboard** (`/` — KB stats + review queue + recent activity) + dedicated **Browse page** (`/browse`) · **server-delivered MCP instructions** (the operating loop shipped to clients in the `initialize` response) · **OAuth 2.1 authorization server** (unconditional since 2.0.0; discovery + DCR + consent + token endpoints, connectors revocable from `/tokens`; migration `0008_oauth.sql`; see [`OAUTH.md`](OAUTH.md)) · **themeable + multilingual web UI** (dark/light
 self-contained design system, zero external requests; reloadable i18n with English, Spanish + French embedded and
 runtime drop-in translations — `internal/i18n`, see [`I18N.md`](I18N.md); decision **D8**). Knowledge-base MCP surface (`/mcp`) = 8 tools.

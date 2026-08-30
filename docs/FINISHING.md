@@ -816,7 +816,7 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
       **ep 6 only.** His words: *"The others I can live without them until Ken is redesigned (which
       should happen soon enough)."* OPERATOR work, not code — the voucher is
       redeemed by the session itself and the console is Vlad's. **Step-by-step procedure:
-      [RUNBOOK-ENDPOINT-MIGRATION.md](RUNBOOK-ENDPOINT-MIGRATION.md)** (2026-08-19), verified
+      RUNBOOK-ENDPOINT-MIGRATION.md** (deleted in 4.0.0 — its subject, moving an endpoint between tokens, no longer exists) (2026-08-19), verified
       against the tree rather than the docs. Its headline finding is the answer to why this has
       felt laborious: **no console control binds an endpoint to a station** — there is no route,
       no form and no i18n string for it, so every one of the five is a two-party dance between the
@@ -871,7 +871,7 @@ The decisions are made; this is what they cost. **The order is load-bearing.**
       set is not closed" is not a caveat about this migration, it is a property of the system**,
       and any future plan shaped like "migrate the N endpoints" inherits it.
 
-      **A trap for anyone following [RUNBOOK-ENDPOINT-MIGRATION.md](RUNBOOK-ENDPOINT-MIGRATION.md)**,
+      **A trap for anyone following RUNBOOK-ENDPOINT-MIGRATION.md** (deleted in 4.0.0),
       which was not Ken's: the session's first attempt was refused by its own client-side
       permission classifier before `station_binding_voucher` ran, and it correctly declined to work
       around it. **Allow `station_binding_voucher` AND `comm_bind` together, before starting** — a

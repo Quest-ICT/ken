@@ -79,7 +79,7 @@ installers are built and tested.
 - [docs/UPGRADING.md](docs/UPGRADING.md) — **read before upgrading**: every change that breaks an existing deployment, what you will observe, and what to do first.
 - [CHANGELOG.md](CHANGELOG.md) — release history.
 - [COMPATIBILITY.md](COMPATIBILITY.md) — what SemVer covers at 1.0 (stable MCP/CLI/env/token/schema surfaces); the `comm_*` and `station_*` tools stay outside it until the COMM v2 redesign lands.
-- [migrations/](migrations/) — the SQLite schema (source of truth; `0001_init.sql` … `0009_content_lang.sql`).
+- [migrations/](migrations/) — the SQLite schema (source of truth; `0001_init.sql` … `0026_link_requests_retired.sql`, plus [internal/comm/migrations/](internal/comm/migrations/) for the expendable message database).
 
 ## Stack
 
