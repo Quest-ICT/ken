@@ -182,3 +182,46 @@ func TestAnUnpublishedUnlinkedStationIsStillDiscoverable(t *testing.T) {
 		t.Error("a station with no link reports linked=true — discovery and permission are being conflated")
 	}
 }
+
+// THE FIFTY-FIRST LABEL-LESS CONVERSATION MUST STILL GET A STATION.
+//
+// Auto-naming tried `base`, then `base (2)` … `base (50)`, then gave up. A session that passes no
+// station_label lands on the base "station", so after fifty of them EVERY new conversation's first
+// mandated call — station_me, which the connect instructions require before anything else — failed
+// permanently with "could not find a free name based on … after 50 tries". The error named no
+// remedy, archiving does not free a name (idx_station_name is UNIQUE with no state predicate), and
+// there is no DeleteStation: recovery was a human renaming stations one at a time.
+//
+// This wave renamed the fallback base from "workspace" to "station", so every deployment's counter
+// restarts at zero on this tag — which is why it is cheap to fix now and expensive later.
+func TestAutoNamingSurvivesPastTheCounter(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	actor, err := s.FindOrCreateActor(ctx, "human", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fifty is the whole of the counter's range, so the next one is the case under test.
+	for i := 0; i < 50; i++ {
+		if _, err := s.CreateStationAutoNamed(ctx, "station", actor); err != nil {
+			t.Fatalf("auto-name %d of 50 failed before the counter was exhausted: %v", i+1, err)
+		}
+	}
+	st, err := s.CreateStationAutoNamed(ctx, "station", actor)
+	if err != nil {
+		t.Fatalf("the 51st label-less conversation got no station: %v\n"+
+			"That is station_me — the first call every session is instructed to make — failing "+
+			"permanently, with no remedy in the message.", err)
+	}
+	if st.Name == "" {
+		t.Error("the fallback produced an empty name")
+	}
+	// AND IT KEEPS WORKING. One fallback that happens to succeed proves nothing about the next.
+	second, err := s.CreateStationAutoNamed(ctx, "station", actor)
+	if err != nil {
+		t.Fatalf("the 52nd failed: %v", err)
+	}
+	if second.Name == st.Name {
+		t.Errorf("two fallback stations share the name %q, so the second collides forever after", st.Name)
+	}
+}

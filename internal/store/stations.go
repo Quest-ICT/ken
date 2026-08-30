@@ -696,7 +696,29 @@ func (s *Store) CreateStationAutoNamed(ctx context.Context, name string, actorID
 			return nil, err
 		}
 	}
-	return nil, fmt.Errorf("could not find a free name based on %q after 50 tries", base)
+	// *** THE COUNTER RAN OUT AND station_me FAILED FOREVER AFTER, FOR EVERY NEW CONVERSATION. ***
+	//
+	// Fifty is plenty of names and no bound at all on conversations: a session that passes no
+	// station_label lands on the base "station", and after fifty of those every new conversation's
+	// FIRST mandated call failed permanently with "could not find a free name based on … after 50
+	// tries" — an error naming no remedy, on the one call the instructions require.
+	//
+	// Archiving does not free a name (idx_station_name is UNIQUE with no state predicate) and there
+	// is no DeleteStation, so recovery was a human renaming stations one at a time.
+	//
+	// THE FALLBACK IS THE STATION ID, which is unique by construction and needs no search. It is an
+	// ugly name and that is the correct trade: a session that gets an ugly name can work and can be
+	// renamed, while a session that gets an error cannot do either. The human sees it on the
+	// console and fixes it there, which is exactly where naming belongs.
+	//
+	// Cheap to change NOW, expensive later: this wave renamed the fallback base from "workspace" to
+	// "station", so every deployment's counter starts from zero at this tag.
+	st, err := s.CreateStation(ctx, base+" "+strings.TrimPrefix(mustRandName(), "st-"), purpose, actorID)
+	if err != nil {
+		return nil, fmt.Errorf("no free name based on %q after 50 tries, and the unique fallback also "+
+			"failed: %w — ask your human to rename or archive some stations, or pass station_label", base, err)
+	}
+	return st, nil
 }
 
 // AuthenticateAPITokenForStation verifies a `ken_<id>_<secret>` API token and returns it as a
@@ -907,4 +929,15 @@ func (s *Store) StationIDBySessionKeyAnyState(ctx context.Context, sessionKey st
 		return "", ErrNotFound
 	}
 	return id, err
+}
+
+// mustRandName returns a short unique-enough suffix for the auto-naming fallback. It cannot fail in
+// a way worth propagating: if the random source is unavailable the caller is already in a degraded
+// state, and a timestamp-free constant would only move the collision.
+func mustRandName() string {
+	v, err := randBase62(6)
+	if err != nil {
+		return "x"
+	}
+	return v
 }
