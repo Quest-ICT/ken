@@ -117,28 +117,13 @@
       </table>
     </div>
     {{end}}
-    {{if .Data.Binders}}
-    <div class="card__body"><p class="help">{{.T "comm.binders_help"}}</p></div>
-    <div class="table-wrap">
-      <table class="table">
-        <thead><tr>
-          <th>{{.T "comm.col_binder"}}</th><th>{{.T "comm.col_station"}}</th>
-          <th>{{.T "comm.col_live_endpoints"}}</th><th></th>
-        </tr></thead>
-        <tbody>
-        {{range .Data.Binders}}
-          <tr>
-            <td class="mono">{{.TokenID}}{{if .Label}} <span class="muted">· {{.Label}}</span>{{end}}</td>
-            <td>{{.Station}}</td>
-            <td class="mono">{{.Live}}</td>
-            <td>
-                          </td>
-          </tr>
-        {{end}}
-        </tbody>
-      </table>
-    </div>
-    {{end}}
+    <!-- THE BINDERS TABLE IS GONE, and its prose was the last place the console still explained
+         station keys. It listed the station KEY that authorised each endpoint binding and what
+         revoking one would sever. There are no station keys, no bindings, and the view model has
+         handed this an empty slice since they were retired — so the card could never render, while
+         its help text went on describing a credential model two releases old to anyone reading the
+         bundle or a translation. -->
+
   </div>
 </section>
 {{end}}

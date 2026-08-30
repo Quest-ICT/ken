@@ -529,33 +529,74 @@ func TestInstructionsDescribeTheMechanismsThatActuallyExist(t *testing.T) {
 	}
 }
 
-// THE OPERATOR-FACING CONSOLE TEXT MUST NOT CLAIM A REMOVED SETTING OR A REPLACED RULE.
+// THE OPERATOR-FACING CONSOLE TEXT MUST NOT NAME A MECHANISM THIS DEPLOYMENT NO LONGER HAS.
 //
-// The existing i18n test catches a MISSING key across locales. It cannot catch a key whose
-// meaning went stale, which is what happened here: every locale said COMM was off by
-// default (the env var was removed in 2.0.0) and that bodies are deleted once processed
-// (the pre-1.6.0 rule that destroyed 97% of one deployment's message bodies). An operator
-// sizing retention or a deletion commitment against that text would get it wrong.
+// The existing i18n test catches a key MISSING across locales. It cannot catch a key whose meaning
+// went stale, which is what keeps happening: every locale once said COMM was off by default (the
+// env var went in 2.0.0), and that bodies are deleted once processed (the pre-1.6.0 rule that
+// destroyed 97% of one deployment's message bodies).
+//
+// *** IT USED TO INSPECT SIX LINES OUT OF TWO THOUSAND. ***
+//
+// The first version began `if !strings.HasPrefix(line, "comm.optin") { continue }`, so it read one
+// key family and was green over every other stale string in the bundle. Two audit rounds found
+// operator text still teaching pairing codes, binding vouchers, station keys, endpoint secrets and
+// an approval queue — none of it visible to a gate that only ever looked at comm.optin. The second
+// round put it plainly: this gate needed widening more than the feature needed deleting.
+//
+// It now reads EVERY key and bans the vocabulary of mechanisms that no longer exist. The exclusion
+// list is the honest part: a few keys legitimately name a retired thing in order to say it is gone,
+// and each is named here rather than the ban being weakened for everyone.
 func TestConsoleTextDoesNotDescribeRemovedOrReplacedBehaviour(t *testing.T) {
+	// Keys allowed to name a retired mechanism, each because it exists to say the thing is gone.
+	// Adding to this list is a decision, not a fix — every entry needs a reason.
+	allowed := map[string]bool{}
+
+	// Vocabulary of things this deployment does not have. Matched case-insensitively against the
+	// VALUE, per locale, so a translated console cannot drift from the English one.
+	banned := map[string][]string{
+		"a pairing code":     {"pairing code", "código de emparejamiento", "code d'appariement"},
+		"an endpoint secret": {"endpoint secret", "secreto del endpoint", "secret du point"},
+		"a station key":      {"station key", "clave de puesto", "clé de poste", "kens_"},
+		"a binding voucher":  {"binding voucher", "voucher", "vale de vinculación", "bon de liaison"},
+		"a deleted tool":     {"comm_register", "comm_bind", "comm_unbind", "comm_join", "station_link_request"},
+		"a deleted endpoint": {"/comm/mcp", "/station/mcp", "X-Ken-Workspace"},
+		"a deleted setting":  {"KEN_COMM_ENABLED", "KEN_STATION_ENABLED", "comm_endpoint_idle_sec"},
+		"link approval":      {"approved link", "enlace aprobado", "lien approuvé"},
+		"the retired word":   {"workspace", "espacio de trabajo", "espace de travail"},
+	}
+
+	var checked int
 	for _, f := range []string{"messages.properties", "messages_es.properties", "messages_fr.properties"} {
 		b, err := os.ReadFile(filepath.Join("..", "i18n", "locales", f))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, line := range strings.Split(string(b), "\n") {
-			if !strings.HasPrefix(line, "comm.optin") {
+			key, value, ok := strings.Cut(line, " = ")
+			if !ok || strings.HasPrefix(strings.TrimSpace(key), "#") {
 				continue
 			}
-			if strings.Contains(line, "KEN_COMM_ENABLED") {
-				t.Errorf("%s: %q names a setting removed in 2.0.0", f, line)
+			key = strings.TrimSpace(key)
+			if allowed[key] {
+				continue
 			}
-			for _, bad := range []string{"opt-in", "opcional", "optionnelle", "Off by default",
-				"Desactivado por defecto", "Désactivé par défaut"} {
-				if strings.Contains(line, bad) {
-					t.Errorf("%s: %q still describes COMM as optional — it is core and always on", f, line)
+			checked++
+			low := strings.ToLower(value)
+			for what, words := range banned {
+				for _, w := range words {
+					if strings.Contains(low, strings.ToLower(w)) {
+						t.Errorf("%s: %s names %s (%q):\n    %s", f, key, what, w, strings.TrimSpace(value))
+					}
 				}
 			}
 		}
+	}
+	// POSITIVE CONTROL ON THE INSTRUMENT. A prefix filter, a changed separator, or a moved locale
+	// directory would make this pass by reading nothing — which is precisely how the previous
+	// version stayed green over five stale families at once.
+	if checked < 1500 {
+		t.Fatalf("only %d strings inspected across three locales; the parser is broken, not the text", checked)
 	}
 }
 
