@@ -750,41 +750,7 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			// A LOOKUP FAILURE CHANGES NOTHING. If ken.db cannot answer, the original refusal
 			// stands — a diagnostic read must never turn a refusal into a different refusal, or
 			// into a 500, on the strength of its own failure.
-			if in.ToStation != "" && (errors.Is(err, comm.ErrUnknownStation) || errors.Is(err, comm.ErrNotLinked)) {
-				if state, exists, lerr := d.Store.LinkStateBetween(ctx, ep.StationID, in.ToStation); lerr == nil {
-					switch {
-					case exists && state == "suspended":
-						err = comm.ErrNotLinked
-					case exists && state == "dormant":
-						err = comm.CallerSafe(errors.New("that station is ARCHIVED, so the link to it is dormant and nothing was sent. " +
-							"Ask your human to unarchive it at Ken's /stations console — its notebook, tasks and mail are intact and " +
-							"the link returns to active with it. Do not retry until they have"))
-					case !exists:
-						err = comm.ErrUnknownStation
-					case state == "active":
-						// *** ken.db SAYS THE LINK IS LIVE AND comm.db DISAGREES: THE MIRROR IS STALE. ***
-						//
-						// This arm was missing, so the code asked the authority, learned the station
-						// exists and the relationship is active, and still emitted check-your-id —
-						// discarding the answer in the one case that PROVES the mirror wrong.
-						//
-						// It happens: syncLinkMirror reads a snapshot and ReplaceLinkMirror rewrites
-						// the whole table, so a snapshot taken before another session's first contact
-						// can land after it and drop a live link. Measured at 4–10% of concurrent
-						// first contacts before the push below was made unconditional.
-						//
-						// REPAIRING IS BETTER THAN REPORTING. The row exists in the durable database;
-						// the projection is derivable from it. So push the mirror and say plainly
-						// that a retry will work — rather than telling a session to check an id
-						// comm_directory just handed it, which is the failure this whole refinement
-						// exists to stop.
-						syncLinkMirror(ctx, d)
-						err = comm.CallerSafe(errors.New("that station is linked to you and this server's " +
-							"message-routing table was briefly out of date. It has been rebuilt: send the same " +
-							"message again and it will go through. Nothing was delivered"))
-					}
-				}
-			}
+			err = refineStationRefusal(ctx, d, ep.StationID, in.ToStation, err)
 			return nil, sendOut{}, commError(err)
 		}
 		// WAKE WHOEVER IS WAITING. On a channel that is the resolved peer; on a room or
@@ -954,6 +920,31 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		if err := requireFileScope(ctx); err != nil {
 			return nil, fileOfferOut{}, err
 		}
+		// *** FIRST CONTACT WORKS HERE TOO, AND IT DID NOT. ***
+		//
+		// EnsureStationLink had exactly one non-console caller — the comm_send arm — so an offer to
+		// a station never written to found no link and was refused. Worse, it was refused with the
+		// SUSPENDED sentence: "deliberately turned off by your human… Do not retry: tell them."
+		// Nobody had turned anything off; there had never been a link. The session was told to stop
+		// and escalate over a relationship one comm_send would have created.
+		//
+		// resolveOfferScope's own doc states the invariant that was broken: "a pair offer is legal
+		// exactly when a pair send is. Two rules for the same relationship is how they drift."
+		if in.ToStation != "" {
+			if p := principalFrom(ctx); p != nil {
+				created, lerr := d.Store.EnsureStationLink(ctx, ep.StationID, in.ToStation, p.ActorID)
+				if lerr != nil {
+					log.Printf("comm: auto-link for offer %s <-> %s: %v", ep.StationID, in.ToStation, lerr)
+				}
+				if created || lerr != nil {
+					syncLinkMirror(ctx, d)
+				}
+				if created {
+					log.Printf("COMM: link %s <-> %s created on first contact via file offer (actor %d)",
+						ep.StationID, in.ToStation, p.ActorID)
+				}
+			}
+		}
 		// EXACTLY ONE ADDRESS, enforced in the store rather than here — the store owns the
 		// link mirror and the room roster, so it is the only layer that can say whether the
 		// address is one the caller may use, and splitting "is it well-formed" from "is it
@@ -966,6 +957,9 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			IdempotencyKey: in.IdempotencyKey, TTLSeconds: in.TTLSeconds,
 		})
 		if err != nil {
+			// The same disambiguation the send path uses, for the same reason: a refusal that
+			// names the wrong cause sends a session to its human over nothing.
+			err = refineStationRefusal(ctx, d, ep.StationID, in.ToStation, err)
 			return nil, fileOfferOut{}, commError(err)
 		}
 		out := fileOfferOut{AttachmentID: res.Attachment.AttachmentID, ExpiresAt: res.Attachment.ExpiresAt}
@@ -1326,4 +1320,53 @@ func syncLinkMirror(ctx context.Context, d Deps) {
 	if err := d.Comm.ReplaceLinkMirror(ctx, pairs, epoch); err != nil {
 		log.Printf("comm: push link mirror: %v", err)
 	}
+}
+
+// refineStationRefusal replaces a mirror-derived refusal with the reason ken.db actually gives.
+//
+// *** THE MIRROR CANNOT TELL "SUSPENDED" FROM "NEVER HEARD OF IT", AND BOTH PATHS NEED THE ANSWER. ***
+//
+// comm.db's station_link_mirror holds ACTIVE links only, so a suspended pair is absent from it
+// entirely and internal/comm — which by design holds no store handle (S7: the expendable side points
+// at the durable one, never the reverse) — can only report "not in the mirror". Guessing a REASON
+// from that produced the worst refusal in the surface: "no station with that id is known here —
+// check the id with comm_directory", for an id comm_directory had just handed over.
+//
+// SHARED BY THE SEND AND THE OFFER, deliberately. resolveOfferScope's own doc states the rule:
+// "a pair offer is legal exactly when a pair send is. Two rules for the same relationship is how
+// they drift." They had already drifted — the offer path had no disambiguation at all and emitted
+// the SUSPENDED sentence for a station nobody had ever written to.
+//
+// A LOOKUP FAILURE CHANGES NOTHING. If ken.db cannot answer, the original refusal stands: a
+// diagnostic read must never turn one refusal into a different refusal on the strength of its own
+// failure.
+func refineStationRefusal(ctx context.Context, d Deps, fromStation, toStation string, err error) error {
+	if toStation == "" || !(errors.Is(err, comm.ErrUnknownStation) || errors.Is(err, comm.ErrNotLinked)) {
+		return err
+	}
+	state, exists, lerr := d.Store.LinkStateBetween(ctx, fromStation, toStation)
+	if lerr != nil {
+		return err
+	}
+	switch {
+	case !exists:
+		return comm.ErrUnknownStation
+	case state == "suspended":
+		return comm.ErrNotLinked
+	case state == "dormant":
+		return comm.CallerSafe(errors.New("that station is ARCHIVED, so the link to it is dormant and " +
+			"nothing was sent. Ask your human to unarchive it at Ken's /stations console — its notebook, " +
+			"tasks and mail are intact and the link returns to active with it. Do not retry until they have"))
+	case state == "active":
+		// ken.db says the link is live and comm.db disagrees: the projection is stale, and it is
+		// derivable from the row that exists. Repair it and say a retry will work, rather than
+		// reporting a permission problem that is not one.
+		syncLinkMirror(ctx, d)
+		return comm.CallerSafe(errors.New("that station is linked to you and this server's " +
+			"message-routing table was briefly out of date. It has been rebuilt: send the same " +
+			"message again and it will go through. Nothing was delivered"))
+	}
+	// Stations exist and no link joins them: first contact should have created one, so this is a
+	// genuine failure to link rather than a permission decision.
+	return comm.ErrUnknownStation
 }

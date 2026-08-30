@@ -352,7 +352,7 @@ type vaultPutOut struct {
 // session learns the id.
 type vaultSendIn struct {
 	Name      string `json:"name" jsonschema:"the secret in YOUR vault to hand over"`
-	ToStation string `json:"to_station" jsonschema:"the station id to give it to — from station_directory or comm_channels. An APPROVED LINK between you is required, the same one that lets you message them"`
+	ToStation string `json:"to_station" jsonschema:"the station id to give it to — from comm_directory, which lists every station and hands back the exact id (station_directory does not return ids). A LINK is required, the same one that lets you message them: it is created by the first comm_send{to_station}, so send them anything first if you have never written to them. A link your human SUSPENDED will refuse"`
 	AsName    string `json:"as_name,omitempty" jsonschema:"optional; the name it should have in THEIR vault. Defaults to the same name"`
 }
 

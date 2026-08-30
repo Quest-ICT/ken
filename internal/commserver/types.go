@@ -351,7 +351,7 @@ type fileOfferIn struct {
 	// told a field is missing.
 	ChannelID      string `json:"channel_id,omitempty" jsonschema:"an open channel, from comm_channels. Exactly one of channel_id, to_room or to_station"`
 	ToRoom         string `json:"to_room,omitempty" jsonschema:"a room id — every member receives the offer, and it is ONE attachment against the file budget rather than one per member"`
-	ToStation      string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — no channel, nothing to open or expire, and no permission to obtain: the first message creates the link. Get it from comm_directory"`
+	ToStation      string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — no channel, nothing to open or expire. The offer creates the relationship on first contact, exactly as comm_send does. Get the id from comm_directory"`
 	Name           string `json:"name" jsonschema:"required; a bare filename (no directories). The receiver will know the file by this name"`
 	SizeBytes      int64  `json:"size_bytes" jsonschema:"required; exact size of the file"`
 	SHA256         string `json:"sha256" jsonschema:"required; 64-hex sha256 of the file content (run: sha256sum FILE)"`
