@@ -24,7 +24,7 @@ import (
 func TestEverySessionIsToldItHasNoClock(t *testing.T) {
 	// The universal block. Not the COMM or station text: a KB-only session gets
 	// neither, and is exactly as likely to write a drifting age into an entry.
-	got := buildInstructions(nil)
+	got := buildInstructions()
 
 	for _, want := range []struct{ frag, why string }{
 		{"You have no clock",
@@ -48,7 +48,7 @@ func TestEverySessionIsToldItHasNoClock(t *testing.T) {
 // with the search-first habit and the curation gate, and length itself causes
 // skimming — a instruction nobody finishes protects nothing.
 func TestTheClockParagraphStaysProportionate(t *testing.T) {
-	whole := buildInstructions(nil)
+	whole := buildInstructions()
 	i := strings.Index(whole, "You have no clock")
 	if i < 0 {
 		t.Fatal("the clock paragraph is absent, so its size cannot be judged")

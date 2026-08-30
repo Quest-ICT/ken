@@ -428,7 +428,12 @@ You have no clock. Before any claim about time — how long, how old, still curr
 // language paragraph when the operator has declared the language(s) they curate in
 // (settings.curation_langs). With none declared the base guide is returned
 // unchanged, so a single-language KB sees no difference.
-func buildInstructions(curationLangs []string) string { return baseInstructions }
+// buildInstructions returns the connect-time block.
+//
+// It took a curationLangs argument and discarded it — the curation rule moved onto the two writing
+// tools, where a truncating client cannot cut it. The parameter outlived its use and made three
+// cases of the delivery-budget test byte-identical, which read as coverage.
+func buildInstructions() string { return baseInstructions }
 
 // curationSentence is the curation-language rule, addressed to the tools that WRITE.
 //
@@ -517,14 +522,14 @@ func NewServer(d Deps) *mcp.Server {
 		Name:    "ken",
 		Title:   "Ken knowledge base",
 		Version: version.Version,
-	}, &mcp.ServerOptions{Instructions: version.InstructionStamp() + buildInstructions(d.CurationLangs), KeepAlive: mcpKeepAlive})
+	}, &mcp.ServerOptions{Instructions: version.InstructionStamp() + buildInstructions(), KeepAlive: mcpKeepAlive})
 	RegisterTools(s, d)
 	// THE META TOOLS ARE REGISTERED HERE, NOT IN RegisterTools, and the distinction is what keeps
 	// the unified endpoint honest. RegisterTools is called three times against ONE server there,
 	// and mcp.AddTool replaces a tool of the same name without a word — so a pair registered per
 	// package collapsed to whichever package ran last, and ken_instructions answered for one
 	// surface while looking complete. allserver calls version.RegisterMetaTools itself, once.
-	version.RegisterMetaTools(s, func() string { return buildInstructions(d.CurationLangs) })
+	version.RegisterMetaTools(s, func() string { return buildInstructions() })
 	return s
 }
 

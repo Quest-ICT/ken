@@ -17,26 +17,23 @@ import (
 //
 // A test that asserts on a fragment of a delivered value cannot see a cap on the value.
 //
-// AND THE CURATION APPENDIX COUNTS TOO. buildInstructions appends a paragraph when the operator
-// declares curation languages, so the deployment that turns that feature ON is the one whose
-// instructions overflow — the failure lands on the operator who configured the most. Checked
-// with a realistic multi-language setting rather than only with nil.
+// THE CURATION APPENDIX NO LONGER COUNTS, AND THE THREE CASES THAT CHECKED IT WERE VACUOUS.
+//
+// This used to loop over nil, one language and three, on the reasoning that buildInstructions
+// appended a paragraph when curation languages were declared — so the deployment turning that
+// feature ON was the one whose instructions overflowed. That was true, and the fix was to move the
+// rule onto kb_save and kb_propose_enhancement, where it arrives intact. buildInstructions has
+// ignored its argument ever since, so all three cases produced a BYTE-IDENTICAL string and the
+// table read as coverage of a variable that no longer varies.
+//
+// The parameter is gone with them. A signature that accepts something it discards invites exactly
+// this: a test that exercises it, passes, and proves nothing.
 func TestInstructionsFitTheDeliveryBudget(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		langs []string
-	}{
-		{"no curation languages", nil},
-		{"one curation language", []string{"es"}},
-		{"three curation languages", []string{"es", "fr", "de"}},
-	} {
-		delivered := version.InstructionStamp() + buildInstructions(tc.langs)
-		if n := len([]rune(delivered)); n > version.InstructionBudget {
-			t.Errorf("%s: /mcp sends %d characters and the client delivers %d — %d characters "+
-				"of instruction reach no session. Shorten the block, or move a rule into the "+
-				"description of the tool it governs, where it arrives intact.",
-				tc.name, n, version.InstructionBudget, n-version.InstructionBudget)
-		}
+	delivered := version.InstructionStamp() + buildInstructions()
+	if n := len([]rune(delivered)); n > version.InstructionBudget {
+		t.Errorf("/mcp sends %d characters and the client delivers %d — %d characters of instruction "+
+			"reach no session. Shorten the block, or move a rule into the description of the tool it "+
+			"governs, where it arrives intact.", n, version.InstructionBudget, n-version.InstructionBudget)
 	}
 }
 
@@ -48,7 +45,7 @@ func TestInstructionsFitTheDeliveryBudget(t *testing.T) {
 // is identical — and silently put the stamp back behind everything else the moment the block
 // grows again.
 func TestTheStampArrivesFirst(t *testing.T) {
-	delivered := version.InstructionStamp() + buildInstructions(nil)
+	delivered := version.InstructionStamp() + buildInstructions()
 	stamp := version.InstructionStamp()
 	if len(delivered) < len(stamp) || delivered[:len(stamp)] != stamp {
 		t.Fatal("the version stamp is no longer the first thing in /mcp's instructions; appended, it is " +

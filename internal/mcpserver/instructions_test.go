@@ -12,15 +12,18 @@ import (
 	"github.com/Quest-ICT/ken/internal/store"
 )
 
-// TestBuildInstructionsBaseUnchanged: with no curation language declared the
-// AI-facing instructions must be exactly the base guide — an English-only KB
-// sees no difference.
-func TestBuildInstructionsBaseUnchanged(t *testing.T) {
-	if got := buildInstructions(nil); got != baseInstructions {
-		t.Fatal("nil curation langs should return the base instructions unchanged")
-	}
-	if got := buildInstructions([]string{}); got != baseInstructions {
-		t.Fatal("empty curation langs should return the base instructions unchanged")
+// TestBuildInstructionsIsTheBaseGuide: the connect-time block is exactly the base guide, and
+// nothing appends to it.
+//
+// It used to take a curation-language argument and this test called it twice, with nil and with an
+// empty slice, to prove neither changed the output. The argument is gone — it was discarded — so
+// the two calls were the same call. What remains worth asserting is the identity itself, because
+// the sibling test below is what stops the curation paragraph from creeping back into a field the
+// client truncates.
+func TestBuildInstructionsIsTheBaseGuide(t *testing.T) {
+	if got := buildInstructions(); got != baseInstructions {
+		t.Fatal("the connect-time block is no longer exactly the base guide — something is appending " +
+			"to a field the client cuts")
 	}
 }
 
@@ -47,10 +50,10 @@ func TestCurationSentenceNamesTheLanguages(t *testing.T) {
 	if !strings.Contains(curationSentence([]string{"xx"}), "curated in xx.") {
 		t.Fatal("unknown language code should fall back to the bare code")
 	}
-	// AND IT NEVER RE-ENTERS THE INSTRUCTIONS. buildInstructions must ignore its argument now;
-	// a future edit that starts appending again would refit under the budget for a while and
-	// then silently truncate whatever sits last.
-	if buildInstructions([]string{"fr", "zh"}) != baseInstructions {
+	// AND IT NEVER RE-ENTERS THE INSTRUCTIONS. buildInstructions takes no argument at all now, so
+	// the only way back in is an edit to the block itself — which would refit under the budget for
+	// a while and then silently truncate whatever sits last.
+	if buildInstructions() != baseInstructions {
 		t.Fatal("buildInstructions is appending curation text again — that field is truncated, " +
 			"which is where this paragraph spent its whole life undelivered")
 	}

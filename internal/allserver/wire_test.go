@@ -215,6 +215,27 @@ func TestPerToolRulesArriveInFullThroughAResult(t *testing.T) {
 		t.Errorf("a tool-scoped answer also returned %d tool names", len(out.Tools))
 	}
 
+	// EVERY SERVED TOOL IS ASKABLE ABOUT, INCLUDING THE TWO THAT ANSWER FOR THE OTHERS.
+	//
+	// ken_version and ken_instructions are registered with mcp.AddTool directly rather than through
+	// addTool, so they never entered tooldoc and asking about either returned "no tool named X is
+	// served here" — the same sentence a retired name gets. The population most likely to ask is
+	// the one investigating the freeze, and the answer told them a tool in their own list did not
+	// exist.
+	tools, err = sess.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tl := range tools.Tools {
+		var one struct {
+			Tool string `json:"tool"`
+		}
+		msg := callJSON(t, sess, "ken_instructions", map[string]any{"tool": tl.Name}, &one)
+		if one.Tool != tl.Name {
+			t.Errorf("ken_instructions{tool:%q} did not answer for it: %s", tl.Name, msg)
+		}
+	}
+
 	// AND AN UNKNOWN NAME FAILS USEFULLY. A bare refusal leaves a session one typo from the right
 	// call with no way to find it; the refusal carries the list instead.
 	msg := callJSON(t, sess, "ken_instructions", map[string]any{"tool": "comm_sned"}, nil)

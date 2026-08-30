@@ -26,6 +26,16 @@ import (
 // mcpserver rebuilds its instructions live when the curation languages change, and a captured copy
 // would go stale in the one tool whose entire purpose is not being stale.
 func RegisterMetaTools(s *mcp.Server, connectText func() string) {
+	// THESE TWO ARE ASKABLE ABOUT THEMSELVES, and they were not.
+	//
+	// tooldoc is populated as a side effect of each package's addTool; this pair is registered with
+	// mcp.AddTool directly, so ken_instructions{tool:"ken_version"} answered "no tool named
+	// ken_version is served here" — the same sentence a genuinely retired name gets. The population
+	// most likely to ask is the one investigating the freeze, and the answer told them a tool they
+	// are holding does not exist.
+	tooldoc.Register("ken_version", ToolDescription)
+	tooldoc.Register("ken_instructions", InstructionsToolDescription)
+
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ken_version",
 		Description: ToolDescription,

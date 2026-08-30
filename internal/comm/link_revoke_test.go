@@ -231,68 +231,54 @@ func TestListChannelsIsStationScopedLikePollAndChannelFor(t *testing.T) {
 	}
 }
 
-// A STATION MUST NOT BECOME ITS OWN PEER.
+// A STATION MUST NOT BECOME ITS OWN PEER — AND THE SCHEMA NOW REFUSES THE STATE ENTIRELY.
 //
-// The original defect was in the deleted join path: its re-join check compared endpoint ROWIDS,
-// and the schema's CHECK (endpoint_b <> endpoint_a) catches only the same literal rowid — so a
-// second endpoint of a station that already held a seat matched neither guard and took the free
-// one. A replacement session re-redeeming its predecessor's still-valid code was the ordinary way
-// to get there.
+// The original defect was in the deleted pairing-code join path: its re-join check compared endpoint
+// ROWIDS, and the schema's CHECK (endpoint_b <> endpoint_a) catches only the same literal rowid, so
+// a SECOND endpoint of a station that already held a seat matched neither guard, took the free seat,
+// and the channel ended up with station_a = station_b. Every message that station sent came back as
+// mail from a peer.
 //
-// THE PATH IS GONE AND THE INVARIANT IS NOT. OpenLinkedChannel is what opens a channel now, and it
-// checked rowids and empty stations — not whether the two stations were the SAME. So this asserts
-// the property against the surviving path rather than retiring with the defect it was written for.
+// This test then moved onto OpenLinkedChannel, building the two-mailboxes-for-one-station state by
+// direct INSERT because MailboxFor is get-or-create and would not produce it. Migration 0021 makes
+// that INSERT impossible: a partial UNIQUE index on endpoint(station_id) WHERE revoked_at IS NULL.
+// The invariant every reader already assumed is now enforced where it cannot be forgotten.
 //
-// It is unreachable through supported calls today: a station has exactly one mailbox, so two
-// endpoints of one station is a state nothing produces. This builds that state directly, because a
-// guard whose only proof is "nothing can reach it" is a guard nobody has watched refuse.
-func TestAStationCannotTakeBothSeatsOfAChannel(t *testing.T) {
+// SO THE ASSERTION MOVED TO THE STRONGER GUARANTEE, and the code guard in OpenLinkedChannel stays
+// as defence — it costs one comparison and it is the thing that would still hold if the index were
+// ever dropped. Asserting the index rather than the guard is the honest choice: the index is what
+// makes the state unreachable, and a test proving the guard works on a state nothing can construct
+// proves less than one proving the state cannot be constructed.
+func TestAStationCannotHaveTwoLiveMailboxes(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
 
 	first := stationEndpoint(t, st, "tok-1", "st-solo")
-	// A SECOND MAILBOX FOR THE SAME STATION, WRITTEN DIRECTLY. MailboxFor is get-or-create by
-	// station and would hand back `first`, so asking it twice proves nothing — the rowid guard
-	// would refuse the result and the STATION check would never be exercised. The row is inserted
-	// past the constructor precisely because the supported paths cannot produce this state.
-	if _, err := st.W.ExecContext(ctx, `
+
+	// CONTROL: asking again returns the SAME row rather than a second one. This is the ordinary
+	// path, and if it ever stopped holding, the refusal below would be hiding a broken get-or-create
+	// rather than protecting an invariant.
+	again := stationEndpoint(t, st, "tok-2", "st-solo")
+	if again.ID != first.ID {
+		t.Fatalf("MailboxFor returned a different mailbox for the same station (%d, %d)", first.ID, again.ID)
+	}
+
+	// AND THE SCHEMA REFUSES A SECOND ONE even when written past the constructor.
+	_, err := st.W.ExecContext(ctx, `
 INSERT INTO endpoint(endpoint_id, secret_sha256, token_id, actor_id, label, station_id, bound_at)
-VALUES('ep-second-seat','x','tok-2',7,'st-solo','st-solo',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`); err != nil {
-		t.Fatal(err)
-	}
-	var secondID int64
-	if err := st.R.QueryRow(`SELECT id FROM endpoint WHERE endpoint_id='ep-second-seat'`).Scan(&secondID); err != nil {
-		t.Fatal(err)
-	}
-	second := &Endpoint{ID: secondID, EndpointID: "ep-second-seat", StationID: "st-solo"}
-	if first.ID == second.ID {
-		t.Fatal("setup: both handles are the same row, so the rowid guard alone would refuse this " +
-			"and the test would prove nothing about the STATION check")
+VALUES('ep-second-seat','x','tok-2',7,'st-solo','st-solo',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+	if err == nil {
+		t.Error("a second live mailbox was created for one station — two sessions could then take " +
+			"both seats of a channel, giving station_a = station_b, and every attachment offered to " +
+			"the first mailbox would strand when a reader resolved to the second")
 	}
 
-	if _, err := st.OpenLinkedChannel(ctx, first, second, 42, "solo<->solo"); err == nil {
-		t.Error("a channel opened with one station on both sides — every message it sends would " +
-			"come back to it as mail from a peer")
+	// A DIFFERENT station is unaffected: the index is per station, not global.
+	if other := stationEndpoint(t, st, "tok-3", "st-peer"); other.ID == first.ID {
+		t.Error("two stations resolved to one mailbox")
 	}
-
-	// CONTROL: a genuinely different station still gets a channel. Without this, a guard that
-	// refused EVERY open would read as a pass.
-	other := stationEndpoint(t, st, "tok-3", "st-peer")
-	opened, err := st.OpenLinkedChannel(ctx, first, other, 42, "solo<->peer")
-	if err != nil {
-		t.Fatalf("a real peer was refused a channel: %v", err)
-	}
-	if !opened.Open() {
-		t.Fatalf("the channel did not open for a real peer: state=%q", opened.State)
-	}
-	var stnA, stnB string
-	if err := st.R.QueryRow(
-		`SELECT COALESCE(station_a,''), COALESCE(station_b,'') FROM channel WHERE channel_id=?`,
-		opened.ChannelID).Scan(&stnA, &stnB); err != nil {
-		t.Fatal(err)
-	}
-	if stnA == stnB {
-		t.Errorf("both seats hold station %q", stnA)
+	if _, err := st.OpenLinkedChannel(ctx, first, stationEndpoint(t, st, "tok-3", "st-peer"), 42, "solo<->peer"); err != nil {
+		t.Errorf("a real peer was refused a channel: %v", err)
 	}
 }
 
