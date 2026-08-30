@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Quest-ICT/ken/internal/comm"
-	"github.com/Quest-ICT/ken/internal/store"
 )
 
 // EVERY REFUSAL WHOSE TEXT WAS WRITTEN FOR A CALLER MUST REACH THAT CALLER.
@@ -63,7 +62,11 @@ func TestEveryCallerFacingRefusalSurvivesTheMapper(t *testing.T) {
 		{"comm.ErrUnknownStation", comm.ErrUnknownStation},
 		{"comm.ErrRoomEmpty", comm.ErrRoomEmpty},
 		{"comm.ErrNoAudience", comm.ErrNoAudience},
-		{"store.ErrStationArchived", store.ErrStationArchived},
+		// store.ErrStationArchived IS GONE from this list because it is gone from the codebase: its
+		// only producer (afterEndpointAuth) had no callers, so the commError arm this entry proved
+		// was a branch no input could reach — an unreachable branch with a passing test over it,
+		// which is exactly what this file exists to prevent. The live sentinel,
+		// station.ErrStationArchived, is CallerSafe and reaches the caller on the default path.
 		{"CallerSafe ChannelFor room-as-channel", comm.CallerSafe(fmt.Errorf("%w: %q is a ROOM, not a channel", comm.ErrNotFound, "r1"))},
 	}
 	for _, c := range intact {
@@ -116,10 +119,13 @@ func TestEveryCallerFacingRefusalSurvivesTheMapper(t *testing.T) {
 	if got := commError(errors.New("zzz-unclassified-zzz")); got == nil || got.Error() == "zzz-unclassified-zzz" {
 		t.Fatalf("commError no longer flattens an unknown error (%v) — this test cannot detect the class it guards", got)
 	}
-	if len(intact) < 14 {
+	// THE FLOOR MOVED WITH A DELETION, DELIBERATELY AND LOUDLY. It was 14 against a list of 17;
+	// store.ErrStationArchived was removed because nothing could raise it, leaving 16. A floor that
+	// silently keeps passing while the list shrinks is the same defect this file guards, one level
+	// up — so it is set just under the current count and must be re-read whenever a sentinel goes.
+	if len(intact) < 15 {
 		t.Fatalf("only %d caller-facing sentinels enumerated — the list has shrunk and this test is guarding less than it claims", len(intact))
 	}
-	_ = store.ErrStationArchived
 }
 
 // isCallerSafe mirrors what the mapper itself checks — the CallerSafeText interface, declared

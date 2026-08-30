@@ -658,11 +658,24 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			// FAILURE TO CREATE DOES NOT FAIL THE SEND. If it did, an unlinkable pair would get an
 			// error about linking rather than the send path's own refusal, which is the clearer
 			// one. The send re-checks the link itself, inside its own writing transaction.
+			//
+			// THE MIRROR IS PUSHED ON FAILURE TOO, AND THAT IS NOT BELT-AND-BRACES. The push used
+			// to happen only when EnsureStationLink reported `created`, so a run that inserted the
+			// row and then failed — or one whose push itself failed — left an ACTIVE link in ken.db
+			// that comm.db had never heard of. Every later send to that peer then got the
+			// "unknown station" refusal for a permission that exists, until some unrelated console
+			// write happened to rebuild the mirror. Pushing whenever a link COULD have appeared
+			// makes the recovery deterministic instead of a matter of luck; the push is two reads
+			// and one write against a table of pairs.
 			if p := principalFrom(ctx); p != nil {
-				if created, lerr := d.Store.EnsureStationLink(ctx, ep.StationID, in.ToStation, p.ActorID); lerr != nil {
+				created, lerr := d.Store.EnsureStationLink(ctx, ep.StationID, in.ToStation, p.ActorID)
+				if lerr != nil {
 					log.Printf("comm: auto-link %s <-> %s: %v", ep.StationID, in.ToStation, lerr)
-				} else if created {
+				}
+				if created || lerr != nil {
 					syncLinkMirror(ctx, d)
+				}
+				if created {
 					log.Printf("COMM: link %s <-> %s created on first contact (actor %d) — no approval required",
 						ep.StationID, in.ToStation, p.ActorID)
 				}
@@ -1030,27 +1043,18 @@ func requireFileScope(ctx context.Context) error {
 // the context plumbing that lifted them. There is no endpoint credential: a caller proves an OAuth
 // grant and names a station, and the mailbox follows from the station.
 
-// afterEndpointAuth runs the checks that apply to an authenticated endpoint however it proved
-// itself — by secret or by conversation key.
+// afterEndpointAuth IS DELETED, AND WITH IT THE LAST WAY TO RAISE store.ErrStationArchived.
 //
-// FACTORED SO THE TWO PATHS CANNOT DIVERGE. The secret-free path added in 0019 must enforce the
-// severed-station-key rule and the archived-station rule identically; a second copy would be one
-// edit away from a claimed endpoint outliving a revocation that a secret-driven one respects.
-// Both are ordered AFTER authentication for the reason the originals give: the answer must reach
-// a proven holder and tell a prober nothing.
-func afterEndpointAuth(ctx context.Context, d Deps, ep *comm.Endpoint) (*comm.Endpoint, error) {
-	// THE STATION-KEY SEVER CHECK IS GONE with station keys. A mailbox names no authorising key,
-	// so there is nothing to re-check at use; the station's own liveness is checked in
-	// station.Resolve, which every comm call already passes through.
-	// Fails OPEN on a database error, matching the secret path: ken.db being briefly unreadable
-	// should not cut messaging for every station at once.
-	if ep.StationID != "" {
-		if archived, aerr := d.Store.IsStationArchived(ctx, ep.StationID); aerr == nil && archived {
-			return nil, store.ErrStationArchived
-		}
-	}
-	return ep, nil
-}
+// It re-checked, after authentication, that a mailbox's station was not archived — factored so the
+// secret path and the conversation-key path could not diverge. Both callers are gone: station
+// liveness is now checked in station.Resolve, which EVERY comm call passes through before a mailbox
+// is even resolved, and which raises its own station.ErrStationArchived.
+//
+// Keeping it would have been worse than dead weight. It was the only producer of
+// store.ErrStationArchived, so commError's arm for that sentinel was a branch no input could reach
+// — and internal/audit's reachability gate stayed green over store.IsStationArchived only because
+// this dead function called it. A gate kept alive by the thing it should have condemned is not a
+// gate.
 
 // auth resolves WHICH STATION is calling and hands back that station's mailbox.
 //
@@ -1129,17 +1133,17 @@ func commError(err error) error {
 		return errors.New("file storage quota exceeded — retry later, offer a smaller file, or use a same-host path transfer")
 	case errors.Is(err, comm.ErrBadName):
 		return errors.New("invalid file name — use a bare filename: no directories, no '..', no control characters")
-	// A STORE SENTINEL, NAMED HERE RATHER THAN MARKED CallerSafe, because CallerSafe lives in
-	// `comm` and this is raised by `store` — which must not import the expendable package (S7's
-	// pointer rule runs comm -> store, never back). It carries an instruction only its own text can
-	// deliver, and it reached the caller as "internal error": a session whose station was archived
-	// was told nothing, and had no way to learn that its notebook and credentials were intact and
-	// one console click would restore messaging.
+	// THE store.ErrStationArchived ARM IS GONE, and its removal is worth a note because the arm was
+	// UNREACHABLE while a test asserted it delivered its text. store.ErrStationArchived had exactly
+	// one producer — afterEndpointAuth — which had zero callers; station liveness moved to
+	// station.Resolve, whose own station.ErrStationArchived is already CallerSafe and reaches the
+	// caller through the default path below.
 	//
-	// IT WAS TWO. store.ErrStationKeyRevoked went with the station keys — nothing raises it, so a
-	// case for it here would be a branch no input can reach, which reads as coverage and is not.
-	case errors.Is(err, store.ErrStationArchived):
-		return errors.New(store.ErrStationArchived.Error())
+	// The reason the arm existed is still the rule for anything similar: a sentinel raised by
+	// `store` cannot be marked CallerSafe, because CallerSafe lives in `comm` and the expendable
+	// package must never be imported by the durable one (S7). Such a sentinel has to be named here
+	// explicitly or it arrives as "internal error" — which is how four carefully written refusals
+	// once reached sessions as two words meaning "the server is broken".
 	case err == nil:
 		return nil
 	default:

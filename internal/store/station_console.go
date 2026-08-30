@@ -791,9 +791,23 @@ func (s *Store) EnsureStationLink(ctx context.Context, x, y string, actorID int6
 	if err != nil {
 		return false, err
 	}
+	// BOTH STATIONS MUST BE ACTIVE, and the guard is in the INSERT rather than a check before it so
+	// a concurrent archive cannot land between the two.
+	//
+	// Without it, first contact created an ACTIVE link to an ARCHIVED station: the console badged a
+	// live relationship with a post the operator had just archived, and comm_open_channel — which
+	// reads AreStationsLinked rather than the station-state-joined mirror — would open a channel to
+	// it. ArchiveStation's whole invariant is that archiving dormants a station's links; a path that
+	// creates a fresh active one behind it makes archive advisory.
+	//
+	// The send still fails afterwards, on the mirror, which is why this was not visible as a broken
+	// send. It was visible as a console that disagreed with itself.
 	res, err := s.W.ExecContext(ctx, `
 INSERT INTO station_link(link_id, station_a, station_b, approved_by_actor_id)
-VALUES(?,?,?,?) ON CONFLICT DO NOTHING`, linkID, a, b, actorID)
+SELECT ?,?,?,?
+ WHERE (SELECT state FROM station WHERE station_id=?) = 'active'
+   AND (SELECT state FROM station WHERE station_id=?) = 'active'
+ON CONFLICT DO NOTHING`, linkID, a, b, actorID, a, b)
 	if err != nil {
 		return false, err
 	}

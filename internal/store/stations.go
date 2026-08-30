@@ -535,40 +535,21 @@ SELECT st.station_id, st.name, st.purpose,
 	return out, rows.Err()
 }
 
-// ErrStationArchived is returned to a session whose station has been retired.
+// ErrStationArchived IS DELETED, because nothing could raise it once afterEndpointAuth went. The
+// live sentinel is station.ErrStationArchived, raised by station.Resolve — which every comm and
+// station call passes through before a mailbox exists to check.
 //
-// The text names the state AND the remedy, because under the MCP freeze an error string is
-// the only channel that reaches a session already running: it cannot be sent a corrected tool
-// description, so whatever it needs to know has to be in the refusal it gets.
-var ErrStationArchived = errors.New("this station is archived, so it no longer sends or receives on COMM — " +
-	"ask your human to unarchive it from the /stations console. Nothing was lost: your endpoint and its " +
-	"credentials still work, its notebook and tasks are still readable, and unarchiving restores messaging immediately")
+// It left a commError arm behind it that no input could reach, and a refusal-reachability test
+// entry asserting that arm still delivered its text. A branch that cannot be entered, guarded by a
+// test that passes, is indistinguishable from a working control.
 
-// IsStationArchived reports whether a station is retired.
+// IsStationArchived IS DELETED with afterEndpointAuth, its only caller. Station liveness is checked
+// in station.Resolve — before a mailbox is resolved at all — by StationIsLive and StationIsArchived,
+// which every comm and station call already passes through.
 //
-// Read at USE rather than enforced at bind, for the same reason station-key revocation is:
-// binding happens once and the state changes afterwards, so a check at bind time answers a
-// question nobody asked. It also keeps the operation REVERSIBLE — refusing at use means
-// unarchiving restores a session with its existing credentials, where revoking the endpoint
-// would force a re-registration, a new secret onto disk and a fresh voucher.
-func (s *Store) IsStationArchived(ctx context.Context, stationID string) (bool, error) {
-	if stationID == "" {
-		return false, nil
-	}
-	var state string
-	err := s.R.QueryRowContext(ctx,
-		`SELECT state FROM station WHERE station_id=?`, stationID).Scan(&state)
-	if errors.Is(err, sql.ErrNoRows) {
-		// No station row at all. NOT treated as archived: an endpoint bound to a station
-		// that has been deleted outright is a different fault, and answering "archived"
-		// would send its human to a console page with nothing on it.
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return state == "archived", nil
-}
+// Worth noting how it survived: internal/audit's reachability gate was green over this method only
+// because the dead function calling it was itself never called. The gate matches bare method names
+// and is not transitive, so "reachable from something unreachable" reads as reachable.
 
 // StationExists reports whether a station id names a live (non-archived) station.
 //

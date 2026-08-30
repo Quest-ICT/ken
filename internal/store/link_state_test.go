@@ -221,3 +221,57 @@ func TestLinkStateBetweenAnswersAllFourCases(t *testing.T) {
 		t.Errorf("reversed: state=%q, want suspended — the pair is unordered to callers", state)
 	}
 }
+
+// FIRST CONTACT MUST NOT CREATE AN ACTIVE LINK TO AN ARCHIVED STATION.
+//
+// ArchiveStation's invariant is that archiving dormants a station's links. Auto-linking had no
+// liveness guard, so the first message to an archived post created a fresh ACTIVE row behind the
+// archive — the console badged a live relationship with a station the operator had just archived,
+// and comm_open_channel (which reads AreStationsLinked, not the station-state-joined mirror) would
+// open a channel to it. A control that a later write can undo without saying so is advisory.
+//
+// The send itself failed anyway, on the mirror, which is why this never looked like a broken send.
+// It looked like a console disagreeing with itself.
+func TestFirstContactDoesNotLinkToAnArchivedStation(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	actor, err := s.FindOrCreateActor(ctx, "human", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.CreateStation(ctx, "live", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, err := s.CreateStation(ctx, "gone", "", actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ArchiveStation(ctx, gone.StationID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := s.EnsureStationLink(ctx, live.StationID, gone.StationID, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Error("first contact created a link to an ARCHIVED station")
+	}
+	links, err := s.ListStationLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 0 {
+		t.Errorf("%d link(s) exist after contacting an archived station: %+v", len(links), links)
+	}
+
+	// CONTROL: unarchive and the same call succeeds. Without it, a guard that refused EVERY
+	// auto-link would pass everything above and break the feature entirely.
+	if err := s.ArchiveStation(ctx, gone.StationID, false); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := s.EnsureStationLink(ctx, live.StationID, gone.StationID, actor); err != nil || !created {
+		t.Errorf("first contact with a LIVE station did not create a link (created=%v err=%v)", created, err)
+	}
+}
