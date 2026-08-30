@@ -347,3 +347,49 @@ func TestTheDevTokenCanActuallyBeUsed(t *testing.T) {
 		t.Errorf("kb_search failed for the dev token: %s", out)
 	}
 }
+
+// A LOWERED CAP MUST BIND THE SESSION THAT IS ALREADY OPEN.
+//
+// Rebuilding the server on a settings change reaches the NEXT session and no other: the SDK
+// resolves its server only when no session exists, and an active session keeps its own alive
+// indefinitely. So an operator lowering a cap during an incident would not affect the session that
+// prompted the change — which is the only session that matters at that moment.
+//
+// Measured before the fix: one console save lowering the locker blob cap to 1 KiB, and a 4 KiB
+// station_locker_put on an open session succeeded. comm never had the problem, because its tools
+// read their limits per call; stations baked them into the tool closures at registration. Both
+// surfaces mark every field Live:true and OPERATION.md says flatly there is no such thing as a
+// restart-level setting, so the asymmetry was invisible from anywhere a human looks.
+func TestALoweredStationCapBindsAnOpenSession(t *testing.T) {
+	sess, handler, _ := unifiedWithHandler(t)
+	if _, err := sess.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "station_me", Arguments: map[string]any{"session_key": "conv-caps"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	big := strings.Repeat("x", 4096)
+	// CONTROL: it fits under the default cap. Without this, the refusal below could be caused by
+	// anything at all — a bad argument, a missing station — and would not be about the cap.
+	if out := callJSON(t, sess, "station_locker_put", map[string]any{
+		"name": "before.txt", "body": big,
+	}, nil); strings.Contains(out, "too large") || strings.Contains(out, "cap") {
+		t.Fatalf("the control write was already refused, so this test cannot show a cap taking effect: %s", out)
+	}
+
+	lim := store.DefaultStationLockerLimits()
+	lim.MaxBlobBytes = 1024
+	handler.SetStationLimits(store.DefaultStationTaskLimits(), store.DefaultStationNoteLimits(),
+		lim, store.DefaultStationVaultLimits())
+
+	// SAME SESSION, no reconnect. That is the whole point.
+	out := callJSON(t, sess, "station_locker_put", map[string]any{
+		"name": "after.txt", "body": big,
+	}, nil)
+	if !strings.Contains(out, "1024") && !strings.Contains(strings.ToLower(out), "too large") {
+		t.Errorf("a 4 KiB write succeeded on an open session after the cap was lowered to 1 KiB: %s\n"+
+			"The settings page reports this field as live, so an operator lowering a cap in an "+
+			"incident is told it applies immediately while the session that caused the incident "+
+			"keeps writing.", out)
+	}
+}

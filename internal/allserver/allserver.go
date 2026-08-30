@@ -118,6 +118,18 @@ type Handler struct {
 	http.Handler
 	d   Deps
 	ptr atomic.Pointer[mcp.Server]
+	// stationLim is read PER CALL by the station tools, so a cap change reaches a session that is
+	// already open. Rebuilding the server is not enough on its own: the SDK resolves its server only
+	// when no session exists, and an active session keeps its own alive — so an operator lowering a
+	// cap during an incident would not affect the session that prompted it.
+	stationLim atomic.Pointer[stationLimits]
+}
+
+type stationLimits struct {
+	Task   store.StationTaskLimits
+	Note   store.StationNoteLimits
+	Locker store.StationLockerLimits
+	Vault  store.StationVaultLimits
 }
 
 // SetCurationLangs rebuilds the served tool set so kb_save and kb_propose_enhancement carry the
@@ -137,11 +149,10 @@ func (h *Handler) SetCurationLangs(langs []string) {
 // directly. Rebuilding is the honest way to make the new value reach the handlers.
 func (h *Handler) SetStationLimits(task store.StationTaskLimits, note store.StationNoteLimits,
 	locker store.StationLockerLimits, vault store.StationVaultLimits) {
-	d := h.d
-	d.Station.TaskLimits, d.Station.NoteLimits = task, note
-	d.Station.LockerLimits, d.Station.VaultLimits = locker, vault
-	h.d = d
-	h.ptr.Store(buildServer(d))
+	// ONE ATOMIC STORE, NO REBUILD. The station tools read this pointer on every call through
+	// Deps.LiveLimits, exactly as the comm tools read their own — so the new cap applies to the
+	// next call on every session, including ones already open.
+	h.stationLim.Store(&stationLimits{Task: task, Note: note, Locker: locker, Vault: vault})
 }
 
 func NewHTTPHandler(d Deps) *Handler {
@@ -166,7 +177,34 @@ func NewHTTPHandler(d Deps) *Handler {
 	d.Comm.TokenLimiter, d.Station.TokenLimiter = nil, nil
 	d.Comm.SkipTokenTouch, d.Station.SkipTokenTouch = true, true
 
+	// DEFAULTS ARE APPLIED HERE, because stationserver.NewHTTPHandler is what used to do it and this
+	// endpoint does not call it. A zero limit is not "unlimited", it is a cap of ZERO: the first
+	// wire test to exercise a locker write against an unnormalised Deps was refused with "over the
+	// 0-byte per-file cap". main.go always populates these, so production never saw it — which is
+	// exactly the kind of gap that waits for the one embedder that forgets.
+	if d.Station.TaskLimits.MaxOpen == 0 {
+		d.Station.TaskLimits = store.DefaultStationTaskLimits()
+	}
+	if d.Station.NoteLimits.MaxPageBytes == 0 {
+		d.Station.NoteLimits = store.DefaultStationNoteLimits()
+	}
+	if d.Station.LockerLimits.MaxBlobBytes == 0 {
+		d.Station.LockerLimits = store.DefaultStationLockerLimits()
+	}
+	if d.Station.VaultLimits.MaxSecretBytes == 0 {
+		d.Station.VaultLimits = store.DefaultStationVaultLimits()
+	}
+
 	h := &Handler{d: d}
+	h.stationLim.Store(&stationLimits{
+		Task: d.Station.TaskLimits, Note: d.Station.NoteLimits,
+		Locker: d.Station.LockerLimits, Vault: d.Station.VaultLimits,
+	})
+	d.Station.LiveLimits = func() (store.StationTaskLimits, store.StationNoteLimits, store.StationLockerLimits, store.StationVaultLimits) {
+		l := h.stationLim.Load()
+		return l.Task, l.Note, l.Locker, l.Vault
+	}
+	h.d = d
 	h.ptr.Store(buildServer(d))
 	inner := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return h.ptr.Load() },

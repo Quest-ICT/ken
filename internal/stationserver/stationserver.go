@@ -77,29 +77,62 @@ type Deps struct {
 	// limits reads the live bundle. Set by NewHTTPHandler; nil in tests that build a
 	// server directly, where the starting values stand.
 	limits func() *limits
+
+	// LiveLimits is the same thing for an EMBEDDER that owns the live values itself — which is
+	// allserver, the only surface actually mounted.
+	//
+	// *** WITHOUT IT, EVERY STATION CAP FROZE INTO THE TOOL CLOSURES AT REGISTRATION. ***
+	//
+	// allserver registers these tools from a Deps VALUE, so `limits` was nil and the accessors fell
+	// back to the boot snapshot. Rebuilding the server on a settings change fixed it for the NEXT
+	// session and not for any already open — the SDK resolves its server only when no session
+	// exists, and a session is kept alive by its own activity. Measured: one console save lowering
+	// the locker blob cap to 1 KiB, and a 4 KiB station_locker_put on an open session succeeded.
+	//
+	// comm never had this problem because commserver.RegisterTools takes its *Handler and reads
+	// s.limits.Load() per call. That asymmetry was invisible: both surfaces mark every field
+	// Live:true, and OPERATION.md says flatly there is no such thing as a restart-level setting.
+	// This makes stations read per call the same way.
+	LiveLimits func() (store.StationTaskLimits, store.StationNoteLimits, store.StationLockerLimits, store.StationVaultLimits)
 }
 
 // taskLim, noteLim and lockerLim read the live bounds, falling back to whatever the
 // Deps were built with when no live source is wired (tests).
 func (d Deps) taskLim() store.StationTaskLimits {
+	if d.LiveLimits != nil {
+		task, _, _, _ := d.LiveLimits()
+		return task
+	}
 	if d.limits != nil {
 		return d.limits().Task
 	}
 	return d.TaskLimits
 }
 func (d Deps) noteLim() store.StationNoteLimits {
+	if d.LiveLimits != nil {
+		_, note, _, _ := d.LiveLimits()
+		return note
+	}
 	if d.limits != nil {
 		return d.limits().Note
 	}
 	return d.NoteLimits
 }
 func (d Deps) lockerLim() store.StationLockerLimits {
+	if d.LiveLimits != nil {
+		_, _, locker, _ := d.LiveLimits()
+		return locker
+	}
 	if d.limits != nil {
 		return d.limits().Locker
 	}
 	return d.LockerLimits
 }
 func (d Deps) vaultLim() store.StationVaultLimits {
+	if d.LiveLimits != nil {
+		_, _, _, vault := d.LiveLimits()
+		return vault
+	}
 	if d.limits != nil {
 		return d.limits().Vault
 	}
