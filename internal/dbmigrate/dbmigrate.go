@@ -225,8 +225,21 @@ func checkForeignKeys(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if len(broken) > 0 {
+		// *** THE REMEDY MUST BE ONE THE OPERATOR CAN ACTUALLY PERFORM. ***
+		//
+		// This said "restore the pre-upgrade snapshot" for BOTH databases — and comm.db is
+		// deliberately in no backup tier (BACKUP.md, main.go and install.sh all say so, because it
+		// is expendable by design). So the only remedy printed for the database this check most
+		// often fires on was one that cannot exist: a recovery whose failure renders identically
+		// to not recovering.
+		//
+		// Both remedies are named, and which applies is decided by the caller — it knows which
+		// database it opened, and it is the only thing that does.
 		return fmt.Errorf("database has %d or more dangling foreign key reference(s), first: %s — "+
-			"this is not repaired by restarting; restore the pre-upgrade snapshot (docs/BACKUP.md)",
+			"this is not repaired by restarting. For ken.db restore the pre-upgrade snapshot "+
+			"(docs/BACKUP.md). For comm.db there is no snapshot by design: it is expendable, so "+
+			"stop Ken, delete it (data/comm/comm.db and its -wal/-shm), and restart — messaging "+
+			"rebuilds empty and the knowledge base and stations are unaffected",
 			len(broken), strings.Join(broken, "; "))
 	}
 	return nil

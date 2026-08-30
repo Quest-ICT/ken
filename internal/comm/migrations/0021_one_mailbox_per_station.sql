@@ -56,17 +56,31 @@ SELECT e.id AS loser,
    AND e.id > (SELECT MIN(e2.id) FROM endpoint e2
                 WHERE e2.station_id = e.station_id AND e2.revoked_at IS NULL);
 
--- A CHANNEL WHOSE TWO SEATS COLLAPSE ONTO ONE ROW cannot survive: the schema forbids it
--- (CHECK endpoint_b <> endpoint_a), and it is degenerate anyway — a station paired with itself,
--- where every message sent came back to the sender. Revoked rather than deleted, so its messages
--- and attachments (both ON DELETE CASCADE) are kept and the operator can still see it happened.
-UPDATE channel SET state = 'revoked',
+-- A CHANNEL WHOSE TWO SEATS COLLAPSE ONTO ONE ROW cannot keep both: the schema forbids it
+-- (CHECK endpoint_b IS NULL OR endpoint_b <> endpoint_a), and it is degenerate anyway — a station
+-- paired with itself, where every message sent came back to the sender.
+--
+-- *** THE FIRST REWRITE DELETED IT, AND THAT WAS THE ROUND-TWO BUG MOVED ONE TABLE OVER. ***
+--
+-- message.channel_id and attachment.channel_id reference channel(id) ON DELETE CASCADE — and
+-- foreign keys are OFF for the whole migration run, so nothing cascades. The DELETE left both
+-- orphaned, the post-migration foreign_key_check failed, and because each migration file commits
+-- its own transaction the version was already recorded: comm permanently DEGRADED on every restart.
+-- Exactly the failure round two found in the endpoint columns, reproduced in the fix for it.
+--
+-- Worse, the file said the opposite of what it did: a dead `UPDATE … SET state='revoked'` sat above
+-- the DELETE with a comment explaining that the channel is "revoked rather than deleted, so its
+-- messages and attachments are kept". The DELETE immediately undid it. Both the code and the prose
+-- claimed a behaviour the file did not have.
+--
+-- SO THE ROW IS KEPT, WHICH IS WHAT THE COMMENT ALWAYS CLAIMED. endpoint_b is nullable, so vacating
+-- the second seat satisfies the CHECK, keeps the channel and every message and attachment on it,
+-- orphans nothing, and leaves the operator able to see that the conversation existed. Revoked
+-- because a half-seated channel must not carry new traffic.
+UPDATE channel
+   SET endpoint_b = NULL,
+       state = 'revoked',
        revoked_at = COALESCE(revoked_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
- WHERE endpoint_b IS NOT NULL
-   AND COALESCE((SELECT winner FROM _mailbox_merge WHERE loser = channel.endpoint_a), channel.endpoint_a)
-     = COALESCE((SELECT winner FROM _mailbox_merge WHERE loser = channel.endpoint_b), channel.endpoint_b);
-
-DELETE FROM channel
  WHERE endpoint_b IS NOT NULL
    AND COALESCE((SELECT winner FROM _mailbox_merge WHERE loser = channel.endpoint_a), channel.endpoint_a)
      = COALESCE((SELECT winner FROM _mailbox_merge WHERE loser = channel.endpoint_b), channel.endpoint_b);
@@ -94,6 +108,26 @@ UPDATE channel SET endpoint_a = (SELECT winner FROM _mailbox_merge WHERE loser =
  WHERE endpoint_a IN (SELECT loser FROM _mailbox_merge);
 UPDATE channel SET endpoint_b = (SELECT winner FROM _mailbox_merge WHERE loser = channel.endpoint_b)
  WHERE endpoint_b IN (SELECT loser FROM _mailbox_merge);
+
+-- *** AND THE ADDRESSING COLUMNS, WHICH ARE NOT FOREIGN KEYS AND SO FAIL SILENTLY. ***
+--
+-- delivery.party_key, message.sender_party and notice_watermark.party_key hold a party STRING, and
+-- for a mailbox that sent or received before it was bound to a station that string is
+-- 'e:<endpoint rowid>'. No foreign key covers them, so foreign_key_check cannot see them dangle and
+-- the first rewrite left them pointing at a deleted rowid.
+--
+-- TWO FAILURES, BOTH SILENT. The owning station polls zero rows for mail that is plainly in the
+-- database, because the poll predicate matches on the party string. And SQLite REUSES a freed
+-- maximum rowid, so the next mailbox to be created can inherit another station's queued message —
+-- misdelivery with nothing anywhere reporting an error.
+UPDATE delivery SET party_key = 'e:' || (SELECT winner FROM _mailbox_merge WHERE 'e:' || loser = delivery.party_key)
+ WHERE party_key IN (SELECT 'e:' || loser FROM _mailbox_merge);
+
+UPDATE message SET sender_party = 'e:' || (SELECT winner FROM _mailbox_merge WHERE 'e:' || loser = message.sender_party)
+ WHERE sender_party IN (SELECT 'e:' || loser FROM _mailbox_merge);
+
+UPDATE notice_watermark SET party_key = 'e:' || (SELECT winner FROM _mailbox_merge WHERE 'e:' || loser = notice_watermark.party_key)
+ WHERE party_key IN (SELECT 'e:' || loser FROM _mailbox_merge);
 
 DELETE FROM endpoint WHERE id IN (SELECT loser FROM _mailbox_merge);
 DROP TABLE _mailbox_merge;

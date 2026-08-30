@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // *** THE SUITE COULD NOT SEE THE WIRING, AND THAT IS WHY THE SAME CLASS KEPT SHIPPING. ***
@@ -286,5 +290,191 @@ func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 	// A DEGRADED comm is a failure, not a setting — and a fresh install must never be in it.
 	if s := string(b); strings.Contains(strings.ToUpper(s), "DEGRADED") {
 		t.Errorf("a freshly installed Ken reports a degraded component: %s", s)
+	}
+}
+
+// *** AN UPGRADE FROM THE PREVIOUS RELEASE MUST NOT DEGRADE COMM. ***
+//
+// This is the one assertion that would have caught the last two audit rounds. Both found the same
+// defect class in comm migration 0021: a statement that removes rows while foreign keys are OFF,
+// orphaning columns nobody enumerated, so the post-migration check fails — AFTER the migration has
+// committed its version, which means every subsequent boot is degraded and no re-run repairs it.
+//
+// Round two found it in the endpoint columns. The fix for that introduced it in the channel columns.
+// Neither was visible to `go test ./...`, because every store test opens a FRESH database: the
+// data-moving arms of a migration copy zero rows in every unit test that exists.
+//
+// So this builds the PREVIOUS tag's binary, lets it create a database, and boots HEAD on it. It is
+// the only test in the tree that exercises a migration against data it did not itself create.
+//
+// SKIPPED, NOT FAILED, when the previous tag cannot be built — a shallow clone or a missing tag is
+// an environment fact, not a defect, and a test that fails for that reason gets disabled rather than
+// fixed. It logs loudly so a skip cannot be mistaken for a pass.
+func TestUpgradeFromPreviousReleaseDoesNotDegradeComm(t *testing.T) {
+	const prev = "v3.42.0"
+	root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Skipf("not a git checkout, cannot build %s: %v", prev, err)
+	}
+	repo := strings.TrimSpace(string(root))
+	if err := exec.Command("git", "-C", repo, "rev-parse", "--verify", prev+"^{commit}").Run(); err != nil {
+		t.Skipf("tag %s is not present in this checkout, so the upgrade path cannot be exercised here", prev)
+	}
+
+	work := t.TempDir()
+	tree := filepath.Join(work, "prev")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", tree, prev).CombinedOutput(); err != nil {
+		t.Skipf("cannot create a worktree at %s: %v: %s", prev, err, out)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", tree).Run()
+	})
+
+	oldBin := filepath.Join(work, "ken-prev")
+	build := exec.Command(goToolPath(t), "build", "-o", oldBin, "./cmd/ken")
+	build.Dir = tree
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Skipf("cannot build %s: %v: %s", prev, err, out)
+	}
+
+	// The OLD binary creates both databases at its own schema.
+	data := filepath.Join(work, "data")
+	runFor(t, oldBin, data, 20*time.Second)
+
+	// CONTROL: the old binary really did create comm.db. Without it, "the upgrade was clean" would
+	// be true of an upgrade that had nothing to migrate — which is exactly the blind spot that let
+	// two rounds of this defect through.
+	commDB := filepath.Join(data, "comm", "comm.db")
+	if _, err := os.Stat(commDB); err != nil {
+		t.Fatalf("%s did not create comm.db at %s, so this test would prove nothing: %v", prev, commDB, err)
+	}
+
+	// *** AND IT MUST CONTAIN THE ROWS THE MIGRATION ACTUALLY MOVES. ***
+	//
+	// The first version of this test booted the old binary, upgraded, and passed — while the broken
+	// migration was still in the tree. A fresh boot creates an EMPTY comm.db, so every data-moving
+	// statement copies zero rows and the arms that fail are never entered. That is the same blind
+	// spot as the unit tests, reproduced in the test written to escape it.
+	//
+	// The shape below is one v3.42.0 could produce with its own tools: comm_register twice for one
+	// station leaves two mailboxes, and binding an endpoint to a station AFTER joining a channel
+	// leaves a channel whose two seats belong to the same station. Written as SQL because driving
+	// the old binary's MCP surface from here would be a second integration suite; the STATE is what
+	// the migration reads, and the state is faithful.
+	seedLegacyCommRows(t, commDB)
+
+	// Now boot HEAD on it and read the log.
+	log := runFor(t, kenBinary(t), data, 30*time.Second)
+	if strings.Contains(log, "DEGRADED") {
+		t.Errorf("upgrading from %s degrades COMM:\n%s\n\n"+
+			"A migration that leaves a dangling reference commits its version first, so this does not "+
+			"heal on restart — every later boot reports the same failure with nothing repaired.", prev, log)
+	}
+	if strings.Contains(strings.ToLower(log), "dangling") {
+		t.Errorf("the upgrade left dangling foreign key references:\n%s", log)
+	}
+}
+
+// runFor starts a binary against a data directory, waits for it to become healthy, stops it, and
+// returns everything it logged.
+func runFor(t *testing.T, bin, dataDir string, budget time.Duration) string {
+	t.Helper()
+	addr := freePort(t)
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "KEN_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env,
+		"KEN_DB="+filepath.Join(dataDir, "ken.db"),
+		"KEN_ADDR="+addr,
+		"KEN_METRICS=off",
+		"HOME="+dataDir,
+	)
+	cmd := exec.Command(bin, "serve")
+	cmd.Env = env
+	var out strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start %s: %v", bin, err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://" + addr + "/healthz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				time.Sleep(200 * time.Millisecond) // let the startup lines flush
+				return out.String()
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("%s did not become healthy within %s:\n%s", bin, budget, out.String())
+	return ""
+}
+
+// goToolPath finds the go binary the same way kenBinary does.
+func goToolPath(t *testing.T) string {
+	t.Helper()
+	p, err := exec.LookPath("go")
+	if err != nil {
+		t.Skipf("no go toolchain on PATH to build the previous release: %v", err)
+	}
+	return p
+}
+
+// seedLegacyCommRows writes the pre-4.0.0 shapes that migration 0021 has to move: two live
+// mailboxes on one station, a channel seated on both of them, and a message, delivery and
+// attachment referencing the one that will be collapsed away.
+//
+// Every column here is one a previous audit round found unhandled. Keep them all: the value of this
+// fixture is that it is the union of what two rounds discovered by hand.
+func seedLegacyCommRows(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", "file:"+path+"?_pragma=foreign_keys(off)")
+	if err != nil {
+		t.Fatalf("open legacy comm.db: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO endpoint(endpoint_id,secret_sha256,token_id,actor_id,label,station_id,bound_at)
+		   VALUES('legacy-a','x','tok',1,'legacy-a','st-legacy',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+		`INSERT INTO endpoint(endpoint_id,secret_sha256,token_id,actor_id,label,station_id,bound_at)
+		   VALUES('legacy-b','x','tok',1,'legacy-b','st-legacy',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+		// A channel seated on both mailboxes of one station — reachable in 3.x by binding after joining.
+		`INSERT INTO channel(channel_id,owner_actor_id,endpoint_a,endpoint_b,state)
+		   SELECT 'legacy-self',1,
+		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-a'),
+		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),'open'`,
+		// A message ON that channel, sent by the mailbox that will be collapsed, with an e: party
+		// key — the addressing column no foreign key covers.
+		`INSERT INTO message(message_id,channel_id,scope_id,scope_seq,sender_endpoint,sender_party,
+		                     body,body_bytes,body_sha256,expires_at)
+		   SELECT 'legacy-m1',(SELECT id FROM channel WHERE channel_id='legacy-self'),'ch:legacy-self',1,
+		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),
+		          'e:'||(SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),
+		          'hi',2,'abc',strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 day')`,
+		`INSERT INTO delivery(message_row,party_key,recipient_endpoint,state)
+		   SELECT (SELECT id FROM message WHERE message_id='legacy-m1'),
+		          'e:'||(SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),
+		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),'queued'`,
+		`INSERT INTO attachment(attachment_id,channel_id,scope_id,sender_endpoint,name,size_bytes,
+		                        sha256,state,transfer,expires_at)
+		   SELECT 'legacy-at1',(SELECT id FROM channel WHERE channel_id='legacy-self'),'ch:legacy-self',
+		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),'f.bin',3,'abc','offered',
+		          'upload',strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 day')`,
+	}
+	for i, q := range stmts {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed legacy row %d: %v", i+1, err)
+		}
 	}
 }

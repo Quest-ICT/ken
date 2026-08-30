@@ -173,7 +173,12 @@ fail on the first query that touches something the migration removed — `/comm`
 `station_link.revoked_at`, dropped by 0025, and inserts `station_request` rows with `kind='link'`,
 which 0026's rebuilt CHECK rejects.
 
-**The way back is the snapshot taken before the upgrade** (`ken backup`, and `scripts/install.sh`
+**If comm.db is the database that failed, there is no snapshot and none is needed**: it is expendable
+by design and in no backup tier. Stop Ken, delete `data/comm/comm.db` and its `-wal`/`-shm`
+companions, and restart — messaging rebuilds empty, and the knowledge base and every station,
+notebook, task, locker and vault are untouched. Queued mail and open channels are the only loss.
+
+**For ken.db, the way back is the snapshot taken before the upgrade** (`ken backup`, and `scripts/install.sh`
 takes one automatically). Restore it and run the old binary against it.
 
 **From 4.0.0 onward this failure is loud.** The migration runner now refuses to start when the
