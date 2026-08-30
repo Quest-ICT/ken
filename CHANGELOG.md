@@ -15,7 +15,11 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-### 4.0.0 — THE BREAKING WAVE (staged here; not yet tagged)
+_Nothing yet — everything below is tagged, built and published._
+
+## [4.0.0] — 2026-08-30
+
+### THE BREAKING WAVE
 
 **MAJOR. SCHEMA CHANGE. Rule 4 is SUSPENDED for this release by decision** — a release carrying a
 migration normally carries nothing else, and staging this one would have meant several reconnects,

@@ -34,6 +34,8 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 4.0.0
+
 > **THE RECORD HAS A GAP: 3.30.0 THROUGH 3.42.0 SHIPPED WITHOUT ENTRIES HERE.** This file's own
 > maintenance rule says a break is written down in the change that causes it, "not reconstructed at
 > release time from commit messages", and thirteen releases went by without one. Saying so is worth
