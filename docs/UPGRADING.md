@@ -148,7 +148,7 @@ ask about.
 
 #### Schema
 
-**ken.db 24 → 26**, **comm.db 19 → 20** (3.42.0 already carried `0024`, which is listed below for
+**ken.db 24 → 26**, **comm.db 19 → 21** (3.42.0 already carried `0024`, which is listed below for
 completeness because this is the first UPGRADING entry since 3.29.0). Rule 4 (a release carrying a migration carries nothing
 else) is **suspended for this wave by decision**, because staging it would have meant several
 reconnects — exactly what the wave exists to avoid.
@@ -158,6 +158,7 @@ reconnects — exactly what the wave exists to avoid.
 - `0026` — `station_request.kind` loses `'link'` and its rows; drops `station_link_denial` and the
   long-inert `station_binding_voucher`
 - comm `0020` — drops `pairing_code`
+- comm `0021` — a partial UNIQUE index making one live mailbox per station a schema fact
 
 **Back up before upgrading.** `ken backup` snapshots ken.db; comm.db is expendable by design and is
 not backed up.

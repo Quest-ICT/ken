@@ -19,7 +19,7 @@ same change — never "docs later".
 
 **MAJOR. SCHEMA CHANGE. Rule 4 is SUSPENDED for this release by decision** — a release carrying a
 migration normally carries nothing else, and staging this one would have meant several reconnects,
-which is exactly what it exists to avoid. `ken.db` **24 → 26**, `comm.db` **19 → 20**.
+which is exactly what it exists to avoid. `ken.db` **24 → 26**, `comm.db` **19 → 21**.
 
 **Every session must reconnect. Nothing is migrated.** Vlad, ruling on both: *"I prefer breaking
 them now that I can reconfigure every existing session rather than keep workspace laying around for
@@ -132,6 +132,44 @@ Net **−6,377 lines** across 129 files. The operator briefing is
 - Three refusals were instructing sessions into dead ends: `ErrNotAStation` named `comm_bind` and
   the `X-Ken-Workspace` header, `ErrNotLinked` said to file `station_link_request` and wait for a
   human, and `ErrUnknownStation` claimed a station must appear in an approved link to be known.
+
+### Fixed after the pre-release audit
+
+An adversarial audit of the staged release (`docs/audits/2026-08-28-4.0.0-prerelease.md`) raised 103
+findings; 82 survived three refutation lenses. These are the ones that were defects rather than
+observations, listed because several were introduced BY this wave.
+
+- **A suspended link told the session to check its id.** comm.db's mirror holds active links only,
+  so a suspended peer vanished from it and the send path — which decided the REASON by asking
+  whether the target appeared in any mirror row — answered "no station with that id is known here".
+  comm_directory returns that exact id, so the session re-checks and retries: the one behaviour the
+  SUSPENDED refusal exists to prevent. The reason now comes from ken.db, which is the authority.
+  **The shipped test passed only because its fixture gave the target a second link.**
+- **Every live setting reached a handler nobody served.** The per-surface handlers stopped being
+  mounted when the endpoints collapsed, and `live.OnChange` was still wired to them: a station cap
+  lowered to 1 KiB let a 4 KiB write through, and a curation language never reached `kb_save`.
+  Both guarding tests were green against unmounted handlers.
+- **Two console buttons reported success and did nothing** — Revoke endpoint (stamped a column
+  nothing reads; the mailbox is recreated on the next call) and Reassign mailbox, which three
+  documents already described as deleted.
+- **The rate limit was charged three times per request**, so the shipped default of 120/min burst 60
+  was really 40/20. Two extra unthrottled `UPDATE api_token` statements per request went with it.
+- **`KEN_DEV_TOKEN` authenticated nothing**, including README's quickstart: the bypass was honoured
+  by one middleware of three.
+- **A binary older than the database booted normally.** The migration runner had no ceiling check,
+  so a rollback to 3.42.0 produced an ordinary startup log and then failed on the first query
+  touching a dropped table. It now refuses, names both schema versions and points at the snapshot.
+- **`comm_file_offer{to_room|to_station, transfer:"upload"}` could never move a byte** — a nullable
+  column scanned into an `int64`, surfacing as a 404 indistinguishable from "no such grant".
+- **Auto-linking created an ACTIVE link to an ARCHIVED station**, and its mirror push was one-shot
+  with its failure swallowed.
+- **Four frozen input-schema strings asserted deleted gates**, plus `station_me`'s
+  `comm_endpoint_ids`, which told sessions to check a credentials file that no longer exists.
+- **The CLI taught the inverted scope rule** and printed `ken station key` as a next step after
+  `ken station add`, a subcommand this release retired.
+- **`afterEndpointAuth` was dead and holding up a gate**: it was the only producer of
+  `store.ErrStationArchived`, and internal/audit's reachability check was green over
+  `store.IsStationArchived` only because this uncalled function called it.
 
 ### Documentation
 
