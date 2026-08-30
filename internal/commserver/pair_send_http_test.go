@@ -418,6 +418,16 @@ func TestSendToStationOverHTTP(t *testing.T) {
 
 	// AND THE OFF-SWITCH STILL STOPS IT, which is the half that makes the success above safe.
 	// Without this arm, "everything is permitted" would pass this test just as well.
+	// THE SECOND LINK IS REMOVED BEFORE SUSPENDING, AND ITS REMOVAL IS THE POINT.
+	//
+	// This arm used to leave beta<->delta standing, which kept delta visible in the mirror for an
+	// unrelated reason — so the refusal below read SUSPENDED while the code was deciding it from
+	// "does this station appear in ANY mirror row". In a real two-station estate the answer after a
+	// suspend is always "no", and the session was told to re-check a typo. The test passed on a
+	// fixture artefact; deleting the artefact is what makes it a test.
+	if err := st.SetStationLinkSuspended(ctx, linkBetweenStations(t, st, ctx, beta.StationID, delta.StationID), true); err != nil {
+		t.Fatal(err)
+	}
 	suspendMe := linkBetweenStations(t, st, ctx, alpha.StationID, delta.StationID)
 	if err := st.SetStationLinkSuspended(ctx, suspendMe, true); err != nil {
 		t.Fatal(err)

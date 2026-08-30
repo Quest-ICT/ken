@@ -524,6 +524,45 @@ SELECT l.station_a, l.station_b
 // Separate from RevokeStationLink on purpose: the revoke is a write and this is the
 // read that must happen BEFORE it — once the row says 'revoked' the console still
 // needs to say whose relationship just ended.
+// LinkStateBetween reports the state of the link joining two stations, and whether the target
+// station exists at all. It is the refusal path's source of truth.
+//
+// *** WHY THIS EXISTS: THE MIRROR CANNOT TELL "SUSPENDED" FROM "NEVER HEARD OF IT". ***
+//
+// comm.db's station_link_mirror carries ACTIVE links only, so a suspended pair vanishes from it
+// completely. The send path asked the mirror whether the target appeared in ANY row and, on a miss,
+// answered "no station with that id is known here — check the id". In a two-station estate that is
+// ALWAYS the answer after a suspend: the human turned the relationship off, and the session was
+// told it had mistyped an id comm_directory had just handed it. It re-checks and retries, which is
+// the one behaviour the SUSPENDED refusal exists to prevent.
+//
+// The mirror is right to hold only active links — it is the hot-path authorisation projection, and
+// a suspended row in it would BE a permission. The mistake was inferring a REASON from a projection
+// built to answer a different question. This asks ken.db, which is the authority, on the cold path
+// where one extra read costs nothing.
+//
+// Returns ("", false, nil) when no such station exists; (state, true, nil) otherwise, with state
+// empty when both stations exist and no link joins them.
+func (s *Store) LinkStateBetween(ctx context.Context, x, y string) (state string, targetExists bool, err error) {
+	if err := s.R.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM station WHERE station_id=?)`, y).Scan(&targetExists); err != nil {
+		return "", false, err
+	}
+	if !targetExists {
+		return "", false, nil
+	}
+	a, b := orderPair(x, y)
+	err = s.R.QueryRowContext(ctx,
+		`SELECT state FROM station_link WHERE station_a=? AND station_b=?`, a, b).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", true, nil
+	}
+	if err != nil {
+		return "", true, err
+	}
+	return state, true, nil
+}
+
 func (s *Store) StationLinkByID(ctx context.Context, linkID string) (StationLink, error) {
 	var l StationLink
 	err := s.R.QueryRowContext(ctx, `

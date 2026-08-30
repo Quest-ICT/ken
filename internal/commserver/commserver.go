@@ -710,6 +710,37 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			m, err = d.Comm.Send(ctx, ep, in.ChannelID, in.Body, opts)
 		}
 		if err != nil {
+			// *** THE REASON FOR A REFUSED PAIR SEND IS DECIDED FROM ken.db, NOT FROM THE MIRROR. ***
+			//
+			// comm.db holds ACTIVE links only, so a suspended pair is absent from it entirely and
+			// the send path cannot distinguish "your human turned this off" from "no such station".
+			// It guessed the second, telling the session to re-check an id comm_directory had just
+			// handed it — so the session retries, which is precisely what the SUSPENDED refusal
+			// exists to stop. The shipped test passed only because its fixture gave the target a
+			// second link, leaving it visible in the mirror for an unrelated reason.
+			//
+			// FIXED HERE BECAUSE ONLY HERE CAN. internal/comm holds no store handle by design
+			// (S7: the expendable side points at the durable one, never the reverse), so the
+			// package that raises the error cannot consult the database that knows the answer.
+			// This handler holds both.
+			//
+			// A LOOKUP FAILURE CHANGES NOTHING. If ken.db cannot answer, the original refusal
+			// stands — a diagnostic read must never turn a refusal into a different refusal, or
+			// into a 500, on the strength of its own failure.
+			if in.ToStation != "" && (errors.Is(err, comm.ErrUnknownStation) || errors.Is(err, comm.ErrNotLinked)) {
+				if state, exists, lerr := d.Store.LinkStateBetween(ctx, ep.StationID, in.ToStation); lerr == nil {
+					switch {
+					case exists && state == "suspended":
+						err = comm.ErrNotLinked
+					case exists && state == "dormant":
+						err = comm.CallerSafe(errors.New("that station is ARCHIVED, so the link to it is dormant and nothing was sent. " +
+							"Ask your human to unarchive it at Ken's /stations console — its notebook, tasks and mail are intact and " +
+							"the link returns to active with it. Do not retry until they have"))
+					case !exists:
+						err = comm.ErrUnknownStation
+					}
+				}
+			}
 			return nil, sendOut{}, commError(err)
 		}
 		// WAKE WHOEVER IS WAITING. On a channel that is the resolved peer; on a room or

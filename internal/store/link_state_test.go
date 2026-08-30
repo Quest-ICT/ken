@@ -164,3 +164,60 @@ func linkState(t *testing.T, st *Store, ctx context.Context, linkID string) stri
 	}
 	return s
 }
+
+// LinkStateBetween is the refusal path's source of truth, so all four of its answers are asserted.
+//
+// It exists because comm.db's mirror holds ACTIVE links only: a suspended pair is absent from it
+// entirely, which made "your human turned this off" indistinguishable from "no such station" at the
+// one moment the difference decides what a session does next. Every branch below maps to a different
+// sentence a session receives, so a wrong answer here is a wrong instruction there.
+func TestLinkStateBetweenAnswersAllFourCases(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	actor, err := s.FindOrCreateActor(ctx, "human", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(name string) *Station {
+		t.Helper()
+		st, err := s.CreateStation(ctx, name, "", actor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	me, peer, stranger := mk("me"), mk("peer"), mk("stranger")
+
+	// 1. NO SUCH STATION — the only case that should ever tell a session to check its id.
+	if state, exists, err := s.LinkStateBetween(ctx, me.StationID, "st-does-not-exist"); err != nil || exists || state != "" {
+		t.Errorf("unknown station: state=%q exists=%v err=%v; want \"\", false, nil", state, exists, err)
+	}
+	// 2. EXISTS, NO LINK. Distinct from the above: the station is real and reachable, and the first
+	//    message would create the link. A session told to check its id here would be misled.
+	if state, exists, err := s.LinkStateBetween(ctx, me.StationID, stranger.StationID); err != nil || !exists || state != "" {
+		t.Errorf("no link: state=%q exists=%v err=%v; want \"\", true, nil", state, exists, err)
+	}
+	// 3. ACTIVE.
+	if _, err := s.EnsureStationLink(ctx, me.StationID, peer.StationID, actor); err != nil {
+		t.Fatal(err)
+	}
+	if state, exists, err := s.LinkStateBetween(ctx, me.StationID, peer.StationID); err != nil || !exists || state != "active" {
+		t.Errorf("active: state=%q exists=%v err=%v; want active, true, nil", state, exists, err)
+	}
+	// 4. SUSPENDED — the case the whole function was written for.
+	links, err := s.ListStationLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetStationLinkSuspended(ctx, links[0].LinkID, true); err != nil {
+		t.Fatal(err)
+	}
+	if state, exists, err := s.LinkStateBetween(ctx, me.StationID, peer.StationID); err != nil || !exists || state != "suspended" {
+		t.Errorf("suspended: state=%q exists=%v err=%v; want suspended, true, nil", state, exists, err)
+	}
+	// AND IT IS ORDER-INDEPENDENT. The link is stored on an ordered pair; a caller asking from the
+	// other side must get the same answer, or the refusal would depend on who sent.
+	if state, _, _ := s.LinkStateBetween(ctx, peer.StationID, me.StationID); state != "suspended" {
+		t.Errorf("reversed: state=%q, want suspended — the pair is unordered to callers", state)
+	}
+}
