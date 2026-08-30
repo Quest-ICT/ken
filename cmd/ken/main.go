@@ -409,20 +409,14 @@ func runServe(args []string) {
 		commserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/mcp"))
 		stationserver.SetResourceMetadata(oauthSrv.ResourceMetadataURLFor("/mcp"))
 	}
-	mcpHandler := mcpserver.NewHTTPHandler(mcpDeps)
-	// NOT MOUNTED HERE ANY MORE. /mcp is the ONE machine surface and it serves every tool, so it
-	// can only be built after COMM and STATIONS are. The mount is at the bottom of this function.
-	// mcpHandler survives as the knowledge-base dependency set and as the fallback when a surface
-	// is switched off.
-	// Rebuild the AI-facing instructions live when the curation language(s) change,
-	// but only then — an unrelated settings edit shouldn't churn the MCP server.
-	lastCurLangs := strings.Join(live.Current().CurationLangSet, ",")
-	live.OnChange(func(s *settings.Snapshot) {
-		if k := strings.Join(s.CurationLangSet, ","); k != lastCurLangs {
-			lastCurLangs = k
-			mcpHandler.SetCurationLangs(s.CurationLangSet)
-		}
-	})
+	// THE PER-SURFACE HANDLERS ARE NOT BUILT ANY MORE, AND THE LIVE HOOKS MOVED WITH THEM.
+	//
+	// mcpserver.NewHTTPHandler and stationserver.NewHTTPHandler were still being constructed here
+	// after /mcp became the one surface, with live.OnChange wired to them — so every "live" setting
+	// edited a handler no request could reach. Measured: a 4 KiB station_locker_put succeeded
+	// against a handler whose cap had just been lowered to 1 KiB, and a curation language never
+	// reached kb_save's frozen list entry. Both hooks now target the served handler, and they are
+	// registered below, after it exists.
 	// Inter-session communication (docs/COMM.md) — always on; commStore is nil only
 	// when comm.db could not be opened, which degrades rather than disables.
 	//
@@ -633,16 +627,9 @@ func runServe(args []string) {
 			}
 		}
 		sd.TaskLimits, sd.NoteLimits, sd.LockerLimits, sd.VaultLimits = stationLimits(live.Current())
-		stationHandler := stationserver.NewHTTPHandler(sd)
-		// Live: an operator lowering a station cap is usually reacting to something
-		// already growing, which is the worst case for "applies at the next restart".
-		lastStation := stationRelevant(live.Current().Values)
-		live.OnChange(func(sn *settings.Snapshot) {
-			if k := stationRelevant(sn.Values); k != lastStation {
-				lastStation = k
-				stationHandler.SetLimits(stationLimits(sn))
-			}
-		})
+		// The station cap hook is registered on the served handler, below. Live because an operator
+		// lowering a cap is usually reacting to something already growing, which is the worst case
+		// for "applies at the next restart".
 		// /station/mcp IS GONE, like /comm/mcp. One surface.
 		log.Printf("STATIONS: served from the single machine surface at /mcp")
 		stationDepsOut = sd
@@ -665,9 +652,28 @@ func runServe(args []string) {
 	// DEGRADED state — comm.db failed to open — and that is a failure, not a choice: allserver
 	// already skips comm's tools and comm's middleware on a nil CommH, so it degrades correctly on
 	// its own and the knowledge base and stations stay up. That is COMM.md §5's promise, kept.
-	mux.Handle("/mcp", allserver.NewHTTPHandler(allserver.Deps{
+	allHandler := allserver.NewHTTPHandler(allserver.Deps{
 		KB: mcpDeps, Comm: commDepsOut, CommH: commHandler, Station: stationDepsOut,
-	}))
+	})
+	mux.Handle("/mcp", allHandler)
+	// *** THE LIVE HOOKS, ON THE HANDLER THAT IS ACTUALLY SERVED. ***
+	//
+	// Both used to point at per-surface handlers that stopped being mounted when the surfaces
+	// collapsed, so the settings page went on advertising these fields as live while editing them
+	// changed nothing a request could observe. Registered here, after the served handler exists,
+	// because that is the only object a request touches.
+	lastCurLangs := strings.Join(live.Current().CurationLangSet, ",")
+	lastStation := stationRelevant(live.Current().Values)
+	live.OnChange(func(sn *settings.Snapshot) {
+		if k := strings.Join(sn.CurationLangSet, ","); k != lastCurLangs {
+			lastCurLangs = k
+			allHandler.SetCurationLangs(sn.CurationLangSet)
+		}
+		if k := stationRelevant(sn.Values); k != lastStation {
+			lastStation = k
+			allHandler.SetStationLimits(stationLimits(sn))
+		}
+	})
 	if commHandler == nil {
 		log.Printf("MCP: one surface at /mcp — but COMM IS DEGRADED, so comm_* tools are absent. This is a failure to open comm.db, not a setting; the knowledge base and stations are unaffected")
 	} else {

@@ -31,6 +31,13 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // unified builds the real endpoint over real stores and connects a client to it.
 func unified(t *testing.T) *mcp.ClientSession {
+	sess, _, _ := unifiedWithHandler(t)
+	return sess
+}
+
+// unifiedWithHandler additionally returns the served handler and a reconnect function, for the
+// tests that have to observe a LIVE settings change on the surface a request actually reaches.
+func unifiedWithHandler(t *testing.T) (*mcp.ClientSession, *Handler, func() *mcp.ClientSession) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "ken.db"))
@@ -61,25 +68,30 @@ func unified(t *testing.T) *mcp.ClientSession {
 		t.Fatal(err)
 	}
 	commDeps := commserver.Deps{Comm: cs, Store: st}
-	srv := httptest.NewServer(NewHTTPHandler(Deps{
+	handler := NewHTTPHandler(Deps{
 		KB:      mcpserver.Deps{Store: st},
 		Comm:    commDeps,
 		CommH:   commserver.NewHTTPHandler(commDeps),
 		Station: stationserver.Deps{Store: st},
-	}))
+	})
+	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	cli := mcp.NewClient(&mcp.Implementation{Name: "wire", Version: "0"}, nil)
-	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:             srv.URL,
-		HTTPClient:           &http.Client{Transport: bearer{tok: tok, base: http.DefaultTransport}},
-		DisableStandaloneSSE: true,
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
+	connect := func() *mcp.ClientSession {
+		t.Helper()
+		cli := mcp.NewClient(&mcp.Implementation{Name: "wire", Version: "0"}, nil)
+		sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{
+			Endpoint:             srv.URL,
+			HTTPClient:           &http.Client{Transport: bearer{tok: tok, base: http.DefaultTransport}},
+			DisableStandaloneSSE: true,
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = sess.Close() })
+		return sess
 	}
-	t.Cleanup(func() { _ = sess.Close() })
-	return sess
+	return connect(), handler, connect
 }
 
 func callJSON(t *testing.T, sess *mcp.ClientSession, name string, args map[string]any, into any) string {
@@ -208,5 +220,64 @@ func TestPerToolRulesArriveInFullThroughAResult(t *testing.T) {
 	msg := callJSON(t, sess, "ken_instructions", map[string]any{"tool": "comm_sned"}, nil)
 	if !strings.Contains(msg, "comm_send") {
 		t.Errorf("the refusal for a mistyped tool name does not name the real ones: %q", msg)
+	}
+}
+
+// *** A LIVE SETTING MUST CHANGE THE SURFACE A REQUEST ACTUALLY REACHES. ***
+//
+// This is the gate that was missing, and its absence let a real regression ship into the staged
+// release. When the three endpoints collapsed into /mcp, main.go went on constructing
+// mcpserver.Handler and stationserver.Handler and wiring live.OnChange to them — handlers nothing
+// mounted. Editing a "live" setting therefore changed nothing observable, while the settings page
+// went on saying it applied immediately.
+//
+// BOTH GUARDING TESTS STAYED GREEN, because both drove a per-surface handler directly. That is the
+// defect this project keeps paying for: the check and the thing checked rendered identically. So
+// this one drives the SERVED handler and reads the answer off the wire.
+//
+// The curation language is the worse of the two. It is the single rule tooldoc.MustArrive exists
+// for — a session cannot pull an answer to a question it does not know to ask — so a stale one
+// produces proposals the curator cannot read, and the write SUCCEEDS.
+func TestALiveSettingChangeReachesTheServedSurface(t *testing.T) {
+	sess, handler, reconnect := unifiedWithHandler(t)
+
+	descOf := func(s *mcp.ClientSession, tool string) string {
+		t.Helper()
+		tools, err := s.ListTools(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tl := range tools.Tools {
+			if tl.Name == tool {
+				return tl.Description
+			}
+		}
+		t.Fatalf("%s is not in the served tool list", tool)
+		return ""
+	}
+
+	// CONTROL: with no curation language configured, no curation rule is advertised. Without this,
+	// the assertion below would pass on a build that always carried the text.
+	const marker = "CURATION LANGUAGE"
+	for _, tool := range []string{"kb_save", "kb_propose_enhancement"} {
+		if strings.Contains(descOf(sess, tool), marker) {
+			t.Fatalf("%s carries the curation rule with no language configured", tool)
+		}
+	}
+
+	handler.SetCurationLangs([]string{"fr"})
+
+	after := reconnect()
+	for _, tool := range []string{"kb_save", "kb_propose_enhancement"} {
+		got := descOf(after, tool)
+		if !strings.Contains(got, marker) {
+			t.Errorf("%s does not carry the curation rule after a live change — the setting says it "+
+				"applies immediately and the served surface disagrees, which is how a session writes "+
+				"an entry the curator can never promote, with no error anywhere", tool)
+			continue
+		}
+		if !strings.Contains(got, "French") {
+			t.Errorf("%s carries a curation rule that does not name the configured language: %q", tool, got)
+		}
 	}
 }

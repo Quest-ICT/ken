@@ -47,12 +47,14 @@ package allserver
 
 import (
 	"net/http"
+	"sync/atomic"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/Quest-ICT/ken/internal/commserver"
 	"github.com/Quest-ICT/ken/internal/mcpserver"
 	"github.com/Quest-ICT/ken/internal/stationserver"
+	"github.com/Quest-ICT/ken/internal/store"
 	"github.com/Quest-ICT/ken/internal/version"
 )
 
@@ -97,7 +99,71 @@ type Deps struct {
 // this one server, so a tool's description, schema and handler are identical here and on its own
 // endpoint. A second copy would drift, and a tool that says different things depending on which
 // URL reached it is the defect class this project keeps paying for.
-func NewHTTPHandler(d Deps) http.Handler {
+// Handler is the /mcp endpoint. It holds its MCP server in an atomic pointer so a settings edit can
+// swap in a rebuilt one without dropping the endpoint, exactly as mcpserver.Handler always has.
+//
+// *** IT DID NOT, AND EVERY "LIVE" SETTING SILENTLY STOPPED BEING LIVE. ***
+//
+// When the three endpoints collapsed into this one, mcpserver.Handler and stationserver.Handler
+// stopped being mounted — but main.go kept wiring live.OnChange to them. So an operator lowering a
+// station locker cap, or declaring a curation language, edited a handler no request could reach:
+// measured, a 4 KiB station_locker_put succeeded against a handler whose cap had just been set to
+// 1 KiB. The settings page went on reporting those fields as live, and the two tests guarding the
+// behaviour were green against handlers nothing served.
+//
+// The curation language is the worst of them, because it is the one rule tooldoc.MustArrive exists
+// for: a session cannot pull an answer to a question it does not know to ask, so a stale curation
+// sentence produces proposals the curator cannot read, with no error anywhere.
+type Handler struct {
+	http.Handler
+	d   Deps
+	ptr atomic.Pointer[mcp.Server]
+}
+
+// SetCurationLangs rebuilds the served tool set so kb_save and kb_propose_enhancement carry the
+// current curation-language rule. Cheap and rare — it fires only on a settings edit — and existing
+// connections keep working, picking the new text up on their next initialize.
+func (h *Handler) SetCurationLangs(langs []string) {
+	d := h.d
+	d.KB.CurationLangs = langs
+	h.d = d
+	h.ptr.Store(buildServer(d))
+}
+
+// SetStationLimits swaps the station caps every station_* tool reads.
+//
+// It rebuilds rather than mutating in place because stationserver.Deps carries its limits as a
+// closure installed by its own constructor, and this package registers tools from the Deps value
+// directly. Rebuilding is the honest way to make the new value reach the handlers.
+func (h *Handler) SetStationLimits(task store.StationTaskLimits, note store.StationNoteLimits,
+	locker store.StationLockerLimits, vault store.StationVaultLimits) {
+	d := h.d
+	d.Station.TaskLimits, d.Station.NoteLimits = task, note
+	d.Station.LockerLimits, d.Station.VaultLimits = locker, vault
+	h.d = d
+	h.ptr.Store(buildServer(d))
+}
+
+func NewHTTPHandler(d Deps) *Handler {
+	h := &Handler{d: d}
+	h.ptr.Store(buildServer(d))
+	inner := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return h.ptr.Load() },
+		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
+
+	// CHAINED, INNERMOST LAST. Each middleware authenticates the same bearer against its own
+	// surface's requirement and injects its own principal, so by the time the request reaches the
+	// server all three are present. A credential missing any capability is refused at the
+	// transport by whichever link needs it — which is the fail-closed property, kept.
+	ch := stationserver.AuthMiddleware(d.Station, inner)
+	if d.CommH != nil {
+		ch = commserver.AuthMiddleware(d.Comm, ch)
+	}
+	h.Handler = mcpserver.AuthMiddleware(d.KB, ch)
+	return h
+}
+
+func buildServer(d Deps) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    "ken",
 		Title:   "Ken — knowledge base, messaging and working identity",
@@ -118,18 +184,5 @@ func NewHTTPHandler(d Deps) http.Handler {
 	// looked complete. The closure hands back the block a session actually receives here, so what
 	// ken_instructions returns cannot drift from what was delivered at connect.
 	version.RegisterMetaTools(s, func() string { return Instructions })
-
-	inner := mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return s },
-		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
-
-	// CHAINED, INNERMOST LAST. Each middleware authenticates the same bearer against its own
-	// surface's requirement and injects its own principal, so by the time the request reaches the
-	// server all three are present. A credential missing any capability is refused at the
-	// transport by whichever link needs it — which is the fail-closed property, kept.
-	h := stationserver.AuthMiddleware(d.Station, inner)
-	if d.CommH != nil {
-		h = commserver.AuthMiddleware(d.Comm, h)
-	}
-	return mcpserver.AuthMiddleware(d.KB, h)
+	return s
 }
