@@ -142,6 +142,13 @@ func Brief(name, full string) string {
 // A HARD FLOOR OF 40 CHARACTERS before it will accept a break, so an abbreviation in the opening
 // words ("Ken 3.40.0. …") cannot truncate a description to nothing — the failure that would be
 // invisible, because a too-short description still renders as a description.
+//
+// AND IT REFUSES TO BREAK ON A KNOWN ABBREVIATION, which the floor alone did not cover. kb_diff's
+// shipped one-liner was "Field-by-field diff of two revisions of an entry (rev_a vs rev_b) — e.g."
+// — 66 characters, comfortably over the floor, and a fragment ending mid-thought. The floor catches
+// a stub; nothing caught a sentence that merely ENDS BADLY, because a fragment renders exactly like
+// a sentence. Handled here rather than by rewriting the prose: an extractor that splits English
+// wrongly will do it again to the next tool, and the next author will not know to avoid "e.g.".
 func firstSentence(s string) string {
 	s = strings.TrimSpace(s)
 	for i, r := range s {
@@ -152,9 +159,28 @@ func firstSentence(s string) string {
 			continue
 		}
 		rest := s[i+1:]
-		if rest == "" || rest[0] == ' ' || rest[0] == '\n' {
-			return strings.TrimSpace(s[:i+1])
+		if rest != "" && rest[0] != ' ' && rest[0] != '\n' {
+			continue
 		}
+		if endsInAbbreviation(s[:i+1]) {
+			continue
+		}
+		return strings.TrimSpace(s[:i+1])
 	}
 	return s
+}
+
+// abbreviations are the sentence-enders that are not sentence ends. Deliberately short: each entry
+// is a place the extractor would otherwise cut mid-thought, and a long list would start swallowing
+// genuine sentence breaks that happen to follow a short word.
+var abbreviations = []string{"e.g.", "i.e.", "etc.", "cf.", "vs.", "approx.", "Fig.", "no."}
+
+func endsInAbbreviation(s string) bool {
+	low := strings.ToLower(s)
+	for _, a := range abbreviations {
+		if strings.HasSuffix(low, strings.ToLower(a)) {
+			return true
+		}
+	}
+	return false
 }

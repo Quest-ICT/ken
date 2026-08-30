@@ -619,12 +619,6 @@ func runServe(args []string) {
 				}
 				return out, nil
 			}
-			// Which comm endpoints belong to a station, for the station_me pre-flight.
-			// Same one-way dependency as the two hooks above: this is the only place both
-			// handles exist, so the adaptation lives here.
-			sd.CommEndpoints = func(ctx context.Context, stationID string) ([]string, error) {
-				return commStore.EndpointIDsForStation(ctx, stationID)
-			}
 		}
 		sd.TaskLimits, sd.NoteLimits, sd.LockerLimits, sd.VaultLimits = stationLimits(live.Current())
 		// The station cap hook is registered on the served handler, below. Live because an operator

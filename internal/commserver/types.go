@@ -349,9 +349,9 @@ type fileOfferIn struct {
 	// and jsonschema cannot say that here. The handler enforces it and names the three by
 	// listing them, so a caller that passes none or two learns which to pick rather than being
 	// told a field is missing.
-	ChannelID      string `json:"channel_id,omitempty" jsonschema:"the pairing-code channel to offer on. Exactly one of channel_id, to_room or to_station"`
+	ChannelID      string `json:"channel_id,omitempty" jsonschema:"an open channel, from comm_channels. Exactly one of channel_id, to_room or to_station"`
 	ToRoom         string `json:"to_room,omitempty" jsonschema:"a room id — every member receives the offer, and it is ONE attachment against the file budget rather than one per member"`
-	ToStation      string `json:"to_station,omitempty" jsonschema:"a station id an approved link joins you to — no channel, nothing to open or expire"`
+	ToStation      string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — no channel, nothing to open or expire, and no permission to obtain: the first message creates the link. Get it from comm_directory"`
 	Name           string `json:"name" jsonschema:"required; a bare filename (no directories). The receiver will know the file by this name"`
 	SizeBytes      int64  `json:"size_bytes" jsonschema:"required; exact size of the file"`
 	SHA256         string `json:"sha256" jsonschema:"required; 64-hex sha256 of the file content (run: sha256sum FILE)"`
@@ -483,7 +483,7 @@ type openLinkedIn struct {
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
 	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
-	ToStation  string `json:"to_station" jsonschema:"required; the station to open a channel with, by NAME. A human must already have approved a link between your station and that one"`
+	ToStation  string `json:"to_station" jsonschema:"required; the station to open a channel with, by NAME as your human refers to it (note: comm_send takes an ID, this takes a NAME). No approval is needed — a link is created by the first message — but a link your human SUSPENDED will refuse"`
 	Label      string `json:"label,omitempty" jsonschema:"optional; a human-readable name for the channel, shown in your human's console"`
 }
 

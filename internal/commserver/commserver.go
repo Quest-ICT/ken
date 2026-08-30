@@ -403,7 +403,9 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_open_channel",
-		Description: "Open a named channel with another STATION. You will usually not need this: comm_send{to_station} " +
+		Description: "RARELY NEEDED — prefer comm_send{to_station}, which reaches any station with nothing to open. " +
+			"This opens a named channel with another STATION, worth it only when you want a durable channel_id to " +
+			"address one long exchange by. " +
 			"reaches a peer with nothing to open, join or expire, and creates the relationship on first contact. " +
 			"A channel is worth opening when you want a durable id to address a long exchange by, which both sides " +
 			"can resolve after either of them is replaced by a successor session. " +

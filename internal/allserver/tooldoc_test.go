@@ -47,6 +47,14 @@ func TestEveryToolBriefStandsAlone(t *testing.T) {
 		// them in a diff.
 		case len(lead) < 24:
 			t.Errorf("%s: one-line description is %d chars and says nothing useful: %q", n, len(lead), lead)
+		// AND IT MUST NOT END MID-THOUGHT. The length floor catches a stub; it cannot catch a
+		// fragment, because a fragment renders exactly like a sentence — kb_diff shipped 66
+		// characters ending in "e.g." and passed every check here. tooldoc.firstSentence now
+		// refuses to break on a known abbreviation; this asserts the outcome rather than trusting
+		// the list to be complete.
+		case strings.HasSuffix(lead, "e.g.") || strings.HasSuffix(lead, "i.e.") ||
+			strings.HasSuffix(lead, "etc.") || strings.HasSuffix(lead, "vs."):
+			t.Errorf("%s: the one-line description ends on an abbreviation and is a fragment: %q", n, lead)
 		case len(lead) > 400:
 			t.Errorf("%s: the extractor found no sentence break in %d chars, so the whole rules are back in "+
 				"the description and nothing was shortened: %q…", n, len(lead), lead[:120])

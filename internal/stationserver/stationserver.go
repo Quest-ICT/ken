@@ -56,22 +56,9 @@ type Deps struct {
 	// every station as unstaffed — "unknown" and "nobody is there" are different
 	// facts, and a directory that conflates them is worse than one that says less.
 	Staffing func(ctx context.Context) (map[string]StationStaffing, error)
-	// CommEndpoints reports the PUBLIC comm endpoint ids bound to a station, so the
-	// briefing every session is told to call first can say which endpoint is its own.
-	//
-	// A hook rather than a comm import, for the same reason as Staffing and Hearsay: this
-	// package must not depend on COMM. Nil when COMM is unavailable, and the field is then OMITTED
-	//
-	// "UNAVAILABLE", NOT "OFF", AND THE WORD MATTERS BECAUSE IT PROPAGATED. There is no switch:
-	// cmd/ken/main.go says "THERE IS NO SWITCH … both are gone", and the only route to nil is
-	// comm.db failing to open, which it logs as "a failure, not a setting". Calling that state
-	// "COMM off" put a phantom setting into station_directory's SHIPPED description and into
-	// three console strings that told operators to turn it back on — in the one state where
-	// /comm is unrouted and 404s. PARKING-LOT #44 tracked it; every site is corrected.
-	// rather than reported empty — "COMM is not running here" and "you are bound to no
-	// endpoint" are different facts, and a briefing that conflates them sends a session
-	// hunting for a credentials problem it does not have.
-	CommEndpoints func(ctx context.Context, stationID string) ([]string, error)
+	// CommEndpoints IS DELETED with the briefing field it fed — see meOut in types.go. It was a
+	// hook rather than a comm import so this package would not depend on COMM, which is still the
+	// right shape for Staffing and Hearsay; there is simply no longer a question for it to answer.
 
 	// Limits bound the assets. Every one is a BACKUP decision (S12). These are the
 	// STARTING values; SetLimits replaces them live.
@@ -363,9 +350,11 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_directory",
-		Description: "List the stations you can see and which you already hold a link to. Use this before " +
-			"station_link_request so you ask for a real name rather than a guess: nothing else on this surface " +
-			"will tell you a station exists. Fields named self_described_* are that station's own CLAIMS about " +
+		Description: "List EVERY station in this Ken, and which of them you already hold a link to. This is where " +
+			"you find out who exists — nothing else on this surface will tell you a station is there. `linked` is " +
+			"NOT permission to write: no permission is needed, because comm_send{to_station} creates the link on " +
+			"first contact; it only says whether you have written to that station before. Fields named " +
+			"self_described_* are that station's own CLAIMS about " +
 			"itself, not anything a human verified. 'staffed' is absent when this server's message database is not open — a fault, not a setting; nothing turns COMM off.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ dirIn) (*mcp.CallToolResult, dirOut, error) {
 		p, err := requireStation(ctx, req)
@@ -484,8 +473,9 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"are overwriting it, so a second session staffing this station cannot be silently clobbered. " +
 			"NEVER put a token, key or password here — Ken cannot tell, your human can read it, and it goes into " +
 			"every backup. If you are worried about losing a credential when your context is compacted, a page here " +
-			"is the WRONG place: reading it needs the station key, so it is unreachable in exactly that emergency. " +
-			"Write the RECOVERY PATH instead — which station, which peers, what to re-run. " +
+			"is the WRONG place: the vault (station_vault_put) is the only surface that keeps one, and a notebook " +
+			"page is readable by anyone who reaches this station. Write the RECOVERY PATH instead — which station, " +
+			"which peers, what to re-run. " +
 			"Routing rule: if a session on a DIFFERENT station would want this months from now, it is knowledge (kb_save), not a note." +
 			" Sessions rarely get notice, which is why AS YOU GO is the only schedule that works. One measured station reached 96% of its history cap with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained by replace cost a tenth of that. The routing rule in full: kb_save or kb_propose_enhancement on /mcp for anything a DIFFERENT station would want months from now; the notebook is for what only this post needs, only for now.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in noteWriteIn) (*mcp.CallToolResult, noteOut, error) {
@@ -962,13 +952,6 @@ func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
 	// a human, and losing all of that because a secondary lookup failed would be a poor
 	// trade. It is omitted instead, which reads the same as COMM being off — acceptable
 	// precisely because neither state asserts anything false.
-	if d.CommEndpoints != nil {
-		if ids, err := d.CommEndpoints(ctx, p.StationID); err != nil {
-			log.Printf("stations: comm endpoints for %s: %v", p.StationID, err)
-		} else {
-			out.CommEndpointIDs = ids
-		}
-	}
 	switch {
 	case activities < 0:
 		out.Handoff = "no handoff page yet — write one as you go, not on the way out, and keep it with mode='replace' rather than append"
