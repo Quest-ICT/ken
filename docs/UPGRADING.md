@@ -34,6 +34,69 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 5.0.0
+
+**Two things are different in kind from any previous release. Read both before upgrading.**
+
+### 1. YOU UPGRADE THE DATABASE. Ken will not.
+
+There is no migration runner any more. Ken creates a database from a single schema file when the
+file is empty, and on an existing one it reads the recorded version and **refuses to start** if it
+is not the version the binary requires.
+
+**So the upgrade is a procedure, not a restart:**
+
+```sh
+ken backup snapshot && ken backup verify     # ken.db is durable; this is not optional
+sudo systemctl stop ken
+sqlite3 /opt/ken/data/comm/comm.db < upgrade/comm-4.x-to-5.0.0.sql
+sudo systemctl start ken
+```
+
+**`ken.db` does not change** — it is already at version 26, which is what 5.0.0 requires, so there
+is nothing to run for it. Only `comm.db` moves, 21 → 22.
+
+*What you observe if you skip it:* Ken stops with `comm.db is at schema version 21 and this binary
+requires 22`, naming the direction and the document. Nothing is damaged and nothing changes on a
+restart — that is the point. Full procedure and verification commands:
+[UPGRADING-THE-DATABASE.md](UPGRADING-THE-DATABASE.md).
+
+*Why:* a migration runner rewrites data nobody is watching, on a schedule set by whoever restarts
+the service. Three audit rounds before 4.0.0 found the same migration broken three separate times,
+each invisible to a fully green suite. Moving it out makes it a thing you run on purpose and can
+verify with the `sqlite3` you already have.
+
+### 2. The channel is retired, and every session reconnects
+
+`comm_open_channel` is **deleted**, with the `channel` table, the `ch:` scope, and `channel_id`
+everywhere it appeared.
+
+- **`comm_send`** loses `channel_id`. Address with `to_station`, `to_room`, or `to_room:"all"`.
+- **`comm_file_offer`** loses `channel_id`. Address with `to_room` or `to_station`.
+- **`comm_ack`** replaces `channel_id` with **`to_room` / `to_station`** alongside `ack_up_to_seq`.
+  It always accepted a room id there and its description had to say so; a cumulative ack now names
+  its conversation the same way a send does.
+- **`comm_channels` keeps its name** and loses its `channels` array. Rooms and pairs are what it
+  reports. The array is gone rather than empty, because an empty one would say "you hold no
+  channels" instead of "there are none".
+- **`ken_comm_channels_open` is removed from `/metrics`.** Anything scraping it needs updating —
+  collector-proxy in particular.
+
+*What a session observes:* a call passing `channel_id` is refused, naming the addressing that
+exists. A session holding a `ch:` scope from before gets a refusal rather than an empty result it
+would read as an empty inbox.
+
+**Suspend and resume are now exact inverses.** Suspending a link used to close its live channels
+and resuming never reopened them — a reversible control that was partly irreversible. There is
+nothing left to half-restore.
+
+### Also
+
+Two servers that nothing served since 4.0.0 are deleted, along with the stale instruction block one
+of them carried; `endpoint`'s secret and binding columns are dropped (nothing has verified a
+mailbox secret since 4.0.0); and file-offer idempotency, which was **unenforced for every room and
+pair offer**, is fixed by the same upgrade script.
+
 ## 4.0.1
 
 **Nothing breaks, and there is nothing to do.** It is listed here because two changes look like they

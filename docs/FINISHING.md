@@ -64,6 +64,18 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 5.0.0** (2026-08-31) — the channel is retired (slice 7), and **Ken no longer migrates
+databases**. It creates one from `schema/*.sql` and otherwise checks the recorded version and
+refuses to start if it differs; upgrading is a procedure an operator runs with stock `sqlite3`
+(`upgrade/`, `docs/UPGRADING-THE-DATABASE.md`). Vlad's call, taken because a migration runner is
+code that rewrites data nobody is watching — and because three audit rounds before 4.0.0 found the
+same migration broken three separate times, each invisible to a green suite.
+
+Shipped with it: the two MCP servers nothing had served since 4.0.0, the dead mailbox columns, and
+three defects the work surfaced — a schema file that left foreign keys OFF for the process (every
+`ON DELETE CASCADE` inert on the writer), file-offer idempotency unenforced for every room and pair
+offer, and cumulative ack losing its subject when the channel arm went.
+
 **Released: 4.0.1** (2026-08-31) — cut for ONE reason: on 4.0.0 most of the station surface is
 unusable on any client that re-initialises between messages, which is the common case rather than
 the corner. Nineteen station tools did not declare `session_key`, so `additionalProperties:false`

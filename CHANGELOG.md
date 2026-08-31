@@ -15,7 +15,13 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-### 5.0.0 — staged here, not yet tagged
+_Nothing yet — everything below is tagged, built and published._
+
+## [5.0.0] — 2026-08-31
+
+**Every session reconnects again, and the database upgrade is now yours to run.** The second MAJOR
+in two days, deliberately: with four sessions connected, one reconnect now costs less than two
+later.
 
 ### Removed
 
@@ -81,8 +87,6 @@ same change — never "docs later".
   the ordinary case, could be acked one message at a time and no other way. It gains a pair arm,
   scoped to stations comm knows — an earlier version accepted any id, which made acking a room you
   are not in resolve as a "pair" and turned the uniform refusal into an existence oracle.
-
-### Fixed
 
 - **`station_directory` listed stations it gave no way to reach.** The row carried name, purpose,
   `last_seen_at`, `linked` and `staffed` — and no `station_id`, which is the only thing
