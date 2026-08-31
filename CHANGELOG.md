@@ -15,6 +15,73 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### 5.0.0 — staged here, not yet tagged
+
+### Removed
+
+- **The channel is retired (slice 7).** `comm_open_channel` is gone, with the `channel` table, the
+  `ch:` scope namespace, the Comm page's channel card and its revoke control, the per-channel
+  pending counter, the admin listing, and the channel arms of send, ack-scope and file-offer.
+  4.0.0 had already removed its reason to exist — a link is created by the first message, so
+  `comm_send{to_station}` reaches any station with nothing to open, join or expire.
+
+  What the channel cost was a **second place for a conversation to live**: two stations could hold
+  a pair scope and one or more channel scopes at once, each with its own sequence, backpressure and
+  idea of what "the conversation" was, and every surface that counted, closed or listed traffic had
+  to know about both.
+
+  **`comm_channels` keeps its name** — it reports rooms and pairs, and renaming a tool costs a
+  reconnect for nothing. **The `ken_comm_channels_open` metric is gone**, which matters to anything
+  scraping `/metrics`.
+
+- **Suspend is no longer retroactive**, and suspend/resume are now exact inverses. Suspending a
+  link used to close its live channels, and resuming never reopened them — a reversible control
+  that was partly irreversible. There is nothing left to half-restore.
+
+- **The two MCP servers nothing served.** 4.0.0 deleted `/comm/mcp` and `/station/mcp` and left
+  their servers standing: `main.go` stopped calling `stationserver.NewHTTPHandler` altogether, and
+  commserver kept building a full MCP server, its middleware and its connect-time instructions on
+  every boot, reachable by nothing. The station block had rotted exactly as unserved text does — it
+  still told every session there were "THREE MCP SURFACES" and to ask their human for the others by
+  name.
+
+- **Dead mailbox columns:** `endpoint.secret_sha256` (creating a mailbox minted a random secret and
+  hashed it purely to satisfy NOT NULL; nothing has verified one since 4.0.0), `secret_rotated_at`,
+  `rotate_count`, `bound_by_station_key_id` — plus `LiveEndpointForStation` and
+  `store.TokenIsRevoked`, whose last callers went with the channel.
+
+### Changed
+
+- **KEN NO LONGER MIGRATES DATABASES.** `schema/ken.sql` and `schema/comm.sql` create a whole
+  database in one step, applied only when the file is empty; on an existing database Ken reads the
+  recorded version and **refuses to start** if it is not the one the binary requires. Upgrading is
+  a deliberate act performed with stock `sqlite3` — scripts in `upgrade/`, procedure in
+  `docs/UPGRADING-THE-DATABASE.md`. ken.db is unchanged at 26; comm.db moves 21 → 22.
+
+  **The refusal is the load-bearing half.** Without it this fails silently in the worst direction —
+  a binary opening a database whose shape it does not know. Measured before 4.0.0 going the other
+  way: the v3.42.0 binary booted against a 4.0.0 database with an ordinary startup log and then
+  500ed on a table that no longer existed.
+
+### Fixed
+
+- **File-offer idempotency was unenforced for every room and pair offer.** `idx_attachment_idem`
+  was keyed on `channel_id` while the lookup has used `scope_id` since comm 0017; SQLite treats
+  NULLs as distinct, so those offers sat outside the unique index entirely and a repeated key
+  created a second attachment. The upgrade script de-duplicates before building the correct index,
+  because building it over existing duplicates aborts.
+
+- **Creating a database left foreign keys OFF for the process.** The generated schema opened with
+  `PRAGMA foreign_keys=OFF`, and a pragma is per CONNECTION — so the writer the server holds for
+  its whole life had every `ON DELETE CASCADE` inert. Purging a message stopped taking its
+  deliveries, SQLite reused the freed rowid, and the next insert collided with a delivery row that
+  should not have existed.
+
+- **Cumulative ack lost its subject** when the channel arm went: a two-station conversation, now
+  the ordinary case, could be acked one message at a time and no other way. It gains a pair arm,
+  scoped to stations comm knows — an earlier version accepted any id, which made acking a room you
+  are not in resolve as a "pair" and turned the uniform refusal into an existence oracle.
+
 ### Fixed
 
 - **`station_directory` listed stations it gave no way to reach.** The row carried name, purpose,
