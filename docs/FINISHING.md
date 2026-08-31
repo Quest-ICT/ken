@@ -64,6 +64,18 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 5.2.0** (2026-08-31) — a broadcast reached the union of the sender's ROOMS, so on an
+instance with no rooms it reached nobody. Production had thirteen stations and zero rooms: an
+operator holding a confirmed data-integrity defect could not send an estate-wide "stop writing"
+advisory, addressed three by hand, and left six unwarned. `to_everyone:true` — and its permanent
+alias `to_room:"all"` — now reaches every ACTIVE station, read live from `ken.db` through the one
+function that also builds the list `comm_directory` prints, so the advertised reach is the length
+of that list. The old guard compared two hand-copied queries over the same mirror, agreed with
+itself at 0 and 0, and stayed green throughout; its replacement runs against the built binary
+because the invariant now spans both databases. S14's "broadcast is derived, not granted" is
+reversed, and the reversal is recorded in `docs/STATIONS.md` rather than edited over. No schema
+change.
+
 **Released: 5.1.0** (2026-08-31) — writes could land on another session's station. The connection
 binding was keyed on the MCP session id, which is per CONNECTION, so two Claude Desktop chats shared
 one binding and whichever called `station_me` last owned it. ken-prod-ops found it by reading the

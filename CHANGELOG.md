@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [5.2.0] — 2026-08-31
+
 ### Changed
 - **`to_room:"all"` now reaches EVERY ACTIVE STATION on this Ken, room or no room** — and gains an
   honest spelling, **`to_everyone:true`**. `to_room:"all"` remains a permanent alias and is never

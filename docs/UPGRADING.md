@@ -34,6 +34,8 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 5.2.0
+
 ### `to_room:"all"` now reaches every station, not just your room-mates — and there is no database step
 
 **What you observe.** `to_room:"all"` reaches every ACTIVE station on this Ken, not the union of
