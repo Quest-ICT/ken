@@ -271,6 +271,46 @@ func TestBinaryChargesTheRateLimitOncePerRequest(t *testing.T) {
 // A migration that leaves a dangling reference commits its version before the check runs, so the
 // version alone is not evidence. This asserts both, on a fresh install, through the binary that
 // ships — which is also the only place the comm.db path (a subdirectory main() chooses) is exercised.
+// A DEV PRINCIPAL MUST BE CHARGED LIKE ANY OTHER TOKEN — the half its neighbour cannot see.
+//
+// TestBinaryChargesTheRateLimitOncePerRequest above catches OVER-charging: a shared limiter
+// divides the burst, so too few requests get through. It is silent on the opposite defect, and
+// the opposite defect is the one this project actually shipped. A dev principal carrying no
+// token identity is charged to no bucket, never 429s at all, and sails through that test with
+// ok == burst*2 — comfortably past its `ok < burst-1` floor.
+//
+// That is not hypothetical. v3.42.0 had TestAuthRejectsTheDevTokenBypass for exactly this
+// reason; the 4.0.0 wave deleted it and replaced it with nothing. Blanking TokenID on any of
+// the three auth paths (mcpserver, commserver, stationserver) leaves `go test ./...` green.
+//
+// So this asserts the 429 ARRIVES. Loopback is exempt from per-IP limiting, so the only bucket
+// that can produce one is the per-token bucket, which is precisely the thing under test.
+func TestBinaryChargesTheDevPrincipalLikeAnyOtherToken(t *testing.T) {
+	const burst = 4
+	url := ken(t,
+		"KEN_DEV_TOKEN=smoke-secret",
+		"KEN_RATELIMIT_TOKEN_RPM=60",
+		fmt.Sprintf("KEN_RATELIMIT_TOKEN_BURST=%d", burst),
+	)
+
+	sent, limited := 0, false
+	for i := 0; i < burst*4; i++ {
+		code, _, _ := rpc(t, url, "smoke-secret", "", initBody)
+		sent++
+		if code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Errorf("%d requests on a burst of %d and never a 429 — the dev principal is charged to "+
+			"no token bucket, so it is exempt from a limit every other credential pays.\n"+
+			"Check TokenID on the dev principal in internal/{mcpserver,commserver,stationserver}/auth.go: "+
+			"an empty one accounts to nothing and is invisible to every other test in this tree.",
+			sent, burst)
+	}
+}
+
 func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 	url := ken(t)
 
