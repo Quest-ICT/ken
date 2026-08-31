@@ -140,10 +140,6 @@
           <!-- WHICH TOKEN OWNS IT was never shown, which is why nobody could see that eleven
                endpoints hung off one credential until it was queried by hand. -->
           <th>{{.T "comm.col_owner"}}</th>
-          <!-- AND WHICH STATION KEY AUTHORISED THE BINDING, the second weld: this column is
-               checked at use on every call, and a revoked or deleted key severs the endpoint
-               exactly as retiring its owning token would. It was never shown either. -->
-          <th>{{.T "comm.col_binder"}}</th>
           <th>{{.T "comm.col_last_seen"}}</th><th>{{.T "comm.col_created"}}</th><th></th>
         </tr></thead>
         <tbody>
@@ -152,10 +148,8 @@
             <td class="mono">{{.EndpointID}}</td>
             <td>
               {{if .Label}}{{.Label}}{{else}}<span class="muted">—</span>{{end}}
-              {{if .RotatedAt}}<span class="badge badge--sm" title="{{$.T "comm.rotated_help"}}">{{$.T "comm.rotated"}} ×{{.RotateCount}}</span>{{end}}
             </td>
             <td class="mono" style="font-size:.82rem">{{.Owner.TokenID}}</td>
-            <td class="mono" style="font-size:.82rem">{{if .BoundByStationKeyID}}{{.BoundByStationKeyID}}{{else}}<span class="muted">—</span>{{end}}</td>
             <td class="mono">{{localtime .LastSeenAt}}</td>
             <td class="mono">{{localtime .CreatedAt}}</td>
             <td>

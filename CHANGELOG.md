@@ -17,6 +17,25 @@ same change — never "docs later".
 
 ### Fixed
 
+- **The console told operators to perform deleted actions.** 33 strings across three locales still
+  named mechanisms 4.0.0 removed: *"Registered sessions"* on a console where nothing registers,
+  *"This endpoint's secret has been replaced"* for a secret that no longer exists, *"Credentials
+  these endpoints depend on"*, and — the one an operator would act on — `rooms.member_deaf_help`
+  saying *"the session needs to bind"* when binding was deleted. A wrong label is cosmetic; an
+  instruction to perform a deleted action sends the only person who can fix the problem looking
+  for a control that is not there.
+
+  All reworded in English, Spanish and French. Two dead things went with them: the *rotated* badge
+  on the Comm page, and the *Bound by* column — nothing has written `secret_rotated_at`,
+  `rotate_count` or `bound_by_station_key_id` since station keys and secret rotation were retired,
+  so both could only ever render empty.
+
+  **`TestNoOperatorStringNamesARetiredMechanism` replaces a discipline, not a test.** v3.42.0 had a
+  prose gate over comm strings; the wave deleted it correctly, because the mechanism it policed was
+  gone — and nothing replaced the habit, which is how these 33 shipped. The new gate matches
+  PHRASES rather than words, so "registered" stays legal for OAuth client registration and "rotate"
+  stays legal in the sentence that says there is nothing to rotate.
+
 - **Most of the station surface was behind a coin flip.** `station_me`, `comm_poll`, `comm_send`
   and `comm_directory` accepted a `session_key`; the other nineteen station tools did not declare
   the field, so `additionalProperties:false` REJECTED it and they had nothing to identify the
