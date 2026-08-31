@@ -17,6 +17,23 @@ same change — never "docs later".
 
 _Nothing yet — everything below is tagged, built and published._
 
+## [5.0.1] — 2026-08-31
+
+### Fixed
+
+- **5.0.0's release bundle did not contain the upgrade script it tells you to run.** 5.0.0 made the
+  database upgrade an operator's job — Ken refuses to start against a database at the wrong version
+  and names `upgrade/comm-4.x-to-5.0.0.sql` — and `build-release.sh` staged `docs/`, `scripts/`,
+  `deploy/` and `configs/`, because `upgrade/` did not exist when it was written. So the tarball
+  refused to start and the fix was in a git checkout the operator might not have.
+
+  The bundle now carries `upgrade/*.sql` and `docs/UPGRADING-THE-DATABASE.md`, and
+  `verify-artifact.sh` **fails the release** if any script in the repo is missing from the bundle —
+  counting files on disk in the unpacked tarball rather than trusting the build that produced it.
+  Verified by building a bundle with the directory omitted and watching the gate refuse it.
+
+  Nothing is wrong with a running 5.0.0. This only affects upgrading TO it from the tarball.
+
 ## [5.0.0] — 2026-08-31
 
 **Every session reconnects again, and the database upgrade is now yours to run.** The second MAJOR

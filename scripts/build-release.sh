@@ -143,7 +143,7 @@ for arch in $ARCHES; do
     bundle="ken-${VERSION}"
     stage="$STAGE_ROOT/$arch/$bundle"
     rm -rf "$STAGE_ROOT/$arch"
-    mkdir -p "$stage/bin" "$stage/scripts" "$stage/deploy" "$stage/docs" "$stage/configs"
+    mkdir -p "$stage/bin" "$stage/scripts" "$stage/deploy" "$stage/docs" "$stage/configs" "$stage/upgrade"
 
     echo "[build-release] compiling bin/ken"
     ( cd "$REPO" && GOOS=linux GOARCH="$arch" \
@@ -171,7 +171,19 @@ for arch in $ARCHES; do
     # its stated purpose is that a human can open it and know where things stand.
     [ -f "$REPO/docs/OPERATION.md" ] && install -m 0644 "$REPO/docs/OPERATION.md" "$stage/docs/OPERATION.md"
     [ -f "$REPO/docs/FINISHING.md" ] && install -m 0644 "$REPO/docs/FINISHING.md" "$stage/docs/FINISHING.md"
+    [ -f "$REPO/docs/UPGRADING-THE-DATABASE.md" ] && install -m 0644 "$REPO/docs/UPGRADING-THE-DATABASE.md" "$stage/docs/UPGRADING-THE-DATABASE.md"
     [ -f "$REPO/configs/litestream.yml" ] && install -m 0640 "$REPO/configs/litestream.yml" "$stage/configs/litestream.yml"
+
+    # *** THE UPGRADE SCRIPTS SHIP, AND SINCE 5.0.0 THEY ARE REQUIRED. ***
+    #
+    # Ken does not migrate databases: it refuses to start against one at the wrong version, and the
+    # operator runs the matching script with stock sqlite3. A bundle without them is a bundle that
+    # cannot be upgraded to — the binary would refuse and the fix would be in a git checkout the
+    # operator may not have. 5.0.0 was published once without this directory before anyone noticed.
+    for u in "$REPO"/upgrade/*.sql; do
+        [ -f "$u" ] || continue
+        install -m 0644 "$u" "$stage/upgrade/$(basename "$u")"
+    done
 
     # License + third-party notices (required for AGPL distribution).
     install -m 0644 "$REPO/LICENSE" "$stage/LICENSE"

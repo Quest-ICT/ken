@@ -42,7 +42,7 @@ ok()   { echo "artifact: ok — $*"; }
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 
 # Files the bundle stages verbatim from the repo; each must match the tagged tree.
-STAGED="docs/INSTALL.md docs/BACKUP.md configs/litestream.yml
+STAGED="docs/INSTALL.md docs/BACKUP.md docs/UPGRADING-THE-DATABASE.md configs/litestream.yml
         scripts/install.sh scripts/ken.sh scripts/ken-snapshot.sh
         deploy/ken.service deploy/ken-snapshot.service deploy/ken-snapshot.timer LICENSE"
 
@@ -52,6 +52,24 @@ for tgz in "$DIST"/ken-"$VERSION"-linux-*.tar.gz; do
     d="$work/$arch"; mkdir -p "$d"
     tar -xzf "$tgz" -C "$d" || { note "$tgz: cannot extract"; continue; }
     b="$d/ken-$VERSION"
+
+    # --- 0. EVERY UPGRADE SCRIPT IN THE REPO IS IN THE BUNDLE ----------------
+    #
+    # Since 5.0.0 Ken does not migrate databases: it REFUSES to start against one at the wrong
+    # version and the operator runs the matching script with sqlite3. A bundle missing them is a
+    # bundle that cannot be upgraded to — the binary refuses and the fix sits in a git checkout the
+    # operator may not have.
+    #
+    # 5.0.0 SHIPPED EXACTLY THAT WAY. build-release.sh staged docs, scripts, deploy and configs, and
+    # nobody had told it about a directory that did not exist when it was written. Caught by
+    # unpacking the published tarball and looking, which is why this check counts FILES ON DISK
+    # rather than trusting the build.
+    for u in "$REPO"/upgrade/*.sql; do
+        [ -f "$u" ] || continue
+        if [ ! -f "$b/upgrade/$(basename "$u")" ]; then
+            note "$arch: upgrade/$(basename "$u") is in the repo and NOT in the bundle — an operator on the previous release cannot upgrade with what they downloaded"
+        fi
+    done
 
     # --- 1. no private host survives anywhere in the bundle -------------------
     # `strings -a` the binary too: the module path and the injected SourceURL live
