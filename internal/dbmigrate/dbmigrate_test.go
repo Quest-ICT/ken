@@ -59,7 +59,7 @@ func TestRunRefusesAMigrationThatLeavesADanglingReference(t *testing.T) {
 		"0001_init.sql":  &fstest.MapFile{Data: []byte(baseSchema)},
 		"0002_child.sql": child("INSERT INTO child(id, parent_id) VALUES (1, 1);"),
 	}
-	if err := dbmigrate.Run(ctx, w, r, intact, "*.sql"); err != nil {
+	if err := dbmigrate.Run(ctx, w, r, intact, "*.sql", "test.db"); err != nil {
 		t.Fatalf("control: a run whose references are intact failed: %v", err)
 	}
 	var v int
@@ -75,7 +75,7 @@ func TestRunRefusesAMigrationThatLeavesADanglingReference(t *testing.T) {
 		"0001_init.sql":  &fstest.MapFile{Data: []byte(baseSchema)},
 		"0002_child.sql": child("INSERT INTO child(id, parent_id) VALUES (1, 999);"),
 	}
-	err := dbmigrate.Run(ctx, w2, r2, broken, "*.sql")
+	err := dbmigrate.Run(ctx, w2, r2, broken, "*.sql", "test.db")
 	if err == nil {
 		t.Fatal("Run accepted a migration that left child row 1 pointing at a parent that does not exist — " +
 			"enforcement is off for the whole run, so nothing else would ever have said so")
@@ -91,10 +91,10 @@ func TestRunIsANoOpWhenEverythingIsApplied(t *testing.T) {
 	ctx := context.Background()
 	w, r := openPools(t)
 	only := fstest.MapFS{"0001_init.sql": &fstest.MapFile{Data: []byte(baseSchema)}}
-	if err := dbmigrate.Run(ctx, w, r, only, "*.sql"); err != nil {
+	if err := dbmigrate.Run(ctx, w, r, only, "*.sql", "test.db"); err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	if err := dbmigrate.Run(ctx, w, r, only, "*.sql"); err != nil {
+	if err := dbmigrate.Run(ctx, w, r, only, "*.sql", "test.db"); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
 	var rows, distinct int
@@ -123,10 +123,10 @@ func TestADatabaseNewerThanTheBinaryIsRefused(t *testing.T) {
 
 	// CONTROL: an ordinary run succeeds, and re-running an up-to-date database is a no-op. If
 	// either failed, the refusal below would prove nothing about version ordering.
-	if err := dbmigrate.Run(ctx, w, r, files, "*.sql"); err != nil {
+	if err := dbmigrate.Run(ctx, w, r, files, "*.sql", "test.db"); err != nil {
 		t.Fatalf("control: an ordinary migration run failed: %v", err)
 	}
-	if err := dbmigrate.Run(ctx, w, r, files, "*.sql"); err != nil {
+	if err := dbmigrate.Run(ctx, w, r, files, "*.sql", "test.db"); err != nil {
 		t.Fatalf("control: re-running an up-to-date database failed: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestADatabaseNewerThanTheBinaryIsRefused(t *testing.T) {
 	if _, err := w.ExecContext(ctx, `INSERT INTO schema_migration(version) VALUES (9999)`); err != nil {
 		t.Fatal(err)
 	}
-	err := dbmigrate.Run(ctx, w, r, files, "*.sql")
+	err := dbmigrate.Run(ctx, w, r, files, "*.sql", "test.db")
 	if err == nil {
 		t.Fatal("a database at schema 9999 was accepted by a binary that knows nothing about it — " +
 			"an operator rolling back gets a clean startup log and a broken deployment")

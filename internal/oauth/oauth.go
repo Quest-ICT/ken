@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -326,6 +327,18 @@ func (s *Server) grantAuthCode(w http.ResponseWriter, r *http.Request) {
 		// Lost the single-use race, or expired between peek and consume.
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "authorization code could not be redeemed")
 		return
+	}
+	// A SUCCESSFUL EXCHANGE IS THE MOMENT ABANDONED SIBLINGS BECOME PROVABLY DEAD.
+	//
+	// The grant row is created at /authorize, so a retry or a double-submit leaves one with no
+	// tokens and revoked_at IS NULL forever — ken-prod-ops measured two grants for one client 2.3
+	// seconds apart, one live and one empty, both showing as connected applications. Sweeping here
+	// costs one UPDATE on the path that already writes, and only ever touches grants whose
+	// authorization code is gone, so a flow still in progress is untouched.
+	if n, err := s.st.RevokeAbandonedGrants(r.Context()); err != nil {
+		log.Printf("OAuth: could not sweep abandoned grants: %v", err)
+	} else if n > 0 {
+		log.Printf("OAuth: revoked %d grant(s) that issued no token and whose authorization code is gone", n)
 	}
 	s.writeTokens(w, access, refresh, cd.Scope)
 }

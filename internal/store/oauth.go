@@ -109,6 +109,40 @@ type NewAuthCode struct {
 	Resource            string
 }
 
+// RevokeAbandonedGrants revokes grants that can never produce a token again.
+//
+// *** A GRANT IS CREATED AT /authorize, NOT AT TOKEN EXCHANGE. *** So a retry, a double-submit, or
+// a consent screen the human closes leaves a row with revoked_at IS NULL forever, and nothing ever
+// cleaned it up. ken-prod-ops measured it on the live deployment: one human action produced grants
+// g13 and g14 for the same client 2.3 seconds apart — g13 with an access and a refresh token, g14
+// with none, both listed as connected applications, distinguishable only by an Active-tokens count
+// of 0.
+//
+// Vlad's rule is that two active authorizations is a fault rather than a feature. This is the
+// mechanism by which one silently becomes two, and it is invisible in the console.
+//
+// THE PREDICATE IS "CAN NEVER SUCCEED", NOT "LOOKS UNUSED", and the difference matters. A grant is
+// abandoned only when it has issued NO token AND its authorization code is gone — consumed or
+// expired. An authorization code is single-use and short-lived, so such a grant has no path left
+// to a token. A grant whose code is still live is mid-flow and MUST NOT be touched: the human may
+// be finishing the consent screen right now, and revoking it would break the very flow that
+// created it.
+//
+// Returns how many it revoked, so a caller can log a number rather than a reassurance.
+func (s *Store) RevokeAbandonedGrants(ctx context.Context) (int64, error) {
+	res, err := s.W.ExecContext(ctx, `
+UPDATE oauth_grant SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ WHERE revoked_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM oauth_token t WHERE t.grant_id = oauth_grant.id)
+   AND NOT EXISTS (SELECT 1 FROM oauth_auth_code c
+                    WHERE c.grant_id = oauth_grant.id
+                      AND c.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // CreateOAuthGrantAndCode records the human's approval as a durable grant and a
 // single-use authorization code (hashed), returning the plaintext code once.
 func (s *Store) CreateOAuthGrantAndCode(ctx context.Context, in NewAuthCode, codeTTL time.Duration) (string, error) {

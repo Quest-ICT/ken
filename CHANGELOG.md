@@ -15,7 +15,45 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-_Nothing yet — everything below is tagged, built and published._
+### Fixed
+
+- **`station_directory` listed stations it gave no way to reach.** The row carried name, purpose,
+  `last_seen_at`, `linked` and `staffed` — and no `station_id`, which is the only thing
+  `comm_send{to_station}` accepts and the only thing that identifies a station now the pairing code
+  is gone. `st.StationID` sat two lines away in the loop, used for the staffing lookup. Its own
+  comment claimed the row MIRRORED `comm_directory`'s, which carries both the id and an
+  `address_with` hint; nothing compared them, so nothing said otherwise. Both fields are now built
+  by a constructor rather than a struct literal, because both are strings and a literal that omits
+  them marshals cleanly and lists a station nobody can reach.
+
+- **`station_me` accepted a self-description and threw it away.** It is applied at the bottom of the
+  handler, and BOTH `session_key` branches — station created, and station already claimed — return
+  before that line. `session_key` is the recommended way to call the tool and now the only reliable
+  one, so the fields were dead for exactly the population using it correctly. Applied on all three
+  paths through one helper.
+
+- **The boot that migrates said nothing.** ken-prod-ops measured the boot that took the live
+  database from ken 24 → 26 and comm 19 → 21: thirteen lines, and
+  `grep -icE "migrat|foreign|fk|integrity|schema"` returned **zero**. Two migrations ran, the
+  foreign-key check ran and passed, and none of it was visible — so an operator could not tell "the
+  integrity check passed" from "there is no integrity check". Both boot paths now report the
+  version, what moved, and that the check ran; the same grep returns 4.
+
+- **An abandoned `/authorize` left a permanent active grant.** The grant row is created at consent,
+  not at token exchange, so a retry or a closed consent screen left one with no tokens and
+  `revoked_at IS NULL` forever. ken-prod-ops measured two grants for one client 2.3 seconds apart,
+  one live and one empty, both listed as connected applications. A successful exchange now revokes
+  grants that have issued no token AND whose authorization code is gone — never one still mid-flow,
+  which is the arm that matters: a sweep taking that grant would break the consent a human is
+  completing.
+
+### Changed
+
+- **`TestBinaryRefusesAPartialCredential` did not test a partial credential** — only an unknown
+  bearer and an absent one, both refused by the ordinary path since 1.x. The 4.0.0 claim that a
+  credential holding *some* capabilities is refused at the transport was documented in UPGRADING.md
+  and the release notes with nothing exercising it. Now minted and presented for real: a read-only
+  token is refused.
 
 ## [4.0.1] — 2026-08-31
 

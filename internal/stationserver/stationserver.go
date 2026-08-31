@@ -417,13 +417,11 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			out.YouAre = me.Name
 		}
 		for _, st := range list {
-			e := dirEntry{
-				Name:               st.Name,
-				Purpose:            st.Purpose,
-				SelfDescribedAbout: st.SelfDescribedAbout,
-				SelfDescribedTags:  st.SelfDescribedTags,
-				Linked:             st.Linked,
-			}
+			e := newDirEntry(st.StationID, st.Name)
+			e.Purpose = st.Purpose
+			e.SelfDescribedAbout = st.SelfDescribedAbout
+			e.SelfDescribedTags = st.SelfDescribedTags
+			e.Linked = st.Linked
 			if sf, ok := staffing[st.StationID]; ok {
 				staffed := sf.Endpoints > 0
 				e.Staffed = &staffed
@@ -917,6 +915,9 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 				return meOut{}, err
 			}
 			station.Bind(req, st.StationID)
+			if err := applySelfDescription(ctx, d, st.StationID, in); err != nil {
+				return meOut{}, err
+			}
 			if created {
 				out := claimedStationOut(st)
 				out.SessionKeyEcho = key
@@ -933,18 +934,37 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 	// NO STATION ON THE PRINCIPAL AND NOTHING BOUND: this session has never claimed one, so it
 	// gets one. There used to be a header consulted here too; it is gone.
 	if p := principalFrom(ctx); p != nil && p.StationID == "" && station.Bound(req) == "" {
-		return claimStation(ctx, d, p, in.StationLabel)
+		return claimStation(ctx, d, p, in)
 	}
 	p, err := requireStation(ctx, req, in.SessionKey)
 	if err != nil {
 		return meOut{}, err
 	}
-	if in.SelfDescribedAbout != "" || in.SelfDescribedTags != nil {
-		if err := d.Store.SetStationSelfDescription(ctx, p.StationID, in.SelfDescribedAbout, in.SelfDescribedTags); err != nil {
-			return meOut{}, err
-		}
+	if err := applySelfDescription(ctx, d, p.StationID, in); err != nil {
+		return meOut{}, err
 	}
 	return buildBriefing(ctx, d, p)
+}
+
+// applySelfDescription records what a station says about itself, on EVERY path that accepts it.
+//
+// *** IT WAS APPLIED ON ONE PATH OUT OF THREE, AND THAT ONE WAS THE PATH NOBODY TAKES. ***
+//
+// station_me writes the self-description at the bottom of the handler, after requireStation. Both
+// session_key branches — station created, and station already claimed — return before reaching it,
+// so a call carrying a key accepted self_described_about and self_described_tags and dropped them
+// without a word. session_key is the RECOMMENDED way to call station_me and the only reliable one,
+// which means the fields were dead for exactly the population using the tool correctly.
+//
+// Measured by calling it: a station created with self_described_about set echoed
+// self_described_about:"" in the same result, and a second call with the same key echoed "" again.
+//
+// A no-op when nothing was sent, so a plain station_me does not clear a description set earlier.
+func applySelfDescription(ctx context.Context, d Deps, stationID string, in meIn) error {
+	if in.SelfDescribedAbout == "" && in.SelfDescribedTags == nil {
+		return nil
+	}
+	return d.Store.SetStationSelfDescription(ctx, stationID, in.SelfDescribedAbout, in.SelfDescribedTags)
 }
 
 func buildBriefing(ctx context.Context, d Deps, p *principal) (meOut, error) {
@@ -1164,8 +1184,8 @@ func claimedStationOut(st *store.Station) meOut {
 // address, or the first release ships a global namespace one session can squat." So a collision is
 // resolved by decorating the NAME and never by refusing, and the human renames it in the console
 // whenever they like without invalidating a single config.
-func claimStation(ctx context.Context, d Deps, p *principal, hint string) (meOut, error) {
-	name := strings.TrimSpace(hint)
+func claimStation(ctx context.Context, d Deps, p *principal, in meIn) (meOut, error) {
+	name := strings.TrimSpace(in.StationLabel)
 	if name == "" {
 		// A session that offered no folder name still gets a station — withholding one over a
 		// missing hint would put the deadlock back for the exact case it was built for.
@@ -1180,6 +1200,9 @@ func claimStation(ctx context.Context, d Deps, p *principal, hint string) (meOut
 	}
 	log.Printf("STATION: minted station %s (%q, auto-named) for token %s — no approval required (IDENTITY.md §5)",
 		st.StationID, st.Name, p.TokenID)
+	if err := applySelfDescription(ctx, d, st.StationID, in); err != nil {
+		return meOut{}, err
+	}
 	return meOut{
 		StationID:   st.StationID,
 		Name:        st.Name,

@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +50,21 @@ import (
 // explicit rather than incidental), and `foreign_key_check` runs at the end.
 // Disabling enforcement while rewriting is only safe if something afterwards proves
 // the result is consistent; without that this trades a loud failure for a quiet one.
-func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
+// Run applies pending migrations to one database and SAYS SO.
+//
+// *** IT USED TO DO ALL OF THIS SILENTLY. ***
+//
+// ken-prod-ops measured the boot that took the live database from ken 24 -> 26 and comm 19 -> 21:
+// thirteen log lines, and `grep -icE "migrat|foreign|fk|integrity|schema"` returned ZERO. Two
+// migrations ran, the foreign-key check ran and passed, and none of it was visible. They could
+// only establish that the databases were sound by opening them and checking by hand.
+//
+// That is this project's own defect class aimed at its riskiest operation: a check whose success
+// is INDISTINGUISHABLE FROM ITS ABSENCE. An operator reading that log cannot tell "the integrity
+// check passed" from "no integrity check exists", and the second is what they will assume the day
+// it matters. The label names WHICH database, because two of them migrate on one boot and a line
+// that does not say which is barely better than no line.
+func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob, label string) error {
 	files, err := fs.Glob(fsys, glob)
 	if err != nil {
 		return err
@@ -101,6 +116,8 @@ func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
 		}
 	}
 	if len(pending) == 0 {
+		log.Printf("schema: %s at version %d, up to date — %d migration(s) already applied",
+			label, highestApplied, len(applied))
 		// *** THE INTEGRITY CHECK RUNS ON EVERY BOOT, NOT ONLY WHEN SOMETHING IS APPLIED. ***
 		//
 		// Each migration file carries its own BEGIN/COMMIT, so a file COMMITS before the
@@ -113,7 +130,11 @@ func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
 		// A fault that heals itself by being restarted is the worst shape a fault can take, because
 		// the operator's first instinct is exactly the thing that hides it. One PRAGMA per boot is
 		// a small price for the failure staying visible until somebody fixes it.
-		return checkForeignKeys(ctx, r)
+		if err := checkForeignKeys(ctx, r); err != nil {
+			return err
+		}
+		log.Printf("schema: %s foreign_key_check clean", label)
+		return nil
 	}
 
 	conn, err := w.Conn(ctx)
@@ -124,6 +145,9 @@ func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
 		return fmt.Errorf("disable foreign keys for migration: %w", err)
 	}
+
+	log.Printf("schema: %s MIGRATING from version %d to %d — %d file(s): %s",
+		label, highestApplied, highestEmbedded, len(pending), strings.Join(pending, ", "))
 
 	for _, f := range pending {
 		body, err := fs.ReadFile(fsys, f)
@@ -160,6 +184,8 @@ func Run(ctx context.Context, w, r *sql.DB, fsys fs.FS, glob string) error {
 			"foreign keys were off during the rewrite and the result does not hold together",
 			len(broken), broken[0])
 	}
+	log.Printf("schema: %s now at version %d — %d migration(s) applied, foreign_key_check clean",
+		label, highestEmbedded, len(pending))
 	return nil
 }
 

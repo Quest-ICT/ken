@@ -367,7 +367,7 @@ func (s *Store) lim() Limits { return *s.limits.Load() }
 // foreign-key handling a table rebuild depends on. The comment carrying the
 // measurement that bought it moved with the code.
 func (s *Store) Migrate() error {
-	return dbmigrate.Run(context.Background(), s.W, s.R, migrationFS, "migrations/*.sql")
+	return dbmigrate.Run(context.Background(), s.W, s.R, migrationFS, "migrations/*.sql", "comm.db")
 }
 
 // Owner identifies who a COMM object belongs to. All three fields name rows in

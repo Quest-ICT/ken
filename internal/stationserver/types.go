@@ -12,10 +12,32 @@ package stationserver
 // not survive a harness flattening a structured result into prose — and once flattened,
 // a claim reads as fact (S8).
 
-// dirEntry mirrors comm_directory's row on the /station surface. The claim fields
+// dirEntry is comm_directory's row on the /station surface. It said it MIRRORED that row while
+// omitting the id and the address hint the comm row carries, so the two directories disagreed on
+// the one field that makes a listing actionable. The claim fields
 // keep their claim-bearing names (S8) so a reader that flattens this still sees that
 // self_described_about is what the other station says, not what a human vouched for.
+// addressAStationWith is the one wording, used by the constructor below so a row cannot be built
+// without it. It was a literal in the handler for exactly as long as it took to notice that a
+// hand-built row silently carried an empty hint.
+const addressAStationWith = "how to send here: pass this station_id as to_station"
+
+// newDirEntry builds a directory row with the fields that make it ACTIONABLE already filled.
+//
+// A constructor rather than a struct literal because the two fields this exists to guarantee are
+// the two a caller never misses at compile time: both are strings, so omitting them yields "" and
+// a row that marshals cleanly, lists a station, and cannot be used to reach it.
+func newDirEntry(stationID, name string) dirEntry {
+	return dirEntry{StationID: stationID, Name: name, AddressWith: addressAStationWith}
+}
+
 type dirEntry struct {
+	// StationID IS THE ADDRESS, and its absence made this whole tool unusable for its stated
+	// purpose. comm_send{to_station} takes exactly this value and every other route to it was
+	// removed with the pairing code, so a directory that lists a station without its id lists a
+	// station you cannot reach. It was omitted while st.StationID sat two lines away in the loop,
+	// used for the staffing lookup.
+	StationID          string   `json:"station_id"`
 	Name               string   `json:"name"`
 	Purpose            string   `json:"purpose,omitempty"`
 	SelfDescribedAbout string   `json:"self_described_about,omitempty"`
@@ -24,6 +46,10 @@ type dirEntry struct {
 	// Omitted entirely when COMM cannot answer. See Deps.Staffing.
 	Staffed    *bool  `json:"staffed,omitempty"`
 	LastSeenAt string `json:"last_seen_at,omitempty"`
+	// AddressWith is the literal call shape, carried for the same reason comm's row carries it:
+	// the id alone leaves the caller to guess which parameter it belongs in, and to_station is
+	// not the only one that takes an id.
+	AddressWith string `json:"address_with" jsonschema:"how to send here: pass this station_id as to_station"`
 }
 
 // listIn is what the three listing tools take. They used to take a bare `struct{}`, which is why

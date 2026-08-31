@@ -228,6 +228,82 @@ func TestBinaryRefusesAPartialCredential(t *testing.T) {
 	}
 }
 
+// A CREDENTIAL THAT CANNOT DO EVERYTHING IS REFUSED AT THE TRANSPORT — the case the test above is
+// named for and does not cover.
+//
+// TestBinaryRefusesAPartialCredential checks an UNKNOWN bearer and an ABSENT one. Neither is
+// partial: both are refused by the ordinary "who are you" path that has existed since 1.x. The
+// documented 4.0.0 behaviour is different and stronger — /mcp carries every tool, so a credential
+// holding SOME capabilities is refused rather than admitted with a reduced tool list, on the
+// grounds that admitting it would turn the tool list into a reconnaissance surface.
+//
+// That claim was in UPGRADING.md and in the release notes with nothing exercising it. A named test
+// that covers a neighbouring case reads as coverage from the outside, which is the whole reason
+// the deleted-test audit that found this was worth running.
+func TestBinaryRefusesACredentialThatHoldsOnlySomeCapabilities(t *testing.T) {
+	bin := kenBinary(t)
+	dir := t.TempDir()
+	db := filepath.Join(dir, "data", "ken.db")
+
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "KEN_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "KEN_DB="+db, "HOME="+dir)
+
+	// A knowledge-base-only token: exactly the shape a connector approved before /mcp carried
+	// everything ends up with.
+	mint := exec.Command(bin, "token", "add", "--actor", "kb-only-probe", "--label", "kb-only", "--scopes", "read")
+	mint.Env = env
+	out, err := mint.CombinedOutput()
+	if err != nil {
+		t.Skipf("could not mint a scoped token, so this cannot be exercised here: %v\n%s", err, out)
+	}
+	tok := ""
+	for _, f := range strings.Fields(string(out)) {
+		if strings.HasPrefix(f, "ken_") {
+			tok = strings.TrimRight(f, ".,")
+			break
+		}
+	}
+	if tok == "" {
+		t.Skipf("no ken_ token in the mint output, so there is nothing to present:\n%s", out)
+	}
+
+	addr := freePort(t)
+	srv := exec.Command(bin, "serve")
+	srv.Env = append(env, "KEN_ADDR="+addr, "KEN_METRICS=off")
+	var log strings.Builder
+	srv.Stdout, srv.Stderr = &log, &log
+	if err := srv.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _ = srv.Process.Kill(); _ = srv.Wait() }()
+
+	url := "http://" + addr
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url + "/healthz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	code, _, body := rpc(t, url, tok, "", initBody)
+	if code == http.StatusOK {
+		t.Errorf("a token holding only 'read' was ADMITTED to /mcp (HTTP 200).\n%s\n"+
+			"UPGRADING.md and the 4.0.0 release notes both say a partial credential is refused at "+
+			"the transport, because admitting it would make the tool list a reconnaissance surface. "+
+			"Either the behaviour or the documentation is wrong.", body)
+	}
+}
+
 // THE PER-TOKEN RATE LIMIT IS CHARGED ONCE PER REQUEST.
 //
 // It was charged three times, because main() hands ONE limiter to three dependency sets and /mcp
@@ -391,6 +467,46 @@ func TestEveryStationToolWorksFromTheSessionKeyAlone(t *testing.T) {
 	}
 }
 
+// A SELF-DESCRIPTION SENT WITH A session_key MUST SURVIVE THE CALL THAT ACCEPTED IT.
+//
+// station_me wrote it at the BOTTOM of the handler, and both session_key branches — station
+// created, and station already claimed — return before reaching that line. So the recommended way
+// to call the tool was the one way the fields were silently discarded: a station created with
+// self_described_about set echoed self_described_about:"" in the same result.
+//
+// Over the wire, because the discard was a control-flow path in the handler, and the value has to
+// come back out of a SECOND call to prove it was STORED rather than merely echoed.
+func TestASelfDescriptionSentWithASessionKeyIsKept(t *testing.T) {
+	url := ken(t, "KEN_DEV_TOKEN=smoke-secret")
+	const key = "smoke-selfdesc-key"
+	const about = "what this station is responsible for"
+
+	code, sid, body := rpc(t, url, "smoke-secret", "", initBody)
+	if code != http.StatusOK {
+		t.Fatalf("initialize: %d %s", code, body)
+	}
+	me := func(args string) string {
+		t.Helper()
+		c, _, out := rpc(t, url, "smoke-secret", sid, fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"station_me","arguments":%s}}`, args))
+		if c != http.StatusOK {
+			t.Fatalf("station_me: %d %s", c, out)
+		}
+		return out
+	}
+
+	// The station is CREATED by this call, which is the path that dropped the value.
+	first := me(fmt.Sprintf(`{"session_key":%q,"self_described_about":%q}`, key, about))
+
+	// Read it back on a separate call: an echo proves nothing about what was stored.
+	second := me(fmt.Sprintf(`{"session_key":%q}`, key))
+	if !strings.Contains(second, about) {
+		t.Errorf("self_described_about did not survive the call that accepted it.\ncreate: %s\nread back: %s\n"+
+			"station_me applies the self-description only after requireStation, and both session_key "+
+			"branches return before reaching that line.", first, second)
+	}
+}
+
 func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 	url := ken(t)
 
@@ -437,6 +553,52 @@ func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 // SKIPPED, NOT FAILED, when the previous tag cannot be built — a shallow clone or a missing tag is
 // an environment fact, not a defect, and a test that fails for that reason gets disabled rather than
 // fixed. It logs loudly so a skip cannot be mistaken for a pass.
+// THE BOOT THAT MIGRATES MUST SAY SO, AND SAY THE INTEGRITY CHECK RAN.
+//
+// ken-prod-ops measured the boot that took the live database from ken 24 -> 26 and comm 19 -> 21:
+// thirteen log lines, and `grep -icE "migrat|foreign|fk|integrity|schema"` returned ZERO. Two
+// migrations ran and the foreign-key check ran and passed, invisibly. They could establish the
+// databases were sound only by opening them and checking by hand.
+//
+// A check whose success is indistinguishable from its absence is this project's own defect class,
+// aimed at its riskiest operation. An operator reading that log cannot tell "the integrity check
+// passed" from "there is no integrity check", and on the day it matters they will assume the
+// second.
+//
+// Asserted on BOTH boots, because the two paths print from different branches: the first migrates,
+// the second finds nothing pending and must still report that the check ran.
+func TestTheBootSaysWhatItDidToTheSchema(t *testing.T) {
+	data := t.TempDir()
+	bin := kenBinary(t)
+
+	first := runFor(t, bin, data, 30*time.Second)
+	for _, want := range []string{
+		"schema: ken.db MIGRATING", "schema: comm.db MIGRATING",
+		"foreign_key_check clean",
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("the migrating boot never said %q:\n%s", want, first)
+		}
+	}
+
+	second := runFor(t, bin, data, 30*time.Second)
+	for _, want := range []string{
+		"schema: ken.db at version", "schema: comm.db at version",
+		"foreign_key_check clean",
+	} {
+		if !strings.Contains(second, want) {
+			t.Errorf("a boot with nothing pending never said %q, so a reader cannot tell the "+
+				"integrity check ran from there being none:\n%s", want, second)
+		}
+	}
+
+	// ken-prod-ops' own command, which returned 0 on the boot that migrated two databases.
+	if n := strings.Count(strings.ToLower(first), "schema:"); n < 4 {
+		t.Errorf("only %d schema lines on a boot that migrated two databases; prod's grep for "+
+			"migration evidence is what returned zero and started this", n)
+	}
+}
+
 func TestUpgradeFromPreviousReleaseDoesNotDegradeComm(t *testing.T) {
 	const prev = "v4.0.0"
 	root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()

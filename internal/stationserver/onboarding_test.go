@@ -40,7 +40,7 @@ func TestASessionWithNoStationGetsOneAndWorksImmediately(t *testing.T) {
 		t.Fatal("fixture: this principal already has a station, so it cannot exercise onboarding")
 	}
 
-	out, err := claimStation(ctx, d, p, "ken-public")
+	out, err := claimStation(ctx, d, p, meIn{StationLabel: "ken-public"})
 	if err != nil {
 		t.Fatalf("a session with no station could not get one: %v — the deadlock is still closed", err)
 	}
@@ -95,7 +95,7 @@ func TestASessionWithNoStationGetsOneAndWorksImmediately(t *testing.T) {
 // for: a session that does not know what to call itself is still a session that cannot work.
 func TestAStationIsMintedEvenWithNoFolderName(t *testing.T) {
 	d, p := onboardingHarness(t)
-	out, err := claimStation(context.WithValue(context.Background(), ctxKey{}, p), d, p, "")
+	out, err := claimStation(context.WithValue(context.Background(), ctxKey{}, p), d, p, meIn{})
 	if err != nil {
 		t.Fatalf("no name hint meant no station: %v", err)
 	}
@@ -114,11 +114,11 @@ func TestASecondFolderWithTheSameNameStillGetsAStation(t *testing.T) {
 	d, p := onboardingHarness(t)
 	ctx := context.WithValue(context.Background(), ctxKey{}, p)
 
-	first, err := claimStation(ctx, d, p, "ken-public")
+	first, err := claimStation(ctx, d, p, meIn{StationLabel: "ken-public"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := claimStation(ctx, d, p, "ken-public")
+	second, err := claimStation(ctx, d, p, meIn{StationLabel: "ken-public"})
 	if err != nil {
 		t.Fatalf("a second folder with the same name was refused a station: %v — that is the "+
 			"deadlock again, in miniature", err)

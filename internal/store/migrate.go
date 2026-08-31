@@ -29,7 +29,7 @@ func (s *Store) Migrate() error {
 // one: comm.db learned at migration 0009 that a fresh-install test proves nothing
 // about a migration that rewrites a populated table.
 func (s *Store) migrateFrom(ctx context.Context, fsys fs.FS, glob string) error {
-	return dbmigrate.Run(ctx, s.W, s.R, fsys, glob)
+	return dbmigrate.Run(ctx, s.W, s.R, fsys, glob, "ken.db")
 }
 
 // appliedVersions reads the schema_migration table; a missing table (fresh db)
