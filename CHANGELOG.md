@@ -15,6 +15,23 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+
+- **AI-INTEGRATION.md now carries a drop-in prompt asking a session to register what it is in charge
+  of.** `comm_directory` lists every station, but a NAME tells a peer that `proxmox-servers` exists
+  without telling them it owns the hypervisor and explicitly not anything inside a guest — and that
+  difference decides whether a message reaches the right session.
+
+  The prompt asks for `self_described_about` and `self_described_tags`, and asks for them written
+  for a PEER deciding whether to write, not for a human reading a roster: what you own, what you
+  explicitly do not, who has the other half, and what a peer would otherwise get wrong. The worked
+  examples are real ones from a live estate, and what they have in common is that they spend most of
+  their words on BOUNDARIES.
+
+  It also states the two things a human should know first — the field is a CLAIM and Ken presents it
+  as one, so it is a signpost and never a gate; and it needs 5.0.0, because before that the
+  self-description was accepted and silently discarded on the only path anyone takes.
+
 ### Fixed
 
 - **An empty briefing read as reassurance when a session's station was gone.** `station_me` knows
