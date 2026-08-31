@@ -32,27 +32,13 @@ type channelsIn struct {
 	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 }
 
-type channelView struct {
-	State     string `json:"state"`
-	Open      bool   `json:"open"`
-	CreatedAt string `json:"created_at"`
-	// Pending is how many messages are QUEUED for you here — never delivered, never
-	// clocked. It exists so checking before you send is a look rather than a delivery;
-	// comm_poll is the only alternative and it hands you the messages.
-	//
-	// Queued only. A delivered-but-unacked message has already been shown to you, so
-	// counting it would be telling you to go and read something you have.
-	Pending int `json:"pending" jsonschema:"messages waiting for you on THIS CHANNEL, counted without delivering them. Room and broadcast mail are counted separately — pending_total is the number that covers everything"`
-}
+// channelView is deleted with the array it filled.
 
 type channelsOut struct {
-	// Channels keeps meaning exactly "things addressable by channel_id". Room rows are
-	// NOT folded in under a discriminator, deliberately: every element of this array has
-	// always been spendable as `channel_id`, and three input schemas take one. A room id
-	// in there would be passed straight back to comm_send/comm_ack/comm_file_offer, all
-	// of which reject it — turning a clean structural absence into a plausible wrong
-	// value, which is strictly worse.
-	Channels []channelView `json:"channels"`
+	// THE `channels` ARRAY IS GONE, not emptied. It meant "things addressable by channel_id", and
+	// there is no channel_id; leaving the key present and always empty would tell a session it
+	// holds no channels rather than that the concept is retired, which is the difference between
+	// an answer and a silence. Rooms and pairs are the two things a session can actually address.
 	// Rooms is the fix for comm_channels being blind to room mail. NEVER omitempty and
 	// never nil: `[]` means "you are in no rooms", an ABSENT key means an older build,
 	// and a caller must be able to tell those apart. That distinction is the entire
@@ -108,7 +94,7 @@ type channelRoomView struct {
 	// failure this surface has caused was a station that knew a room existed, had its id,
 	// and could not work out how to send to it — it passed the id as channel_id, got a
 	// bare refusal, and concluded rooms were receive-only.
-	AddressWith string `json:"address_with" jsonschema:"how to send here: pass this room_id as to_room, not as channel_id"`
+	AddressWith string `json:"address_with" jsonschema:"how to send here: pass this room_id as to_room"`
 }
 
 // channelPairView is one station-to-station conversation an approved link authorises.
@@ -138,8 +124,7 @@ type sendIn struct {
 	// to_station is the peer station an approved link joins you to.
 	// No longer `required` individually — the handler enforces the choice, because
 	// "exactly one of" is not something a JSON schema can say.
-	ChannelID string `json:"channel_id,omitempty" jsonschema:"an open channel, from comm_channels. Exactly one of channel_id, to_room or to_station"`
-	ToRoom    string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of, or the literal \"all\" to reach every station you share a room with. Exactly one of channel_id, to_room or to_station"`
+	ToRoom string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of, or the literal \"all\" to reach every station you share a room with. Exactly one of to_room or to_station"`
 	// ToStation is the addressing mode that needs no pairing code and no channel: a
 	// human approved a LINK between the two stations, and that approval is the standing
 	// permission. Takes the station id rather than the name because a name is a human
@@ -147,10 +132,10 @@ type sendIn struct {
 	// comm_channels and comm_directory both hand back the id to use. (comm_directory did
 	// NOT, for the whole of 3.12.0: the sentence was written and the field was not added.
 	// Fixed in 3.12.1 by making the sentence true rather than by narrowing it.)
-	ToStation        string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — no channel, and no permission to obtain: the first message creates the link. Get it from comm_directory, which lists every station. Exactly one of channel_id, to_room or to_station"`
+	ToStation        string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — no permission to obtain: the first message creates the link. Get it from comm_directory, which lists every station. Exactly one of to_room or to_station"`
 	Body             string `json:"body" jsonschema:"required; the message text. Atomic and size-capped — there is no multi-part send"`
 	RequiresResponse bool   `json:"requires_response,omitempty" jsonschema:"optional; marks the message as owing a reply and arms a reply deadline"`
-	ReplyTo          string `json:"reply_to,omitempty" jsonschema:"optional; message_id of the request you are answering. Must be a message addressed to you on this channel"`
+	ReplyTo          string `json:"reply_to,omitempty" jsonschema:"optional; message_id of the request you are answering. Must be a message addressed to you in this conversation"`
 	// MAKE IT DESCRIPTIVE. The key survives the body's destruction — retention blanks
 	// text, the metadata row and its key remain — so it is the only part of a message
 	// guaranteed to outlive the message. ken-prod-ops recovered the subjects of three
@@ -187,7 +172,7 @@ type pollIn struct {
 	SessionKey  string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	WaitSeconds int    `json:"wait_seconds,omitempty" jsonschema:"optional; how long to block waiting for a message. CLAMPED server-side, and the result tells you what you actually got: wait_seconds_granted is the real wait, and wait_clamped_from appears when yours was shortened. Prefer one long wait over frequent short polls — a parked call costs one request however long it waits. Pass -1 to return immediately"`
 	Limit       int    `json:"limit,omitempty" jsonschema:"optional; max messages to return. Default 50, MAXIMUM 100 — a larger value returns 100, not fewer"`
-	Scope       string `json:"scope,omitempty" jsonschema:"optional; return only messages in ONE scope, so a hub can drain a single conversation instead of its whole inbox. Copy it verbatim from the scope field of a polled message, or build it: 'ch:'+channel_id, 'r:'+room_id. Other scopes are HIDDEN from this call, not empty — an empty scoped result does not mean your inbox is empty; comm_channels says what is waiting where and delivers nothing. The result echoes scope_filter: if that field is missing, the server predates this argument and ignored what you passed"`
+	Scope       string `json:"scope,omitempty" jsonschema:"optional; return only messages in ONE scope, so a hub can drain a single conversation instead of its whole inbox. Copy it verbatim from the scope field of a polled message, or build it: 'r:'+room_id, or the pair scope for a direct conversation. Other scopes are HIDDEN from this call, not empty — an empty scoped result does not mean your inbox is empty; comm_channels says what is waiting where and delivers nothing. The result echoes scope_filter: if that field is missing, the server predates this argument and ignored what you passed"`
 }
 
 // fileView is the attachment descriptor on a delivered message.
@@ -202,7 +187,7 @@ type fileView struct {
 
 type messageView struct {
 	MessageID string `json:"message_id"`
-	// Scope is where this message lives and where a reply goes: 'ch:<channel>',
+	// Scope is where this message lives and where a reply goes: 'p:<station>|<station>',
 	// 'r:<room>' or 'b:<sender>'.
 	//
 	// Its absence is what made rooms hard to use. A room message arrived with
@@ -293,7 +278,7 @@ type pollOut struct {
 // noticeView is one thing that happened to a message this caller sent.
 type noticeView struct {
 	MessageID string `json:"message_id"`
-	Scope     string `json:"scope" jsonschema:"where the message was sent: ch:<channel>, r:<room> or b:<sender>"`
+	Scope     string `json:"scope" jsonschema:"where the message was sent: r:<room>, p:<station>|<station> or b:<sender>"`
 	Reason    string `json:"reason" jsonschema:"expired = nobody read it before its lifetime ran out; reply_overdue = you marked it requires_response and the deadline passed unanswered"`
 	At        string `json:"at" jsonschema:"when it became true"`
 	// IdempotencyKey is echoed because it is often the only surviving description:
@@ -310,9 +295,14 @@ type ackIn struct {
 	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
 	// sessions are the population this exists for.
 	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
-	MessageID  string `json:"message_id,omitempty" jsonschema:"the message you finished processing. Either this, or channel_id + ack_up_to_seq"`
-	ChannelID  string `json:"channel_id,omitempty" jsonschema:"with ack_up_to_seq, acks everything from the peer up to that sequence number"`
-	AckUpToSeq int64  `json:"ack_up_to_seq,omitempty" jsonschema:"with channel_id, acks cumulatively"`
+	MessageID  string `json:"message_id,omitempty" jsonschema:"the message you finished processing. Either this, or to_room/to_station + ack_up_to_seq"`
+	// ADDRESSED LIKE A SEND, rather than by overloading one field. This was `channel_id`, and its
+	// description had to end "…and channel_id accepts a ROOM id too" — a parameter whose name was
+	// wrong for half its callers. There is no channel now, and a cumulative ack names the same two
+	// things a send does.
+	ToRoom     string `json:"to_room,omitempty" jsonschema:"with ack_up_to_seq: a room_id you are in, acking everything in that room up to that sequence number"`
+	ToStation  string `json:"to_station,omitempty" jsonschema:"with ack_up_to_seq: a peer's station_id, acking your direct conversation with them up to that sequence number"`
+	AckUpToSeq int64  `json:"ack_up_to_seq,omitempty" jsonschema:"with to_room or to_station, acks cumulatively up to and including this seq"`
 }
 
 type ackOut struct {
@@ -345,9 +335,8 @@ type fileOfferIn struct {
 	// and jsonschema cannot say that here. The handler enforces it and names the three by
 	// listing them, so a caller that passes none or two learns which to pick rather than being
 	// told a field is missing.
-	ChannelID      string `json:"channel_id,omitempty" jsonschema:"an open channel, from comm_channels. Exactly one of channel_id, to_room or to_station"`
 	ToRoom         string `json:"to_room,omitempty" jsonschema:"a room id — every member receives the offer, and it is ONE attachment against the file budget rather than one per member"`
-	ToStation      string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — no channel, nothing to open or expire. The offer creates the relationship on first contact, exactly as comm_send does. Get the id from comm_directory"`
+	ToStation      string `json:"to_station,omitempty" jsonschema:"any station_id in this Ken — nothing to open or expire. The offer creates the relationship on first contact, exactly as comm_send does. Get the id from comm_directory"`
 	Name           string `json:"name" jsonschema:"required; a bare filename (no directories). The receiver will know the file by this name"`
 	SizeBytes      int64  `json:"size_bytes" jsonschema:"required; exact size of the file"`
 	SHA256         string `json:"sha256" jsonschema:"required; 64-hex sha256 of the file content (run: sha256sum FILE)"`
@@ -474,20 +463,7 @@ type directoryRoom struct {
 	Pending int `json:"pending"`
 }
 
-type openLinkedIn struct {
-	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
-	// argument rather than a header: a claude.ai connector cannot set custom headers, and chat
-	// sessions are the population this exists for.
-	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
-	ToStation  string `json:"to_station" jsonschema:"required; the station to open a channel with, by NAME as your human refers to it (note: comm_send takes an ID, this takes a NAME). No approval is needed — a link is created by the first message — but a link your human SUSPENDED will refuse"`
-	Label      string `json:"label,omitempty" jsonschema:"optional; a human-readable name for the channel, shown in your human's console"`
-}
-
-type openLinkedOut struct {
-	ChannelID string `json:"channel_id"`
-	Open      bool   `json:"open"`
-	Reused    bool   `json:"reused,omitempty"`
-}
+// openLinkedOut and openLinkedIn are DELETED with comm_open_channel.
 
 type bindIn struct {
 	// SessionKey drives a CLAIMED endpoint with no secret at all (migration 0019). Send it as an
