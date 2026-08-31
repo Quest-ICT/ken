@@ -662,9 +662,13 @@ fi
 # ----------------------------------------------------------------------------
 # 5b. Pre-upgrade DB snapshot.
 # ----------------------------------------------------------------------------
-# Before the "current" symlink flips (so $LINK still resolves the OLD binary) and
-# before the new release runs its migrations, snapshot the live DB so there is a
-# clean rollback point. Best-effort: a failure never aborts the upgrade, and the live
+# Before the "current" symlink flips (so $LINK still resolves the OLD binary),
+# snapshot the live DB so there is a clean rollback point.
+#
+# SINCE 5.0.0 KEN DOES NOT MIGRATE, so the new release will not rewrite this database — it will
+# REFUSE to start if the schema version is not the one it requires, and the operator runs the
+# upgrade themselves (docs/UPGRADING-THE-DATABASE.md). That makes this snapshot MORE useful rather
+# than less: it is the rollback point for the upgrade the operator is about to run by hand. Best-effort: a failure never aborts the upgrade, and the live
 # DB is untouched. The chown -R below fixes ownership of the snapshot (and any WAL
 # sidecar files the read left behind). Skipped on a fresh install (no DB yet).
 if [ -e "$DATA/ken.db" ] && [ -x "$LINK/bin/ken" ]; then

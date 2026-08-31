@@ -25,7 +25,7 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l ./cmd ./internal ./migrations)"
+          unformatted="$(gofmt -l ./cmd ./internal)"
           if [ -n "$unformatted" ]; then
             echo "::error::gofmt needed on: $unformatted"
             exit 1
