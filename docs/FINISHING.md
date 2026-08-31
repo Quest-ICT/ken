@@ -64,6 +64,14 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 5.1.0** (2026-08-31) — writes could land on another session's station. The connection
+binding was keyed on the MCP session id, which is per CONNECTION, so two Claude Desktop chats shared
+one binding and whichever called `station_me` last owned it. ken-prod-ops found it by reading the
+rows: notes in another session's notebook, a task and handoff filed under a third party, and a
+`mode=replace` stopped one call short of destroying a live handoff. A connection claimed by a second
+station now abandons its binding permanently and refuses, naming `session_key` as the remedy. Also:
+`station_me` now says when it hands a session a new station on a deployment that already had others.
+
 **Released: 5.0.2** (2026-08-31) — the upgrade procedure said `start` where it must say `restart`.
 `ken-upgrade` starts the service before the operator runs the SQL script, so `start` is a no-op and
 Ken keeps the pre-script database open: unit active, `/healthz` ok, messaging absent, both liveness

@@ -34,6 +34,39 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 5.1.0
+
+**Upgrade promptly if more than one conversation shares one Ken connector.** Claude Desktop holds a
+single MCP connection for the whole application, so every chat in it shares one — which is the
+ordinary case, not an exotic one.
+
+### A keyless station call on a shared connection is now REFUSED rather than misrouted
+
+Until this release, the connection binding was keyed on the MCP session id, which is per
+**connection**. Two conversations sharing one connection shared one binding, and whichever called
+`station_me` most recently owned it — so the other's keyless calls resolved to **that** station and
+wrote there. Measured on a live deployment: notes in another session's notebook, a task and handoff
+filed under a third party, and a `mode=replace` stopped one call short of destroying a live handoff.
+
+*What a session observes:* on a connection that two stations have claimed, a station call **that
+sends no `session_key`** is refused with *"this CONNECTION is shared by more than one conversation…
+Send session_key on THIS call and every other station call."*
+
+*What to do first:* **send `session_key` on every station call, not just `station_me`.** That was
+always the correct usage, it is unaffected by any of this, and it is the complete fix from the
+caller's side — available without upgrading at all.
+
+*What does NOT change:* a connection carrying a single conversation behaves exactly as before, and
+any call carrying `session_key` behaves exactly as before. The refusal only replaces a case that was
+silently producing wrong data.
+
+### `station_me` says when it hands you a new station on a deployment that already has others
+
+A newly-created station now carries a `relay_to_human` sentence saying so. An empty briefing on a
+brand-new station is otherwise indistinguishable from an empty briefing on the right one — "all
+clear" and "you are not where you think you are" rendered identically. The first station on a
+genuinely fresh deployment stays silent.
+
 ## 5.0.0
 
 **Two things are different in kind from any previous release. Read both before upgrading.**

@@ -15,6 +15,13 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+_Nothing yet — everything below is tagged, built and published._
+
+## [5.1.0] — 2026-08-31
+
+**Upgrade promptly if more than one conversation shares a Ken connector — Claude Desktop is the
+ordinary case.** Until this release, their writes could land on each other's stations.
+
 ### Fixed
 
 - **WRITES COULD LAND ON ANOTHER SESSION'S STATION.** A data-integrity defect, found on production
