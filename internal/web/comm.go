@@ -153,18 +153,12 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 			labels[t.TokenID] = t.Label
 		}
 	}
-	var ownerIDs, binderIDs []string
-	stationOf := map[string]string{}
-	seenOwner, seenBinder := map[string]bool{}, map[string]bool{}
+	var ownerIDs []string
+	seenOwner := map[string]bool{}
 	for _, ep := range endpoints {
 		if !seenOwner[ep.Owner.TokenID] {
 			seenOwner[ep.Owner.TokenID] = true
 			ownerIDs = append(ownerIDs, ep.Owner.TokenID)
-		}
-		if ep.BoundByStationKeyID != "" && !seenBinder[ep.BoundByStationKeyID] {
-			seenBinder[ep.BoundByStationKeyID] = true
-			binderIDs = append(binderIDs, ep.BoundByStationKeyID)
-			stationOf[ep.BoundByStationKeyID] = ep.StationID
 		}
 	}
 	owners := make([]credential, 0, len(ownerIDs))

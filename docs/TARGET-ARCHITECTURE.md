@@ -333,7 +333,7 @@ and then discards it.
   shared package or copying it — and this week has been a sustained argument against the second
   option: the rate-limit config had two copies that drifted, with the DEAD one correct, and the
   migration runner had the hardening in the store that needed it least. The right home is probably
-  beside `internal/dbmigrate`, which exists for exactly this reason now.
+  beside `internal/dbschema`, which exists for exactly this reason now.
 - **Disk-full is the failure mode Ken is least able to report from inside.** A full disk stops the
   snapshot, stops the WAL checkpoint and stops the write path, so the surface that would tell you is
   the surface that is failing. That argues for the metric being *cheap and always present* rather

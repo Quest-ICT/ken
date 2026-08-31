@@ -192,7 +192,6 @@ func TestSendToStationOverHTTP(t *testing.T) {
 			Body           string `json:"body"`
 			Scope          string `json:"scope"`
 			ReplyToStation string `json:"reply_to_station"`
-			ChannelID      string `json:"channel_id"`
 		} `json:"messages"`
 	}
 	if err := json.Unmarshal([]byte(textOf(res)), &poll); err != nil {
@@ -209,10 +208,9 @@ func TestSendToStationOverHTTP(t *testing.T) {
 		t.Errorf("reply_to_station = %q, want the sending station — a recipient that cannot see the reply "+
 			"address has to reverse-engineer it from the scope string", got.ReplyToStation)
 	}
-	if got.ChannelID != "" {
-		t.Errorf("channel_id = %q — a pair message belongs to no channel, and a non-empty value "+
-			"here would be passed straight back to a tool that rejects it", got.ChannelID)
-	}
+	// THE channel_id ASSERTION IS GONE WITH THE FIELD. It required a pair message to carry an
+	// empty channel_id, so a value could not be handed back to a tool that would reject it. The
+	// field is no longer on the wire at all, which is the stronger version of the same guarantee.
 
 	// comm_channels LISTS THE PAIR. The listing and the send read the same mirror, so a
 	// peer named here is always one the send would accept.

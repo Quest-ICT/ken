@@ -124,12 +124,10 @@ type Attachment struct {
 
 	AttachmentID string
 	// ScopeID is the address: ch:<id>, r:<id> or p:<a>|<b>. It is the authoritative
-	// field — ChannelID below is a convenience for the one scope kind that has a channel.
 	ScopeID string
 	// ChannelID is EMPTY for a room or pair attachment, which belong to no channel. It was
 	// loaded through an INNER JOIN until 2026-08-24, so a scope-shaped row returned NO ROWS
 	// at all — the lookup would have reported "not found" for an attachment that exists.
-	ChannelID   string
 	Name        string
 	SizeBytes   int64
 	SHA256      string
@@ -209,27 +207,11 @@ FROM attachment WHERE state IN ('offered','ready')`).Scan(&held); err != nil {
 // "path" offers enqueue their message immediately (there is nothing to wait for);
 // "upload" offers return a one-time grant and enqueue only at CompleteUpload.
 
-// recipientFor returns the channel peer's endpoint rowid for a CHANNEL offer and NULL for
-// anything else. A room or pair attachment has no single recipient — that is the whole reason
-// 0017 relaxed the column — and writing an arbitrary one would resurrect the frozen seat rowid
-// this rewrite exists to remove.
-func recipientFor(ctx context.Context, t *sql.Tx, chRow any, ep *Endpoint) any {
-	row, ok := chRow.(int64)
-	if !ok {
-		return nil
-	}
-	var a, b sql.NullInt64
-	if err := t.QueryRowContext(ctx, `SELECT endpoint_a, endpoint_b FROM channel WHERE id=?`, row).Scan(&a, &b); err != nil {
-		return nil
-	}
-	if a.Valid && a.Int64 != ep.ID {
-		return a.Int64
-	}
-	if b.Valid && b.Int64 != ep.ID {
-		return b.Int64
-	}
-	return nil
-}
+// *** recipientFor IS DELETED WITH THE CHANNEL. ***
+//
+// It read the OTHER seat of a channel so a 'path' offer could name the one endpoint it was for.
+// Every offer is addressed to a room or a station now, and the audience comes from the SCOPE,
+// which is the change this file had already made everywhere except here.
 
 // FileAddr is where an offer goes. EXACTLY ONE field is set — the same three-way choice
 // comm_send already offers, arriving late on the file surface because attachments were
@@ -245,7 +227,7 @@ type FileAddr struct {
 // Each arm delegates to the check that already governs sends of that kind rather than
 // inventing a file-specific one: a room offer is legal exactly when a room send is, a pair
 // offer exactly when a pair send is. Two rules for the same relationship is how they drift.
-func (s *Store) resolveOfferScope(ctx context.Context, t *sql.Tx, ep *Endpoint, addr FileAddr) (scope string, chRow any, err error) {
+func (s *Store) resolveOfferScope(ctx context.Context, t *sql.Tx, ep *Endpoint, addr FileAddr) (scope string, err error) {
 	set := 0
 	for _, v := range []string{addr.RoomID, addr.StationID} {
 		if v != "" {
@@ -253,7 +235,7 @@ func (s *Store) resolveOfferScope(ctx context.Context, t *sql.Tx, ep *Endpoint, 
 		}
 	}
 	if set != 1 {
-		return "", nil, CallerSafe(errors.New(
+		return "", CallerSafe(errors.New(
 			"give exactly one of to_room or to_station — a file goes to one place, " +
 				"and which one decides who can fetch it"))
 	}
@@ -262,39 +244,39 @@ func (s *Store) resolveOfferScope(ctx context.Context, t *sql.Tx, ep *Endpoint, 
 	case addr.RoomID != "":
 		// Membership is the authorisation, exactly as it is for a room send.
 		if !s.callerIsInRoom(ctx, ep, addr.RoomID) {
-			return "", nil, ErrRoomEmpty
+			return "", ErrRoomEmpty
 		}
-		return roomScope(addr.RoomID), nil, nil
+		return roomScope(addr.RoomID), nil
 
 	case addr.StationID != "":
 		senderParty, err := endpointParty(ctx, t, ep.ID)
 		if err != nil {
-			return "", nil, err
+			return "", err
 		}
 		from, ok := strings.CutPrefix(senderParty, "s:")
 		if !ok || from == "" {
-			return "", nil, ErrNotAStation
+			return "", ErrNotAStation
 		}
 		if from == addr.StationID {
-			return "", nil, ErrSelfSend
+			return "", ErrSelfSend
 		}
 		linked, err := areLinked(ctx, t, from, addr.StationID)
 		if err != nil {
-			return "", nil, err
+			return "", err
 		}
 		if !linked {
-			return "", nil, ErrNotLinked
+			return "", ErrNotLinked
 		}
 		// NO CHANNEL ROW, which is the entire point of the pair scope: the conversation is
 		// the relationship, so a file joins the conversation the two are already having
 		// rather than opening a second place for it to live.
-		return pairScope(from, addr.StationID), nil, nil
+		return pairScope(from, addr.StationID), nil
 
 	default:
 		// THE CHANNEL ARM IS GONE WITH THE CHANNEL. An address that names neither a room nor a
 		// station names nothing this server can authorise, and saying so plainly beats resolving
 		// an id that can no longer exist.
-		return "", nil, fmt.Errorf("%w: address a file offer with to_room or to_station", ErrNotFound)
+		return "", fmt.Errorf("%w: address a file offer with to_room or to_station", ErrNotFound)
 	}
 }
 
@@ -338,7 +320,7 @@ func (s *Store) OfferFile(ctx context.Context, ep *Endpoint, addr FileAddr, in F
 	err := s.tx(ctx, func(t *sql.Tx) error {
 		// RESOLVED AND AUTHORISED INSIDE THE TRANSACTION, so a link revoked or a member
 		// removed between the check and the insert cannot slip an offer through.
-		scope, chRow, err := s.resolveOfferScope(ctx, t, ep, addr)
+		scope, err := s.resolveOfferScope(ctx, t, ep, addr)
 		if err != nil {
 			return err
 		}
@@ -413,16 +395,15 @@ SELECT COUNT(*) FROM attachment WHERE sender_endpoint=? AND transfer='upload' AN
 		// and nothing ever did — every attachment written between 0010 and 0017 carries
 		// scope_id NULL, which is why 0017 has to re-backfill before it can tighten.
 		//
-		// `channel_id` and `recipient_endpoint` are still written HERE because this is the
-		// channel path and both are true of it: the CASCADE on channel_id is how revoking a
-		// channel takes its files with it, and a 'path' transfer's rendezvous really is
-		// between two specific endpoints on one filesystem. A room or pair offer leaves both
-		// NULL and carries only the scope.
+		// NEITHER channel_id NOR recipient_endpoint IS WRITTEN ANY MORE. The first is gone with
+		// the channel. The second froze the audience into the row at offer time, which is exactly
+		// what the scope replaced: a station's mailbox can be staffed by a different session by the
+		// time the file is fetched, and a frozen endpoint id made that a permanent refusal.
 		res, err := t.ExecContext(ctx, `
-INSERT INTO attachment(attachment_id, scope_id, channel_id, sender_endpoint, recipient_endpoint,
+INSERT INTO attachment(attachment_id, scope_id, sender_endpoint,
                        name, size_bytes, sha256, transfer, note, nonce_sha256, idempotency_key, expires_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
-			attachmentID, scope, chRow, ep.ID, recipientFor(ctx, t, chRow, ep),
+VALUES(?,?,?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
+			attachmentID, scope, ep.ID,
 			in.Name, in.SizeBytes, sha, in.Transfer, nullStr(in.Note), nullStr(nonce), nullStr(in.IdempotencyKey),
 			nowExpr(ttl))
 		if err != nil {
@@ -436,7 +417,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
 		switch in.Transfer {
 		case "path":
 			// Nothing to upload: enqueue now and mark ready.
-			msg, err := s.enqueueOfferMessage(ctx, t, ep, scope, chRow, ep.ID, in.Note, ttl)
+			msg, err := s.enqueueOfferMessage(ctx, t, ep, scope, ep.ID, in.Note, ttl)
 			if err != nil {
 				return err
 			}
@@ -583,7 +564,7 @@ func (s *Store) GrantDownload(ctx context.Context, ep *Endpoint, attachmentID st
 // The recipients come from the scope AS OF NOW rather than from a row frozen at offer time,
 // so a room that gained a member between the offer and the upload delivers to them too — which
 // is what "one offer serves N recipients" has to mean if the audience can change at all.
-func (s *Store) enqueueOfferMessage(ctx context.Context, t *sql.Tx, ep *Endpoint, scope string, chRow any, sender int64, body string, ttlSec int) (*Message, error) {
+func (s *Store) enqueueOfferMessage(ctx context.Context, t *sql.Tx, ep *Endpoint, scope string, sender int64, body string, ttlSec int) (*Message, error) {
 	members, err := membersOfScope(ctx, t, scope)
 	if err != nil {
 		return nil, err
@@ -606,7 +587,6 @@ func (s *Store) enqueueOfferMessage(ctx context.Context, t *sql.Tx, ep *Endpoint
 	}
 	return s.insertMessageWithDeliveries(ctx, t, insertSpec{
 		Scope:       scope,
-		ChannelRow:  chRow,
 		Sender:      sender,
 		SenderParty: senderParty,
 		Recipients:  recipients,
@@ -694,13 +674,13 @@ func (s *Store) CompleteUpload(ctx context.Context, attachmentRow int64, storedB
 		// channel_id and recipient_endpoint are NULLABLE since 0017 — a room or pair
 		// attachment carries neither — so they are scanned as nullable rather than into
 		// plain int64s, which would fail the scan on exactly the rows 0017 exists to allow.
-		var chRow, recipientNull sql.NullInt64
+		var recipientNull sql.NullInt64
 		var sender int64
 		var note sql.NullString
 		var state, scope string
 		err := t.QueryRowContext(ctx, `
-SELECT channel_id, sender_endpoint, recipient_endpoint, state, note, scope_id FROM attachment WHERE id=?`,
-			attachmentRow).Scan(&chRow, &sender, &recipientNull, &state, &note, &scope)
+SELECT sender_endpoint, recipient_endpoint, state, note, scope_id FROM attachment WHERE id=?`,
+			attachmentRow).Scan(&sender, &recipientNull, &state, &note, &scope)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -711,13 +691,7 @@ SELECT channel_id, sender_endpoint, recipient_endpoint, state, note, scope_id FR
 		if state != "offered" {
 			return CallerSafe(errors.New("attachment is not awaiting an upload"))
 		}
-		// nil rather than chRow when the attachment belongs to no channel — insertSpec's
-		// ChannelRow is `any` precisely so a room message can carry no channel at all.
-		var chAny any
-		if chRow.Valid {
-			chAny = chRow.Int64
-		}
-		m, err := s.enqueueOfferMessage(ctx, t, nil, scope, chAny, sender, note.String, s.lim().FileTTLSeconds)
+		m, err := s.enqueueOfferMessage(ctx, t, nil, scope, sender, note.String, s.lim().FileTTLSeconds)
 		if err != nil {
 			return err
 		}
@@ -777,16 +751,15 @@ func attachmentByID(ctx context.Context, t *sql.Tx, attachmentID string) (*Attac
 	// returned zero rows for exactly the attachments 0017 exists to allow — a lookup that
 	// answers "not found" for a row that is sitting in the table.
 	var recipient sql.NullInt64
-	var chPublic sql.NullString
 	err := t.QueryRowContext(ctx, `
-SELECT a.id, a.recipient_endpoint, a.sender_endpoint, a.attachment_id, a.scope_id, c.channel_id, a.name, a.size_bytes, a.sha256,
+SELECT a.id, a.recipient_endpoint, a.sender_endpoint, a.attachment_id, a.scope_id, a.name, a.size_bytes, a.sha256,
        a.transfer, a.nonce_sha256, a.state, a.expires_at,
        (SELECT m.message_id FROM message m WHERE m.id = a.message_id)
-FROM attachment a LEFT JOIN channel c ON c.id = a.channel_id
+FROM attachment a
 WHERE a.attachment_id=?`, attachmentID).
-		Scan(&a.rowID, &recipient, &a.senderRow, &a.AttachmentID, &a.ScopeID, &chPublic, &a.Name, &a.SizeBytes, &a.SHA256,
+		Scan(&a.rowID, &recipient, &a.senderRow, &a.AttachmentID, &a.ScopeID, &a.Name, &a.SizeBytes, &a.SHA256,
 			&a.Transfer, &nonce, &a.State, &a.ExpiresAt, &msgID)
-	a.recipientRow, a.ChannelID = recipient.Int64, chPublic.String
+	a.recipientRow = recipient.Int64
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

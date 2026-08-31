@@ -22,12 +22,6 @@ type Endpoint struct {
 	HostHint   string
 	CreatedAt  string
 	LastSeenAt string
-	// RotatedAt and RotateCount are DISPLAY state for the console ("did I already
-	// rotate this one?"). comm.db is expendable and not backed up, so the
-	// authoritative audit record is the server log, not these columns.
-	RotatedAt   string
-	RotateCount int
-
 	// StationID is the durable station this endpoint reads for, or "" when unbound
 	// (docs/STATIONS.md S4). An opaque id into ken.db with no foreign key: S7's rule
 	// is that cross-database pointers run expendable -> durable, and under restore
@@ -40,11 +34,10 @@ type Endpoint struct {
 	// one AUTHORISES — presenting it drives this endpoint's mail — so it is as sensitive as the
 	// secret it replaces and must never be logged or written down.
 	SessionKey string
-	// BoundByStationKeyID is the station key that authorised the binding. Revoking
-	// that key severs every endpoint it bound (S6) — without this column, revocation
-	// would stop future bindings and leave the leaked capability running.
-	BoundByStationKeyID string
-	BoundAt             string
+	// BoundByStationKeyID IS DELETED with station keys. It named the key that authorised a
+	// binding so revoking that key could sever every endpoint it bound; there are no station keys
+	// and nothing binds, so the column recorded which retired credential had done a retired thing.
+	BoundAt string
 }
 
 // endpointBySessionKey resolves a claimed endpoint. Revoked endpoints are refused here rather than
@@ -68,21 +61,20 @@ func (s *Store) endpointBySessionKey(ctx context.Context, sessionKey string) (*E
 func (s *Store) endpointByIDNoSecret(ctx context.Context, endpointID string) (*Endpoint, error) {
 	var (
 		ep      Endpoint
-		hash    string
 		revoked sql.NullString
 		label   sql.NullString
 		hint    sql.NullString
 		skey    sql.NullString
 	)
 	err := s.R.QueryRowContext(ctx, `
-SELECT id, endpoint_id, secret_sha256, token_id, actor_id, label, host_hint,
+SELECT id, endpoint_id, token_id, actor_id, label, host_hint,
        created_at, last_seen_at, revoked_at,
-       COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,''),
+       COALESCE(station_id,''), COALESCE(bound_at,''),
        session_key
 FROM endpoint WHERE endpoint_id=?`, endpointID).
-		Scan(&ep.ID, &ep.EndpointID, &hash, &ep.Owner.TokenID, &ep.Owner.ActorID, &label, &hint,
+		Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &label, &hint,
 			&ep.CreatedAt, &ep.LastSeenAt, &revoked,
-			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt, &skey)
+			&ep.StationID, &ep.BoundAt, &skey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -201,8 +193,8 @@ FROM endpoint WHERE `+where+` ORDER BY COALESCE(label,''), endpoint_id`, arg)
 func (s *Store) ListEndpoints(ctx context.Context) ([]Endpoint, error) {
 	rows, err := s.R.QueryContext(ctx, `
 SELECT id, endpoint_id, token_id, actor_id, COALESCE(label,''), COALESCE(host_hint,''),
-       created_at, last_seen_at, COALESCE(secret_rotated_at,''), COALESCE(rotate_count,0),
-       COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,''),
+       created_at, last_seen_at,
+       COALESCE(station_id,''), COALESCE(bound_at,''),
        -- SELECTED SO THE CONSOLE CAN SHOW WHICH CONVERSATION DRIVES EACH MAILBOX. Without it every
        -- endpoint looks unclaimed on the page, and an operator recovering an abandoned one cannot
        -- tell it from a live session's — which is the first thing they need to know.
@@ -216,8 +208,7 @@ FROM endpoint WHERE revoked_at IS NULL ORDER BY created_at DESC`)
 	for rows.Next() {
 		var ep Endpoint
 		if err := rows.Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &ep.Label, &ep.HostHint, &ep.CreatedAt, &ep.LastSeenAt,
-			&ep.RotatedAt, &ep.RotateCount,
-			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt, &ep.SessionKey); err != nil {
+			&ep.StationID, &ep.BoundAt, &ep.SessionKey); err != nil {
 			return nil, err
 		}
 		out = append(out, ep)
@@ -234,10 +225,10 @@ func (s *Store) endpointByRowID(ctx context.Context, id int64) (*Endpoint, error
 	)
 	err := s.R.QueryRowContext(ctx, `
 SELECT id, endpoint_id, token_id, actor_id, label, host_hint, created_at, last_seen_at,
-       COALESCE(station_id,''), COALESCE(bound_by_station_key_id,''), COALESCE(bound_at,'')
+       COALESCE(station_id,''), COALESCE(bound_at,'')
 FROM endpoint WHERE id=?`, id).
 		Scan(&ep.ID, &ep.EndpointID, &ep.Owner.TokenID, &ep.Owner.ActorID, &label, &hint, &ep.CreatedAt, &ep.LastSeenAt,
-			&ep.StationID, &ep.BoundByStationKeyID, &ep.BoundAt)
+			&ep.StationID, &ep.BoundAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -325,15 +316,14 @@ func (s *Store) MailboxFor(ctx context.Context, stationID string, owner Owner) (
 	if err != nil {
 		return nil, err
 	}
-	secret, err := randBase62(40)
-	if err != nil {
-		return nil, err
-	}
+	// NO SECRET IS MINTED ANY MORE. secret_sha256 was NOT NULL, so this generated forty random
+	// characters and stored their hash on every mailbox creation purely to satisfy the constraint
+	// — nothing has verified one since 4.0.0 made the station the identity. The column is gone.
 	if _, err := s.W.ExecContext(ctx, `
-INSERT INTO endpoint(endpoint_id, secret_sha256, token_id, actor_id, label, station_id, bound_at)
-VALUES(?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+INSERT INTO endpoint(endpoint_id, token_id, actor_id, label, station_id, bound_at)
+VALUES(?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 ON CONFLICT DO NOTHING`,
-		endpointID, sha256Hex(secret), owner.TokenID, owner.ActorID, stationID, stationID); err != nil {
+		endpointID, owner.TokenID, owner.ActorID, stationID, stationID); err != nil {
 		return nil, err
 	}
 	return s.mailboxByStation(ctx, stationID)

@@ -125,7 +125,7 @@ func (h *Handler) SetMaxPollWait(seconds int) {
 // missing between a completed upload and the receiver's poll.
 func viewOf(m *comm.Message) messageView {
 	mv := messageView{
-		MessageID: m.MessageID, ChannelID: m.ChannelID, Seq: m.Seq,
+		MessageID: m.MessageID, Seq: m.Seq,
 		Scope: m.Scope, FromStationID: m.SenderStationID, AudienceSize: m.AudienceSize,
 		FromEndpointID: m.SenderEndpointID, Body: m.Body,
 		RequiresResponse: m.RequiresResponse, ReplyTo: m.ReplyToMessageID,

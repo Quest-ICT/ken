@@ -1,31 +1,41 @@
--- 0021_init.sql — THE WHOLE SCHEMA, IN ONE STEP.
+-- comm.sql — the WHOLE comm database, created in one step.
 --
--- Ken is installed FRESH. Before this file a new database was built by REPLAYING every
--- migration in order: 21 files that created tables only to drop them again, added columns
--- later migrations removed, and rebuilt the same table several times over. The end state was
--- correct and the journey was pure cost — nobody could read the schema without replaying it
--- in their head, and every install paid for history no deployment has.
+-- KEN DOES NOT MIGRATE DATABASES. It applies this file to an EMPTY one and otherwise reads the
+-- recorded schema version and refuses to start if it is not the number below. Upgrading an
+-- existing database is a separate, deliberate act an operator performs with stock sqlite3 —
+-- see docs/UPGRADING-THE-DATABASE.md and the scripts in upgrade/.
 --
--- This file is that end state, GENERATED from the replay rather than transcribed from it, so
--- it cannot drift from what the chain produced. It is not hand-maintained. There is no
--- pre-4.0.0 database anywhere to upgrade, which is what makes collapsing the chain safe
--- rather than merely tidy.
+-- WHY THAT WAY ROUND. A migration runner is code that rewrites data nobody is watching, on a
+-- schedule set by whoever restarts the service. Ken is installed FRESH, so the runner existed
+-- almost entirely for a case that does not arise — and the one time it did arise, three audit
+-- rounds found the same migration broken three separate times. Moving the rewrite OUT of the
+-- server makes it a thing an operator runs on purpose, reads the output of, and can verify with
+-- the same sqlite3 they already use to check the result.
 --
--- IT KEEPS VERSION 21 DELIBERATELY. dbmigrate tracks applied migrations by the NUMBER in
--- the filename, so a database that already recorded 21 finds nothing pending and is left
--- untouched. Numbering it 0001 would make every existing database try to create tables it
--- already has.
+-- THIS FILE IS GENERATED, from a database built by the previous schema plus the upgrade script,
+-- so it cannot disagree with what that script produces. Do not hand-edit it: change the upgrade
+-- script, regenerate, and let the equivalence test compare the two.
 --
--- FTS5 SHADOW TABLES ARE ABSENT ON PURPOSE. CREATE VIRTUAL TABLE builds and seeds
--- []
--- itself; emitting them here makes the file fail on "table already exists".
+-- SCHEMA VERSION 22.
+
+-- NO `PRAGMA foreign_keys=OFF` HERE, AND THAT ABSENCE IS LOAD-BEARING.
+--
+-- A pragma is PER CONNECTION, not per statement, and this file is executed on the writer the
+-- server keeps for its whole life. A file that turned enforcement off and did not turn it back on
+-- left every ON DELETE CASCADE in the database inert for that process — measured: purging a
+-- message stopped taking its deliveries with it, SQLite reused the freed rowid, and the next
+-- insert collided with a delivery row that should not have existed.
+--
+-- Creating tables needs no such pragma. SQLite does not resolve a foreign key's target at CREATE
+-- time, so the forward references below are fine in any order. The UPGRADE scripts do disable it,
+-- deliberately and briefly, and turn it back on — but they run in their own sqlite3 process where
+-- the blast radius ends with the command.
 
 BEGIN;
 
 CREATE TABLE attachment (
   id                 INTEGER PRIMARY KEY,
   attachment_id      TEXT    NOT NULL UNIQUE,      -- opaque, server-minted; also the on-disk filename
-  channel_id         INTEGER REFERENCES channel(id) ON DELETE CASCADE,
   sender_endpoint    INTEGER NOT NULL REFERENCES endpoint(id) ON DELETE CASCADE,
   recipient_endpoint INTEGER REFERENCES endpoint(id) ON DELETE CASCADE,
 
@@ -56,22 +66,6 @@ CREATE TABLE attachment (
   ready_at           TEXT,
   done_at            TEXT
 , scope_id TEXT NOT NULL);
-
-CREATE TABLE channel (
-  id             INTEGER PRIMARY KEY,
-  channel_id     TEXT    NOT NULL UNIQUE,      -- opaque, server-minted
-  owner_actor_id INTEGER NOT NULL,             -- the human who authorized the pairing
-  endpoint_a     INTEGER NOT NULL REFERENCES endpoint(id) ON DELETE CASCADE,
-  endpoint_b     INTEGER          REFERENCES endpoint(id) ON DELETE CASCADE,  -- NULL until the 2nd join
-  state          TEXT    NOT NULL DEFAULT 'pending'
-                   CHECK (state IN ('pending','open','revoked')),
-  created_at     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  opened_at      TEXT,
-  revoked_at     TEXT, label TEXT, station_a TEXT, station_b TEXT,
-  -- A channel joins two DISTINCT endpoints: a session must not pair with itself.
-  CHECK (endpoint_b IS NULL OR endpoint_b <> endpoint_a)
-);
-
 CREATE TABLE delivery (
   id                  INTEGER PRIMARY KEY,
   message_row         INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
@@ -94,11 +88,9 @@ CREATE TABLE delivery (
   -- been handed the message is a deadline against a weekend.
   reply_deadline_at   TEXT,
   replied_by          INTEGER REFERENCES message(id) ON DELETE SET NULL);
-
 CREATE TABLE endpoint (
   id            INTEGER PRIMARY KEY,
   endpoint_id   TEXT    NOT NULL UNIQUE,       -- opaque, server-minted; the only address
-  secret_sha256 TEXT    NOT NULL,              -- SHA-256 of the one-time endpoint secret
   token_id      TEXT    NOT NULL,              -- ken.db api_token.token_id (no FK: other db)
   actor_id      INTEGER NOT NULL,              -- ken.db actor.id           (no FK: other db)
   label         TEXT,                          -- human-readable decoration; NEVER an address
@@ -106,8 +98,7 @@ CREATE TABLE endpoint (
   created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   last_seen_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   revoked_at    TEXT
-, secret_rotated_at TEXT, rotate_count INTEGER NOT NULL DEFAULT 0, station_id TEXT, bound_by_station_key_id TEXT, bound_at TEXT, session_key TEXT);
-
+, station_id TEXT, bound_at TEXT, session_key TEXT);
 CREATE TABLE "message" (
   id                 INTEGER PRIMARY KEY,
   message_id         TEXT    NOT NULL UNIQUE,
@@ -116,7 +107,6 @@ CREATE TABLE "message" (
   -- Nullable from here on: a room message belongs to no channel. Still written for
   -- every 'ch:' message so slice 7 can retire the column with evidence rather than
   -- hope.
-  channel_id         INTEGER REFERENCES channel(id) ON DELETE CASCADE,
   sender_endpoint    INTEGER NOT NULL REFERENCES endpoint(id) ON DELETE CASCADE,
   sender_party       TEXT    NOT NULL,   -- 's:<station_id>' | 'e:<endpoint rowid>'
 
@@ -141,13 +131,11 @@ CREATE TABLE "message" (
   audience_size      INTEGER NOT NULL DEFAULT 1,
   audience_epoch     INTEGER NOT NULL DEFAULT 0
 );
-
 CREATE TABLE mirror_state (
   id           INTEGER PRIMARY KEY CHECK (id = 1),
   roster_epoch INTEGER NOT NULL DEFAULT 0,
   refreshed_at TEXT    NOT NULL
 );
-
 CREATE TABLE notice_watermark (
   -- 's:<station_id>' or 'e:<endpoint rowid>' — the same party key everything else in
   -- this database is addressed by, so a session that reconnects under a new endpoint
@@ -173,7 +161,6 @@ CREATE TABLE notice_watermark (
   -- requiring a confirmation call no running session could make.
   shown_at  TEXT NOT NULL DEFAULT ''
 ) WITHOUT ROWID;
-
 CREATE TABLE room_member_mirror (
   room_id   TEXT NOT NULL,
   -- ALWAYS 's:<station_id>'. Rooms hold stations, never endpoints — an endpoint is a
@@ -183,21 +170,17 @@ CREATE TABLE room_member_mirror (
   party_key TEXT NOT NULL,
   PRIMARY KEY (room_id, party_key)
 ) WITHOUT ROWID;
-
 CREATE TABLE schema_migration (
   version    INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-
 CREATE TABLE scope_counter (scope_id TEXT PRIMARY KEY, next_seq INTEGER NOT NULL) WITHOUT ROWID;
-
 CREATE TABLE station_link_mirror (
   station_a TEXT NOT NULL,
   station_b TEXT NOT NULL,
   PRIMARY KEY (station_a, station_b),
   CHECK (station_a < station_b)
 ) WITHOUT ROWID;
-
 CREATE TABLE transfer_grant (
   id            INTEGER PRIMARY KEY,
   grant_sha256  TEXT    NOT NULL UNIQUE,
@@ -208,67 +191,36 @@ CREATE TABLE transfer_grant (
   consumed_at   TEXT,
   created_at    TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-
 CREATE UNIQUE INDEX idx_attachment_idem
-  ON attachment(channel_id, sender_endpoint, idempotency_key)
+  ON attachment(scope_id, sender_endpoint, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
-
 CREATE INDEX idx_attachment_msg   ON attachment(message_id) WHERE message_id IS NOT NULL;
-
 CREATE INDEX idx_attachment_scope ON attachment(scope_id, state);
-
 CREATE INDEX idx_attachment_state ON attachment(state, expires_at);
-
-CREATE INDEX idx_channel_a ON channel(endpoint_a, state);
-
-CREATE INDEX idx_channel_b ON channel(endpoint_b, state);
-
-CREATE INDEX idx_channel_station_a ON channel(station_a) WHERE station_a IS NOT NULL;
-
-CREATE INDEX idx_channel_station_b ON channel(station_b) WHERE station_b IS NOT NULL;
-
 CREATE INDEX idx_delivery_expiry ON delivery(state, message_row);
-
 CREATE INDEX idx_delivery_inbox  ON delivery(party_key, state, id);
-
 CREATE UNIQUE INDEX idx_delivery_unique ON delivery(message_row, party_key);
-
-CREATE INDEX idx_endpoint_bound_by ON endpoint(bound_by_station_key_id)
-  WHERE bound_by_station_key_id IS NOT NULL;
-
 CREATE INDEX idx_endpoint_owner ON endpoint(actor_id);
-
 CREATE UNIQUE INDEX idx_endpoint_session_key
     ON endpoint(session_key) WHERE session_key IS NOT NULL;
-
 CREATE UNIQUE INDEX idx_endpoint_station ON endpoint(station_id)
   WHERE station_id IS NOT NULL AND revoked_at IS NULL;
-
 CREATE INDEX idx_endpoint_token ON endpoint(token_id);
-
 CREATE INDEX idx_grant_attachment ON transfer_grant(attachment_id);
-
 CREATE INDEX idx_grant_expires    ON transfer_grant(expires_at);
-
 CREATE INDEX idx_message_expires ON message(expires_at);
-
 CREATE UNIQUE INDEX idx_message_idem
   ON message(scope_id, sender_party, idempotency_key) WHERE idempotency_key IS NOT NULL;
-
 CREATE INDEX idx_message_scope   ON message(scope_id, created_at);
-
 CREATE UNIQUE INDEX idx_message_scope_seq ON message(scope_id, scope_seq);
-
 CREATE INDEX idx_message_sender ON message(sender_party, kind);
-
 CREATE INDEX idx_message_settled ON message(created_at);
-
 CREATE INDEX idx_room_mirror_party ON room_member_mirror(party_key);
 
 -- The rows a freshly created database carries.
 INSERT INTO mirror_state(id, roster_epoch, refreshed_at)
   VALUES (1, 0, strftime('%Y-%m-%dT%H:%M:%fZ','now'));
 
-INSERT INTO schema_migration(version) VALUES (21);
+INSERT INTO schema_migration(version) VALUES (22);
 
 COMMIT;

@@ -106,7 +106,6 @@ func (s *Store) SendToRoom(ctx context.Context, ep *Endpoint, roomID, body strin
 
 		out, err = s.insertMessageWithDeliveries(ctx, t, insertSpec{
 			Scope:       scope,
-			ChannelRow:  nil,
 			Sender:      ep.ID,
 			SenderParty: senderParty,
 			Recipients:  recipients,
@@ -131,7 +130,6 @@ func (s *Store) SendToRoom(ctx context.Context, ep *Endpoint, roomID, body strin
 // rows: where it lives, who wrote it, and who it is for.
 type insertSpec struct {
 	Scope       string
-	ChannelRow  any // the channel rowid for a 'ch:' scope; nil for a room
 	Sender      int64
 	SenderParty string
 	Recipients  []scopeMember
@@ -214,11 +212,11 @@ SELECT m.id FROM message m
 	}
 
 	if _, err := t.ExecContext(ctx, `
-INSERT INTO message(message_id, scope_id, scope_seq, channel_id, sender_endpoint, sender_party,
+INSERT INTO message(message_id, scope_id, scope_seq, sender_endpoint, sender_party,
                     idempotency_key, body, body_sha256, body_bytes, requires_response, reply_to,
                     audience_size, kind, expires_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
-		messageID, in.Scope, seq, in.ChannelRow, in.Sender, in.SenderParty,
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
+		messageID, in.Scope, seq, in.Sender, in.SenderParty,
 		nullStr(in.Opts.IdempotencyKey), in.Body, sha256Hex(in.Body), len(in.Body),
 		boolInt(in.Opts.RequiresResponse), replyTo, len(in.Recipients), in.Kind,
 		nowExpr(in.TTLSeconds)); err != nil {

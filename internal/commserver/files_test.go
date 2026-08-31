@@ -261,7 +261,7 @@ func TestRelayFailsClosed(t *testing.T) {
 // file. Every field the store exposes must survive the copy.
 func TestViewOfCarriesTheFileDescriptor(t *testing.T) {
 	m := &comm.Message{
-		MessageID: "m1", ChannelID: "c1", Seq: 7, SenderEndpointID: "e1",
+		MessageID: "m1", Seq: 7, SenderEndpointID: "e1",
 		Body: "note", RequiresResponse: true, ReplyToMessageID: "m0",
 		DeliveryCount: 2, CreatedAt: "t0", ReplyDeadlineAt: "t1",
 		File: &comm.FileInfo{

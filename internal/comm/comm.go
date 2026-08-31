@@ -34,7 +34,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -44,11 +43,9 @@ import (
 	"github.com/ncruces/go-sqlite3/driver"
 	"github.com/ncruces/go-sqlite3/ext/fts5"
 
-	"github.com/Quest-ICT/ken/internal/dbmigrate"
+	"github.com/Quest-ICT/ken/internal/dbschema"
+	"github.com/Quest-ICT/ken/schema"
 )
-
-//go:embed migrations/*.sql
-var migrationFS embed.FS
 
 // Sentinel errors. Callers map these to their own surface (an MCP tool error, an
 // HTTP status); they are matched with errors.Is, never by string.
@@ -357,17 +354,18 @@ func (s *Store) SetLimits(l Limits) { s.limits.Store(&l) }
 // than touching the field, so a live swap is picked up on the next operation.
 func (s *Store) lim() Limits { return *s.limits.Load() }
 
-// Migrate applies embedded COMM migrations in lexical order, skipping versions
-// already recorded. Idempotent, forward-only, and independent of the knowledge
-// base's migration state — the two databases version separately on purpose, so a
-// COMM schema change never touches ken.db.
+// Migrate is a misnomer kept for its callers: it does not migrate anything.
 //
-// The runner itself is internal/dbmigrate, shared with ken.db. It used to live
-// here and ONLY here, which is why ken.db spent nineteen migrations without the
-// foreign-key handling a table rebuild depends on. The comment carrying the
-// measurement that bought it moved with the code.
+// It creates comm.db from schema/comm.sql when the file is empty, checks the recorded version
+// otherwise, and refuses to continue if the database is not at the version this binary requires.
+//
+// comm.db is the EXPENDABLE database, and that changes the remedy rather than the rule: if this
+// one is ever wrong, deleting it and restarting is supported and costs only in-flight mail. The
+// refusal still fires, because "expendable" is a decision for the operator to make knowingly, not
+// something the server should do to their message history on their behalf.
 func (s *Store) Migrate() error {
-	return dbmigrate.Run(context.Background(), s.W, s.R, migrationFS, "migrations/*.sql", "comm.db")
+	return dbschema.Apply(context.Background(), s.W, s.R,
+		schema.Comm, schema.CommVersion, "comm.db", "docs/UPGRADING-THE-DATABASE.md")
 }
 
 // Owner identifies who a COMM object belongs to. All three fields name rows in

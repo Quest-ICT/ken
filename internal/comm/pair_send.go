@@ -57,7 +57,7 @@ import (
 // same wave that made this state unreachable. An error telling a session to call a tool that no
 // longer exists is worse than no error: it is a confident instruction into a dead end.
 var ErrNotAStation = CallerSafe(errors.New("to_station addresses one station from another, and this mailbox has no station behind it. " +
-	"That should not be possible — tell your human, and address this message with channel_id meanwhile"))
+	"That should not be possible — tell your human"))
 
 // ErrNotLinked now means ONE THING: a human turned this relationship off.
 //
@@ -170,7 +170,6 @@ func (s *Store) SendToStation(ctx context.Context, ep *Endpoint, toStation, body
 
 		out, err = s.insertMessageWithDeliveries(ctx, t, insertSpec{
 			Scope:       pairScope(fromStation, toStation),
-			ChannelRow:  nil,
 			Sender:      ep.ID,
 			SenderParty: senderParty,
 			Recipients:  []scopeMember{{Party: stationParty(toStation)}},

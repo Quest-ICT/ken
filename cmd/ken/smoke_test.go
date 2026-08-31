@@ -536,12 +536,11 @@ func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 // orphaning columns nobody enumerated, so the post-migration check fails — AFTER the migration has
 // committed its version, which means every subsequent boot is degraded and no re-run repairs it.
 //
-// IT NOW GUARDS THE OPPOSITE DIRECTION TOO. HEAD creates both databases from ONE file each
-// (migrations/0026_init.sql, internal/comm/migrations/0021_init.sql); the v4.0.0 release built
-// them by replaying 26 and 21 files. dbmigrate tracks applied migrations by the NUMBER in the
-// filename, so a released database that already recorded 26 and 21 must find nothing pending
-// and be left alone. That is the claim the running deployment depends on, and reasoning about
-// it is not the same as running it.
+// IT NOW COVERS THE WHOLE UPGRADE STORY, because 5.0.0 moved the rewrite out of the server.
+// Ken creates a database from schema/*.sql and otherwise checks the recorded version, so the
+// path from 4.x is: HEAD REFUSES, an operator runs upgrade/comm-4.x-to-5.0.0.sql with stock
+// sqlite3, HEAD starts. Every step of that is asserted here against the real previous binary and
+// the real script — the alternative is a procedure that exists only in a document.
 //
 // Round two found it in the endpoint columns. The fix for that introduced it in the channel columns.
 // Neither was visible to `go test ./...`, because every store test opens a FRESH database: the
@@ -553,7 +552,7 @@ func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 // SKIPPED, NOT FAILED, when the previous tag cannot be built — a shallow clone or a missing tag is
 // an environment fact, not a defect, and a test that fails for that reason gets disabled rather than
 // fixed. It logs loudly so a skip cannot be mistaken for a pass.
-// THE BOOT THAT MIGRATES MUST SAY SO, AND SAY THE INTEGRITY CHECK RAN.
+// THE BOOT MUST SAY WHAT IT DID TO THE SCHEMA, AND SAY THE INTEGRITY CHECK RAN.
 //
 // ken-prod-ops measured the boot that took the live database from ken 24 -> 26 and comm 19 -> 21:
 // thirteen log lines, and `grep -icE "migrat|foreign|fk|integrity|schema"` returned ZERO. Two
@@ -573,7 +572,7 @@ func TestTheBootSaysWhatItDidToTheSchema(t *testing.T) {
 
 	first := runFor(t, bin, data, 30*time.Second)
 	for _, want := range []string{
-		"schema: ken.db MIGRATING", "schema: comm.db MIGRATING",
+		"schema: ken.db is empty — creating it", "schema: comm.db is empty — creating it",
 		"foreign_key_check clean",
 	} {
 		if !strings.Contains(first, want) {
@@ -583,7 +582,7 @@ func TestTheBootSaysWhatItDidToTheSchema(t *testing.T) {
 
 	second := runFor(t, bin, data, 30*time.Second)
 	for _, want := range []string{
-		"schema: ken.db at version", "schema: comm.db at version",
+		"schema: ken.db at version 26, as required", "schema: comm.db at version 22, as required",
 		"foreign_key_check clean",
 	} {
 		if !strings.Contains(second, want) {
@@ -594,40 +593,57 @@ func TestTheBootSaysWhatItDidToTheSchema(t *testing.T) {
 
 	// ken-prod-ops' own command, which returned 0 on the boot that migrated two databases.
 	if n := strings.Count(strings.ToLower(first), "schema:"); n < 4 {
-		t.Errorf("only %d schema lines on a boot that migrated two databases; prod's grep for "+
+		t.Errorf("only %d schema lines on a boot that created two databases; prod's grep for "+
 			"migration evidence is what returned zero and started this", n)
 	}
 }
 
-func TestUpgradeFromPreviousReleaseDoesNotDegradeComm(t *testing.T) {
-	const prev = "v4.0.0"
+// prevRelease is the tag the upgrade tests build. Bump it with every release: pointing at a tag
+// older than the one operators are actually on tests a journey nobody takes, and pointing it at
+// HEAD makes both tests vacuous while staying green.
+const prevRelease = "v4.0.1"
+
+// repoRoot locates the checkout, or SKIPS. A shallow clone is an environment fact, not a defect,
+// and a test that FAILS for it gets disabled rather than fixed.
+func repoRoot(t *testing.T) string {
+	t.Helper()
 	root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
-		t.Skipf("not a git checkout, cannot build %s: %v", prev, err)
+		t.Skipf("not a git checkout, so a previous release cannot be built: %v", err)
 	}
-	repo := strings.TrimSpace(string(root))
-	if err := exec.Command("git", "-C", repo, "rev-parse", "--verify", prev+"^{commit}").Run(); err != nil {
-		t.Skipf("tag %s is not present in this checkout, so the upgrade path cannot be exercised here", prev)
-	}
+	return strings.TrimSpace(string(root))
+}
 
+// buildPreviousRelease builds the named tag in a throwaway worktree and returns the binary.
+func buildPreviousRelease(t *testing.T, repo, tag string) string {
+	t.Helper()
+	if err := exec.Command("git", "-C", repo, "rev-parse", "--verify", tag+"^{commit}").Run(); err != nil {
+		t.Skipf("tag %s is not present in this checkout, so the upgrade path cannot be exercised here", tag)
+	}
 	work := t.TempDir()
 	tree := filepath.Join(work, "prev")
-	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", tree, prev).CombinedOutput(); err != nil {
-		t.Skipf("cannot create a worktree at %s: %v: %s", prev, err, out)
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--detach", tree, tag).CombinedOutput(); err != nil {
+		t.Skipf("cannot create a worktree at %s: %v: %s", tag, err, out)
 	}
 	t.Cleanup(func() {
 		_ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", tree).Run()
 	})
-
-	oldBin := filepath.Join(work, "ken-prev")
-	build := exec.Command(goToolPath(t), "build", "-o", oldBin, "./cmd/ken")
+	bin := filepath.Join(work, "ken-prev")
+	build := exec.Command(goToolPath(t), "build", "-o", bin, "./cmd/ken")
 	build.Dir = tree
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Skipf("cannot build %s: %v: %s", prev, err, out)
+		t.Skipf("cannot build %s: %v: %s", tag, err, out)
 	}
+	return bin
+}
+
+func TestAPreviousReleasesDatabaseIsRefusedThenUpgradedByTheScript(t *testing.T) {
+	prev := prevRelease
+	repo := repoRoot(t)
+	oldBin := buildPreviousRelease(t, repo, prev)
 
 	// The OLD binary creates both databases at its own schema.
-	data := filepath.Join(work, "data")
+	data := t.TempDir()
 	runFor(t, oldBin, data, 20*time.Second)
 
 	// CONTROL: the old binary really did create comm.db. Without it, "the upgrade was clean" would
@@ -652,24 +668,176 @@ func TestUpgradeFromPreviousReleaseDoesNotDegradeComm(t *testing.T) {
 	// the migration reads, and the state is faithful.
 	seedReleaseCommRows(t, commDB)
 
-	// Now boot HEAD on it and read the log.
-	log := runFor(t, kenBinary(t), data, 30*time.Second)
+	// *** HEAD MUST REFUSE THIS DATABASE, AND THEN THE UPGRADE SCRIPT MUST MAKE IT BOOT. ***
+	//
+	// 5.0.0 stopped migrating databases. Ken creates one from schema/*.sql and otherwise checks the
+	// recorded version, so a 4.x comm.db — schema 21 against a binary requiring 22 — has to stop the
+	// boot. Both halves are asserted here because either alone is worthless: a refusal that nothing
+	// can clear is an outage, and an upgrade nobody was told to run is the silent-start this
+	// replaces.
+	refused := bootAndCapture(t, kenBinary(t), data, 30*time.Second)
+	if !strings.Contains(refused, "schema version") {
+		t.Fatalf("HEAD started against a %s database instead of refusing it:\n%s\n\n"+
+			"That is the failure the version check exists to prevent: a binary opening a database "+
+			"whose shape it does not know, writing columns that are not there.", prev, refused)
+	}
+	// The refusal has to name the way out. An operator who cannot act on it will delete something.
+	if !strings.Contains(refused, "UPGRADING-THE-DATABASE.md") {
+		t.Errorf("the refusal does not name the upgrade procedure:\n%s", refused)
+	}
 
-	// PROVE THE LOG ARRIVED BEFORE TRUSTING WHAT IT DOES NOT SAY. Every check below is negative,
-	// so an empty or truncated log satisfies all of them. Anchor on a line HEAD always prints at
-	// boot: if this fails, the negative checks below never had anything to read and their silence
-	// means nothing.
+	// APPLY THE SCRIPT THE WAY AN OPERATOR DOES: the file that ships in upgrade/, run against the
+	// database from outside the process. If this stops working, so does the only supported path
+	// from 4.x — and it would fail here rather than on somebody's deployment.
+	applySQLFile(t, commDB, filepath.Join(repo, "upgrade", "comm-4.x-to-5.0.0.sql"))
+
+	log := bootAndCapture(t, kenBinary(t), data, 30*time.Second)
 	if !strings.Contains(log, "COMM:") {
-		t.Fatalf("no COMM boot lines in the log, so the checks below prove nothing; got %d bytes:\n%s",
-			len(log), log)
+		t.Fatalf("after the upgrade HEAD still did not come up:\n%s", log)
 	}
-	if strings.Contains(log, "DEGRADED") {
-		t.Errorf("upgrading from %s degrades COMM:\n%s\n\n"+
-			"A migration that leaves a dangling reference commits its version first, so this does not "+
-			"heal on restart — every later boot reports the same failure with nothing repaired.", prev, log)
+	// PROVE THE LOG ARRIVED BEFORE TRUSTING WHAT IT DOES NOT SAY. The checks below are negative, so
+	// an empty log satisfies every one of them.
+	if !strings.Contains(log, "comm.db at version 22") {
+		t.Errorf("the boot does not report comm.db at the version the upgrade set:\n%s", log)
 	}
-	if strings.Contains(strings.ToLower(log), "dangling") {
-		t.Errorf("the upgrade left dangling foreign key references:\n%s", log)
+	if strings.Contains(log, "DEGRADED") || strings.Contains(strings.ToLower(log), "dangling") {
+		t.Errorf("the upgraded database does not hold together:\n%s", log)
+	}
+	if !strings.Contains(log, "foreign_key_check clean") {
+		t.Errorf("the boot never says the integrity check ran, so its silence proves nothing:\n%s", log)
+	}
+}
+
+// AN UPGRADED DATABASE AND A FRESH ONE MUST END UP WITH THE SAME SCHEMA.
+//
+// This is the claim the whole no-migration design rests on: schema/comm.sql and
+// upgrade/comm-4.x-to-5.0.0.sql are two routes to one shape, written by hand and by generation
+// respectively, and nothing but this test forces them to agree. If they drift, an upgraded
+// deployment runs on a schema no fresh install has ever been tested against — and it would look
+// completely healthy, because every version check would still pass.
+//
+// ken-prod-ops verifies exactly this from outside, by hashing the DDL of both databases before and
+// after. That they can is not an accident: the files are plain SQLite, readable by stock sqlite3
+// from another process, which is a property to protect rather than one to optimise away.
+func TestAnUpgradedDatabaseMatchesAFreshOne(t *testing.T) {
+	repo := repoRoot(t)
+	oldBin := buildPreviousRelease(t, repo, prevRelease)
+
+	// Route one: the previous release creates it, the script upgrades it.
+	upgraded := t.TempDir()
+	runFor(t, oldBin, upgraded, 20*time.Second)
+	applySQLFile(t, filepath.Join(upgraded, "comm", "comm.db"),
+		filepath.Join(repo, "upgrade", "comm-4.x-to-5.0.0.sql"))
+
+	// Route two: HEAD creates it from the schema file.
+	fresh := t.TempDir()
+	runFor(t, kenBinary(t), fresh, 30*time.Second)
+
+	a := commDDL(t, filepath.Join(upgraded, "comm", "comm.db"))
+	b := commDDL(t, filepath.Join(fresh, "comm", "comm.db"))
+	if a != b {
+		t.Errorf("an upgraded comm.db and a fresh one have DIFFERENT schemas.\n"+
+			"upgraded:\n%s\n\nfresh:\n%s\n\n"+
+			"The upgrade script and schema/comm.sql have drifted. Every version check would still "+
+			"pass, so nothing else in this tree would notice.", a, b)
+	}
+}
+
+// commDDL reads a database's whole schema, ordered, the way an external checker would.
+func commDDL(t *testing.T, path string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite3", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT type, name, COALESCE(sql,'') FROM sqlite_master
+	    WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`)
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+	defer rows.Close()
+	var sb strings.Builder
+	for rows.Next() {
+		var typ, name, ddl string
+		if err := rows.Scan(&typ, &name, &ddl); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&sb, "%s %s\n%s\n\n", typ, name, strings.TrimSpace(ddl))
+	}
+	return sb.String()
+}
+
+// bootAndCapture starts the binary and returns everything it logged, whether it came up or died.
+//
+// runFor FAILS the test when the process never becomes healthy, which is correct for every other
+// caller and exactly wrong here: the first half of the upgrade test WANTS a binary that refuses to
+// start, and needs to read why.
+func bootAndCapture(t *testing.T, bin, dataDir string, budget time.Duration) string {
+	t.Helper()
+	addr := freePort(t)
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "KEN_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env,
+		"KEN_DB="+filepath.Join(dataDir, "ken.db"),
+		"KEN_ADDR="+addr,
+		"KEN_METRICS=off",
+		"HOME="+dataDir,
+	)
+	cmd := exec.Command(bin, "serve")
+	cmd.Env = env
+	var out strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start %s: %v", bin, err)
+	}
+
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		select {
+		case <-done:
+			// It exited on its own — a refusal. Its output is complete because Wait joined the
+			// copiers.
+			return out.String()
+		default:
+		}
+		resp, err := http.Get("http://" + addr + "/healthz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				_ = cmd.Process.Kill()
+				<-done
+				return out.String()
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_ = cmd.Process.Kill()
+	<-done
+	return out.String()
+}
+
+// applySQLFile runs one .sql file against a database the way an operator's sqlite3 would.
+func applySQLFile(t *testing.T, dbPath, sqlPath string) {
+	t.Helper()
+	body, err := os.ReadFile(sqlPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", sqlPath, err)
+	}
+	db, err := sql.Open("sqlite3", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("open %s: %v", dbPath, err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(string(body)); err != nil {
+		t.Fatalf("applying %s: %v", filepath.Base(sqlPath), err)
 	}
 }
 

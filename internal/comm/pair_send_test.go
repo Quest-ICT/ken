@@ -35,16 +35,10 @@ func TestAStationCanWriteToALinkedPeerWithNoChannel(t *testing.T) {
 		t.Errorf("recipients = %d, want 1", m.Recipients)
 	}
 
-	// NOT A CHANNEL. If a channel row appeared, the conversation would once again
-	// depend on both sides being staffed at the moment of creation — the exact
-	// dependency this item removes.
-	var channels int
-	if err := st.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM channel`).Scan(&channels); err != nil {
-		t.Fatal(err)
-	}
-	if channels != 0 {
-		t.Errorf("%d channel rows — a pair send must not create one", channels)
-	}
+	// THE "NOT A CHANNEL" ARM IS GONE BECAUSE THE TABLE IS. It counted channel rows and required
+	// zero, so that a pair send could not quietly reacquire the dependency on both sides being
+	// staffed at the moment of creation. Slice 7 deleted the table, so the assertion is now
+	// structural: there is nothing for a send to create.
 
 	// Addressed to the PARTY with no endpoint attached, so a successor session
 	// staffing st-beta inherits the conversation without anything being re-pointed.

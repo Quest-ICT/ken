@@ -1,24 +1,38 @@
--- 0026_init.sql — THE WHOLE SCHEMA, IN ONE STEP.
+-- ken.sql — the WHOLE durable database, created in one step.
 --
--- Ken is installed FRESH. Before this file a new database was built by REPLAYING every
--- migration in order: 26 files that created tables only to drop them again, added columns
--- later migrations removed, and rebuilt the same table several times over. The end state was
--- correct and the journey was pure cost — nobody could read the schema without replaying it
--- in their head, and every install paid for history no deployment has.
+-- KEN DOES NOT MIGRATE DATABASES. It applies this file to an EMPTY one and otherwise reads the
+-- recorded schema version and refuses to start if it is not the number below. Upgrading an
+-- existing database is a separate, deliberate act an operator performs with stock sqlite3 —
+-- see docs/UPGRADING-THE-DATABASE.md.
 --
--- This file is that end state, GENERATED from the replay rather than transcribed from it, so
--- it cannot drift from what the chain produced. It is not hand-maintained. There is no
--- pre-4.0.0 database anywhere to upgrade, which is what makes collapsing the chain safe
--- rather than merely tidy.
---
--- IT KEEPS VERSION 26 DELIBERATELY. dbmigrate tracks applied migrations by the NUMBER in
--- the filename, so a database that already recorded 26 finds nothing pending and is left
--- untouched. Numbering it 0001 would make every existing database try to create tables it
--- already has.
+-- THIS IS THE DURABLE DATABASE. Unlike comm.db there is no "delete it and start again": the
+-- knowledge base and every station's notebook, tasks, locker and vault live here. Snapshot before
+-- you touch it, and VERIFY the snapshot (`ken backup snapshot`, then `ken backup verify`).
 --
 -- FTS5 SHADOW TABLES ARE ABSENT ON PURPOSE. CREATE VIRTUAL TABLE builds and seeds
--- ['entry_code_fts_config', 'entry_code_fts_content', 'entry_code_fts_data', 'entry_code_fts_docsize', 'entry_code_fts_idx', 'entry_fts_config', 'entry_fts_content', 'entry_fts_data', 'entry_fts_docsize', 'entry_fts_idx']
--- itself; emitting them here makes the file fail on "table already exists".
+-- entry_code_fts_config, entry_code_fts_content, entry_code_fts_data, entry_code_fts_docsize, entry_code_fts_idx, entry_fts_config, entry_fts_content, entry_fts_data, entry_fts_docsize, entry_fts_idx
+-- itself; emitting them here fails on "table already exists" — which is exactly how this file
+-- failed the first time it was generated.
+--
+-- 5.0.0 CHANGES NOTHING HERE, which is why there is no ken upgrade script: a 4.x database is
+-- already at version 26 and Ken starts against it untouched. comm.db is the one that moved.
+--
+-- GENERATED, not hand-written. Regenerate rather than editing.
+--
+-- SCHEMA VERSION 26.
+
+-- NO `PRAGMA foreign_keys=OFF` HERE, AND THAT ABSENCE IS LOAD-BEARING.
+--
+-- A pragma is PER CONNECTION, not per statement, and this file is executed on the writer the
+-- server keeps for its whole life. A file that turned enforcement off and did not turn it back on
+-- left every ON DELETE CASCADE in the database inert for that process — measured: purging a
+-- message stopped taking its deliveries with it, SQLite reused the freed rowid, and the next
+-- insert collided with a delivery row that should not have existed.
+--
+-- Creating tables needs no such pragma. SQLite does not resolve a foreign key's target at CREATE
+-- time, so the forward references below are fine in any order. The UPGRADE scripts do disable it,
+-- deliberately and briefly, and turn it back on — but they run in their own sqlite3 process where
+-- the blast radius ends with the command.
 
 BEGIN;
 

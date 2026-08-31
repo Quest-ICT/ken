@@ -79,7 +79,7 @@ installers are built and tested.
 - [docs/UPGRADING.md](docs/UPGRADING.md) — **read before upgrading**: every change that breaks an existing deployment, what you will observe, and what to do first.
 - [CHANGELOG.md](CHANGELOG.md) — release history.
 - [COMPATIBILITY.md](COMPATIBILITY.md) — what SemVer covers at 1.0 (stable MCP/CLI/env/token/schema surfaces); the `comm_*` and `station_*` tools stay outside it until the COMM v2 redesign lands.
-- [migrations/](migrations/) — the SQLite schema (source of truth). One file, [`0026_init.sql`](migrations/0026_init.sql), builds the whole database in a single step rather than replaying the 26 files that produced it; [internal/comm/migrations/](internal/comm/migrations/) does the same for the expendable message database.
+- [schema/](schema/) — the SQL that CREATES each database, and nothing that changes one. [`ken.sql`](schema/ken.sql) and [`comm.sql`](schema/comm.sql) build a whole database in one step; Ken applies them only when the file is empty and otherwise checks the recorded version and refuses to start if it differs. Upgrading an existing database is a separate, deliberate act with stock `sqlite3` — the scripts are in [upgrade/](upgrade/) and the procedure is [docs/UPGRADING-THE-DATABASE.md](docs/UPGRADING-THE-DATABASE.md).
 
 ## Stack
 

@@ -57,11 +57,10 @@ import (
 const pendingScopeSQL = `
   FROM delivery d
   JOIN message m ON m.id = d.message_row
-  LEFT JOIN channel c ON c.id = m.channel_id
  WHERE %PARTY%
    AND d.state = 'queued'
    AND %NOTEXPIRED%
-   AND (c.id IS NULL OR c.state='open')`
+`
 
 // pendingNotExpiredSQL is THE deliverability-by-clock clause, and it belongs to every
 // counter in this package rather than to the fragment above.

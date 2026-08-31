@@ -16,9 +16,6 @@ import (
 // split is load-bearing rather than an optimization.
 type Message struct {
 	MessageID string
-	// ChannelID is EMPTY for a room or broadcast message — those belong to no channel.
-	// Scope is the address that always exists.
-	ChannelID string
 	// Scope is where this message lives: 'ch:<channel>', 'r:<room>' or 'b:<party>'.
 	//
 	// D3 of the rooms debugging. Without it a recipient could not tell that a message
@@ -182,7 +179,7 @@ func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, e
 // answer the caller it exists for cannot act on.
 var ErrBadScope = CallerSafe(errors.New(
 	"scope must name one namespace: 'r:<room_id>', 'p:<station>|<station>' or 'b:<party>'. " +
-		"Copy it verbatim from the `scope` field of a polled message, or build it as 'ch:'+channel_id or 'r:'+room_id. " +
+		"Copy it verbatim from the `scope` field of a polled message, or build it as 'r:'+room_id, or use the pair scope for a direct conversation. " +
 		"Omit scope to poll every scope at once"))
 
 // PollScoped is Poll narrowed to ONE scope; Poll is PollScoped with no filter, and the
@@ -260,11 +257,9 @@ func (s *Store) PollScoped(ctx context.Context, ep *Endpoint, limit int, scope s
 SELECT m.message_id, d.party_key
 FROM delivery d
 JOIN message m ON m.id = d.message_row
-LEFT JOIN channel c ON c.id = m.channel_id
 WHERE `+party+`
   AND d.state IN ('queued','delivered')
-  AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
-  AND (c.id IS NULL OR c.state='open')`+scopeClause+`
+  AND m.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`+scopeClause+`
   AND (d.claimed_by_endpoint IS NULL
        OR d.claimed_by_endpoint = ?
        OR d.claim_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -514,11 +509,9 @@ func queuedForEndpoint(ctx context.Context, t *sql.Tx, ep *Endpoint) (int, error
 SELECT COUNT(*)
   FROM delivery d
   JOIN message m ON m.id = d.message_row
-  LEFT JOIN channel c ON c.id = m.channel_id
  WHERE `+pred+`
    AND d.state = 'queued'
-   AND %NOTEXPIRED%
-   AND (c.id IS NULL OR c.state='open')`), args...).Scan(&n)
+   AND %NOTEXPIRED%`), args...).Scan(&n)
 	return n, err
 }
 
@@ -866,53 +859,10 @@ WHERE NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message_row = message.id
 		// 4. The unredeemed-pairing-code purge is deleted with the table. Nothing mints a code:
 		//    a relationship is created by the first message and turned off, if ever, at the console.
 
-		// 5. *** THE IDLE-MAILBOX REAP IS DELETED, BECAUSE WHAT IT BOUNDED NO LONGER GROWS. ***
-		//
-		//    Its own justification was the premise: "sessions register once each and never
-		//    unregister, so under NORMAL usage these rows accumulate forever." That was true when
-		//    every session called comm_register and got its own endpoint. comm_register is gone. A
-		//    mailbox belongs to a STATION — one row, created on first use, reused by every session
-		//    that ever staffs it — so the row set is bounded by the number of stations, and a human
-		//    creates those by hand at the console.
-		//
-		//    KEEPING IT WOULD HAVE BEEN WORSE THAN USELESS. The delete was guarded against rows
-		//    referenced by messages, attachments and channel seats, but a PAIR message is addressed
-		//    to the post rather than to a connection — recipient_endpoint is NULL by design since
-		//    the party model — so a station whose only traffic is pair mail matched every guard. Its
-		//    mailbox would have been deleted out from under it: MailboxFor recreates one on the next
-		//    call, with a NEW endpoint_id, so nothing errors and nothing is obviously lost, while
-		//    the directory reports the station as unstaffed and its last-seen history is gone. A
-		//    retention sweep that quietly re-issues an identity is the worst kind of maintenance.
-		//
-		//    Two guards from that query are worth remembering rather than rediscovering. A channel
-		//    seat is not an idle row, however quiet: channel.endpoint_a/endpoint_b cascade, so
-		//    reaping a seat took the CHANNEL and any queued mail on it. And every NOT IN set had to
-		//    exclude NULL explicitly, because `id NOT IN (…, NULL)` is NULL rather than true — one
-		//    NULL silently stopped the sweep deleting anything at all, with no error and no log.
-		//
-		// Revoked channels with nothing left referencing them.
-		//
-		// *** BOTH SUBQUERIES FILTER NULLS, AND THE OMISSION WAS A PERMANENT NO-OP. ***
-		// `NOT IN` over a set containing NULL is never true, so ONE pair or room message —
-		// which belongs to no channel and writes channel_id NULL since migration 0009 —
-		// disabled this purge for the life of the deployment, with no error and no log line.
-		// The rule is stated verbatim twelve lines above in the endpoint purge, which got the
-		// guard when 0009 landed; this arm did not.
-		//
-		// `attachment.channel_id` is NOT NULL today so its arm cannot be poisoned yet — the
-		// guard is added anyway because the scope-shaping migration makes it nullable, and a
-		// guard added with the column is a guard nobody has to remember later.
-		//
-		// The existing sweep tests could not see this: their fixtures leave `message` empty,
-		// and `NOT IN` over an EMPTY set is true. The test for it seeds a pair message first.
-		if _, err := t.ExecContext(ctx, `
-DELETE FROM channel
-WHERE state='revoked' AND revoked_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now',?)
-  AND id NOT IN (SELECT channel_id FROM message WHERE channel_id IS NOT NULL)
-  AND id NOT IN (SELECT channel_id FROM attachment WHERE channel_id IS NOT NULL)`,
-			nowExpr(-s.lim().MetadataTTLSeconds)); err != nil {
-			return err
-		}
+		// THE REVOKED-CHANNEL PURGE IS GONE WITH THE CHANNEL. It deleted channel rows whose
+		// retention had elapsed, guarded so a row still referenced by a message or an attachment
+		// survived — a guard added because the 0009 arm had been poisoned by exactly that shape.
+		// There are no channel rows.
 
 		// 6. The file-exchange half: attachment expiry, done-marking, grant purge.
 		//    Byte deletion happens after commit — filesystem calls stay out of the
@@ -943,7 +893,6 @@ func messageByID(ctx context.Context, q rowQuerier, messageID string) (*Message,
 	var (
 		m        Message
 		body     sql.NullString
-		chID     sql.NullString
 		replyTo  sql.NullString
 		deadline sql.NullString
 		reqResp  int
@@ -967,7 +916,7 @@ func messageByID(ctx context.Context, q rowQuerier, messageID string) (*Message,
 	// honestly answer about many recipients. A caller needing per-recipient truth
 	// reads `delivery` (slice 4's comm_outbox is that surface).
 	err := q.QueryRowContext(ctx, `
-SELECT m.message_id, c.channel_id, m.scope_id, COALESCE(se.station_id,''), m.audience_size,
+SELECT m.message_id, m.scope_id, COALESCE(se.station_id,''), m.audience_size,
        m.scope_seq, se.endpoint_id, m.body, m.requires_response,
        (SELECT r.message_id FROM message r WHERE r.id = m.reply_to),
        COALESCE((SELECT d.state FROM delivery d WHERE d.message_row = m.id
@@ -979,11 +928,10 @@ SELECT m.message_id, c.channel_id, m.scope_id, COALESCE(se.station_id,''), m.aud
        m.kind,
        a.attachment_id, a.name, a.size_bytes, a.sha256, a.transfer, a.nonce_sha256
 FROM message m
-LEFT JOIN channel c  ON c.id  = m.channel_id
 JOIN endpoint se ON se.id = m.sender_endpoint
 LEFT JOIN attachment a ON a.message_id = m.id
 WHERE m.message_id=?`, messageID).
-		Scan(&m.MessageID, &chID, &m.Scope, &m.SenderStationID, &m.AudienceSize,
+		Scan(&m.MessageID, &m.Scope, &m.SenderStationID, &m.AudienceSize,
 			&m.Seq, &m.SenderEndpointID, &body, &reqResp,
 			&replyTo, &m.State, &m.DeliveryCount, &m.BodyBytes, &m.CreatedAt, &m.ExpiresAt, &deadline, &m.Kind,
 			&attID, &attName, &attSize, &attSHA, &attMode, &attNonce)
@@ -994,7 +942,6 @@ WHERE m.message_id=?`, messageID).
 		return nil, err
 	}
 	m.Body = body.String
-	m.ChannelID = chID.String
 	m.RequiresResponse = reqResp == 1
 	m.ReplyToMessageID = replyTo.String
 	m.ReplyDeadlineAt = deadline.String

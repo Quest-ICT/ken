@@ -33,7 +33,6 @@ type channelsIn struct {
 }
 
 type channelView struct {
-	ChannelID string `json:"channel_id"`
 	State     string `json:"state"`
 	Open      bool   `json:"open"`
 	CreatedAt string `json:"created_at"`
@@ -203,9 +202,6 @@ type fileView struct {
 
 type messageView struct {
 	MessageID string `json:"message_id"`
-	// ChannelID is EMPTY for a room or broadcast message. Kept for channel traffic and
-	// for callers that predate rooms; `scope` is the address that always exists.
-	ChannelID string `json:"channel_id,omitempty"`
 	// Scope is where this message lives and where a reply goes: 'ch:<channel>',
 	// 'r:<room>' or 'b:<sender>'.
 	//

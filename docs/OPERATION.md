@@ -889,15 +889,23 @@ SELECT COUNT(*), MAX(version), MAX(applied_at) FROM schema_migration;
 **An unchanged count with unchanged timestamps proves no migration ran** — a much stronger
 statement than the absence of a log line, and available in one query on each database.
 
-**Both databases migrate through the same runner, and it turns foreign keys OFF for the run.**
-`internal/dbmigrate` pins one writer connection, sets `PRAGMA foreign_keys=OFF` outside the
-transaction, applies each pending file, restores enforcement, then runs `PRAGMA foreign_key_check`
-— a migration that leaves a dangling reference FAILS rather than committing a half-rewritten
-schema, with `migration left N dangling foreign key reference(s)`. Two consequences for you: an
-upgrade that crosses NO migration never touches the pragma and never pays for the check (the
-runner returns as soon as it finds nothing pending), and one that DOES cross a migration pays a
-single full foreign-key scan of that database — seconds at knowledge-base sizes. Enforcement is
-off only for the duration of the run, on that one connection, never for serving.
+**NEITHER DATABASE MIGRATES. Ken creates one and checks the other.** Since 5.0.0 there is no
+migration runner: `internal/dbschema` applies `schema/*.sql` to an EMPTY database, and on an
+existing one it reads `MAX(version)` and **refuses to start** unless it matches what the binary
+requires. Upgrading is something you run yourself with `sqlite3` while Ken is stopped — see
+[UPGRADING-THE-DATABASE.md](UPGRADING-THE-DATABASE.md).
+
+Two consequences for you. A boot now says what it did, on both databases and on every start:
+
+```
+schema: ken.db at version 26, as required
+schema: ken.db foreign_key_check clean
+```
+
+**That foreign-key check runs on EVERY boot, not only when something was written.** It is cheap,
+and the failure it catches does not heal: a database with a dangling reference otherwise reports an
+ordinary healthy startup on every subsequent boot, and a fault that appears to fix itself when
+restarted is the worst shape a fault can take.
 
 **A FAILURE is the exception, and the two databases fail differently.** A `ken.db` migration
 failure is fatal — the service does not start. A `comm.db` failure is not: Ken logs
