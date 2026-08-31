@@ -15,6 +15,39 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **WRITES COULD LAND ON ANOTHER SESSION'S STATION.** A data-integrity defect, found on production
+  by ken-prod-ops reading the rows: one session's notes in another session's notebook, a third
+  party's task and handoff filed under the first, and a `mode=replace` stopped one call short of
+  destroying a live handoff.
+
+  The connection binding was keyed on the MCP session id, which is per **connection**. Claude
+  Desktop holds one connection for the whole application, so every conversation in it shared one
+  row in that map:
+
+  ```
+  conversation A: station_me{session_key:A}  -> map[conn] = stationA
+  conversation B: station_me{session_key:B}  -> map[conn] = stationB   (OVERWRITES)
+  conversation A: station_note_write{}       -> Bound(conn) = stationB -> A's note lands on B
+  ```
+
+  It surfaced the hour the estate went from 4 stations to 13, because that was the first time two
+  conversations shared a connection. The map had been accidentally correct for as long as every
+  session was alone on one — which is why it also explains the *intermittent* refusals reported
+  separately, and why a five-call sample looked tool-specific to two different observers.
+
+  **A connection claimed by a second, different station is now proven to carry more than one
+  conversation, and its binding is abandoned permanently** — for every conversation on it, including
+  the one that bound first, which is precisely the one that would otherwise keep writing to somebody
+  else's station believing it was fine. The refusal is distinguishable and names the remedy:
+  **send `session_key`**. It deliberately does not say "call station_me", which the caller has
+  already done successfully and which does not help.
+
+  **A call carrying `session_key` was never affected and still is not** — the key resolves the
+  station directly and never touches the binding. Sending it on every station call is the complete
+  fix from the caller's side, available without upgrading.
+
 ### Added
 
 - **AI-INTEGRATION.md now carries a drop-in prompt asking a session to register what it is in charge

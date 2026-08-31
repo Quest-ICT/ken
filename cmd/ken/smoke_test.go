@@ -569,6 +569,84 @@ func TestANewStationOnAnOldDeploymentSaysSo(t *testing.T) {
 	}
 }
 
+// *** TWO CONVERSATIONS ON ONE CONNECTION MUST NOT WRITE TO EACH OTHER'S STATION. ***
+//
+// This is a production data-integrity defect, reproduced. The connection binding is keyed on the
+// MCP session id, which is per CONNECTION; Claude Desktop holds ONE connection for the whole
+// application, so every conversation in it shares one row in that map:
+//
+//	conversation A: station_me{session_key:A}  -> map[conn] = stationA
+//	conversation B: station_me{session_key:B}  -> map[conn] = stationB   (OVERWRITES)
+//	conversation A: station_note_write{}       -> Bound(conn) = stationB -> A's note lands on B
+//
+// ken-prod-ops read the rows on 2026-08-31: one session's notes in another's notebook, a third
+// party's task and handoff filed under the first, and a mode=replace stopped one call short of
+// destroying a live handoff. It appeared the hour the estate went from 4 stations to 13, because
+// that was the first time two conversations shared a connection — the map had been accidentally
+// correct for as long as every session was alone on one.
+//
+// THE FIX IS A REFUSAL, NOT A REPAIR. Ken cannot tell which conversation a keyless call belongs to
+// once two have claimed the connection, and guessing is what produced the misrouting. So the
+// binding is abandoned for that connection permanently, and the caller is told the one thing that
+// does work.
+//
+// OVER THE WIRE, ON ONE Mcp-Session-Id, because that identifier IS the defect. A unit test would
+// have to fabricate the collision it exists to detect.
+func TestTwoConversationsOnOneConnectionDoNotCrossStations(t *testing.T) {
+	url := ken(t, "KEN_DEV_TOKEN=smoke-secret")
+
+	code, sid, body := rpc(t, url, "smoke-secret", "", initBody)
+	if code != http.StatusOK {
+		t.Fatalf("initialize: %d %s", code, body)
+	}
+	call := func(tool, args string) string {
+		t.Helper()
+		c, _, out := rpc(t, url, "smoke-secret", sid, fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, tool, args))
+		if c != http.StatusOK {
+			t.Fatalf("%s: HTTP %d: %s", tool, c, out)
+		}
+		return out
+	}
+
+	// Two conversations claim the SAME connection, exactly as two Desktop chats do.
+	call("station_me", `{"session_key":"conversation-A","station_label":"A"}`)
+	call("station_me", `{"session_key":"conversation-B","station_label":"B"}`)
+
+	// A KEYLESS CALL MUST NOW BE REFUSED. Before the guard it resolved to whichever station bound
+	// last — conversation B's — and wrote there.
+	keyless := call("station_note_write", `{"key":"handoff","body":"from conversation A","mode":"replace"}`)
+	if !strings.Contains(keyless, "shared by more than one conversation") {
+		t.Errorf("a keyless write on a connection claimed by two stations was not refused:\n%s\n\n"+
+			"That is the production defect: the binding hands back whichever station bound most "+
+			"recently, so one conversation's write lands in another's notebook.", keyless)
+	}
+	// The refusal must name the remedy, and must NOT send them to station_me — they have already
+	// called it, successfully, and calling it again does not help.
+	if !strings.Contains(keyless, "session_key") {
+		t.Errorf("the refusal does not name session_key, which is the only thing that fixes it:\n%s", keyless)
+	}
+
+	// AND THE KEY STILL WORKS, on the same poisoned connection. A guard that broke both paths would
+	// be an outage rather than a fix.
+	withKey := call("station_note_write",
+		`{"key":"handoff","body":"from conversation A","mode":"replace","session_key":"conversation-A"}`)
+	if strings.Contains(withKey, "shared by more than one conversation") ||
+		strings.Contains(withKey, "has not said which station") {
+		t.Errorf("a call carrying session_key was refused on a shared connection:\n%s\n\n"+
+			"The key resolves the station directly and never touches the binding.", withKey)
+	}
+
+	// *** AND IT LANDED ON A's STATION, NOT B's. *** The refusal above is only half the fix; this
+	// is the half that proves nothing crossed. Read back through B's key: B's handoff must be
+	// untouched, which it cannot be if A's write went to B.
+	bNotes := call("station_note_read", `{"key":"handoff","session_key":"conversation-B"}`)
+	if strings.Contains(bNotes, "from conversation A") {
+		t.Errorf("conversation A's note is in conversation B's notebook:\n%s\n\n"+
+			"This is the row-level shape ken-prod-ops measured on production.", bNotes)
+	}
+}
+
 func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 	url := ken(t)
 

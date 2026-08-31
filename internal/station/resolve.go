@@ -45,6 +45,43 @@ var ErrNoStation = errors.New("this connection has not said which station it is,
 	"Call station_me ONCE with session_key — a stable id for THIS conversation — and send the SAME session_key on every call that needs it. " +
 	"Calling station_me repeatedly with NO session_key is not the fix: that mints a new station each time and strands the previous one")
 
+// ErrAmbiguousConnection is returned when a connection has been claimed by more than one station,
+// which proves it carries more than one CONVERSATION and can no longer speak for any of them.
+//
+// *** THIS EXISTS BECAUSE THE BINDING SILENTLY MISROUTED WRITES ON PRODUCTION. ***
+//
+// The map below is keyed on the MCP session id, which is per CONNECTION. Claude Desktop holds ONE
+// connection for the whole application, so every conversation in it shares one key and one row:
+//
+//	conversation A: station_me{session_key:A}  -> map[conn] = stationA
+//	conversation B: station_me{session_key:B}  -> map[conn] = stationB   (OVERWRITES)
+//	conversation A: station_note_write{}       -> Bound(conn) = stationB -> A's note lands on B
+//
+// ken-prod-ops read the rows on 2026-08-31: one session's notes in another session's notebook, a
+// third party's task and handoff filed under the first, and a `mode=replace` stopped one call short
+// of destroying a live handoff. It surfaced the hour the estate went from 4 stations to 13, because
+// that was the first time this deployment had two conversations on one connection at once — the map
+// had been accidentally correct for as long as every session was alone.
+//
+// A DISTINGUISHABLE, CallerSafe REFUSAL RATHER THAN THE GENERIC ONE. The caller can fix this
+// completely and immediately by sending session_key, so the error says exactly that. Rendering it
+// as "you have not said which station you are" would send them to station_me — which they have
+// already called, successfully, and which will not help.
+var ErrAmbiguousConnection = errors.New("this CONNECTION is shared by more than one conversation, " +
+	"so it cannot say which station you are — several have claimed it. Send session_key on THIS call " +
+	"and every other station call: it names your station directly and cannot be confused with another " +
+	"conversation's. Calling station_me again does not fix it; the key is what fixes it")
+
+// binding is what one connection claimed, and whether that claim is still trustworthy.
+type binding struct {
+	stationID string
+	// ambiguous latches TRUE and never clears. Once two stations have claimed one connection, no
+	// later call on it can be attributed to either — including calls from the conversation that
+	// bound first, which is precisely the one that would otherwise keep writing to somebody else's
+	// station believing it was fine.
+	ambiguous bool
+}
+
 // sessionBindings maps an MCP session id to the station that connection is working as.
 //
 // BOUNDED, because a map keyed on connections that never announce their end would otherwise grow
@@ -69,14 +106,22 @@ func Bind(req *mcp.CallToolRequest, stationID string) {
 		// conversation declares its key on every call instead — correct, just chattier.
 		return
 	}
-	if _, loaded := sessionBindings.LoadOrStore(id, stationID); !loaded {
+	prev, loaded := sessionBindings.LoadOrStore(id, binding{stationID: stationID})
+	if !loaded {
 		if sessionBindingCount.Add(1) > maxSessionBindings {
 			sessionBindings.Range(func(k, _ any) bool { sessionBindings.Delete(k); return true })
 			sessionBindingCount.Store(0)
 		}
 		return
 	}
-	sessionBindings.Store(id, stationID)
+	b, _ := prev.(binding)
+	// A SECOND, DIFFERENT STATION ON ONE CONNECTION IS PROOF, not a heuristic: one conversation
+	// staffs one station, so two stations mean two conversations sharing a transport.
+	if b.ambiguous || b.stationID != stationID {
+		sessionBindings.Store(id, binding{stationID: stationID, ambiguous: true})
+		return
+	}
+	sessionBindings.Store(id, binding{stationID: stationID})
 }
 
 // Bound returns the station this connection claimed, or "".
@@ -89,11 +134,29 @@ func Bound(req *mcp.CallToolRequest) string {
 		return ""
 	}
 	if v, ok := sessionBindings.Load(id); ok {
-		if s, ok := v.(string); ok {
-			return s
+		if b, ok := v.(binding); ok && !b.ambiguous {
+			return b.stationID
 		}
 	}
 	return ""
+}
+
+// Ambiguous reports whether this connection has been claimed by more than one station, so a caller
+// can raise the refusal that names the remedy instead of the generic one.
+func Ambiguous(req *mcp.CallToolRequest) bool {
+	if req == nil || req.Session == nil {
+		return false
+	}
+	id := req.Session.ID()
+	if id == "" {
+		return false
+	}
+	v, ok := sessionBindings.Load(id)
+	if !ok {
+		return false
+	}
+	b, _ := v.(binding)
+	return b.ambiguous
 }
 
 // Resolve is the ONLY way any surface learns which station is calling.
@@ -130,6 +193,12 @@ func Resolve(ctx context.Context, st *store.Store, req *mcp.CallToolRequest, _ i
 		}
 		sid = id
 	default:
+		// THE KEY IS ALWAYS PREFERRED, and this branch is only reached when the caller sent none.
+		// A shared connection cannot answer for any conversation on it, so say so rather than
+		// resolving to whichever station claimed it most recently.
+		if Ambiguous(req) {
+			return "", ErrAmbiguousConnection
+		}
 		sid = Bound(req)
 	}
 	if sid == "" {
