@@ -311,6 +311,86 @@ func TestBinaryChargesTheDevPrincipalLikeAnyOtherToken(t *testing.T) {
 	}
 }
 
+// EVERY STATION TOOL MUST WORK FROM session_key ALONE, ON A CONNECTION THAT NEVER BOUND.
+//
+// station_me, comm_poll, comm_send and comm_directory took a session_key. The other nineteen
+// station tools did not DECLARE the field, so `additionalProperties:false` rejected it at the
+// schema, and they fell back to a map keyed on the MCP session id that station_me writes.
+//
+// ken-prod-ops measured that map failing on a client which re-initialises between messages:
+// station_me succeeded, and a station_note_write seconds later in the SAME conversation with the
+// SAME key was refused "this connection has not said which station it is". Notebook, tasks,
+// locker and vault were behind whether a connection happened to persist.
+//
+// IT HAS TO BE TESTED OVER THE WIRE. Half the defect was the SCHEMA refusing the argument, which
+// no unit test on requireStation can see: such a test passes a Go string to a Go function and
+// never meets the JSON schema that was doing the rejecting. So this drives real MCP calls, and
+// deliberately uses a SECOND initialize — a different session id, nothing bound — to be the
+// re-initialising client rather than a simulation of one.
+func TestEveryStationToolWorksFromTheSessionKeyAlone(t *testing.T) {
+	url := ken(t, "KEN_DEV_TOKEN=smoke-secret")
+	const key = "smoke-conversation-key"
+
+	call := func(sid, tool, args string) string {
+		t.Helper()
+		body := fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":%q,"arguments":%s}}`,
+			tool, args)
+		code, _, out := rpc(t, url, "smoke-secret", sid, body)
+		if code != http.StatusOK {
+			t.Fatalf("%s: HTTP %d: %s", tool, code, out)
+		}
+		return out
+	}
+
+	// Connection ONE claims a station with the key.
+	code, sid1, body := rpc(t, url, "smoke-secret", "", initBody)
+	if code != http.StatusOK {
+		t.Fatalf("initialize: %d %s", code, body)
+	}
+	call(sid1, "station_me", fmt.Sprintf(`{"session_key":%q,"station_label":"smoke"}`, key))
+
+	// Connection TWO is a fresh MCP session: it has bound nothing, which is exactly the state a
+	// re-initialising client is in on its second message.
+	code, sid2, body := rpc(t, url, "smoke-secret", "", initBody)
+	if code != http.StatusOK {
+		t.Fatalf("second initialize: %d %s", code, body)
+	}
+	if sid2 == sid1 {
+		t.Fatal("the second initialize reused the first session id, so this proves nothing about " +
+			"an unbound connection")
+	}
+
+	// One tool per shape: a lister that took a bare struct{}, the notebook, the task list, the
+	// locker and the vault. Each is a different input type, and the field had to be added to all.
+	for _, c := range []struct{ tool, args string }{
+		{"station_note_list", `{}`},
+		{"station_note_write", `{"key":"handoff","title":"t","body":"b","mode":"replace"}`},
+		{"station_task_list", `{"state":"open"}`},
+		{"station_locker_list", `{}`},
+		{"station_vault_list", `{}`},
+		{"station_directory", `{}`},
+	} {
+		withKey := c.args[:len(c.args)-1]
+		if len(withKey) > 1 {
+			withKey += ","
+		}
+		withKey += fmt.Sprintf(`"session_key":%q}`, key)
+
+		out := call(sid2, c.tool, withKey)
+		if strings.Contains(out, "has not said which station") {
+			t.Errorf("%s refused a call carrying session_key on an unbound connection:\n%s\n"+
+				"That is the whole defect: the key names the station and the connection is "+
+				"irrelevant.", c.tool, out)
+		}
+		if strings.Contains(out, "additionalProperties") || strings.Contains(out, "unknown field") {
+			t.Errorf("%s REJECTED session_key at the schema:\n%s\n"+
+				"The input type is missing the field, so no caller can send it however correct "+
+				"the resolver is.", c.tool, out)
+		}
+	}
+}
+
 func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 	url := ken(t)
 

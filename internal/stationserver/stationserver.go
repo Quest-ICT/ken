@@ -274,7 +274,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"re-ask in a loop, and TELL YOUR HUMAN IN WORDS that you asked and why, because this result reaches " +
 			"nobody otherwise.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in roomRequestIn) (*mcp.CallToolResult, roomRequestOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, roomRequestOut{}, err
 		}
@@ -396,8 +396,8 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"first contact; it only says whether you have written to that station before. Fields named " +
 			"self_described_* are that station's own CLAIMS about " +
 			"itself, not anything a human verified. 'staffed' is absent when this server's message database is not open — a fault, not a setting; nothing turns COMM off.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ dirIn) (*mcp.CallToolResult, dirOut, error) {
-		p, err := requireStation(ctx, req)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in dirIn) (*mcp.CallToolResult, dirOut, error) {
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, dirOut{}, err
 		}
@@ -465,8 +465,8 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"nothing warns you when that happens, so this is the only place it shows. `history_bytes` grows with the SQUARE " +
 			"of a page kept by append, which is why it reaches the cap long before the page looks large. " +
 			" Working state only: durable lessons belong in the knowledge base.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, noteListOut, error) {
-		p, err := requireStation(ctx, req)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, noteListOut, error) {
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, noteListOut{}, err
 		}
@@ -489,7 +489,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"When station_note_list says a page has lost revisions, `rev` is how you read what survived — " +
 			"the lowest readable revision is (revisions_lost + 1), and anything below it is gone for good.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, noteOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, noteOut{}, err
 		}
@@ -519,7 +519,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"Routing rule: if a session on a DIFFERENT station would want this months from now, it is knowledge (kb_save), not a note." +
 			" Sessions rarely get notice, which is why AS YOU GO is the only schedule that works. One measured station reached 96% of its history cap with 252,759 bytes of history behind an 8,083-byte head, while a LARGER page maintained by replace cost a tenth of that. The routing rule in full: kb_save or kb_propose_enhancement on /mcp for anything a DIFFERENT station would want months from now; the notebook is for what only this post needs, only for now.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in noteWriteIn) (*mcp.CallToolResult, noteOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, noteOut{}, err
 		}
@@ -542,7 +542,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"knowledge: it queues the page for them to review and convert. Use it when a working note has proven " +
 			"durable enough that another station would want it.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in noteReadIn) (*mcp.CallToolResult, promoteOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, promoteOut{}, err
 		}
@@ -563,7 +563,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"one is the same commitment, close the duplicate — normally the row you just added, since the older one " +
 			"carries the age the ordering depends on — with a resolution naming the id you kept.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskAddIn) (*mcp.CallToolResult, taskAddOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, taskAddOut{}, err
 		}
@@ -583,7 +583,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"gone longest without being raised. A pure query — reading it does not count as raising anything." +
 			" This is the FULL list, and the briefing head is only a sample of it: when station_me reports a non-zero 'never_briefed', read it here — what has never been shown to anyone is what is most likely to be stale. When 'oldest_open_task_days' is large, look at created_at and ask whether an item is still worth doing, or done being worth doing — overtaken is not the same as wrong.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskListIn) (*mcp.CallToolResult, taskListOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, taskListOut{}, err
 		}
@@ -599,7 +599,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		Description: "Close finished tasks — several at once. Do this the moment a thing is done, not at the end " +
 			"of the session. A resolution line is required: the record of what happened is the point.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskCloseIn) (*mcp.CallToolResult, countOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, countOut{}, err
 		}
@@ -617,7 +617,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"session what to re-run, while \"still waiting\" makes it start over. The date is a reminder; the REASON is where a recheck is recorded — " +
 			"blocked_on is set once at creation and nothing ever revisits it, so there is nowhere else to put one.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskDeferIn) (*mcp.CallToolResult, okOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, okOut{}, err
 		}
@@ -631,7 +631,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"your human unless they decided it themselves — their commitments are theirs to abandon. If something has " +
 			"been raised repeatedly and nothing moved, say what is blocking it instead of dropping it.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskDropIn) (*mcp.CallToolResult, countOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, countOut{}, err
 		}
@@ -643,7 +643,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		Name:        "station_task_reopen",
 		Description: "Reopen closed or dropped tasks — a decision to drop is sometimes wrong.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in taskReopenIn) (*mcp.CallToolResult, countOut, error) {
-		p, err := requireStation(ctx, req)
+		p, err := requireStation(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, countOut{}, err
 		}
@@ -657,8 +657,8 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		Description: "Files stored against this station — names, sizes, digests. The locker is for what a fresh " +
 			"session on another machine needs to reconstitute you: memory and instruction files, conventions. Never secrets." +
 			" Tool preferences belong here too.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, lockerListOut, error) {
-		p, err := requireLocker(ctx, req)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, lockerListOut, error) {
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, lockerListOut{}, err
 		}
@@ -680,7 +680,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"cannot tell, your human can read it, and it goes into every backup." +
 			" Those belong in the VAULT (station_vault_put), which exists for exactly that. Ken cannot inspect a blob and know it is a secret, so this rule is yours to keep.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in lockerPutIn) (*mcp.CallToolResult, lockerMeta, error) {
-		p, err := requireLocker(ctx, req)
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, lockerMeta{}, err
 		}
@@ -696,7 +696,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		Name:        "station_locker_get",
 		Description: "Read one file back from the locker.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, lockerGetOut, error) {
-		p, err := requireLocker(ctx, req)
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, lockerGetOut{}, err
 		}
@@ -711,7 +711,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		Name:        "station_locker_delete",
 		Description: "Remove a file from the locker.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in lockerGetIn) (*mcp.CallToolResult, okOut, error) {
-		p, err := requireLocker(ctx, req)
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, okOut{}, err
 		}
@@ -728,8 +728,8 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		Name: "station_vault_list",
 		Description: "Secrets held for this station — names, notes, digests and how often each has been read. " +
 			" NEVER values: reading one is a separate, logged call. Entries marked with deleted_at are recoverable.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, vaultListOut, error) {
-		p, err := requireLocker(ctx, req)
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, vaultListOut, error) {
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, vaultListOut{}, err
 		}
@@ -755,7 +755,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"the previous value. To hand a secret to a session on another machine, use station_vault_send rather " +
 			"than pasting it into a message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultPutIn) (*mcp.CallToolResult, vaultPutOut, error) {
-		p, err := requireLocker(ctx, req)
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, vaultPutOut{}, err
 		}
@@ -776,7 +776,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"credentials here rather than in a file. Use the value; do not repeat it into the conversation unless " +
 			"you have to.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, vaultGetOut, error) {
-		p, err := requireLocker(ctx, req)
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, vaultGetOut{}, err
 		}
@@ -799,7 +799,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"sides are logged: your read is recorded as a transfer, and their copy records who wrote it. " +
 			"THEY ARE NOT NOTIFIED — tell them over comm_send, by NAME, never with the value.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultSendIn) (*mcp.CallToolResult, vaultSendOut, error) {
-		p, err := requireLocker(ctx, req)
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, vaultSendOut{}, err
 		}
@@ -824,7 +824,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 			"a delete then a put." +
 			" Nothing here is destroyed, so a mistake costs your human a click rather than the credential.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in vaultGetIn) (*mcp.CallToolResult, okOut, error) {
-		p, err := requireLocker(ctx, req)
+		p, err := requireLocker(ctx, req, in.SessionKey)
 		if err != nil {
 			return nil, okOut{}, err
 		}
@@ -854,8 +854,8 @@ func RegisterTools(s *mcp.Server, d Deps) {
 // can be merged later — "splitting a shipped scope is a MAJOR, merging two is free".
 // This is that merge. The constant stays so an old key's scope list still parses and
 // so nothing has to migrate.
-func requireLocker(ctx context.Context, req *mcp.CallToolRequest) (*principal, error) {
-	return requireStation(ctx, req)
+func requireLocker(ctx context.Context, req *mcp.CallToolRequest, sessionKey string) (*principal, error) {
+	return requireStation(ctx, req, sessionKey)
 }
 
 // hearsayFor computes the write-time hearsay marking (§7) — whether this session had
@@ -935,7 +935,7 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 	if p := principalFrom(ctx); p != nil && p.StationID == "" && station.Bound(req) == "" {
 		return claimStation(ctx, d, p, in.StationLabel)
 	}
-	p, err := requireStation(ctx, req)
+	p, err := requireStation(ctx, req, in.SessionKey)
 	if err != nil {
 		return meOut{}, err
 	}
@@ -1080,6 +1080,7 @@ func addTool[In, Out any](s *mcp.Server, d Deps, t *mcp.Tool,
 	name := t.Name
 	reg := d.Metrics
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
+		ctx = withStore(ctx, d.Store)
 		ctx = withCaller(ctx, d.Store, req)
 		if reg == nil {
 			return h(ctx, req, in)

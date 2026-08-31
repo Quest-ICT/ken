@@ -168,13 +168,13 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 
 	// The case that used to be refused, and is the whole point of the change.
 	bare := &principal{StationID: "s1", Scopes: map[string]bool{ScopeStation: true}}
-	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, bare), nil); err != nil {
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, bare), nil, ""); err != nil {
 		t.Fatalf("a station key without the legacy locker scope cannot reach the locker: %v", err)
 	}
 
 	// An existing key that carries the old scope must not regress.
 	legacy := &principal{StationID: "s1", Scopes: map[string]bool{ScopeStation: true, ScopeStationLocker: true}}
-	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, legacy), nil); err != nil {
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, legacy), nil, ""); err != nil {
 		t.Fatalf("a key carrying the legacy locker scope was refused: %v", err)
 	}
 
@@ -182,7 +182,7 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 	// everything" would pass for the wrong reason — a locker reachable with no station
 	// at all is a different and worse bug than the one being fixed.
 	stationless := &principal{StationID: "", Scopes: map[string]bool{ScopeStation: true}}
-	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, stationless), nil); err == nil {
+	if _, err := requireLocker(context.WithValue(ctx, ctxKey{}, stationless), nil, ""); err == nil {
 		t.Fatal("a station-less key reached the locker — the locker now gates on nothing at all")
 	}
 }
@@ -205,7 +205,7 @@ func TestLockerIsReachableFromAnyStationKey(t *testing.T) {
 func TestASessionWithNoStationIsToldWhatItCanDoAlone(t *testing.T) {
 	ctx := context.Background()
 	c := context.WithValue(ctx, ctxKey{}, &principal{StationID: "", Scopes: map[string]bool{ScopeStation: true}})
-	_, err := requireStation(c, nil)
+	_, err := requireStation(c, nil, "")
 	if err == nil {
 		t.Fatal("a session with no station must not reach station-scoped tools")
 	}

@@ -15,6 +15,25 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+
+- **Most of the station surface was behind a coin flip.** `station_me`, `comm_poll`, `comm_send`
+  and `comm_directory` accepted a `session_key`; the other nineteen station tools did not declare
+  the field, so `additionalProperties:false` REJECTED it and they had nothing to identify the
+  caller but a map keyed on the MCP session id. ken-prod-ops measured that map failing on a client
+  which re-initialises between messages: `station_me` succeeded and a `station_note_write` seconds
+  later, same conversation and same key, was refused *"this connection has not said which station
+  it is"*. Notebook, tasks, locker and vault all depended on whether a connection happened to
+  persist.
+
+  Every station tool now takes `session_key`, and `requireStation` resolves through
+  `station.Resolve` — which already preferred the key and fell back to the binding; the station
+  surface simply never handed it one. Resolve also asks the liveness and archived questions
+  `requireStation` did not, so an archived station now gets the refusal that names its remedy.
+
+  The three listing tools took a bare `struct{}`, which is why they could not be told anything at
+  all: with no field, `session_key` was not merely undeclared but unrepresentable.
+
 ### Changed
 
 - **A database is created in ONE step; the migration chains are collapsed.** `migrations/` held 26

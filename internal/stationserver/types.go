@@ -26,7 +26,16 @@ type dirEntry struct {
 	LastSeenAt string `json:"last_seen_at,omitempty"`
 }
 
-type dirIn struct{}
+// listIn is what the three listing tools take. They used to take a bare `struct{}`, which is why
+// they could not be told which station was calling: with no field, session_key was not merely
+// undeclared but unrepresentable, and `additionalProperties:false` rejected it at the schema.
+type listIn struct {
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+}
+
+type dirIn struct {
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+}
 
 type dirOut struct {
 	Stations []dirEntry `json:"stations"`
@@ -163,8 +172,9 @@ type meOut struct {
 }
 
 type requestIn struct {
-	Purpose  string `json:"purpose" jsonschema:"required; what this station is FOR. Your human approves on this, not on the name"`
-	NameHint string `json:"name_hint,omitempty" jsonschema:"optional; a suggestion only — your human types the real name"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Purpose    string `json:"purpose" jsonschema:"required; what this station is FOR. Your human approves on this, not on the name"`
+	NameHint   string `json:"name_hint,omitempty" jsonschema:"optional; a suggestion only — your human types the real name"`
 }
 type requestOut struct {
 	RequestID string `json:"request_id"`
@@ -197,7 +207,8 @@ type noteListOut struct {
 	Pages []noteMeta `json:"pages"`
 }
 type noteReadIn struct {
-	Key string `json:"key" jsonschema:"required; the page key. 'handoff' is the reserved page a future session reads first"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Key        string `json:"key" jsonschema:"required; the page key. 'handoff' is the reserved page a future session reads first"`
 	// Rev reads a RETAINED older revision. Omit for the current page.
 	//
 	// Added because station_note_list could tell a station it had lost history and
@@ -206,12 +217,13 @@ type noteReadIn struct {
 	Rev int `json:"rev,omitempty" jsonschema:"optional; read a retained older revision instead of the current page. Revisions below the oldest retained have been pruned and say so"`
 }
 type noteWriteIn struct {
-	Key   string   `json:"key" jsonschema:"required"`
-	Title string   `json:"title,omitempty"`
-	Body  string   `json:"body" jsonschema:"required"`
-	Tags  []string `json:"tags,omitempty"`
-	Mode  string   `json:"mode,omitempty" jsonschema:"append (default) or replace"`
-	IfRev int      `json:"if_rev,omitempty" jsonschema:"optional; the rev you read. The write is refused if the page moved, so a second session staffing this station is not silently clobbered"`
+	SessionKey string   `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Key        string   `json:"key" jsonschema:"required"`
+	Title      string   `json:"title,omitempty"`
+	Body       string   `json:"body" jsonschema:"required"`
+	Tags       []string `json:"tags,omitempty"`
+	Mode       string   `json:"mode,omitempty" jsonschema:"append (default) or replace"`
+	IfRev      int      `json:"if_rev,omitempty" jsonschema:"optional; the rev you read. The write is refused if the page moved, so a second session staffing this station is not silently clobbered"`
 }
 type noteOut struct {
 	Key       string   `json:"key"`
@@ -250,6 +262,7 @@ type taskView struct {
 }
 
 type taskAddIn struct {
+	SessionKey  string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
 	Text        string `json:"text" jsonschema:"required; one line, imperative"`
 	BlockedOn   string `json:"blocked_on" jsonschema:"required; self = you can act now, human = it cannot move until your human does or decides, peer = another station owes something"`
 	Detail      string `json:"detail,omitempty" jsonschema:"optional; why, and what done looks like"`
@@ -261,9 +274,10 @@ type taskAddOut struct {
 	NearMatches []taskView `json:"near_matches,omitempty" jsonschema:"open tasks that look similar — if one is the same commitment, close the duplicate and name the id you kept in its resolution"`
 }
 type taskListIn struct {
-	State     string `json:"state,omitempty" jsonschema:"open (default) | done | dropped"`
-	BlockedOn string `json:"blocked_on,omitempty" jsonschema:"filter: self | human | peer"`
-	Limit     int    `json:"limit,omitempty"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	State      string `json:"state,omitempty" jsonschema:"open (default) | done | dropped"`
+	BlockedOn  string `json:"blocked_on,omitempty" jsonschema:"filter: self | human | peer"`
+	Limit      int    `json:"limit,omitempty"`
 }
 type taskListOut struct {
 	Tasks []taskView `json:"tasks"`
@@ -271,23 +285,27 @@ type taskListOut struct {
 	Shown int        `json:"shown"`
 }
 type taskCloseIn struct {
+	SessionKey     string   `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
 	TaskIDs        []string `json:"task_ids" jsonschema:"required; several at once"`
 	Resolution     string   `json:"resolution" jsonschema:"required; one line on what happened"`
 	ResolutionLink string   `json:"resolution_link,omitempty" jsonschema:"optional; a knowledge-base slug, a commit, or a URL"`
 }
 type taskDeferIn struct {
-	TaskID string `json:"task_id" jsonschema:"required"`
-	Until  string `json:"until" jsonschema:"required ISO-8601 date"`
-	Reason string `json:"reason" jsonschema:"required; deferring costs more than closing on purpose"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	TaskID     string `json:"task_id" jsonschema:"required"`
+	Until      string `json:"until" jsonschema:"required ISO-8601 date"`
+	Reason     string `json:"reason" jsonschema:"required; deferring costs more than closing on purpose"`
 }
 type taskDropIn struct {
+	SessionKey   string   `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
 	TaskIDs      []string `json:"task_ids" jsonschema:"required"`
 	Reason       string   `json:"reason" jsonschema:"required"`
 	HumanDecided bool     `json:"human_decided,omitempty" jsonschema:"set only when your human themselves decided to abandon it — required for anything blocked on them"`
 }
 type taskReopenIn struct {
-	TaskIDs []string `json:"task_ids" jsonschema:"required"`
-	Reason  string   `json:"reason" jsonschema:"required"`
+	SessionKey string   `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	TaskIDs    []string `json:"task_ids" jsonschema:"required"`
+	Reason     string   `json:"reason" jsonschema:"required"`
 }
 
 type lockerMeta struct {
@@ -301,12 +319,14 @@ type lockerListOut struct {
 	Files []lockerMeta `json:"files"`
 }
 type lockerPutIn struct {
+	SessionKey  string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
 	Name        string `json:"name" jsonschema:"required; a flat label, never a path"`
 	Body        string `json:"body" jsonschema:"required; text. NEVER a token, key or password"`
 	ContentType string `json:"content_type,omitempty"`
 }
 type lockerGetIn struct {
-	Name string `json:"name" jsonschema:"required"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Name       string `json:"name" jsonschema:"required"`
 }
 type lockerGetOut struct {
 	Name   string `json:"name"`
@@ -336,9 +356,10 @@ type vaultListOut struct {
 	Secrets []vaultMeta `json:"secrets"`
 }
 type vaultPutIn struct {
-	Name   string `json:"name" jsonschema:"required; a flat label, never a path"`
-	Secret string `json:"secret" jsonschema:"required; the credential itself"`
-	Note   string `json:"note,omitempty" jsonschema:"what this is and where it came from — shown to your human INSTEAD of the value"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Name       string `json:"name" jsonschema:"required; a flat label, never a path"`
+	Secret     string `json:"secret" jsonschema:"required; the credential itself"`
+	Note       string `json:"note,omitempty" jsonschema:"what this is and where it came from — shown to your human INSTEAD of the value"`
 }
 type vaultPutOut struct {
 	vaultMeta
@@ -351,9 +372,10 @@ type vaultPutOut struct {
 // name collision would deliver a credential to the wrong post. station_directory is where a
 // session learns the id.
 type vaultSendIn struct {
-	Name      string `json:"name" jsonschema:"the secret in YOUR vault to hand over"`
-	ToStation string `json:"to_station" jsonschema:"the station id to give it to — from comm_directory, which lists every station and hands back the exact id (station_directory does not return ids). A LINK is required, the same one that lets you message them: it is created by the first comm_send{to_station}, so send them anything first if you have never written to them. A link your human SUSPENDED will refuse"`
-	AsName    string `json:"as_name,omitempty" jsonschema:"optional; the name it should have in THEIR vault. Defaults to the same name"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Name       string `json:"name" jsonschema:"the secret in YOUR vault to hand over"`
+	ToStation  string `json:"to_station" jsonschema:"the station id to give it to — from comm_directory, which lists every station and hands back the exact id (station_directory does not return ids). A LINK is required, the same one that lets you message them: it is created by the first comm_send{to_station}, so send them anything first if you have never written to them. A link your human SUSPENDED will refuse"`
+	AsName     string `json:"as_name,omitempty" jsonschema:"optional; the name it should have in THEIR vault. Defaults to the same name"`
 }
 
 // vaultSendOut is a RECEIPT, never the value. The sender already holds the secret; echoing it
@@ -369,7 +391,8 @@ type vaultSendOut struct {
 }
 
 type vaultGetIn struct {
-	Name string `json:"name" jsonschema:"required"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Name       string `json:"name" jsonschema:"required"`
 }
 type vaultGetOut struct {
 	Name   string `json:"name"`
@@ -393,8 +416,9 @@ type okOut struct {
 // request that named members would put an agent in charge of who talks to whom — the one thing
 // migration 0017's surviving argument says an agent must not decide.
 type roomRequestIn struct {
-	Reason   string `json:"reason" jsonschema:"required; why a room should exist and who it is for, in words. Written for YOUR HUMAN, who decides — it is never delivered to anyone else, so do not address it to a peer"`
-	NameHint string `json:"name_hint" jsonschema:"optional; a suggested name. NON-BINDING — your human types the real one and may ignore this entirely"`
+	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation — the SAME value you gave station_me. Without it this call falls back to the connection binding, which does NOT survive a client that re-initialises between messages, and the call is then refused with \"this connection has not said which station it is\". Sending it makes the call work regardless"`
+	Reason     string `json:"reason" jsonschema:"required; why a room should exist and who it is for, in words. Written for YOUR HUMAN, who decides — it is never delivered to anyone else, so do not address it to a peer"`
+	NameHint   string `json:"name_hint" jsonschema:"optional; a suggested name. NON-BINDING — your human types the real one and may ignore this entirely"`
 }
 
 type roomRequestOut struct {

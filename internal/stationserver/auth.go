@@ -56,6 +56,23 @@ type principal struct {
 
 type ctxKey struct{}
 
+// storeCtxKey carries the durable store to requireStation, which needs it for station.Resolve.
+//
+// It is set in addTool for EVERY station tool, unconditionally — deliberately not in withCaller,
+// which early-returns on an in-process transport, a missing bearer and a stale key. A store that
+// is present only on the paths withCaller completes is a resolver that works in production and
+// not in a test harness, which is the shape of defect this package has already paid for twice.
+type storeCtxKey struct{}
+
+func withStore(ctx context.Context, st *store.Store) context.Context {
+	return context.WithValue(ctx, storeCtxKey{}, st)
+}
+
+func storeFrom(ctx context.Context) *store.Store {
+	st, _ := ctx.Value(storeCtxKey{}).(*store.Store)
+	return st
+}
+
 func principalFrom(ctx context.Context) *principal {
 	p, _ := ctx.Value(ctxKey{}).(*principal)
 	return p
@@ -63,15 +80,33 @@ func principalFrom(ctx context.Context) *principal {
 
 // requireStation resolves the caller's station, refusing a station-less key. Every tool
 // except station_request goes through it.
-func requireStation(ctx context.Context, req *mcp.CallToolRequest) (*principal, error) {
+//
+// *** IT TAKES THE CONVERSATION'S OWN KEY, AND THAT IS THE WHOLE POINT. ***
+//
+// This used to read station.Bound(req) alone — the map keyed on the MCP session id, written by
+// station_me. station_me, comm_poll, comm_send and comm_directory accepted a session_key and
+// resolved fine; the other nineteen station tools did not declare the field at all, so
+// `additionalProperties:false` REJECTED it, and they had nothing to fall back on but that map.
+//
+// The map is per CONNECTION, and ken-prod-ops measured a client that re-initialises between
+// messages: station_me succeeded, and a station_note_write seconds later in the same conversation
+// with the same key was refused with "this connection has not said which station it is". That put
+// the notebook, tasks, locker and vault behind whether an MCP session happened to persist.
+//
+// station.Resolve already preferred the key and fell back to the binding — the station surface
+// simply never handed it one. It also asks the liveness and archived questions this function did
+// not, so an archived station now gets the refusal that names its remedy instead of a generic one.
+func requireStation(ctx context.Context, req *mcp.CallToolRequest, sessionKey string) (*principal, error) {
 	p := principalFrom(ctx)
 	if p == nil {
 		return nil, errors.New("unauthenticated")
 	}
-	// THE CONVERSATION'S OWN DECLARATION, made on its first station_me call. The header that used
-	// to be consulted first is gone — see station.Resolve.
 	if p.StationID == "" {
-		p = p.withStation(station.Bound(req))
+		sid, err := station.Resolve(ctx, storeFrom(ctx), req, p.ActorID, sessionKey)
+		if err != nil {
+			return nil, err
+		}
+		p = p.withStation(sid)
 	}
 	if p.StationID == "" {
 		// THIS USED TO SAY "call station_me" — WHICH IS A LOOP THAT MINTS A SECOND STATION.
