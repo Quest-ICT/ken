@@ -131,7 +131,7 @@ func TestBroadcastMailIsCounted(t *testing.T) {
 	beta := stationEndpoint(t, st, "tok-b", "st-beta")
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
-	if _, err := st.Broadcast(ctx, beta, "everyone", SendOpts{}); err != nil {
+	if _, err := st.BroadcastTo(ctx, beta, []string{"s:st-alpha"}, "everyone", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// ROOM MAIL ALONGSIDE IT, so the scope filter has something to exclude. Without this
@@ -172,7 +172,7 @@ func TestPendingTotalSpansChannelRoomAndBroadcast(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "ops", "room", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Broadcast(ctx, beta, "broadcast", SendOpts{}); err != nil {
+	if _, err := st.BroadcastTo(ctx, beta, []string{"s:st-alpha"}, "broadcast", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -259,7 +259,7 @@ func TestTheNewCountersDeliverNothing(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "ops", "room", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Broadcast(ctx, beta, "broadcast", SendOpts{}); err != nil {
+	if _, err := st.BroadcastTo(ctx, beta, []string{"s:st-alpha"}, "broadcast", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.PendingTotalFor(ctx, alpha); err != nil {
@@ -347,7 +347,7 @@ func TestABroadcastReportsWaitingForYou(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "ops", "waiting", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	m, err := st.Broadcast(ctx, alpha, "shouting past it", SendOpts{})
+	m, err := st.BroadcastTo(ctx, alpha, []string{"s:st-beta"}, "shouting past it", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestStatsCountRoomAndBroadcastMail(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "ops", "room traffic", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Broadcast(ctx, beta, "broadcast traffic", SendOpts{}); err != nil {
+	if _, err := st.BroadcastTo(ctx, beta, []string{"s:st-alpha"}, "broadcast traffic", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -936,7 +936,7 @@ func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "ops", "room", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Broadcast(ctx, beta, "broadcast", SendOpts{}); err != nil {
+	if _, err := st.BroadcastTo(ctx, beta, []string{"s:st-alpha"}, "broadcast", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 

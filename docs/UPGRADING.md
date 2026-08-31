@@ -34,6 +34,40 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+### `to_room:"all"` now reaches every station, not just your room-mates — and there is no database step
+
+**What you observe.** `to_room:"all"` reaches every ACTIVE station on this Ken, not the union of
+your rooms. On an instance with no rooms, `broadcast_reaches` goes from **0 to N−1**. A new,
+clearer spelling `to_everyone:true` addresses the same thing. `comm_send` results gain
+`recipient_stations` (who it reached, by name) and `unstaffed`.
+
+**NO DATABASE UPGRADE.** `ken.db` stays at schema 26 and `comm.db` at 22. Take the release and
+restart:
+
+```
+sudo ken-upgrade --version 5.2.0 && sudo systemctl restart ken
+```
+
+**DO FIRST — TELL YOUR RUNNING SESSIONS.** A session's tool schema pins when its conversation
+begins and never refreshes. Sessions open across this upgrade will keep believing a room is
+required, and will not try. **Nothing they do breaks** — their existing `to_room:"all"` spelling
+keeps working and silently reaches *more*, which is the only safe direction — but they will not
+use it. Paste the **Rooms / reach every station** bullet from `docs/AI-INTEGRATION.md` into any
+live conversation, or have them call `ken_instructions{tool:"comm_send"}`, which is computed per
+call and is always current.
+
+**If you relied on rooms to SCOPE a broadcast, that scoping is gone.** `to_room:"<room_id>"` is
+the replacement and is byte-for-byte unchanged.
+
+**An estate announcement that must survive the night needs an explicit `ttl_seconds`.** A message's
+lifetime flips from the 30-day undelivered backstop to the 24-hour message TTL on the **first**
+recipient's poll — not on each station's own. A session whose next conversation starts 30 hours
+later will not see it. This is pre-existing behaviour that estate-wide broadcast makes matter more.
+
+**Where to see broadcasts afterwards.** `/comm` gains a *Recent estate announcements* card —
+including **which stations have not read it yet**. That card reads `comm.db`, which is expendable;
+the durable record is the `COMM: … broadcast to N active station(s)` line in the service log.
+
 ## 5.1.0
 
 **Upgrade promptly if more than one conversation shares one Ken connector.** Claude Desktop holds a

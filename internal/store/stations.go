@@ -539,6 +539,50 @@ SELECT st.station_id, st.name, st.purpose,
 	return out, rows.Err()
 }
 
+// BroadcastRoster is THE definition of "every station on this Ken", and there is
+// deliberately exactly one.
+//
+// It returns the audience as party keys, the SAME rows the directory prints, and the roster
+// generation, all from ONE read — so broadcast_reaches cannot be the length of a different list
+// from the one printed beside it.
+//
+// *** WHY THIS EXISTS: TWO COPIES OF ONE QUERY AGREED WITH EACH OTHER AND WERE BOTH WRONG. ***
+//
+// Until 5.2.0 the reach comm_directory advertised and the set a broadcast actually delivered to
+// were two hand-copied SQL literals over the room membership MIRROR — one in Broadcast, one in
+// BroadcastAudience — and the single test guarding their agreement compared two readings of the
+// same copy. On production, an instance with THIRTEEN stations and ZERO rooms advertised a reach
+// of 0, delivered to 0, agreed with itself, and stayed green while an operator could not send an
+// estate-wide "stop writing" advisory during a live data-integrity incident. Three of thirteen
+// stations were warned by hand; six were never told.
+//
+// The audience is no longer derived from rooms at all. Rooms group; they do not gate. There is one
+// human and one Claude account, so there is no other tenant to protect against (IDENTITY.md §4) —
+// the same ruling that removed the directory filter above and the human gate on pairwise links.
+//
+// It reuses ListStationsVisibleTo rather than restating `state <> 'archived' AND station_id <> ?1`,
+// so a future edit to who-counts-as-live cannot move one surface and leave the other behind.
+//
+// A read failure returns an error and NO PARTIAL SLICE. ListStationsVisibleTo returns `out` beside
+// `rows.Err()`, so a caller that ignored the error would broadcast to however many rows arrived
+// before the failure and report that number as success — an under-delivery that renders exactly
+// like a small estate.
+func (s *Store) BroadcastRoster(ctx context.Context, fromStation string) (parties []string, listed []DirectoryEntry, epoch int64, err error) {
+	listed, err = s.ListStationsVisibleTo(ctx, fromStation)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	parties = make([]string, 0, len(listed))
+	for _, e := range listed {
+		parties = append(parties, "s:"+e.StationID)
+	}
+	epoch, err = s.RosterEpoch(ctx)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return parties, listed, epoch, nil
+}
+
 // ErrStationArchived IS DELETED, because nothing could raise it once afterEndpointAuth went. The
 // live sentinel is station.ErrStationArchived, raised by station.Resolve — which every comm and
 // station call passes through before a mailbox exists to check.

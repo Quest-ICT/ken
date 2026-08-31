@@ -34,10 +34,56 @@
       <ul class="plain">
         <li>{{.T "comm.stat_endpoints"}}: <b>{{.Data.Stats.Endpoints}}</b></li>
         <li>{{.T "comm.stat_unacked"}}: <b>{{.Data.Stats.Unacked}}</b></li>
+        <li>{{.T "comm.stat_deliveries_unacked"}}: <b>{{.Data.Stats.DeliveriesUnacked}}</b></li>
         <li>{{.T "comm.stat_bytes"}}: <b>{{.Data.Stats.BodyBytes}}</b></li>
         <li>{{.T "comm.stat_files"}}: <b>{{.Data.Stats.Files}}</b></li>
         <li>{{.T "comm.stat_file_bytes"}}: <b>{{.Data.Stats.FileBytes}}</b></li>
       </ul>
+    </div>
+  </div>
+</section>
+
+
+<!-- RECENT ESTATE ANNOUNCEMENTS. Metadata only, never a body — same rule as every card on
+     this page. The "not read by" column is the one that earns the card: on 2026-08-31 six of
+     thirteen stations went unwarned and nobody could say which six. Bounded with the true total
+     shown, so a truncated list cannot read as a complete one. -->
+<section>
+  <div class="card">
+    <div class="card__head"><h2 class="h3">{{.T "comm.broadcasts_heading"}}</h2></div>
+    <div class="card__body">
+      <p class="muted">{{.T "comm.broadcasts_hint"}}</p>
+      {{if .Data.Broadcasts}}
+      <p class="muted">{{printf (.T "comm.broadcasts_showing") (len .Data.Broadcasts) .Data.BroadcastsTotal .Data.MetadataRetentionDays}}</p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>{{.T "comm.broadcasts_when"}}</th>
+            <th>{{.T "comm.broadcasts_from"}}</th>
+            <th>{{.T "comm.broadcasts_addressed"}}</th>
+            <th>{{.T "comm.broadcasts_acked"}}</th>
+            <th>{{.T "comm.broadcasts_unread"}}</th>
+            <th>{{.T "comm.broadcasts_expires"}}</th>
+            <th>{{.T "comm.broadcasts_key"}}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Data.Broadcasts}}
+          <tr>
+            <td>{{.CreatedAt}}</td>
+            <td>{{.From}}</td>
+            <td>{{.Addressed}}</td>
+            <td>{{.Acked}}</td>
+            <td>{{if .Unread}}{{range $i, $n := .Unread}}{{if $i}}, {{end}}{{$n}}{{end}}{{else}}&mdash;{{end}}</td>
+            <td>{{.ExpiresAt}}</td>
+            <td>{{.IdempotencyKey}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="muted">{{.T "comm.broadcasts_empty"}}</p>
+      {{end}}
     </div>
   </div>
 </section>

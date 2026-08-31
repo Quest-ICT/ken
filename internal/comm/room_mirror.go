@@ -153,15 +153,19 @@ SELECT mine.room_id,
 	return out, nil
 }
 
-// BroadcastAudience counts the stations a broadcast from this party would reach right
-// now — the same DISTINCT union Broadcast itself computes, so the directory cannot
-// promise a reach the send would not deliver.
-func (s *Store) BroadcastAudience(ctx context.Context, party string) (int, error) {
-	var n int
-	err := s.R.QueryRowContext(ctx, `
-SELECT COUNT(DISTINCT other.party_key)
-  FROM room_member_mirror mine
-  JOIN room_member_mirror other ON other.room_id = mine.room_id
- WHERE mine.party_key = ? AND other.party_key <> ?`, party, party).Scan(&n)
-	return n, err
-}
+// *** BroadcastAudience IS DELETED, AND IT IS THE POINT OF THE 5.2.0 CHANGE. ***
+//
+// It counted the stations a broadcast would reach by running the same DISTINCT self-join over
+// this mirror that Broadcast ran — as a SECOND, HAND-COPIED string literal. Their agreement WAS
+// the invariant, and the one test guarding it compared two readings of the same copy, so it
+// agreed with itself perfectly while being wrong about the world: on production, thirteen
+// stations and zero rooms produced an advertised reach of 0 and a delivered reach of 0, and the
+// suite stayed green through the incident that found it.
+//
+// The audience now has exactly ONE definition — store.BroadcastRoster — which also returns the
+// rows comm_directory prints, so broadcast_reaches is the LENGTH OF THE LIST BESIDE IT and there
+// is no second query left to disagree.
+//
+// ReplaceRoomMirror, RoomsFor, StampMirrorEpoch and MirrorEpoch are untouched: ROOMS STILL NEED
+// THIS MIRROR, because room membership is still a permission, still checked inside the writer
+// transaction. Only the estate-wide audience stopped being one.

@@ -126,3 +126,92 @@ SELECT
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))) * 11`).Scan(&n)
 	return n, err
 }
+
+// Broadcast is one estate-wide announcement, as the console shows it.
+//
+// METADATA ONLY, AND NEVER THE BODY. Same rule as every other console surface here: bodies are
+// deleted on ack and are not the operator's business. What an operator needs is who announced
+// something to the whole estate, how wide it went, and — the question 2026-08-31 could not answer
+// — WHICH stations have not read it yet.
+type Broadcast struct {
+	MessageID      string
+	SenderParty    string
+	IdempotencyKey string
+	CreatedAt      string
+	ExpiresAt      string
+	Addressed      int
+	Acked          int
+	// UnreadParties are the recipients still holding it unacked, as party keys. The caller
+	// resolves them to station names; it holds the ken.db handle and this package must not (S7).
+	UnreadParties []string
+}
+
+// RecentBroadcasts lists the last n estate-wide announcements, newest first, with the total.
+//
+// *** WHY THE TOTAL TRAVELS WITH THE LIST. *** A truncated list that cannot say it was truncated
+// reads as a complete one — the same shape as a reach of 0 that cannot say the query failed. The
+// caller renders "the last 20 of 118", copying the station_vault_read audit trail, which is this
+// product's one settled pattern for a bounded log.
+//
+// IT LIVES IN THE EXPENDABLE DATABASE AND DIES WITH IT. That is correct for an operational view
+// and wrong for an audit claim, so the console says which it is, and the DURABLE record of a
+// broadcast is the COMM: line in the service log. Putting it in ken.db would run a pointer from
+// the durable database into the expendable one, which is S7's forbidden direction.
+func (s *Store) RecentBroadcasts(ctx context.Context, n int) ([]Broadcast, int, error) {
+	if n <= 0 {
+		n = 20
+	}
+	var total int
+	if err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM message WHERE scope_id LIKE 'b:%'`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.R.QueryContext(ctx, `
+SELECT m.message_id, m.sender_party, COALESCE(m.idempotency_key,''), m.created_at, m.expires_at,
+       (SELECT COUNT(*) FROM delivery d WHERE d.message_row = m.id),
+       (SELECT COUNT(*) FROM delivery d WHERE d.message_row = m.id AND d.acked_at IS NOT NULL)
+  FROM message m
+ WHERE m.scope_id LIKE 'b:%'
+ ORDER BY m.created_at DESC
+ LIMIT ?`, n)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []Broadcast
+	for rows.Next() {
+		var b Broadcast
+		if err := rows.Scan(&b.MessageID, &b.SenderParty, &b.IdempotencyKey,
+			&b.CreatedAt, &b.ExpiresAt, &b.Addressed, &b.Acked); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	// The unread parties, per message. A second pass rather than a join, because one row per
+	// (message, unread recipient) would make the caller re-group what it just flattened.
+	for i := range out {
+		urows, err := s.R.QueryContext(ctx, `
+SELECT d.party_key FROM delivery d JOIN message m ON m.id = d.message_row
+ WHERE m.message_id = ? AND d.acked_at IS NULL
+ ORDER BY d.party_key`, out[i].MessageID)
+		if err != nil {
+			return nil, 0, err
+		}
+		for urows.Next() {
+			var p string
+			if err := urows.Scan(&p); err != nil {
+				urows.Close()
+				return nil, 0, err
+			}
+			out[i].UnreadParties = append(out[i].UnreadParties, p)
+		}
+		urows.Close()
+		if err := urows.Err(); err != nil {
+			return nil, 0, err
+		}
+	}
+	return out, total, nil
+}

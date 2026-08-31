@@ -83,9 +83,17 @@ SELECT m.message_id, m.scope_id, 'expired' AS reason, m.expires_at AS at,
 UNION ALL
 
 -- REPLY OVERDUE: you asked for an answer, a recipient was handed the message, the
--- deadline passed, and that recipient has not replied. Keyed per DELIVERY, because with
--- several recipients "nobody answered" and "one of five answered" are different facts.
-SELECT m.message_id, m.scope_id, 'reply_overdue' AS reason, d.reply_deadline_at AS at,
+-- deadline passed, and that recipient has not replied.
+--
+-- *** ONCE PER MESSAGE, NOT ONCE PER RECIPIENT — GROUP BY, exactly as the expired arm above
+-- already does. *** It was keyed per DELIVERY, on the argument that "nobody answered" and "one
+-- of five answered" are different facts. They are, and the recipients list below already carries that
+-- distinction by NAMING the parties who went quiet. What per-delivery keying actually produced
+-- was N near-identical notices for one message, each repeating the same N names: at thirteen
+-- stations, one estate broadcast consumed twelve of a poll's twenty-five notice slots and
+-- starved every other notice for several polls. Estate-wide broadcast is what made that
+-- ordinary rather than theoretical.
+SELECT m.message_id, m.scope_id, 'reply_overdue' AS reason, MIN(d.reply_deadline_at) AS at,
        COALESCE(m.idempotency_key,'')
   FROM message m
   JOIN delivery d ON d.message_row = m.id, mark
@@ -94,6 +102,7 @@ SELECT m.message_id, m.scope_id, 'reply_overdue' AS reason, d.reply_deadline_at 
    AND m.requires_response = 1
    AND `+replyOverdueEligible+`
    AND d.reply_deadline_at > mark.seen_at
+ GROUP BY m.message_id, m.scope_id, m.idempotency_key
 
  ORDER BY at
  LIMIT ?2`, party, limit)

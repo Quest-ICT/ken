@@ -91,12 +91,14 @@ func (s *Store) ReceivedFrom(ctx context.Context, actorID int64, windowSeconds i
 	//
 	// Caught by a test, and it would have shipped silently: the badge would simply
 	// never fire for room mail, and an absent badge is indistinguishable from a
-	// checked-and-clean one. The second arm resolves the party's STATION back to the
+	// checked-and-clean one. The scope_id clause matches commserver's Broadcast flag: on a
+	// two-station instance an estate message has audience_size 1, and the hearsay badge has to
+	// fire for exactly the case where a session is least likely to have checked. The second arm resolves the party's STATION back to the
 	// actors staffing it, which is the same widening the poll predicate does.
 	rows, err := s.R.QueryContext(ctx, `
 SELECT COALESCE(se.station_id, ''), m.message_id,
        COALESCE(d.acked_at, d.first_delivered_at),
-       CASE WHEN m.audience_size > 1 THEN 1 ELSE 0 END
+       CASE WHEN m.audience_size > 1 OR m.scope_id LIKE 'b:%' THEN 1 ELSE 0 END
   FROM delivery d
   JOIN message m ON m.id = d.message_row
   LEFT JOIN endpoint se ON se.id = m.sender_endpoint
@@ -109,7 +111,7 @@ SELECT COALESCE(se.station_id, ''), m.message_id,
                  WHERE e.actor_id = ? AND e.station_id IS NOT NULL
                    AND d.party_key = 's:' || e.station_id)
    )
- ORDER BY CASE WHEN m.audience_size > 1 THEN 1 ELSE 0 END,
+ ORDER BY CASE WHEN m.audience_size > 1 OR m.scope_id LIKE 'b:%' THEN 1 ELSE 0 END,
           COALESCE(d.acked_at, d.first_delivered_at) DESC`,
 		nowExpr(-windowSeconds), actorID, actorID)
 	if err != nil {

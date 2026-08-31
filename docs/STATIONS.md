@@ -564,9 +564,37 @@ can read every value from `/stations`, and that read is logged like any other. T
 sits in has exactly one human per instance (see `docs/DESIGN.md`); a second person with console access
 is outside the threat model rather than defended against.
 
-### S14 — A room is a human-filled set of stations; an agent cannot enlarge its own audience *(chosen: console-only membership, derived broadcast)*
+### S14 — A room is a human-filled set of stations; a broadcast reaches the whole estate *(chosen: console-only membership, ESTATE-WIDE broadcast — the "derived broadcast" half was REVERSED in 5.2.0)*
 
-Rooms give a station many-party addressing without giving it a way to widen who hears it.
+Rooms give a station a named, repeatable many-party address. They no longer decide who a broadcast
+reaches.
+
+> **🔴 THE ORIGINAL S14 IS PARTLY REVERSED, AND THE REVERSAL IS RECORDED HERE RATHER THAN EDITED
+> OVER.** The decision read *"an agent cannot enlarge its own audience"*, and its broadcast clause
+> read *"`to_room:\"all\"` reaches the union of the rooms this station is already in — exactly the
+> set it could have addressed one room at a time."*
+>
+> **What that cost, measured.** On 2026-08-31 production had **thirteen stations and zero rooms**.
+> The union of no rooms is nobody, so `to_room:"all"` was refused with *"you share no room with any
+> other station"* — an accurate description of the mechanism and a useless one about the world. It
+> failed at the exact moment it existed for: an operator holding a confirmed data-integrity defect
+> needed to tell every station **do not write**, hand-addressed three of thirteen, and left six
+> unwarned with no way to know which six. Worse, the check that should have caught this was
+> `BroadcastAudience` compared against `Broadcast` — two hand-copied queries over the same mirror —
+> which agreed with each other at 0 and 0 and stayed green throughout.
+>
+> **Why it could not survive.** Reaching ONE station has needed no permission since 4.0.0: *"no
+> permission to obtain — the first message creates the link."* Reaching ALL of them requiring a
+> human to build a room first cannot be right beside that, under a model whose premise is one
+> human, one Claude account, and **no other tenant to protect against** (IDENTITY.md §4). Rooms as
+> a *permission boundary* is the same shape as link approval, and link approval went for the same
+> reason. This is the third application of that ruling, after the directory filter and the pairwise
+> human gate.
+>
+> **What survives intact:** membership is still console-only, rooms still live in `ken.db`, the
+> mirror is still wholesale, and `to_room:"<room_id>"` is byte-for-byte unchanged. An agent still
+> cannot create a standing GROUP or add itself to one. What it can now do is address the estate
+> once, by name, visibly — which is a message, not a group.
 
 - **Membership is console-only.** There is no tool that creates a room, adds a member or joins one.
   A session that wants a room asks its human in words. This is the same withheld-capability trick as
@@ -578,9 +606,14 @@ Rooms give a station many-party addressing without giving it a way to widen who 
   outer check and the insert. The mirror is replaced wholesale, never synced incrementally: a missed
   removal would leave a station able to send to a room it was taken out of, which is the failure that
   fails OPEN.
-- **Broadcast is derived, not granted.** `to_room:"all"` reaches the union of the rooms this station
-  is already in — exactly the set it could have addressed one room at a time. A station in three of
-  those rooms receives ONE copy.
+- **Broadcast is estate-wide (5.2.0).** `to_everyone:true` — and its permanent alias
+  `to_room:"all"` — reaches **every ACTIVE station on this Ken except the sender**, room or no room.
+  The audience is read live from `ken.db` at the moment of the call through ONE function,
+  `store.BroadcastRoster`, which also produces the list `comm_directory` prints, so
+  `broadcast_reaches` is the length of the list beside it and there is no second query to disagree.
+  A station named twice still receives ONE copy. Archived stations are excluded. The send reports
+  `recipient_stations` **by name**, because a count cannot be checked: "reached 3" and "reached 13"
+  read identically to a session that never knew which was right.
 - **One body, N deliveries.** Each recipient owns its own state, redelivery count and reply deadline;
   the body is stored once, charged once against every bound, and survives until the LAST recipient
   has settled. Blanking when the first acks would rebuild the 97%-of-bodies defect from a new cause.

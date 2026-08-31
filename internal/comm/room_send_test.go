@@ -222,22 +222,30 @@ func TestReplacingTheMirrorRemovesMembershipsThatAreGone(t *testing.T) {
 // of your rooms must get ONE copy. Iterating rooms and appending would deliver three,
 // and at-least-once delivery makes that indistinguishable from a redelivery on the
 // receiving side — the sender would never learn they had said it three times.
-func TestABroadcastReachesEveryoneOnceAcrossOverlappingRooms(t *testing.T) {
+func TestABroadcastReachesEveryStationOnceEvenWhenNamedTwice(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
 
-	// beta is in all three of alpha's rooms; gamma in one; delta in none of them.
+	// THE ROOM MIRROR IS DELIBERATELY POPULATED AND DELIBERATELY IRRELEVANT. delta is in no
+	// room with alpha and receives anyway, because the audience is the ESTATE now, not the
+	// union of the sender's rooms. Before 5.2.0 this test asserted the opposite — that delta
+	// must NOT receive — and it passed while an operator with thirteen peers and no rooms
+	// could reach none of them.
 	if err := st.ReplaceRoomMirror(ctx, map[string][]string{
-		"ops":     {"s:st-alpha", "s:st-beta", "s:st-gamma"},
-		"deploys": {"s:st-alpha", "s:st-beta"},
-		"oncall":  {"s:st-alpha", "s:st-beta"},
-		"other":   {"s:st-delta", "s:st-epsilon"},
+		"ops":   {"s:st-alpha", "s:st-beta"},
+		"other": {"s:st-delta"},
 	}, 1); err != nil {
 		t.Fatal(err)
 	}
 
-	m, err := st.Broadcast(ctx, alpha, "deploying in ten", SendOpts{})
+	// beta named THREE times, as an overlapping-rooms caller would have produced. The SQL
+	// DISTINCT that used to de-duplicate went with the self-join; this asserts its Go
+	// replacement, because a recipient cannot tell three copies from a redelivery and the
+	// sender never learns it said the same thing three times.
+	m, err := st.BroadcastTo(ctx, alpha,
+		[]string{"s:st-beta", "s:st-gamma", "s:st-beta", "s:st-delta", "s:st-beta"},
+		"deploying in ten", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,17 +265,43 @@ func TestABroadcastReachesEveryoneOnceAcrossOverlappingRooms(t *testing.T) {
 		t.Fatal(err)
 	}
 	if betaRows != 1 {
-		t.Fatalf("a station in THREE of the sender's rooms got %d deliveries, want 1 — "+
-			"the recipient cannot tell three copies from a redelivery, so the sender never learns they said it three times", betaRows)
+		t.Fatalf("a station named three times in the audience got %d deliveries, want 1 — "+
+			"the recipient cannot tell three copies from a redelivery", betaRows)
 	}
-	if total != 2 {
-		t.Fatalf("%d deliveries, want 2 (beta and gamma)", total)
+	if deltaRows != 1 {
+		t.Fatal("a station in NO room with the sender did not receive an estate broadcast — " +
+			"the audience is still coming from room membership, which is the 5.2.0 defect")
 	}
-	// A station in none of the sender's rooms is NOT reachable. Broadcast adds reach,
-	// never permission — the audience is exactly the set already addressable one room
-	// at a time.
-	if deltaRows != 0 {
-		t.Fatal("a broadcast reached a station the sender shares no room with — broadcast granted permission rather than reach")
+	if total != 3 {
+		t.Fatalf("%d deliveries, want 3 (beta once, gamma, delta)", total)
+	}
+	if m.Recipients != 3 {
+		t.Fatalf("reported recipients %d, delivered %d — the number a sender is handed must be "+
+			"the number that landed", m.Recipients, total)
+	}
+}
+
+// An audience that is not made of STATION party keys is a bug in the handler that built it, so it
+// must arrive as an internal error rather than as advice to a session that did nothing wrong.
+// Without this, a stray endpoint key would file estate mail under a connection and look like it
+// worked.
+func TestABroadcastRefusesAnAudienceThatIsNotStations(t *testing.T) {
+	st := newStore(t, DefaultLimits())
+	ctx := context.Background()
+	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
+	_, err := st.BroadcastTo(ctx, alpha, []string{"s:st-beta", "e:42"}, "hello", SendOpts{})
+	if !errors.Is(err, ErrAudienceNotStations) {
+		t.Fatalf("got %v, want ErrAudienceNotStations", err)
+	}
+	if _, ok := err.(interface{ CallerSafe() bool }); ok {
+		t.Error("the refusal is caller-safe — a handler bug must not be rendered as advice to the session")
+	}
+	var n int
+	if err := st.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM message`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d message rows written for a refused broadcast", n)
 	}
 }
 
@@ -278,10 +312,11 @@ func TestBroadcastingWithNoAudienceIsRefusedDistinctly(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
 	lonely := stationEndpoint(t, st, "tok-a", "st-alpha")
-	if err := st.ReplaceRoomMirror(ctx, map[string][]string{"solo": {"s:st-alpha"}}, 1); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Broadcast(ctx, lonely, "anyone?", SendOpts{}); !errors.Is(err, ErrNoAudience) {
+	// The ONLY way to reach this now is a one-station instance: the handler passes the estate
+	// minus the sender, so an empty slice means there is nobody else. The refusal must say that
+	// rather than "you share no room with any other station", which sent an operator with
+	// thirteen peers looking for a room to join.
+	if _, err := st.BroadcastTo(ctx, lonely, nil, "anyone?", SendOpts{}); !errors.Is(err, ErrNoAudience) {
 		t.Fatalf("broadcasting into an empty estate got %v, want ErrNoAudience", err)
 	}
 	var n int
@@ -371,47 +406,22 @@ func TestAStationCanDiscoverTheRoomsItIsInAndWhatIsWaiting(t *testing.T) {
 	}
 }
 
-// The reach a session is SHOWN must be the reach a broadcast would actually get, or the
-// directory promises something the send refuses.
-func TestTheAdvertisedBroadcastReachMatchesWhatSendingWouldDo(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
-	if err := st.ReplaceRoomMirror(ctx, map[string][]string{
-		"ops":     {"s:st-alpha", "s:st-beta", "s:st-gamma"},
-		"deploys": {"s:st-alpha", "s:st-beta"},
-	}, 1); err != nil {
-		t.Fatal(err)
-	}
-
-	advertised, err := st.BroadcastAudience(ctx, "s:st-alpha")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := st.Broadcast(ctx, alpha, "hello everyone", SendOpts{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if advertised != m.Recipients {
-		t.Fatalf("the directory advertised a reach of %d and the broadcast delivered %d — "+
-			"a session cannot plan against a number that is not the one it gets", advertised, m.Recipients)
-	}
-	if advertised != 2 {
-		t.Errorf("reach = %d, want 2 (beta counted once despite two shared rooms)", advertised)
-	}
-}
-
-// AN EXPIRED ROOM MESSAGE MUST NOT BREAK THE SWEEP.
+// TestTheAdvertisedBroadcastReachMatchesWhatSendingWouldDo IS DELETED FROM THIS PACKAGE, AND HOW
+// IT PASSED IS THE WHOLE LESSON.
 //
-// It did, in 3.0.0 and 3.0.1. `collectForNotice` scanned `message.channel_id` into an
-// int64, and a room message belongs to no channel — so the first room message to expire
-// unread aborted Sweep with a scan error, and Sweep is where expiry, body retention, the
-// metadata purge, file cleanup and idle-endpoint removal all live. Every one of them
-// stops, and retention fails silently from that moment on.
+// It compared BroadcastAudience against Broadcast — two hand-copied queries over the SAME room
+// mirror — so it proved the two copies agreed and nothing about whether either was right. On
+// production, thirteen stations and zero rooms made both of them 0. It reported "advertised 0,
+// delivered 0, matched" and stayed green through the incident.
 //
-// Nothing caught it because rooms shipped in one release and the sweep was written for a
-// world with one recipient and always a channel. The ordinary case — a room message
-// nobody reads — was the trigger.
+// The invariant is real and now spans both databases — the reach comes from ken.db's roster and
+// the delivery rows land in comm.db — so it CANNOT be asserted from this package, which holds no
+// store handle by design (S7). It is asserted end-to-end against the built binary in
+// cmd/ken/smoke_test.go: TestAnEstateBroadcastReachesEveryStationTheDirectoryLists.
+//
+// The rule this bought: a test that compares two readings of one source proves consistency, never
+// correctness. Point it at the thing being described, not at a second copy of the description.
+
 func TestAnExpiredRoomMessageDoesNotBreakTheSweep(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
@@ -504,7 +514,7 @@ func TestTheSweepSurvivesEveryScopeKindAndBothNoticeReasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A BROADCAST, whose scope is neither a channel nor a room.
-	bm, err := st.Broadcast(ctx, alpha, "everyone", SendOpts{})
+	bm, err := st.BroadcastTo(ctx, alpha, []string{"s:st-beta"}, "everyone", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

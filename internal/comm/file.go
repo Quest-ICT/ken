@@ -241,6 +241,20 @@ func (s *Store) resolveOfferScope(ctx context.Context, t *sql.Tx, ep *Endpoint, 
 	}
 
 	switch {
+	case addr.RoomID == "all":
+		// *** THE TWO ADDRESSING SURFACES DISAGREE HERE DELIBERATELY, AND SAY SO. ***
+		//
+		// This file's own rule is that a room offer is legal exactly when a room send is, and
+		// to_room:"all" is now a legal send. It is not a legal OFFER: a relay grant belongs to
+		// one conversation, and there is no estate-wide transfer. Without this arm it fell
+		// through to the membership check and returned ErrRoomEmpty — sending an operator to
+		// inspect the membership of a room that cannot exist, during the incident where they
+		// reached for the estate address in the first place.
+		return "", CallerSafe(errors.New(
+			"there is no estate-wide file offer: to_room:\"all\" addresses every station on this " +
+				"Ken, and a relay grant belongs to one conversation. Offer the file to one room or " +
+				"one station, or broadcast a message saying where to ask for it"))
+
 	case addr.RoomID != "":
 		// Membership is the authorisation, exactly as it is for a room send.
 		if !s.callerIsInRoom(ctx, ep, addr.RoomID) {

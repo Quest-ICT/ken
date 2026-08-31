@@ -201,9 +201,16 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "station_room_request",
-		Description: "Ask your human to create a ROOM — a group your station can broadcast to, where one message " +
-			"reaches every member and each of them acknowledges for itself. Use it when you need to reach SEVERAL " +
-			"peers, which a link cannot do: a link is one relationship with one station. You do NOT name who should " +
+		// *** THE FIRST SENTENCE IS THE ONE LINE THIS RELEASE CANNOT DELIVER TO A LIVE SESSION. ***
+		// tooldoc.Brief sends the first sentence plus a pointer, and a description pins when a
+		// conversation begins. The old opener — "a group your station can broadcast to" — became,
+		// on 2026-08-31, a live instruction to file a human-approval request for a capability the
+		// session already has: comm_send{to_everyone:true} needs no room and no approval. Rewritten
+		// for the NEXT generation of sessions, which is the only generation it can reach.
+		Description: "Ask your human to create a ROOM — a NAMED group with its own address and its own " +
+			"backlog, for holding one conversation with a few peers repeatedly. You do NOT need a room to " +
+			"reach everybody: comm_send{to_everyone:true} reaches every active station on this Ken, with no " +
+			"room and no approval. Ask for one when a standing, named subset is what you want. You do NOT name who should " +
 			"be in it and cannot — your human decides membership, entirely, and adds each station themselves. Give a " +
 			"reason written for the person deciding; it is shown to YOUR HUMAN only and never delivered to anyone " +
 			"else. name_hint is a suggestion they may ignore. You will be told it is pending either way — do not " +

@@ -15,6 +15,64 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+- **`to_room:"all"` now reaches EVERY ACTIVE STATION on this Ken, room or no room** — and gains an
+  honest spelling, **`to_everyone:true`**. `to_room:"all"` remains a permanent alias and is never
+  deprecated.
+  **Why.** On production this instance had **13 stations and ZERO rooms**, so a broadcast reached
+  nobody — and it failed at the moment it existed for. An operator holding a confirmed
+  data-integrity defect could not send an estate-wide "stop writing" advisory, hand-addressed 3 of
+  13, and left 6 unwarned with no way to know which 6. The audience came from `room_member_mirror`,
+  and the one test guarding "advertised reach == delivered reach" compared **two hand-copied
+  queries over the same mirror**: it reported 0 and 0, agreed with itself, and stayed green
+  throughout.
+  **The rule that goes:** S14's *"broadcast is derived, not granted"*. Rooms survive as a
+  **grouping** — human-filled, agent-uncreatable, with their own address and backlog — never as a
+  permission boundary. Reaching one station has needed no permission since 4.0.0 ("the first
+  message creates the link"); reaching all of them requiring a human to build a room first could
+  not stand beside that under one human, one account, no other tenant (IDENTITY.md §4). Third
+  application of that ruling, after the directory filter and the pairwise human gate. The reversal
+  is recorded in `docs/STATIONS.md` S14 rather than edited over.
+  **What replaces the mirror: nothing.** The audience is read live from `ken.db` at the moment of
+  the call by the one layer holding both handles, through a single function,
+  `store.BroadcastRoster`, which also produces the `stations` list `comm_directory` prints — so
+  `broadcast_reaches` is the length of the list beside it. `comm.BroadcastAudience` is **deleted**;
+  there is no second query left to disagree.
+  **NO DATABASE UPGRADE IS REQUIRED.** `ken.db` stays at schema 26, `comm.db` at 22.
+
+### Added
+- `comm_send` returns **`recipient_stations`** — who it actually reached, by name. A count is not
+  checkable: "reached 3" and "reached 13" read identically to a session that never knew which was
+  right, and that is how 3 of 13 was reported as success. Also **`unstaffed`**: how many of them
+  have no session reading yet.
+- A **Recent estate announcements** card on `/comm`: who sent it, how wide it went, how many have
+  acked, and **which stations have not read it yet** — the question the incident could not answer.
+  Metadata only, never bodies. Plus a durable `COMM: … broadcast to N active station(s)` line in
+  the service log, which survives `comm.db` being rebuilt.
+- `/comm` now renders `deliveries_unacked` beside `messages_unacked`. It was computed and shown
+  **nowhere**, so a broadcast to thirteen stations moved the operator's only visible traffic number
+  by exactly +1 — identical to a DM.
+
+### Fixed
+- **An estate-wide message on a TWO-station Ken arrived with no `broadcast` flag**, so a session
+  read "everyone stop writing" as an ordinary directed message. `audience_size` excludes the
+  sender, and the flag keyed on `> 1`; it now also keys on the scope. `audience_size`'s
+  documentation said "including you" and never was.
+- **Backpressure on a broadcast scope counts announcements, not deliveries.** At 13 stations the
+  seventh unread advisory was refused and at 26 the third — a bound that tightened as the estate
+  grew, during exactly the incident where nobody is acking. The refusal text no longer names a
+  "channel" (retired in 5.0.0) or a peer (an estate send has none).
+- **One `reply_overdue` notice per message, not per recipient.** A 12-recipient broadcast produced
+  twelve near-identical notices, consuming half a poll's 25-notice budget and starving every other
+  notice for several polls.
+- **`comm_ack{ack_up_to_seq}` can settle a broadcast by its scope.** It previously resolved to a
+  pair scope, matched nothing, and reported success while settling nothing.
+- **`comm_file_offer{to_room:"all"}` refuses in its own words** instead of returning "room empty"
+  and sending the operator to inspect the membership of a room that cannot exist.
+- `comm_directory` no longer swallows the error from the reach query. `broadcast_reaches: 0` used
+  to mean either "you are alone" or "the query failed", rendered identically.
+
+
 _Nothing yet — everything below is tagged, built and published._
 
 ## [5.1.0] — 2026-08-31

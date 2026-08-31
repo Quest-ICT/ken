@@ -593,3 +593,77 @@ func TestTimeElRendersUTCWithLocalHook(t *testing.T) {
 		t.Errorf("empty timestamp should render empty, got %q", got)
 	}
 }
+
+// *** THE ANNOUNCEMENTS CARD MUST RENDER WITH DATA IN IT, NOT ONLY WHEN EMPTY. ***
+//
+// The existing console test loads /comm on an empty instance, which exercises the empty-state
+// branch and NOTHING ELSE — the table, its printf and every field access sit behind
+// `{{if .Data.Broadcasts}}` and never execute. A render-time template error (a bad printf arity, a
+// field that does not exist on the row type) is invisible to a page that has no rows: the card
+// renders "no announcements yet", the page returns 200, and the fault appears only on the day an
+// operator opens the console during an incident, which is the one day it must not.
+//
+// This also pins the column that earns the card: WHICH stations have not read it. On 2026-08-31 six
+// of thirteen went unwarned and nobody could say which six.
+func TestTheCommConsoleRendersEstateAnnouncementsWithTheirUnreadStations(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := comm.Open(filepath.Join(t.TempDir(), "comm.db"), comm.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	if err := cs.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hash, _ := passwd.Hash("supersecret", passwd.Standard)
+	actorID, err := st.CreateHumanUser(ctx, "admin", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two real stations, so the card resolves party keys to NAMES rather than printing 's:<id>'.
+	sender, err := st.CreateStation(ctx, "ops-station", "sends advisories", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiet, err := st.CreateStation(ctx, "sleepy-station", "never polls", actorID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ep, err := cs.MailboxFor(ctx, sender.StationID, comm.Owner{TokenID: "tok", ActorID: actorID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cs.BroadcastTo(ctx, ep, []string{"s:" + quiet.StationID},
+		"stop writing", comm.SendOpts{IdempotencyKey: "estate-advisory-1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
+	defer srv.Close()
+	jar, _ := cookiejar.New(nil)
+	cli := &http.Client{Jar: jar}
+	lcsrf := extract(t, cli, srv.URL+"/login", `name="lcsrf" value="([^"]+)"`)
+	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
+
+	page := get(t, cli, srv.URL+"/comm")
+	for _, want := range []string{"ops-station", "sleepy-station", "estate-advisory-1"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the estate announcements card does not carry %q:\n%s", want, trunc(page))
+		}
+	}
+	// A template that failed at RENDER time truncates the response mid-page rather than erroring,
+	// so assert the page actually finished.
+	if !strings.Contains(page, "</html>") {
+		t.Errorf("the /comm page did not finish rendering — a template error truncates silently:\n%s", trunc(page))
+	}
+}

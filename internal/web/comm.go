@@ -1,9 +1,11 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/store"
@@ -177,11 +179,61 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	// Station keys are retired and nothing binds, so the list would always be empty.
 	binders := []credential{}
 
+	// *** RECENT ESTATE ANNOUNCEMENTS — THE BROWSABLE HALF OF "A BROADCAST IS VISIBLE". ***
+	//
+	// On 2026-08-31 the harm was not only that six stations went unwarned; it was that NOBODY
+	// KNEW WHICH SIX. The "not read by" column answers that at t+5 minutes. The `expired` notice
+	// answers the same question, but only after expires_at passes — which flips to the 24h
+	// message TTL on the FIRST recipient's poll, so a day late, or thirty days if nobody polls.
+	//
+	// A FAILED QUERY DROPS THE CARD, IT DOES NOT 500 THE PAGE. Same rule as the owners loop
+	// above: a console page must stay reachable when one card's query fails, because this is the
+	// page an operator opens when something is already wrong.
+	type broadcastRow struct {
+		comm.Broadcast
+		From   string
+		Unread []string
+	}
+	var broadcasts []broadcastRow
+	broadcastsTotal := 0
+	if bs, total, bErr := a.comm.RecentBroadcasts(ctx, 20); bErr != nil {
+		log.Printf("web: comm recent broadcasts: %v", bErr)
+	} else {
+		broadcastsTotal = total
+		for _, b := range bs {
+			row := broadcastRow{Broadcast: b, From: a.stationLabel(ctx, b.SenderParty)}
+			for _, p := range b.UnreadParties {
+				row.Unread = append(row.Unread, a.stationLabel(ctx, p))
+			}
+			broadcasts = append(broadcasts, row)
+		}
+	}
+
 	a.render(w, r, sess, "comm", map[string]any{
 		"Endpoints": eps, "Stats": stats,
 		"Owners": owners, "Binders": binders,
 		"CommURL": a.publicCommURL(r), "Fingerprint": fp,
+		"Broadcasts": broadcasts, "BroadcastsTotal": broadcastsTotal,
+		"MetadataRetentionDays": a.comm.Limits().MetadataTTLSeconds / 86400,
 	})
+}
+
+// stationLabel resolves an 's:<station_id>' party key to the station's human name, falling back
+// to the raw key.
+//
+// The FALLBACK IS THE POINT: a station archived or deleted since the announcement still has to
+// appear in the list, because "who did not read it" is exactly the question being asked and
+// dropping the unresolvable rows would silently shorten the answer.
+func (a *app) stationLabel(ctx context.Context, party string) string {
+	id, ok := strings.CutPrefix(party, comm.PartyPrefixStation)
+	if !ok || id == "" {
+		return party
+	}
+	st, err := a.store.StationByID(ctx, id)
+	if err != nil || st == nil {
+		return party
+	}
+	return st.Name
 }
 
 // handleCommCount answers the Comm console's live-refresh poller with the current

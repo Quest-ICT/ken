@@ -611,6 +611,35 @@ SELECT m.message_id FROM delivery d JOIN message m ON m.id = d.message_row
 // exists, and an id that resolves to nothing must be indistinguishable from one that resolves to
 // somebody else's. The channel arm is gone with the channel.
 func (s *Store) cumulativeAckScope(ctx context.Context, ep *Endpoint, id string) (string, error) {
+	// *** THE BROADCAST ARM, AND IT GOES FIRST. ***
+	//
+	// Estate mail arrives in a 'b:<sender>' scope, which is not a room and not a station id, so
+	// before 5.2.0 a caller trying to settle a backlog of announcements passed the broadcaster's
+	// STATION id, fell through to the pair arm, built 'p:<a>|<b>', matched zero rows and got
+	// acked=0 with a note blaming its endpoint — settling nothing while succeeding. Estate-wide
+	// broadcast makes that the ORDINARY case, and an announcement channel you cannot drain is one
+	// nobody keeps reading.
+	//
+	// Keyed on the SCOPE STRING, which comm_poll already returns verbatim on every message, and
+	// which no room id or station id can collide with because of the 'b:' prefix. Membership is
+	// still what authorises it — holding a delivery in the scope — so the no-oracle property this
+	// function's contract rests on is unchanged: a caller who holds nothing here falls through to
+	// the same uniform refusal as a caller naming a room it is not in.
+	if IsBroadcastScope(id) {
+		party, err := endpointParty(ctx, s.R, ep.ID)
+		if err != nil {
+			return "", err
+		}
+		var held int
+		if err := s.R.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM delivery d JOIN message m ON m.id = d.message_row
+ WHERE m.scope_id = ? AND d.party_key = ?`, id, party).Scan(&held); err != nil {
+			return "", err
+		}
+		if held > 0 {
+			return id, nil
+		}
+	}
 	if s.callerIsInRoom(ctx, ep, id) {
 		return roomScope(id), nil
 	}

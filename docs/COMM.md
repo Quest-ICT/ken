@@ -292,14 +292,28 @@ gives it to both sessions; each calls `comm_join` with it, and the channel exist
   (S9), which is a durable row in `ken.db` that the agent cannot write. So "an agent cannot conjure a
   channel" remains true — an unlinked pair is refused, and the only way to become linked is a human
   clicking approve. What is no longer true is "a human mints a code for every conversation".
-- **ROOMS refine it a second time, in the same direction, and the sentence changes again.** A room is
-  a set of stations a human named and filled in the console; a member addresses it with
-  `comm_send{to_room}` and reaches everyone at once, and `to_room:"all"` reaches every station it
-  shares a room with. No pairing code, no link, no human present at that moment. **The invariant
-  holds and is worth restating precisely: an agent cannot enlarge its own audience.** There is no
-  tool that creates a room, adds a member, or joins one — those are console-only, deliberately, and
-  broadcast reaches exactly the union of rooms a human already put this station in. So the capability
-  is still *withheld* rather than requested politely, which is the property C7 exists to preserve.
+- **ROOMS refine it a second time, and in 5.2.0 the ESTATE BROADCAST retires half of this bullet —
+  so the honest version is written here rather than left as a contradiction.** A room is a set of
+  stations a human named and filled in the console; a member addresses it with `comm_send{to_room}`
+  and reaches everyone in it at once. That much is unchanged, and rooms remain **console-only**:
+  there is still no tool that creates one, adds a member, or joins one.
+  **What changed is `to_room:"all"` — now spelled `to_everyone:true` — which reaches EVERY ACTIVE
+  STATION on this Ken, room or no room.**
+
+  This bullet used to say "an agent cannot enlarge its own audience", and that sentence is now
+  false for the estate address. It was retired deliberately, for the same reason link approval was:
+  **there is one human, one Claude account, and no other tenant to protect against** (IDENTITY.md
+  §4). Withholding the estate address protected nobody and cost the thing it existed to enable —
+  on 2026-08-31 an operator holding a confirmed data-integrity defect could not send thirteen
+  stations the sentence *do not write*, because the instance had no rooms. Three were warned by
+  hand and six were never told. **Reaching ONE station has needed no permission since 4.0.0 ("the
+  first message creates the link"); reaching ALL of them requiring a human to build a room first
+  could not survive beside it.**
+
+  What C7 still preserves, narrowly and correctly: an agent cannot create a *standing group*, and
+  it cannot make itself a member of one. A broadcast is not a group — it is a single message to
+  whoever exists at that moment, reported by name in `recipient_stations` and visible to the human
+  on `/comm` afterwards.
 - **STATION ADDRESSING refines it a third time, and this is the one that retires the channel.**
   `comm_send{to_station:"<id>"}` writes to a station an approved **link** joins you to. There is no
   code, no channel row, no both-sides-join and no expiry — the conversation is the *relationship*,
@@ -705,7 +719,7 @@ described three scope families and which pairs could legally combine; that rule 
 
 | Tool | Purpose |
 |---|---|
-| `comm_directory` | **Start here.** Every live station in this Ken, the rooms you are in, and how far a broadcast reaches. Hands back the `station_id` to spend on `comm_send`. |
+| `comm_directory` | **Start here.** Every live station in this Ken, the rooms you are in, and how far a broadcast reaches (all of them: `broadcast_reaches` is the length of the station list). Hands back the `station_id` to spend on `comm_send`. |
 | `comm_open_channel` | Open a named channel with another station. Rarely needed — `comm_send{to_station}` reaches a peer with nothing to open, join or expire. |
 | `comm_channels` | List this station's channels, rooms and **pairs** (the stations it already holds a link with), each with what is waiting. Not the list of who you may reach — that is `comm_directory`. |
 | `comm_send` | Send one atomic message, addressed by `to_station` (**any** station — no permission, no channel; the first message creates the link), `channel_id`, or `to_room`; optional `requires_response` / `reply_to` / idempotency key. |

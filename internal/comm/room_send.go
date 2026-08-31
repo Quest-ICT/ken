@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // Room-addressed send — the fan-out half of slice 5.
@@ -175,9 +177,26 @@ WHERE scope_id=? AND sender_party=? AND idempotency_key=?`,
 	// failure signal matters most. Notices are derived at poll time since 3.4.0, so both
 	// call sites pass 'message' and the exemption was unreachable — removed here for the
 	// same reason as its twin in message.go, and consistently with it.
+	//
+	// *** A BROADCAST SCOPE COUNTS ANNOUNCEMENTS, NOT DELIVERIES, AND THE ARGUMENT ABOVE IS
+	// WHY. *** For a ROOM the sender chose the width by choosing the room, so charging it
+	// eleven for an eleven-member room prices that decision. For an estate broadcast the
+	// sender chose nothing: the audience is every station that exists, and the HUMAN's
+	// decision to add stations is what would tighten the bound. Left as deliveries, the cap
+	// of 64 silently means "64 divided by however many stations exist" — at 13 stations the
+	// SEVENTH unread advisory is refused (60 < 64 at the sixth check, 72 >= 64 at the
+	// seventh), at 26 the THIRD. That is the estate advisory channel jamming during exactly
+	// the incident where sessions have been told to stop writing and are therefore not
+	// acking. Counted per announcement, the cap is 64 unread announcements per sender,
+	// independent of estate size. See the rate-limit trade-off recorded in the 5.2.0
+	// CHANGELOG: this deliberately removes the only bound that scaled with the estate.
+	countExpr := "COUNT(*)"
+	if IsBroadcastScope(in.Scope) {
+		countExpr = "COUNT(DISTINCT d.message_row)"
+	}
 	var unacked int
 	if err := t.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM delivery d JOIN message m ON m.id = d.message_row
+SELECT `+countExpr+` FROM delivery d JOIN message m ON m.id = d.message_row
  WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, in.Scope).Scan(&unacked); err != nil {
 		return nil, err
 	}
@@ -280,21 +299,44 @@ func nullInt(v sql.NullInt64) any {
 
 // ErrNoAudience refuses a broadcast that would reach nobody.
 //
-// Distinct from ErrRoomEmpty because the remedy differs: an empty room is one the human
-// has not filled, while an empty broadcast means this station is in no room with anyone
-// else. "Join a room" and "add someone to yours" are different sentences to hear.
-var ErrNoAudience = CallerSafe(errors.New("you share no room with any other station, so a broadcast would reach nobody"))
+// Under estate-wide semantics the only way to reach it is a one-station instance, so the text
+// names that and says nothing was lost. It used to say "you share no room with any other station,
+// so a broadcast would reach nobody" — accurate about the mechanism and useless about the world:
+// on production it was returned to an operator who had thirteen peers and needed to warn all of
+// them, and it sent them looking for a room to join instead of telling them the truth.
+var ErrNoAudience = CallerSafe(errors.New("this is the only active station on this Ken, so a broadcast would reach nobody — nothing was sent and nothing was lost. Another station appears the moment a second conversation calls station_me, or when your human creates one from the console"))
 
-// Broadcast sends one body to every station the sender shares a room with.
+// ErrAudienceNotStations is DELIBERATELY NOT CallerSafe.
 //
-// The audience is DERIVED, never stored: it is the union of the memberships of the rooms
-// this sender is in, minus the sender. That is deliberately the same authorization as a
-// room send — you may broadcast to exactly the set you could already have addressed one
-// room at a time — so broadcast adds reach, never permission.
+// It is reachable only by a bug in the handler that builds the audience, so it must arrive as an
+// internal error and a 500, never as advice to a session that did nothing wrong. Without it a
+// stray endpoint party key would file estate mail under an endpoint rather than a station and be
+// indistinguishable from working.
+var ErrAudienceNotStations = errors.New("comm: a broadcast audience must be station party keys of the form s:<station_id>")
+
+// BroadcastTo sends one body to a caller-supplied audience: every active station on this Ken
+// except the sender.
 //
-// One message, N deliveries, exactly like a room send, so a broadcast to nine stations
-// is one body and nine rows rather than nine copies.
-func (s *Store) Broadcast(ctx context.Context, ep *Endpoint, body string, opts SendOpts) (*Message, error) {
+// *** THE AUDIENCE IS SUPPLIED, NOT DERIVED, AND THAT IS THE WHOLE FIX. ***
+//
+// It is read live from ken.db by the one layer holding both handles (store.BroadcastRoster).
+// internal/comm holds no store handle by design — the expendable side points at the durable one,
+// never the reverse (S7) — and a []string of party keys is a VALUE, not an import. SyncLinkMirror
+// already carries ken.db rows across this boundary the same way.
+//
+// WHY IT IS NO LONGER COMPUTED INSIDE THIS TRANSACTION. The in-transaction self-join bought
+// atomicity against a REVOCATION: a station removed from a room mid-send must not receive. That
+// mattered while room membership was a PERMISSION. It is not one any more — rooms group, they do
+// not gate, because there is one human and one Claude account and no other tenant to protect
+// against (IDENTITY.md §4). With nothing to authorise, nothing must be atomic; and perfect
+// transactional consistency over a stale mirror is still the wrong answer. It was wrong by
+// thirteen stations to zero, on production, during a live data-integrity incident.
+//
+// The residual is stated rather than hidden: a station created between the roster read and this
+// insert misses this message. That window is one ken.db read plus one comm.db transaction. The
+// mirror it replaces was refreshed only at boot and on room changes — hours, and on the day this
+// was found, nine new stations inside one of them.
+func (s *Store) BroadcastTo(ctx context.Context, ep *Endpoint, audience []string, body string, opts SendOpts) (*Message, error) {
 	if len(body) > s.lim().MaxBodyBytes {
 		return nil, ErrTooLarge
 	}
@@ -308,37 +350,39 @@ func (s *Store) Broadcast(ctx context.Context, ep *Endpoint, body string, opts S
 		clampedFrom = opts.TTLSeconds
 	}
 
+	// Normalise BEFORE the transaction. Sorting and de-duplicating here is the Go replacement
+	// for the SQL DISTINCT that went with the self-join: a station named twice must get ONE
+	// delivery, because at-least-once delivery makes a duplicate indistinguishable from a
+	// redelivery on the receiving side. The shape check refuses an endpoint party key rather
+	// than filing estate mail under a connection.
+	seen := make(map[string]bool, len(audience))
+	parties := make([]string, 0, len(audience))
+	for _, p := range audience {
+		rest, ok := strings.CutPrefix(p, PartyPrefixStation)
+		if !ok || rest == "" {
+			return nil, fmt.Errorf("%w: %q", ErrAudienceNotStations, p)
+		}
+		if !seen[p] {
+			seen[p] = true
+			parties = append(parties, p)
+		}
+	}
+	sort.Strings(parties)
+
 	var out *Message
 	err := s.tx(ctx, func(t *sql.Tx) error {
 		senderParty, err := endpointParty(ctx, t, ep.ID)
 		if err != nil {
 			return err
 		}
-		// The union, computed in one query rather than room by room, because a station
-		// in three rooms with one shared member must receive ONE copy. Iterating rooms
-		// and appending would deliver it three times, and at-least-once delivery makes
-		// that indistinguishable from a redelivery on the receiving side.
-		rows, err := t.QueryContext(ctx, `
-SELECT DISTINCT other.party_key
-  FROM room_member_mirror mine
-  JOIN room_member_mirror other ON other.room_id = mine.room_id
- WHERE mine.party_key = ? AND other.party_key <> ?
- ORDER BY other.party_key`, senderParty, senderParty)
-		if err != nil {
-			return err
-		}
-		var recipients []scopeMember
-		for rows.Next() {
-			var party string
-			if err := rows.Scan(&party); err != nil {
-				rows.Close()
-				return err
+		// Defensive, not load-bearing: the handler already excludes self in SQL. A
+		// self-delivery would show as one extra in `recipients` and as mail from yourself,
+		// which a session reads as a redelivery rather than as a bug.
+		recipients := make([]scopeMember, 0, len(parties))
+		for _, p := range parties {
+			if p != senderParty {
+				recipients = append(recipients, scopeMember{Party: p})
 			}
-			recipients = append(recipients, scopeMember{Party: party})
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
 		}
 		if len(recipients) == 0 {
 			return ErrNoAudience

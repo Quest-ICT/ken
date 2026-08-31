@@ -144,7 +144,7 @@ func TestCommChannelsCountsBroadcastMail(t *testing.T) {
 	sess, _, ctx := dirHarness(t)
 	seedRoom(t, "ops", "s:"+dirStation, "s:sender-station")
 	sender := stationBoundEndpoint(t, "sender-station")
-	if _, err := dirComm.Broadcast(ctx, sender, "to everyone I share a room with", comm.SendOpts{}); err != nil {
+	if _, err := dirComm.BroadcastTo(ctx, sender, []string{"s:" + dirStation}, "to every station on this Ken", comm.SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 

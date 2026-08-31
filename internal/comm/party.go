@@ -32,10 +32,19 @@ import (
 // old channel scope gets a refusal rather than an empty result it would read as an empty inbox.
 const (
 	scopePrefixRoom = "r:"
+	// PartyPrefixStation is the party key of a STATION, as opposed to the bare-rowid form an
+	// unbound endpoint gets. It was a bare "s:" literal in three places until 5.2.0, when a
+	// fourth reader appeared: BroadcastTo must REFUSE an audience entry that is not a station,
+	// so the grammar it checks against has to be the same one endpointParty writes.
+	PartyPrefixStation = "s:"
 	// A BROADCAST scope belongs to its sender rather than to a place. There is no
-	// standing set of participants to point at — the audience is computed at send time
-	// from the rooms the sender is in — so the scope names the only stable thing
-	// involved, which is who is speaking.
+	// standing set of participants to point at — the audience is every active station on
+	// this Ken at the moment of the call, supplied by the layer that can read the roster —
+	// so the scope names the only stable thing involved, which is who is speaking.
+	//
+	// It said "computed at send time from the rooms the sender is in" until 5.2.0. That was
+	// the whole defect: on an instance with thirteen stations and no rooms it computed an
+	// audience of nobody, and reported that as the truth.
 	//
 	// It is still a real scope with a real sequence, because a recipient needs to be
 	// able to ack one and a cumulative ack has to mean something. What it is NOT is a
@@ -112,7 +121,7 @@ func endpointParty(ctx context.Context, q rowQuerier, endpointRow int64) (string
 		return "", err
 	}
 	if station.Valid && station.String != "" {
-		return "s:" + station.String, nil
+		return PartyPrefixStation + station.String, nil
 	}
 	return endpointPartyKey(endpointRow), nil
 }
@@ -232,6 +241,18 @@ func roomMembers(ctx context.Context, t *sql.Tx, roomID string) ([]scopeMember, 
 
 // broadcastScope is the scope a sender's broadcasts live in.
 func broadcastScope(senderParty string) string { return scopePrefixBroadcast + senderParty }
+
+// IsBroadcastScope states the 'b:' grammar ONCE.
+//
+// validScope's broadcast arm, the backpressure branch in room_send.go, the cumulative-ack arm in
+// message.go and commserver's `broadcast` flag all ask the same question, and three of them used
+// to answer it by hand. Exported because commserver must ask it too: a recipient's `broadcast`
+// flag keyed on `audience_size > 1`, so on a TWO-station Ken an estate-wide advisory arrived
+// flagged as an ordinary directed message — audience_size excludes the sender, so it was 1.
+func IsBroadcastScope(scope string) bool {
+	rest, ok := strings.CutPrefix(scope, scopePrefixBroadcast)
+	return ok && rest != ""
+}
 
 // validScope reports whether s names one of the four scope namespaces.
 //

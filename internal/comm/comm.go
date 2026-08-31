@@ -60,7 +60,11 @@ var (
 	// must surface this as "stop and wait", never as a retryable transport error:
 	// full-duplex has no turn-taking, so two auto-processing sessions can
 	// otherwise enter a reply loop that grows the database without bound.
-	ErrBackpressure = errors.New("channel backpressure: too many unacknowledged messages")
+	// Names neither a "channel" (retired in 5.0.0) nor a peer (an estate send has none). The
+	// remedy differs by scope and the text has to survive both: a pair or room backlog clears
+	// when the other side acks, an estate backlog clears when recipients drain it or the
+	// announcements expire.
+	ErrBackpressure = errors.New("too many unacknowledged messages are already open on this address — nothing was sent. They clear as recipients ack them, or when they expire")
 	// ErrTooLarge means the body exceeds the configured cap.
 	ErrTooLarge = errors.New("message body too large")
 	// ErrChannelClosed means the channel is not open (still pending a second join,

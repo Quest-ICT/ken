@@ -120,11 +120,22 @@ type sendIn struct {
 	// sessions are the population this exists for.
 	SessionKey string `json:"session_key,omitempty" jsonschema:"a stable id for THIS conversation. It selects the station whose mail this call reads, so treat it as a credential: presenting it reads and acks that station's mail"`
 	// EXACTLY ONE of these three. channel_id is the pairing-code channel; to_room is a
-	// room you are in; to_room:"all" broadcasts to every station you share a room with;
+	// room you are in; to_everyone (or the older to_room:"all") reaches every ACTIVE station;
 	// to_station is the peer station an approved link joins you to.
 	// No longer `required` individually — the handler enforces the choice, because
 	// "exactly one of" is not something a JSON schema can say.
-	ToRoom string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of, or the literal \"all\" to reach every station you share a room with. Exactly one of to_room or to_station"`
+	ToRoom string `json:"to_room,omitempty" jsonschema:"a room_id you are a member of. The literal \"all\" is the older spelling of to_everyone and reaches every ACTIVE station on this Ken. Exactly one of to_everyone, to_room or to_station"`
+	// ToEveryone is the honest spelling of the estate-wide address.
+	//
+	// to_room:"all" survives as a PERMANENT alias and is never deprecated: a running session's
+	// tool schema pins when its conversation begins and never refreshes, so a spelling that
+	// stopped working would break exactly the sessions that were live when this shipped. Their
+	// old spelling keeps working and silently reaches MORE, which is the only safe direction.
+	//
+	// The new name exists so the next reader is not taught that "everyone" is a kind of room —
+	// which is precisely the teaching that made the audience come from room membership, and that
+	// left an estate of thirteen stations with no way to address itself.
+	ToEveryone bool `json:"to_everyone,omitempty" jsonschema:"true to reach EVERY active station on this Ken except you — no room needed and none consulted. The same address as the older spelling to_room:\"all\". Exactly one of to_everyone, to_room or to_station"`
 	// ToStation is the addressing mode that needs no pairing code and no channel: a
 	// human approved a LINK between the two stations, and that approval is the standing
 	// permission. Takes the station id rather than the name because a name is a human
@@ -148,13 +159,29 @@ type sendIn struct {
 type sendOut struct {
 	MessageID string `json:"message_id"`
 	Seq       int64  `json:"seq" jsonschema:"monotonic per CONVERSATION — one ascending stream shared by every sender, not one per direction"`
-	// How many recipients this went to. 1 for a channel; the room's size minus you for
-	// a room; the union of your rooms minus you for a broadcast. Reported because a
+	// How many recipients this went to. 1 for a station; the room's size minus you for a
+	// room; every active station on this Ken minus you for a broadcast. Reported because a
 	// sender who cannot see the audience cannot tell a broadcast that reached nine
-	// stations from one that reached none.
+	// stations from one that reached none — which is exactly what happened on 2026-08-31.
 	Recipients      int    `json:"recipients"`
 	ExpiresAt       string `json:"expires_at"`
 	ReplyDeadlineAt string `json:"reply_deadline_at,omitempty"`
+	// RecipientStations names who it reached, on the broadcast path only.
+	//
+	// *** A COUNT IS NOT CHECKABLE. *** "reached 3" and "reached 13" read identically to a
+	// session that never knew which number was right, and that is how an estate-wide safety
+	// advisory reached three of thirteen stations and was reported as success. A LIST can be
+	// checked — against comm_directory's stations[], by the session or by the human it is
+	// pasted to.
+	RecipientStations []string `json:"recipient_stations,omitempty"`
+	// Unstaffed is how many of those stations have no session reading them yet.
+	//
+	// A POINTER, following directoryEntry.Staffed: omitted when COMM could not answer,
+	// present as 0 when the answer is "none". The mail genuinely waits for whoever arrives —
+	// deliveries file under the station party, not an endpoint — so this is not a delivery
+	// failure. It is the difference between "thirteen were told" and "six can read it today",
+	// which is the question an operator sending a safety advisory is actually asking.
+	Unstaffed *int `json:"unstaffed,omitempty"`
 	// TTLClampedFrom appears only when the server overruled the ttl_seconds asked
 	// for. Omitted otherwise, so its presence IS the warning.
 	TTLClampedFrom int `json:"ttl_clamped_from,omitempty"`
@@ -201,7 +228,12 @@ type messageView struct {
 	// Broadcast marks a message that went to several parties. A reply reaches the scope,
 	// not a person, and that changes what it is reasonable to write.
 	Broadcast bool `json:"broadcast,omitempty"`
-	// AudienceSize is how many parties received it, including you.
+	// AudienceSize is how many parties it was addressed to, NOT counting the sender.
+	//
+	// This comment said "including you" until 5.2.0 and never was — it is len(recipients), and
+	// the sender is excluded from its own broadcast. A recipient on a thirteen-station estate
+	// reads 12 and concludes one station was missed. It is also why `Broadcast` above could not
+	// key on this field alone: on a two-station instance an estate message scores 1.
 	AudienceSize int   `json:"audience_size,omitempty"`
 	Seq          int64 `json:"seq"`
 	// FromStationName is who wrote it, in the name a human uses. NOT a claim the sender
@@ -403,7 +435,7 @@ type directoryEntry struct {
 	SelfDescribedAbout string   `json:"self_described_about,omitempty"`
 	SelfDescribedTags  []string `json:"self_described_tags,omitempty"`
 	// ReachableVia says WHY this station is on your list: "link" (a human approved a
-	// relationship, so you may open a channel) or "room" (you share a room, so you can
+	// relationship) or "room" (you share a room, so you can
 	// address it with to_room today, with no link and no pairing code).
 	//
 	// D4 of the rooms debugging. The directory listed only published and linked

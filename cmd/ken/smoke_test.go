@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -645,6 +647,142 @@ func TestTwoConversationsOnOneConnectionDoNotCrossStations(t *testing.T) {
 		t.Errorf("conversation A's note is in conversation B's notebook:\n%s\n\n"+
 			"This is the row-level shape ken-prod-ops measured on production.", bNotes)
 	}
+}
+
+// *** THE REACH A SESSION IS SHOWN MUST BE THE REACH A BROADCAST ACTUALLY GETS. ***
+//
+// THIS IS THE TEST THE CODEBASE DID NOT HAVE, AND ITS ABSENCE COST A DAY. There WAS a test called
+// TestTheAdvertisedBroadcastReachMatchesWhatSendingWouldDo, and it compared BroadcastAudience
+// against Broadcast — two hand-copied queries over the SAME room mirror. It proved the two copies
+// agreed and nothing about whether either described the world. On production, thirteen stations
+// and zero rooms made both of them 0: it reported "advertised 0, delivered 0, matched", stayed
+// green, and an operator could not send an estate-wide "stop writing" advisory during a live
+// data-integrity incident. Six stations were never warned.
+//
+// It has to live HERE, against the built binary, because the invariant now spans both databases:
+// the reach is read from ken.db's station roster and the deliveries land in comm.db. No package
+// below this one holds both handles — internal/comm must never import internal/store (S7) — so
+// there is no unit-level seam where this can be checked. That is a cost of the design and it is
+// the right cost: the thing being asserted is end-to-end behaviour.
+//
+// VERIFY BY DELETION: point the dispatch at anything other than store.BroadcastRoster — the old
+// room-mirror self-join, a subset, a cached list — and the counts disagree and this goes RED.
+func TestAnEstateBroadcastReachesEveryStationTheDirectoryLists(t *testing.T) {
+	url := ken(t, "KEN_DEV_TOKEN=smoke-secret")
+
+	code, sid, body := rpc(t, url, "smoke-secret", "", initBody)
+	if code != http.StatusOK {
+		t.Fatalf("initialize: %d %s", code, body)
+	}
+	call := func(tool, args string) string {
+		t.Helper()
+		c, _, out := rpc(t, url, "smoke-secret", sid, fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, tool, args))
+		if c != http.StatusOK {
+			t.Fatalf("%s: HTTP %d: %s", tool, c, out)
+		}
+		return out
+	}
+
+	// FOUR STATIONS AND DELIBERATELY NO ROOM. This is production's shape on 2026-08-31, and the
+	// shape every fresh deployment has: rooms are human-created and a fresh Ken has none.
+	for _, k := range []string{"conv-a", "conv-b", "conv-c", "conv-d"} {
+		call("station_me", fmt.Sprintf(`{"session_key":%q,"station_label":%q}`, k, k))
+	}
+
+	dir := call("comm_directory", `{"session_key":"conv-a"}`)
+	reach := jsonNumber(t, dir, "broadcast_reaches")
+	if reach != 3 {
+		t.Fatalf("broadcast_reaches = %d on a four-station instance with NO rooms, want 3.\n%s\n\n"+
+			"Zero here is the production defect verbatim: the audience came from room membership, "+
+			"so an estate with no rooms could not address itself.", reach, dir)
+	}
+
+	// Both spellings, and they must agree. to_room:"all" is the older one and is kept forever,
+	// because a session live across this upgrade holds a schema that has never heard of
+	// to_everyone.
+	for _, addr := range []string{`"to_everyone":true`, `"to_room":"all"`} {
+		out := call("comm_send", fmt.Sprintf(
+			`{"session_key":"conv-a","body":"stop writing","idempotency_key":"advisory-%s",%s}`,
+			strings.NewReplacer(`"`, "", ":", "-").Replace(addr), addr))
+		got := jsonNumber(t, out, "recipients")
+		if got != reach {
+			t.Errorf("comm_directory advertised a reach of %d and a broadcast via %s delivered %d.\n%s\n\n"+
+				"A session cannot plan against a number that is not the one it gets, and an operator "+
+				"sending a safety advisory cannot tell 3-of-13 from 13-of-13 by reading a count.",
+				reach, addr, got, out)
+		}
+		// AND THE NAMES, because a count is not checkable. "reached 3" and "reached 13" read
+		// identically to a session that never knew which was right.
+		for _, name := range []string{"conv-b", "conv-c", "conv-d"} {
+			if !strings.Contains(out, name) {
+				t.Errorf("recipient_stations does not name %s after a broadcast via %s:\n%s",
+					name, addr, out)
+			}
+		}
+		if strings.Contains(out, `"conv-a"`) {
+			t.Errorf("the sender is in its own broadcast audience via %s:\n%s", addr, out)
+		}
+	}
+
+	// AND THE MAIL IS REALLY THERE, flagged as a broadcast. The flag is what tells a session a
+	// reply reaches a scope rather than a person, and it keyed on audience_size > 1 until 5.2.0 —
+	// so on a two-station Ken an estate advisory arrived looking like an ordinary direct message.
+	got := call("comm_poll", `{"session_key":"conv-d","wait_seconds":0}`)
+	if !strings.Contains(got, "stop writing") {
+		t.Errorf("a station that shares no room with the sender did not receive the estate broadcast:\n%s", got)
+	}
+	if !strings.Contains(got, `"broadcast":true`) {
+		t.Errorf("estate mail arrived without the broadcast flag:\n%s", got)
+	}
+}
+
+// TestATwoStationEstateStillFlagsABroadcast is the two-station case on its own, because it is the
+// one every fresh deployment starts in and the one the old `audience_size > 1` test could not see:
+// with a single recipient the audience size is 1, so the flag was false and a session read
+// "everyone stop writing" as a note addressed to it alone.
+func TestATwoStationEstateStillFlagsABroadcast(t *testing.T) {
+	url := ken(t, "KEN_DEV_TOKEN=smoke-secret")
+	code, sid, body := rpc(t, url, "smoke-secret", "", initBody)
+	if code != http.StatusOK {
+		t.Fatalf("initialize: %d %s", code, body)
+	}
+	call := func(tool, args string) string {
+		t.Helper()
+		c, _, out := rpc(t, url, "smoke-secret", sid, fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":%q,"arguments":%s}}`, tool, args))
+		if c != http.StatusOK {
+			t.Fatalf("%s: HTTP %d: %s", tool, c, out)
+		}
+		return out
+	}
+	call("station_me", `{"session_key":"only-a","station_label":"only-a"}`)
+	call("station_me", `{"session_key":"only-b","station_label":"only-b"}`)
+
+	call("comm_send", `{"session_key":"only-a","to_everyone":true,"body":"everyone stop writing","idempotency_key":"two-station-advisory"}`)
+	got := call("comm_poll", `{"session_key":"only-b","wait_seconds":0}`)
+	if !strings.Contains(got, `"broadcast":true`) {
+		t.Errorf("on a TWO-station estate the broadcast flag is missing:\n%s\n\n"+
+			"audience_size excludes the sender, so it is 1 here — keyed on `> 1` alone this is the "+
+			"case that silently reads as an ordinary directed message.", got)
+	}
+}
+
+// jsonNumber pulls an integer field out of a tool result, which arrives as JSON embedded in a
+// JSON-RPC envelope's text content. Deliberately a regex over the raw body rather than a decode:
+// the point of these tests is what a CLIENT sees on the wire, and a struct with the field in it
+// would pass even if the server stopped sending it.
+func jsonNumber(t *testing.T, body, field string) int {
+	t.Helper()
+	m := regexp.MustCompile(`\\?"` + field + `\\?":\s*(-?\d+)`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no %q field in:\n%s", field, body)
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("%s = %q: %v", field, m[1], err)
+	}
+	return n
 }
 
 func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {

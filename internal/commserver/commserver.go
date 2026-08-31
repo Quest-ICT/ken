@@ -148,7 +148,11 @@ func viewOf(m *comm.Message) messageView {
 	if strings.HasPrefix(m.Scope, "p:") {
 		mv.ReplyToStation = m.SenderStationID
 	}
-	mv.Broadcast = m.AudienceSize > 1
+	// *** OR THE SCOPE, BECAUSE audience_size EXCLUDES THE SENDER. *** On a TWO-station Ken —
+	// every fresh deployment — an estate-wide advisory has audience_size 1, so keyed on `> 1`
+	// alone it arrived with no broadcast flag and a session read "stop writing, everyone" as an
+	// ordinary directed message. comm_poll's own description tells sessions to read this flag.
+	mv.Broadcast = m.AudienceSize > 1 || comm.IsBroadcastScope(m.Scope)
 	if m.File != nil {
 		mv.File = &fileView{
 			AttachmentID: m.File.AttachmentID, Name: m.File.Name,
@@ -235,14 +239,14 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_directory",
-		Description: "List EVERY station in this Ken, the ROOMS you are in, and how far a broadcast would reach. " +
+		Description: "List EVERY station in this Ken, the ROOMS you are in, and how far a broadcast would reach. broadcast_reaches is the LENGTH OF THE stations LIST below it, from one read \u2014 a broadcast goes to all of them, room or no room. " +
 			"This is where you find out who exists — start here rather than guessing a name, because every refusal for an " +
 			"unavailable target is deliberately identical and probing tells you nothing. " +
 			"`linked` says whether a relationship already exists; it is NOT permission to ask, because none is needed — " +
 			"comm_send{to_station} creates the link on first contact. A station listed with linked=false is one you have " +
 			"simply never written to. " +
 			"`reachable_via` says why a station is listed: \"link\" a standing relationship, \"room\" a room you share. " +
-			"Address a room with comm_send{to_room: room_id}, or every station you share a room with using " +
+			"Address a room with comm_send{to_room: room_id}, or the whole estate with " +
 			"to_room:\"all\" — your human decides who is in a room, which is why rooms are the one thing you cannot make. " +
 			"A room's `pending` is a count and delivers nothing, so checking it before you speak costs nothing. " +
 			"`roster_epoch` changes whenever a membership does: if it has moved since you were told about a room, " +
@@ -262,7 +266,11 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 				"from which to see one — the directory answers 'who is out there', and that question is asked from a " +
 				"station. That should not be possible: tell your human")
 		}
-		list, err := d.Store.ListStationsVisibleTo(ctx, ep.StationID)
+		// ONE READ produces the audience, the printed list and the generation, so
+		// broadcast_reaches is structurally the length of the stations list beside it. Two
+		// hand-copied queries over a mirror used to answer these separately, agreed with each
+		// other, and were both wrong by thirteen stations. See store.BroadcastRoster.
+		parties, list, rosterEpoch, err := d.Store.BroadcastRoster(ctx, ep.StationID)
 		if err != nil {
 			return nil, directoryOut{}, err
 		}
@@ -285,9 +293,11 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		// something to a group, and "prod-ops, infra, dev" answers that question where
 		// three opaque ids do not.
 		myParty := "s:" + ep.StationID
-		// name -> station id, gathered while the party keys are still raw, so the
-		// room-co-member entries below can carry an address like every other entry.
-		roomMateID := map[string]string{}
+		// roomMateID IS DELETED WITH THE D4 APPEND IT FED. It carried a name->id mapping so the
+		// appended room-co-member entries could show an address; those entries are gone (see
+		// below), and every station in the list now comes from BroadcastRoster carrying its own
+		// id. A map still written and no longer read is the same unfinished shape as a column
+		// nothing selects.
 		if rooms, err := d.Comm.RoomsFor(ctx, myParty); err != nil {
 			return nil, directoryOut{}, commError(err)
 		} else {
@@ -296,24 +306,17 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 				for _, pk := range r.Members {
 					label := partyLabel(ctx, d, pk)
 					dr.Members = append(dr.Members, label)
-					// Keep the ADDRESS beside the label. A room co-member is listed below
-					// as reachable, and 3.12.0 shipped a to_station description promising
-					// this tool hands back an id — so listing one without its id would
-					// make the promise false for exactly the entries D4 was added to
-					// include.
-					if id, ok := strings.CutPrefix(pk, "s:"); ok && id != "" {
-						roomMateID[label] = id
-					}
 				}
 				out.Rooms = append(out.Rooms, dr)
 			}
 		}
-		if n, err := d.Comm.BroadcastAudience(ctx, myParty); err == nil {
-			out.BroadcastReaches = n
-		}
-		if e, err := d.Store.RosterEpoch(ctx); err == nil {
-			out.RosterEpoch = e
-		}
+		// *** THE SWALLOW IS DELETED, NOT MITIGATED. *** This was
+		// `if n, err := …; err == nil { … }` with no else, so a FAILED query rendered as
+		// "broadcast_reaches": 0 — byte-identical to the true answer on the room-less
+		// production instance. A dead instrument and a correct reading printed the same digit.
+		// Both values now come from the single read above and an error already returned.
+		out.BroadcastReaches = len(parties)
+		out.RosterEpoch = rosterEpoch
 		// D4. THE STATIONS YOU SHARE A ROOM WITH ARE REACHABLE AND WERE NOT LISTED.
 		//
 		// ListStationsVisibleTo returns published and linked stations. Room membership
@@ -324,9 +327,7 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		//
 		// Collected as a SET keyed on the resolved NAME — which is what the members list
 		// holds — so a station that is both linked and a room co-member appears once
-		// carrying both reasons rather than twice. (This comment said "keyed on station
-		// id" until 3.12.1 and never was; the id now travels alongside in roomMateID,
-		// gathered where the party keys are still raw.)
+		// carrying both reasons rather than twice.
 		roomMates := map[string]bool{}
 		for _, r := range out.Rooms {
 			for _, name := range r.Members {
@@ -334,9 +335,7 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			}
 		}
 
-		seen := map[string]bool{}
 		for _, st := range list {
-			seen[st.Name] = true
 			e := directoryEntry{
 				Name:               st.Name,
 				StationID:          st.StationID,
@@ -362,16 +361,24 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			out.Stations = append(out.Stations, e)
 		}
 
-		// And the room co-members the visibility query never returned. Listing them is
-		// not a widening of permission — a session can already address them with to_room
-		// this second. It is the directory catching up with what is already true.
-		for name := range roomMates {
-			if seen[name] || name == out.YouAre {
-				continue
-			}
-			out.Stations = append(out.Stations, directoryEntry{
-				Name: name, StationID: roomMateID[name], ReachableVia: []string{"room"},
-			})
+		// *** THE D4 APPEND IS DELETED, BECAUSE broadcast_reaches IS NOW THE LENGTH OF THIS
+		// LIST. *** It appended room co-members the visibility query "never returned", on the
+		// premise that ListStationsVisibleTo returns only published and linked stations. That
+		// premise has been false since the filter was removed — it lists EVERY LIVE STATION now
+		// — so the only row this could still add is a co-member the room MIRROR holds and
+		// ken.db does not list as live: precisely a station the broadcast will NOT reach,
+		// appended to a list whose length is the advertised reach. With it gone,
+		// len(out.Stations) == len(parties) == out.BroadcastReaches BY CONSTRUCTION.
+		//
+		// roomMates stays: it still feeds the reachable_via:"room" tag above.
+		if out.BroadcastReaches != len(out.Stations) {
+			// NOT a hard failure, deliberately. comm_directory is the first call in an incident
+			// and the source of the ids an operator falls back to hand-addressing with; failing
+			// it entirely on a cosmetic mismatch takes the discovery tool down at the moment it
+			// is most needed. It degrades to the CHECKABLE number — the list — and says so.
+			log.Printf("COMM: comm_directory reach %d does not match the %d stations listed — reporting the list, which is the checkable one; something appended to stations without going through BroadcastRoster",
+				out.BroadcastReaches, len(out.Stations))
+			out.BroadcastReaches = len(out.Stations)
 		}
 		return nil, out, nil
 	})
@@ -481,8 +488,9 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_send",
-		Description: "Send one message. Address it with to_station (ANY station in this Ken — it needs no permission and works even if the peer is offline), to_room (a room your human put you in), or to_room=\"all\" to reach every station you share a room with. A room message is ONE body delivered to each member separately, so each of them acks for themselves and none of them settles it for the others. Bodies are atomic and size-capped — never chunk a large payload through this tool; a mebibyte of base64 costs hundreds of thousands of output tokens. Pass a DESCRIPTIVE idempotency_key — it stops a retry delivering twice, and it outlives the body: retention blanks the text and the key remains, so it is often the only surviving record of what a message was about. IF THE RESULT CARRIES waiting_for_you, mail was already waiting for you when this went out: poll it and RECONSIDER what you just sent. ttl_clamped_from appears when the server shortened the lifetime you asked for; recipients is how many PARTIES it was addressed to — a party is a station or a lone endpoint, so mail addressed to a station with nobody staffing it still counts 1 and waits for whoever arrives." +
-			"to_station NEEDS NO PERMISSION AND NO CEREMONY: get the id from comm_directory, which lists every station, and send. The first message creates the link, which is recorded so your human can see it and turn it off. One refusal is worth recognising — a link they have SUSPENDED — and the answer to it is to tell them, never to retry. Station-addressed mail reaches the peer carrying reply_to_station — that is the id to answer on, so neither of you works it out from the scope. Set requires_response when you need an answer (a deadline is armed, and a peer who goes quiet then reaches you as a notice on comm_poll), and reply_to with the message_id you are answering.",
+		Description: "Send one message. Address it with to_station (ANY station in this Ken, no permission needed, works if the peer is offline), to_room (a room your human put you in), or to_everyone:true to reach EVERY ACTIVE STATION on this Ken \u2014 no room needed and none consulted (to_room=\"all\" is the older spelling of the same address). A room or estate message is ONE body delivered to each recipient separately, so each acks for themselves and none settles it for the others. Bodies are atomic and size-capped — never chunk a large payload through this tool. Pass a DESCRIPTIVE idempotency_key — it stops a retry delivering twice, and it outlives the body: retention blanks the text and the key remains, often the only surviving record of what a message was about. IF THE RESULT CARRIES waiting_for_you, mail was waiting when this went out: poll it and RECONSIDER what you just sent. ttl_clamped_from appears when the server shortened the lifetime you asked for; recipients is how many PARTIES it went to, and mail to an unstaffed station still counts and waits." +
+			"AN ESTATE-WIDE SEND NAMES WHO IT REACHED: check recipient_stations against comm_directory rather than trusting a count \u2014 \"reached 3\" and \"reached 13\" read the same. unstaffed is how many have nobody reading yet. Its expiry clock starts at the FIRST recipient's poll: pass ttl_seconds to survive the night. Do not set requires_response on one \u2014 the deadline recipients see is not reliably their own. " +
+			"to_station NEEDS NO PERMISSION AND NO CEREMONY: get the id from comm_directory and send. The first message creates the link, recorded so your human can see it and turn it off. One refusal is worth recognising — a link they have SUSPENDED — and the answer is to tell them, never to retry. Station-addressed mail carries reply_to_station — the id to answer on, so neither of you works it out from the scope. Set requires_response when you need an answer (a deadline is armed; a peer who goes quiet reaches you as a notice on comm_poll), and reply_to with the message_id you are answering.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, sendOut, error) {
 		ep, err := auth(ctx, d, req, in.SessionKey)
 		if err != nil {
@@ -502,6 +510,12 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 				given++
 			}
 		}
+		// to_everyone and to_room:"all" are two spellings of ONE address, so passing both is
+		// unambiguous and is not refused. to_everyone beside a real room id, or beside
+		// to_station, still counts two and hits the message below.
+		if in.ToEveryone && in.ToRoom != "all" {
+			given++
+		}
 		if given != 1 {
 			return nil, sendOut{}, fmt.Errorf("pass exactly one of to_room or to_station (got %s)",
 				map[bool]string{true: "neither", false: "more than one"}[given == 0])
@@ -515,6 +529,12 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		}
 
 		var m *comm.Message
+		// Carried out of the switch so the broadcast arm can name WHO it reached in the result
+		// and in the service log. A COUNT IS NOT CHECKABLE: "reached 3" and "reached 13" read
+		// identically to a session that never knew which was right, and that is how an
+		// estate-wide safety advisory reached three of thirteen stations and reported success.
+		var broadcastListed []store.DirectoryEntry
+		var broadcastEpoch int64
 		switch {
 		case in.ToStation != "":
 			// *** THE LINK IS CREATED ON FIRST CONTACT, HERE, BEFORE THE SEND. ***
@@ -563,8 +583,27 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 			// the pair scope is derived from the two station ids, so this path works when neither
 			// side has ever run comm_open_channel and when the peer is not connected at all.
 			m, err = d.Comm.SendToStation(ctx, ep, in.ToStation, in.Body, opts)
-		case in.ToRoom == "all":
-			m, err = d.Comm.Broadcast(ctx, ep, in.Body, opts)
+		case in.ToRoom == "all" || in.ToEveryone:
+			// *** IT HAPPENS AT THIS LAYER BECAUSE ONLY THIS LAYER CAN. *** The roster lives in
+			// ken.db and internal/comm holds no store handle by design (S7), so the handler reads
+			// the estate and passes it down as a value. Same shape as the auto-link block above.
+			//
+			// A ROSTER THAT CANNOT BE READ REFUSES; IT NEVER SHRINKS. There is no degraded mode
+			// and no partial audience: a broadcast that quietly reached four of thirteen and
+			// reported success is the exact failure this release exists to end.
+			parties, listed, rosterEpoch, rErr := d.Store.BroadcastRoster(ctx, ep.StationID)
+			if rErr != nil {
+				log.Printf("COMM: broadcast from station %s REFUSED — station roster unreadable: %v",
+					ep.StationID, rErr)
+				return nil, sendOut{}, comm.CallerSafe(errors.New(
+					"the station roster could not be read, so this broadcast was NOT sent and nothing " +
+						"was delivered — no station received a partial copy. Tell your human; the server " +
+						"log names the failure. Do not retry in a loop"))
+			}
+			m, err = d.Comm.BroadcastTo(ctx, ep, parties, in.Body, opts)
+			if err == nil && m != nil {
+				broadcastListed, broadcastEpoch = listed, rosterEpoch
+			}
 		case in.ToRoom != "":
 			m, err = d.Comm.SendToRoom(ctx, ep, in.ToRoom, in.Body, opts)
 		default:
@@ -625,11 +664,35 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 				w.notify(id)
 			}
 		}
-		return nil, sendOut{
+		out := sendOut{
 			MessageID: m.MessageID, Seq: m.Seq, ExpiresAt: m.ExpiresAt, ReplyDeadlineAt: m.ReplyDeadlineAt,
 			TTLClampedFrom: m.TTLClampedFrom, WaitingForYou: m.WaitingForYou,
 			Recipients: m.Recipients,
-		}, nil
+		}
+		if broadcastListed != nil {
+			// *** THE DURABLE HALF OF "A BROADCAST IS VISIBLE TO THE HUMAN". *** It lands in
+			// journald and survives comm.db being deleted or rebuilt — which matters, because
+			// comm.db is expendable by design and is what the console card below reads.
+			unstaffed := 0
+			staffed, sErr := d.Comm.StaffingByStation(ctx)
+			for _, e := range broadcastListed {
+				out.RecipientStations = append(out.RecipientStations, e.Name)
+				if sErr == nil && staffed[e.StationID].Endpoints == 0 {
+					unstaffed++
+				}
+			}
+			if sErr == nil {
+				// A POINTER: "unknown" and "nobody is there" are different facts, the rule
+				// directoryEntry.Staffed already states for itself.
+				out.Unstaffed = &unstaffed
+			} else {
+				log.Printf("COMM: broadcast from %s: staffing unreadable, unstaffed omitted: %v",
+					ep.StationID, sErr)
+			}
+			log.Printf("COMM: station %s broadcast to %d active station(s) on this Ken (message %s, key %q, roster epoch %d, %d unstaffed)",
+				ep.StationID, m.Recipients, m.MessageID, in.IdempotencyKey, broadcastEpoch, unstaffed)
+		}
+		return nil, out, nil
 	})
 
 	addTool(s, d.Metrics, &mcp.Tool{
