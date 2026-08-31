@@ -15,6 +15,14 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+_Nothing yet — everything below is tagged, built and published._
+
+## [4.0.1] — 2026-08-31
+
+A patch release, cut for ONE reason: on 4.0.0 most of the station surface is unusable on any
+client that re-initialises between messages, which is the common case rather than the corner.
+The rest shipped with it because it was already on `main` and tested.
+
 ### Fixed
 
 - **The console told operators to perform deleted actions.** 33 strings across three locales still
@@ -53,6 +61,16 @@ same change — never "docs later".
   The three listing tools took a bare `struct{}`, which is why they could not be told anything at
   all: with no field, `session_key` was not merely undeclared but unrepresentable.
 
+- **The upgrade smoke test could pass by reading nothing.** `runFor` read the subprocess's output
+  buffer while `os/exec` was still filling it, behind a 200ms "let the startup lines flush" sleep.
+  Every assertion over that log is NEGATIVE — "the log must not say DEGRADED" — so a read that lost
+  the race made the test green by having nothing to read. That is the exact failure mode
+  `cmd/ken/smoke_test.go` was written to catch, reproduced inside the instrument, over the one
+  migration three audit rounds found broken three separate times. `runFor` now kills the child and
+  calls `cmd.Wait()` — which joins the copiers — before reading, so the log is complete and the read
+  is race-free, with no sleep to tune. The upgrade test additionally anchors on a line HEAD always
+  prints, so an empty log fails loudly instead of satisfying every negative check.
+
 ### Changed
 
 - **A database is created in ONE step; the migration chains are collapsed.** `migrations/` held 26
@@ -77,20 +95,6 @@ same change — never "docs later".
   written before comm 0009 began linking replies. Such a row cannot exist in a 4.0.0 database, and
   cannot be created at all now the chain is one file, so the clause could never exclude anything.
   Removing it changes no behaviour — the old guard was `COALESCE(..., '')`, which failed open.
-
-### Fixed
-
-- **The upgrade smoke test could pass by reading nothing.** `runFor` read the subprocess's output
-  buffer while `os/exec` was still filling it, behind a 200ms "let the startup lines flush" sleep.
-  Every assertion over that log is NEGATIVE — "the log must not say DEGRADED" — so a read that lost
-  the race made the test green by having nothing to read. That is the exact failure mode
-  `cmd/ken/smoke_test.go` was written to catch, reproduced inside the instrument, over the one
-  migration three audit rounds found broken three separate times. `runFor` now kills the child and
-  calls `cmd.Wait()` — which joins the copiers — before reading, so the log is complete and the read
-  is race-free, with no sleep to tune. The upgrade test additionally anchors on a line HEAD always
-  prints, so an empty log fails loudly instead of satisfying every negative check.
-
-### Changed
 
 - **CI runs `go test -race ./...`.** It never did, which is why the above shipped: the race is
   invisible to `go test ./...`, and that is all CI and the release workflow ran. A separate step,

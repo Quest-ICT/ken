@@ -64,6 +64,15 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 4.0.1** (2026-08-31) — cut for ONE reason: on 4.0.0 most of the station surface is
+unusable on any client that re-initialises between messages, which is the common case rather than
+the corner. Nineteen station tools did not declare `session_key`, so `additionalProperties:false`
+rejected it and they had nothing to identify the caller but a per-connection map. Notebook, tasks,
+locker and vault were behind whether an MCP session happened to persist. Shipped with it, because it
+was already on `main` and tested: the database is created in ONE step rather than by replaying 26
+and 21 migrations; the console no longer names mechanisms 4.0.0 deleted; the dev principal is
+charged to the rate limiter like any other credential; and CI runs `-race`, which it never had.
+
 **Released: 4.0.0** (2026-08-30) — one machine surface at `/mcp` carrying every tool; station keys
 retired; both human gates on comm removed (a link is created by the first message, the pairing code
 is deleted); suspend/resume replaces link revoke; a mailbox belongs to a STATION, not a session; the

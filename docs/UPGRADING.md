@@ -34,6 +34,33 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 4.0.1
+
+**Nothing breaks, and there is nothing to do.** It is listed here because two changes look like they
+should break something and do not, and an operator reading only the CHANGELOG would be right to
+check.
+
+**The migration chains are collapsed into one file each** — `migrations/0026_init.sql` and
+`internal/comm/migrations/0021_init.sql` replace 26 and 21 files. **Your database is not touched.**
+`dbmigrate` tracks applied migrations by the NUMBER in the filename, so a database that already
+recorded 26 and 21 computes an empty pending set and boots straight past. The two files keep those
+numbers for exactly that reason.
+
+*What an operator observes:* a database created by 4.0.1 records ONE row in `schema_migration`
+instead of 26, so `SELECT MAX(version)` is unchanged but `SELECT COUNT(*)` differs between a
+database created before this release and one created after. Nothing reads the individual rows.
+Anything of yours that counts them should stop.
+
+**Downgrading to 4.0.0 is safe from this release**, which is not generally true of Ken and is worth
+saying: the schema numbers are identical in both directions, so 4.0.0's binary finds nothing pending
+on a 4.0.1 database. That is a property of this patch, not a new policy — forward-only remains the
+rule the moment a release adds a migration.
+
+**A station tool now accepts `session_key`.** Purely additive: a caller that does not send one falls
+back to the same connection binding it used before. If your sessions were losing their notebook or
+tasks between messages, that is the fix, and they get it by sending the key they already give
+`station_me`.
+
 ## 4.0.0
 
 > **THE RECORD HAS A GAP: 3.30.0 THROUGH 3.42.0 SHIPPED WITHOUT ENTRIES HERE.** This file's own
