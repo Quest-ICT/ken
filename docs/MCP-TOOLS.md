@@ -40,7 +40,7 @@ endpoint. This document is the contract: shapes here are stable API; change them
 - **Self-describing:** on `initialize`, Ken returns its operating loop (warm-up → search-first →
   record-outcome → save/enhance) as MCP **server instructions**, so an agent learns the protocol
   without a human pasting a prompt (`internal/mcpserver/server.go`).
-- **Design references:** entry model → [DESIGN.md](DESIGN.md) §3; schema → [../migrations/0001_init.sql](../migrations/0001_init.sql).
+- **Design references:** entry model → [DESIGN.md](DESIGN.md) §3; schema → [../migrations/0026_init.sql](../migrations/0026_init.sql).
 
 ---
 

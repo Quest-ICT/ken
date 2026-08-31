@@ -15,6 +15,31 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+
+- **A database is created in ONE step; the migration chains are collapsed.** `migrations/` held 26
+  files and `internal/comm/migrations/` 21, and every fresh install replayed all of them — creating
+  tables to drop them again, adding columns later files removed, rebuilding the same table several
+  times. Ken is installed fresh, so that journey was pure cost, and nobody could read the schema
+  without replaying it mentally. Both are now a single generated `*_init.sql`.
+
+  The files keep the version numbers **26** and **21** deliberately: `dbmigrate` tracks applied
+  migrations by the number in the filename, so a database that already recorded those finds nothing
+  pending and is untouched. Numbering them `0001` would make every existing database try to create
+  tables it already has.
+
+  Correctness is not asserted, it is generated and proved: the files are dumped from a database
+  built by the real chain, and the two schemas were diffed byte-for-byte before the chain was
+  deleted. `TestUpgradeFromPreviousReleaseDoesNotDegradeComm` now builds **v4.0.0** and boots HEAD
+  on its database, so the claim the running deployment depends on is exercised rather than reasoned
+  about.
+
+- **The reply-overdue rule no longer reads migration archaeology at runtime.** It carried a lower
+  bound of `schema_migration.applied_at WHERE version = 9`, which existed to protect delivery rows
+  written before comm 0009 began linking replies. Such a row cannot exist in a 4.0.0 database, and
+  cannot be created at all now the chain is one file, so the clause could never exclude anything.
+  Removing it changes no behaviour — the old guard was `COALESCE(..., '')`, which failed open.
+
 ### Fixed
 
 - **The upgrade smoke test could pass by reading nothing.** `runFor` read the subprocess's output

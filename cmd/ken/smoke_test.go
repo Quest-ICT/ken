@@ -340,6 +340,13 @@ func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 // orphaning columns nobody enumerated, so the post-migration check fails — AFTER the migration has
 // committed its version, which means every subsequent boot is degraded and no re-run repairs it.
 //
+// IT NOW GUARDS THE OPPOSITE DIRECTION TOO. HEAD creates both databases from ONE file each
+// (migrations/0026_init.sql, internal/comm/migrations/0021_init.sql); the v4.0.0 release built
+// them by replaying 26 and 21 files. dbmigrate tracks applied migrations by the NUMBER in the
+// filename, so a released database that already recorded 26 and 21 must find nothing pending
+// and be left alone. That is the claim the running deployment depends on, and reasoning about
+// it is not the same as running it.
+//
 // Round two found it in the endpoint columns. The fix for that introduced it in the channel columns.
 // Neither was visible to `go test ./...`, because every store test opens a FRESH database: the
 // data-moving arms of a migration copy zero rows in every unit test that exists.
@@ -351,7 +358,7 @@ func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 // an environment fact, not a defect, and a test that fails for that reason gets disabled rather than
 // fixed. It logs loudly so a skip cannot be mistaken for a pass.
 func TestUpgradeFromPreviousReleaseDoesNotDegradeComm(t *testing.T) {
-	const prev = "v3.42.0"
+	const prev = "v4.0.0"
 	root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		t.Skipf("not a git checkout, cannot build %s: %v", prev, err)
@@ -401,7 +408,7 @@ func TestUpgradeFromPreviousReleaseDoesNotDegradeComm(t *testing.T) {
 	// leaves a channel whose two seats belong to the same station. Written as SQL because driving
 	// the old binary's MCP surface from here would be a second integration suite; the STATE is what
 	// the migration reads, and the state is faithful.
-	seedLegacyCommRows(t, commDB)
+	seedReleaseCommRows(t, commDB)
 
 	// Now boot HEAD on it and read the log.
 	log := runFor(t, kenBinary(t), data, 30*time.Second)
@@ -496,51 +503,55 @@ func goToolPath(t *testing.T) string {
 	return p
 }
 
-// seedLegacyCommRows writes the pre-4.0.0 shapes that migration 0021 has to move: two live
-// mailboxes on one station, a channel seated on both of them, and a message, delivery and
-// attachment referencing the one that will be collapsed away.
+// seedReleaseCommRows writes traffic into a database built by the PREVIOUS RELEASE, so the
+// upgrade above runs over rows it did not create: two stations with one mailbox each, a channel
+// between them, and a message, delivery and attachment on that channel.
 //
-// Every column here is one a previous audit round found unhandled. Keep them all: the value of this
-// fixture is that it is the union of what two rounds discovered by hand.
-func seedLegacyCommRows(t *testing.T, path string) {
+// Every column here is one an audit round found unhandled while these tables were being rewritten.
+// Keep them all: the value of this fixture is that it is the union of what those rounds found by
+// hand, and the columns outlived the migration that made them interesting.
+func seedReleaseCommRows(t *testing.T, path string) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", "file:"+path+"?_pragma=foreign_keys(off)")
 	if err != nil {
-		t.Fatalf("open legacy comm.db: %v", err)
+		t.Fatalf("open released comm.db: %v", err)
 	}
 	defer db.Close()
 
+	// THE SHAPE A RELEASED DATABASE ACTUALLY HOLDS, not one the current schema forbids.
+	// The previous version of this seeder built two mailboxes for one station, which is what
+	// 3.x could produce and what comm 0021 exists to collapse. A v4.0.0 database already has
+	// 0021's partial UNIQUE index, so that seed is REJECTED at insert — correctly. One mailbox
+	// per station is now the invariant, so the rows below respect it and the interesting case
+	// becomes a channel and its traffic surviving untouched.
 	stmts := []string{
 		`INSERT INTO endpoint(endpoint_id,secret_sha256,token_id,actor_id,label,station_id,bound_at)
-		   VALUES('legacy-a','x','tok',1,'legacy-a','st-legacy',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+		   VALUES('rel-a','x','tok',1,'rel-a','st-a',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
 		`INSERT INTO endpoint(endpoint_id,secret_sha256,token_id,actor_id,label,station_id,bound_at)
-		   VALUES('legacy-b','x','tok',1,'legacy-b','st-legacy',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-		// A channel seated on both mailboxes of one station — reachable in 3.x by binding after joining.
+		   VALUES('rel-b','x','tok',1,'rel-b','st-b',strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
 		`INSERT INTO channel(channel_id,owner_actor_id,endpoint_a,endpoint_b,state)
-		   SELECT 'legacy-self',1,
-		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-a'),
-		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),'open'`,
-		// A message ON that channel, sent by the mailbox that will be collapsed, with an e: party
-		// key — the addressing column no foreign key covers.
+		   SELECT 'rel-ch',1,
+		          (SELECT id FROM endpoint WHERE endpoint_id='rel-a'),
+		          (SELECT id FROM endpoint WHERE endpoint_id='rel-b'),'open'`,
 		`INSERT INTO message(message_id,channel_id,scope_id,scope_seq,sender_endpoint,sender_party,
 		                     body,body_bytes,body_sha256,expires_at)
-		   SELECT 'legacy-m1',(SELECT id FROM channel WHERE channel_id='legacy-self'),'ch:legacy-self',1,
-		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),
-		          'e:'||(SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),
+		   SELECT 'rel-m1',(SELECT id FROM channel WHERE channel_id='rel-ch'),'ch:rel-ch',1,
+		          (SELECT id FROM endpoint WHERE endpoint_id='rel-b'),
+		          'e:'||(SELECT id FROM endpoint WHERE endpoint_id='rel-b'),
 		          'hi',2,'abc',strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 day')`,
 		`INSERT INTO delivery(message_row,party_key,recipient_endpoint,state)
-		   SELECT (SELECT id FROM message WHERE message_id='legacy-m1'),
-		          'e:'||(SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),
-		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),'queued'`,
+		   SELECT (SELECT id FROM message WHERE message_id='rel-m1'),
+		          'e:'||(SELECT id FROM endpoint WHERE endpoint_id='rel-a'),
+		          (SELECT id FROM endpoint WHERE endpoint_id='rel-a'),'queued'`,
 		`INSERT INTO attachment(attachment_id,channel_id,scope_id,sender_endpoint,name,size_bytes,
 		                        sha256,state,transfer,expires_at)
-		   SELECT 'legacy-at1',(SELECT id FROM channel WHERE channel_id='legacy-self'),'ch:legacy-self',
-		          (SELECT id FROM endpoint WHERE endpoint_id='legacy-b'),'f.bin',3,'abc','offered',
+		   SELECT 'rel-at1',(SELECT id FROM channel WHERE channel_id='rel-ch'),'ch:rel-ch',
+		          (SELECT id FROM endpoint WHERE endpoint_id='rel-b'),'f.bin',3,'abc','offered',
 		          'upload',strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 day')`,
 	}
 	for i, q := range stmts {
 		if _, err := db.Exec(q); err != nil {
-			t.Fatalf("seed legacy row %d: %v", i+1, err)
+			t.Fatalf("seed released row %d: %v", i+1, err)
 		}
 	}
 }
