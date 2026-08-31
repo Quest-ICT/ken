@@ -18,9 +18,9 @@ separate times, each in a way a fully green test suite could not see, because ev
 a *fresh* database and the data-moving arms of a migration copy zero rows.
 
 Moving the rewrite out of the server makes it something you run on purpose, read the output of, and
-verify with the same `sqlite3` you already have. That last part is load-bearing: `ken.db` and
-`comm.db` are plain SQLite files, readable read-only from outside the process, and every upgrade
-verification in this document depends on that.
+verify with an ordinary SQLite client. That last part is load-bearing: `ken.db` and `comm.db` are
+plain SQLite files, readable read-only from outside the process, and every verification in this
+document depends on it. (The *client* is not guaranteed — see below — but the file format is.)
 
 ## Before you touch anything
 
@@ -41,11 +41,62 @@ ken backup verify
 ```
 sudo systemctl stop ken
 sqlite3 /opt/ken/data/comm/comm.db < upgrade/comm-4.x-to-5.0.0.sql
-sudo systemctl start ken
+sudo systemctl restart ken
 ```
 
 Run only the scripts between the version you are on and the version you are going to, in order.
 Each names the versions it moves in its first line.
+
+### `restart`, never `start` — this one has bitten a real deployment
+
+**If you installed the new release with `ken-upgrade`, the service is already running** — it starts
+Ken as its last step, before you have run the script. `systemctl start` on a running unit is a
+**no-op**, so the process keeps the *pre-script* database open and Ken stays degraded.
+
+ken-prod-ops measured exactly this window while upgrading to 5.0.1:
+
+```
+ken-upgrade finishes AND STARTS KEN
+  -> "COMM: DEGRADED — comm.db is at schema version 21 and this binary requires 22"
+run the upgrade script          -> comm.db now at 22
+systemctl start ken             -> NO-OP. No new boot. Still degraded.
+  systemctl is-active           -> active
+  curl /healthz                 -> ok
+systemctl restart ken           -> "schema: comm.db at version 22, as required"
+```
+
+Between those last two steps the unit was **active**, `/healthz` answered **ok**, the database was
+**correctly upgraded**, and messaging was **entirely absent**. Both liveness checks passed. An
+operator following a procedure that said `start` would stop there, because everything they were
+told to check said fine.
+
+**`restart` is correct whether or not the installer left it running.** Use it.
+
+### `sqlite3` may not be installed
+
+**Do not assume it is there.** Rocky 10 does not ship it, and a production deployment running Ken
+turned out not to have it:
+
+```
+command -v sqlite3    # nothing
+```
+
+Any host running Ken's installer has Python, and its `sqlite3` module works:
+
+```
+python3 - /opt/ken/data/comm/comm.db upgrade/comm-4.x-to-5.0.0.sql <<'EOF'
+import sqlite3, sys
+db, script = sys.argv[1], sys.argv[2]
+# isolation_level=None IS REQUIRED. Python's default opens an implicit transaction, which would
+# nest inside the BEGIN/COMMIT the script already has.
+con = sqlite3.connect(db, isolation_level=None)
+con.executescript(open(script).read())
+con.close()
+print("applied", script)
+EOF
+```
+
+The verification commands below have the same problem; run them the same way, or install `sqlite3`.
 
 **Then prove it, rather than assuming the script ran clean.** Every upgrade script ends with the
 three commands to run; they are worth running even when the script printed nothing:

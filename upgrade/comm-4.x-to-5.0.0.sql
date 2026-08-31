@@ -6,7 +6,15 @@
 --
 --     sudo systemctl stop ken
 --     sqlite3 /opt/ken/data/comm/comm.db < comm-4.x-to-5.0.0.sql
---     sudo systemctl start ken
+--     sudo systemctl restart ken
+--
+-- RESTART, NEVER START. ken-upgrade starts the service as its last step, so `start` is a no-op on
+-- a running unit and the process keeps the pre-script database open: unit active, /healthz ok,
+-- messaging entirely absent. Measured on a real deployment upgrading to 5.0.1.
+--
+-- `sqlite3` MAY NOT BE INSTALLED — Rocky 10 does not ship it. docs/UPGRADING-THE-DATABASE.md has a
+-- python3 fallback; it needs isolation_level=None so the BEGIN/COMMIT below is not nested inside
+-- Python's implicit transaction.
 --
 -- comm.db is EXPENDABLE BY DESIGN and is in no backup tier. If anything here fails, the supported
 -- recovery is to stop Ken, delete comm.db and its -wal/-shm, and start: messaging rebuilds empty,

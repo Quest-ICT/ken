@@ -64,6 +64,12 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 5.0.2** (2026-08-31) — the upgrade procedure said `start` where it must say `restart`.
+`ken-upgrade` starts the service before the operator runs the SQL script, so `start` is a no-op and
+Ken keeps the pre-script database open: unit active, `/healthz` ok, messaging absent, both liveness
+checks passing. ken-prod-ops measured the window. The procedure also assumed `sqlite3` was
+installed, which it is not on Rocky 10 — there is a python3 fallback now.
+
 **Released: 5.0.1** (2026-08-31) — 5.0.0's bundle did not ship the upgrade script it instructs the
 operator to run, because `build-release.sh` staged a fixed list of directories and `upgrade/` did
 not exist when that list was written. `verify-artifact.sh` now refuses a bundle missing any upgrade

@@ -49,9 +49,18 @@ is not the version the binary requires.
 ```sh
 ken backup snapshot && ken backup verify     # ken.db is durable; this is not optional
 sudo systemctl stop ken
-sqlite3 /opt/ken/data/comm/comm.db < upgrade/comm-4.x-to-5.0.0.sql
-sudo systemctl start ken
+sudo ken-upgrade --version 5.0.1
+sqlite3 /opt/ken/data/comm/comm.db < /opt/ken/current/upgrade/comm-4.x-to-5.0.0.sql
+sudo systemctl restart ken                   # RESTART, not start — see below
 ```
+
+**`restart`, never `start`.** `ken-upgrade` starts the service as its last step, so `start` is a
+no-op on a running unit and Ken keeps the pre-script database open: unit **active**, `/healthz`
+**ok**, messaging **entirely absent**. Measured on a real deployment upgrading to 5.0.1 — both
+liveness checks passed for the whole window.
+
+**`sqlite3` may not be installed** (Rocky 10 does not ship it).
+[UPGRADING-THE-DATABASE.md](UPGRADING-THE-DATABASE.md) carries a python3 fallback.
 
 **`ken.db` does not change** — it is already at version 26, which is what 5.0.0 requires, so there
 is nothing to run for it. Only `comm.db` moves, 21 → 22.

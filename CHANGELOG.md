@@ -17,6 +17,33 @@ same change — never "docs later".
 
 _Nothing yet — everything below is tagged, built and published._
 
+## [5.0.2] — 2026-08-31
+
+### Fixed
+
+- **The upgrade procedure said `start` where it must say `restart`, and the difference leaves Ken
+  running degraded while every liveness check reports healthy.** `ken-upgrade` starts the service
+  as its last step — before the operator has run the SQL script — so `systemctl start` is a no-op
+  on a running unit and the process keeps the pre-script database open.
+
+  ken-prod-ops measured the window while upgrading to 5.0.1: unit **active**, `/healthz` **ok**,
+  database **correctly upgraded**, messaging **entirely absent**. Both liveness checks passed, and
+  the only signal was a log line nobody was required to read. An operator following the written
+  steps stops there, because everything they were told to check says fine.
+
+  That is this project's own defect class — a failure rendered identically to success — sitting in
+  the instructions rather than the code. Corrected in `docs/UPGRADING-THE-DATABASE.md`,
+  `docs/UPGRADING.md` and the upgrade script's own header.
+
+- **The procedure assumed `sqlite3` was installed. It is not, on Rocky 10** — and not on the
+  deployment that ran this upgrade. `docs/UPGRADING-THE-DATABASE.md` now carries a python3 fallback
+  using the stdlib `sqlite3` module with `isolation_level=None`, which is required so the script's
+  own `BEGIN`/`COMMIT` is not nested inside Python's implicit transaction.
+
+  The claim that a database rewrite can be verified "with the `sqlite3` you already have" was the
+  wrong half of a true statement: the plain SQLite **file format** is the guarantee worth leaning
+  on, and the **client** is not.
+
 ## [5.0.1] — 2026-08-31
 
 ### Fixed
