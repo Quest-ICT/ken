@@ -564,6 +564,30 @@ SELECT st.station_id, st.name, st.purpose,
 // ARCHIVED IS NOT LIVE. Archiving already stops COMM and is documented as severing live endpoints;
 // letting a header re-enter an archived station would make archive a suggestion. An operator who
 // archived a station and then saw a session working in it would have no way to explain it.
+// OtherStationsExist reports whether any station besides this one has ever been created here.
+//
+// It answers ONE question, for station_me: is a newly-minted station the FIRST thing on this
+// deployment, or did the deployment already have a history this session is not part of? Those look
+// identical from inside a fresh station — an empty notebook and no tasks — and they mean opposite
+// things. The first is an ordinary first run. The second means a station that existed is not here.
+//
+// ARCHIVED STATIONS COUNT. An archived one is still history: it proves the deployment predates
+// this session, which is the only thing being asked. Excluding them would answer "no history" for
+// a deployment whose stations had all been archived, which is exactly the case where a session
+// most needs telling.
+//
+// Deliberately a boolean rather than a count. The caller must not be able to put a number in front
+// of a human that invites arithmetic about what was lost — Ken cannot see what was lost, and a
+// count would imply it can.
+func (s *Store) OtherStationsExist(ctx context.Context, exceptStationID string) (bool, error) {
+	var n int
+	if err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM station WHERE station_id <> ?`, exceptStationID).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 func (s *Store) StationExists(ctx context.Context, stationID string) (bool, error) {
 	var n int
 	err := s.R.QueryRowContext(ctx,

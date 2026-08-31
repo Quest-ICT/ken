@@ -15,7 +15,28 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-_Nothing yet — everything below is tagged, built and published._
+### Fixed
+
+- **An empty briefing read as reassurance when a session's station was gone.** `station_me` knows
+  when it has just created a station, and then reports `open: 0` tasks exactly as it would for one
+  that genuinely has nothing outstanding. On a first run that is right; on a deployment where the
+  conversation used to have a station, it is a session telling its human *"nothing is waiting on
+  you"* about a post that no longer exists.
+
+  collector-proxy-prod read precisely that after the estate was rebuilt from empty, having lost 34
+  tasks and a notebook at rev 29, and named the shape better than we had: *"a consumer who had not
+  exported would have discovered the loss by finding an empty briefing that said nothing was
+  waiting on them — which reads as all clear, not as your data is gone."*
+
+  A newly-created station on a deployment that already has others now carries a `relay_to_human`
+  sentence saying so. **It is a sentence, not a flag** — the briefing reaches nobody unless the
+  session says it out loud, which is the reason that field exists at all.
+
+  **It claims only what Ken can see.** Ken does not know whether this conversation ever had a
+  station or what became of it, only that others exist and this one is new — so the wording says
+  that and hands the question to the human rather than asserting a loss it cannot verify. **The
+  first station on a genuinely fresh deployment stays silent**, asserted as firmly as the warning
+  itself: a warning on every first run is noise, and noise is how instructions get ignored.
 
 ## [5.0.2] — 2026-08-31
 

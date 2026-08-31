@@ -507,6 +507,68 @@ func TestASelfDescriptionSentWithASessionKeyIsKept(t *testing.T) {
 	}
 }
 
+// A NEW STATION ON AN OLD DEPLOYMENT MUST SAY SO, AND THE FIRST ONE MUST NOT.
+//
+// station_me knows it just created a station and then reports 0 tasks exactly as it would for one
+// that genuinely has nothing outstanding. On a first run that is right. On a deployment where this
+// conversation used to have a station, it is a session telling its human "nothing is waiting on
+// you" about a post that no longer exists — collector-proxy-prod read exactly that after the estate
+// was rebuilt, having lost 34 tasks and a notebook.
+//
+// BOTH ARMS MATTER AND THE SECOND IS THE ONE THAT KEEPS IT HONEST. A warning on every first call
+// would be noise on a genuinely fresh install, and noise is what gets instructions ignored — so
+// this asserts the FIRST station stays quiet as firmly as it asserts the second one speaks.
+func TestANewStationOnAnOldDeploymentSaysSo(t *testing.T) {
+	url := ken(t, "KEN_DEV_TOKEN=smoke-secret")
+
+	code, sid, body := rpc(t, url, "smoke-secret", "", initBody)
+	if code != http.StatusOK {
+		t.Fatalf("initialize: %d %s", code, body)
+	}
+	me := func(key string) string {
+		t.Helper()
+		c, _, out := rpc(t, url, "smoke-secret", sid, fmt.Sprintf(
+			`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"station_me","arguments":{"session_key":%q}}}`, key))
+		if c != http.StatusOK {
+			t.Fatalf("station_me: %d %s", c, out)
+		}
+		return out
+	}
+
+	// THE FIRST STATION ON AN EMPTY DEPLOYMENT. Nothing was lost, so nothing is claimed.
+	first := me("smoke-first-conversation")
+	if !strings.Contains(first, `"station_just_created":true`) {
+		t.Fatalf("the first call did not create a station, so neither arm below is testing anything:\n%s", first)
+	}
+	if strings.Contains(first, "already has other stations") {
+		t.Errorf("the FIRST station on a fresh deployment was warned that others exist:\n%s\n"+
+			"That is noise on an ordinary first run, and noise is how a warning gets ignored.", first)
+	}
+
+	// A SECOND CONVERSATION. Now the deployment has a history this session is not part of.
+	second := me("smoke-second-conversation")
+	if !strings.Contains(second, `"station_just_created":true`) {
+		t.Fatalf("the second key did not get its own station:\n%s", second)
+	}
+	for _, want := range []string{
+		"relay_to_human", // it must be in the field a session is told to say out loud
+		"already has other stations",
+		"NEW",
+	} {
+		if !strings.Contains(second, want) {
+			t.Errorf("a new station on a deployment that already had others does not say %q:\n%s\n"+
+				"An empty briefing reads as reassurance; that is the whole defect.", want, second)
+		}
+	}
+	// IT MUST NOT ASSERT A LOSS KEN CANNOT SEE. Ken does not know whether this conversation ever
+	// had a station — only that others exist and this one is new.
+	for _, forbidden := range []string{"was deleted", "was removed and", "your data is gone"} {
+		if strings.Contains(second, forbidden) {
+			t.Errorf("the relay claims %q, which Ken cannot know:\n%s", forbidden, second)
+		}
+	}
+}
+
 func TestBinaryMigratesBothDatabasesCleanly(t *testing.T) {
 	url := ken(t)
 

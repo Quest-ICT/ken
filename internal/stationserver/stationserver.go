@@ -857,6 +857,14 @@ func stationMe(ctx context.Context, d Deps, req *mcp.CallToolRequest, in meIn) (
 			if created {
 				out := claimedStationOut(st)
 				out.SessionKeyEcho = key
+				// SAME SENTENCE, SECOND PATH. This is the branch a session with a session_key takes,
+				// which is every session that follows the instructions — so omitting it here would
+				// leave the warning on the path almost nobody uses.
+				if others, oerr := d.Store.OtherStationsExist(ctx, st.StationID); oerr != nil {
+					log.Printf("STATION: cannot tell whether %s is the first station here: %v", st.StationID, oerr)
+				} else if others {
+					out.Relay = newStationRelay(st.Name)
+				}
 				return out, nil
 			}
 			out, err := buildBriefing(ctx, d, p.withStation(st.StationID))
@@ -1093,6 +1101,36 @@ func withCaller(ctx context.Context, st *store.Store, req *mcp.CallToolRequest) 
 // station by declaring its key. Unlike claimStation's version it does NOT ask the human to
 // put anything in a config file — that was the whole cost this removes. The session simply sends
 // the same key next time.
+// newStationRelay is what a session must SAY when Ken has just handed it a brand-new station on a
+// deployment that already had others.
+//
+// *** AN EMPTY BRIEFING READS AS REASSURANCE, AND THAT IS THE WHOLE PROBLEM. ***
+//
+// station_me already knows it just created the station, and then reports 0 tasks exactly as it
+// would for a station that genuinely has nothing outstanding. On a first run that is correct. On a
+// deployment where this conversation USED to have a station, it is a session telling its human
+// "nothing is waiting on you" about a post that no longer exists.
+//
+// collector-proxy-prod hit precisely that after the estate was rebuilt from empty on 2026-08-31 —
+// 34 tasks and a notebook at rev 29, gone — and named the shape better than this comment can:
+// "a consumer who had not exported would have discovered the loss by finding an empty briefing
+// that said nothing was waiting on them, which reads as all clear, not as your data is gone."
+//
+// IT IS A SENTENCE, NOT A FLAG. The briefing reaches nobody unless the session says it out loud;
+// a boolean would be read by the model and relayed by no one. That is the same reasoning as the
+// rest of Relay, and the reason this feature exists at all.
+//
+// IT CLAIMS ONLY WHAT KEN CAN SEE. Ken does not know whether this conversation ever had a station,
+// or what happened to it — only that other stations exist and this one is new. So the wording says
+// that and hands the question to the human, rather than asserting a loss it cannot verify.
+func newStationRelay(name string) string {
+	return "Tell your human, in words, in your first message: Ken had no station for this " +
+		"conversation and has just made a NEW one (" + name + "). This deployment already has other " +
+		"stations, so if you expected to return to an existing one, it is not here — Ken cannot say " +
+		"whether it was removed or never existed, and nothing on this surface can recover it. " +
+		"An empty notebook and no tasks below mean the station is NEW, not that nothing is outstanding."
+}
+
 func claimedStationOut(st *store.Station) meOut {
 	return meOut{
 		StationID:   st.StationID,
@@ -1139,7 +1177,16 @@ func claimStation(ctx context.Context, d Deps, p *principal, in meIn) (meOut, er
 	if err := applySelfDescription(ctx, d, st.StationID, in); err != nil {
 		return meOut{}, err
 	}
+	relay := ""
+	if others, err := d.Store.OtherStationsExist(ctx, st.StationID); err != nil {
+		// A LOOKUP FAILURE MUST NOT COST THE SESSION ITS STATION. The relay is guidance; the
+		// station is the result. Log and carry on rather than turning a read error into a refusal.
+		log.Printf("STATION: cannot tell whether %s is the first station here: %v", st.StationID, err)
+	} else if others {
+		relay = newStationRelay(st.Name)
+	}
 	return meOut{
+		Relay:       relay,
 		StationID:   st.StationID,
 		Name:        st.Name,
 		NameSource:  "auto",
