@@ -53,7 +53,7 @@ func TestDirectedAndBroadcastTrafficAreDistinguishable(t *testing.T) {
 
 	// Now a DIRECTED message on a channel, which must outrank the broadcast.
 	a2, b2, chID := pair(t, st)
-	if _, err := st.Send(ctx, a2, chID, "just for you", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a2, chID, "just for you", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Poll(ctx, b2, 10); err != nil {

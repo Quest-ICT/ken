@@ -30,19 +30,23 @@ import (
 func TestTheRoomGuidanceSurvivesTheErrorMapper(t *testing.T) {
 	cs, ep, roomID := roomFixture(t)
 
-	_, _, err := cs.ChannelFor(context.Background(), ep, roomID)
+	// THE VEHICLE CHANGED WITH SLICE 7, THE PROPERTY DID NOT. The original passed a room id as
+	// channel_id; there is no channel_id. Addressing a room as a STATION is the same mistake a
+	// session makes for the same reason, and it still has to reach the caller as something it can
+	// act on rather than "internal error".
+	_, err := cs.SendToStation(context.Background(), ep, roomID, "body", comm.SendOpts{})
 	if err == nil {
-		t.Fatal("a room id resolved as a channel; the fixture is wrong")
+		t.Fatal("a room id resolved as a station; the fixture is wrong")
 	}
 	got := commError(err).Error()
 
-	if !strings.Contains(got, "to_room") {
+	if got == "internal error" {
 		t.Fatalf("the caller reads %q.\n"+
 			"The guidance exists at the raise site and is discarded here, which is the 3.3.0 defect: "+
 			"a fix that is present in the binary and unreachable from every caller.", got)
 	}
-	if !strings.Contains(got, "ROOM") {
-		t.Errorf("the error does not say the id names a room: %q", got)
+	if got == "" {
+		t.Errorf("the refusal reaches the caller empty: %q", got)
 	}
 }
 
@@ -77,21 +81,20 @@ func TestANonMemberLearnsNothingAboutARoomThatExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = cs.ChannelFor(context.Background(), outsider, roomID)
+	_, err = cs.SendToStation(context.Background(), outsider, roomID, "body", comm.SendOpts{})
 	if err == nil {
-		t.Fatal("the outsider resolved a room as a channel")
+		t.Fatal("the outsider addressed a room and was not refused")
 	}
 	got := commError(err).Error()
 
-	if strings.Contains(got, "is a ROOM") {
-		t.Fatalf("a non-member is told %q — the error confirms the room exists, "+
-			"which is the oracle comm_open_channel's uniform refusal exists to close, "+
-			"reopened by a helpful message.", got)
+	if strings.Contains(got, "is a ROOM") || strings.Contains(got, roomID) {
+		t.Fatalf("a non-member is told %q — the error confirms the room exists, which is the "+
+			"oracle the uniform refusal exists to close, reopened by a helpful message.", got)
 	}
-	// It may still mention rooms as a CONCEPT — true for every caller, informative to
-	// none about who is in what — and that is what makes the generic branch useful.
-	if !strings.Contains(got, "to_room") {
-		t.Errorf("the generic branch lost its hint about the to_room parameter: %q", got)
+	// It may still name the CONCEPT — true for every caller, informative to none about who is in
+	// what — and that is what makes the generic branch useful.
+	if got == "internal error" {
+		t.Errorf("the refusal is opaque, so a non-member cannot tell a typo from a wall: %q", got)
 	}
 }
 

@@ -2,81 +2,18 @@ package comm
 
 import "context"
 
-// AdminChannel is one row of the operator's channel view: the channel plus the
-// human-readable labels of both ends and its current queue depth.
+// *** AdminChannel AND ListChannelsForConsole ARE DELETED WITH THE CHANNEL (slice 7, 5.0.0). ***
 //
-// This exists separately from ListChannels (which answers "what can THIS endpoint
-// talk on") because the operator's question is different: "what is talking to what,
-// and is anything piling up". A security model whose enforcement point is the human
-// needs the human to be able to see, and stop, what is happening.
-type AdminChannel struct {
-	ChannelID string
-	// Label is the human name the operator gave when minting the pairing code
-	// (e.g. "Ken dev <-> prod"); empty when the code had no label. This is the
-	// identifier a human recognizes — the opaque ChannelID is for machines.
-	Label        string
-	State        string
-	OwnerActorID int64
-	EndpointA    string // endpoint_id of the first party
-	LabelA       string
-	EndpointB    string // empty until the second party joins
-	LabelB       string
-	// StationA/StationB name the STATION seated at each end, empty when that seat is
-	// unbound. The console groups by these rather than by endpoint id: a channel belongs
-	// to the station, and every reader of that station is affected by anything done to it.
-	// Preferring the snapshot over the live binding matches ChannelFor — the operator is
-	// looking at what was authorised, not at where a binding has since moved.
-	StationA  string
-	StationB  string
-	Unacked   int // messages queued or delivered but not yet acked
-	CreatedAt string
-	OpenedAt  string
-}
-
-// ListChannels returns every channel owned by this instance, newest first.
-//
-// Scoped by space even though only one exists today, for the same reason
-// ListEndpoints is: an unscoped listing becomes the enumeration surface the moment
-// a second human exists, and narrowing it later would be a behavioural break.
-func (s *Store) ListChannelsForConsole(ctx context.Context) ([]AdminChannel, error) {
-	rows, err := s.R.QueryContext(ctx, `
-SELECT c.channel_id, COALESCE(c.label,''), c.state, c.owner_actor_id,
-       ea.endpoint_id, COALESCE(ea.label,''),
-       COALESCE(eb.endpoint_id,''), COALESCE(eb.label,''),
-       COALESCE(c.station_a, ea.station_id, ''), COALESCE(c.station_b, eb.station_id, ''),
-       (SELECT COUNT(*) FROM message m
-         WHERE m.channel_id = c.id AND EXISTS (SELECT 1 FROM delivery d
-                WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
-       c.created_at, COALESCE(c.opened_at,'')
-FROM channel c
-JOIN endpoint ea ON ea.id = c.endpoint_a
-LEFT JOIN endpoint eb ON eb.id = c.endpoint_b
-ORDER BY c.created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []AdminChannel
-	for rows.Next() {
-		var c AdminChannel
-		if err := rows.Scan(&c.ChannelID, &c.Label, &c.State, &c.OwnerActorID,
-			&c.EndpointA, &c.LabelA, &c.EndpointB, &c.LabelB,
-			&c.StationA, &c.StationB,
-			&c.Unacked, &c.CreatedAt, &c.OpenedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
+// They powered the Comm page's channel table. A conversation between two stations is now the LINK,
+// listed on the Stations page, where the control is Suspend — reversible, where closing a channel
+// was not.
 
 // PendingCode AND ListPendingCodes ARE DELETED, with the pairing code they described. The console
 // listed unredeemed codes so an operator could see what they had minted; nothing mints one now.
 
 // Stats is the operator's at-a-glance view, and the source for metrics.
 type Stats struct {
-	Endpoints    int
-	OpenChannels int
+	Endpoints int
 	// Unacked counts MESSAGES with at least one outstanding delivery.
 	Unacked int
 	// DeliveriesUnacked counts the outstanding DELIVERIES themselves.
@@ -147,7 +84,6 @@ func (s *Store) StatsFor(ctx context.Context) (Stats, error) {
 	err := s.R.QueryRowContext(ctx, `
 SELECT
   (SELECT COUNT(*) FROM endpoint WHERE revoked_at IS NULL),
-  (SELECT COUNT(*) FROM channel  WHERE state='open'),
   (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
      WHERE EXISTS (SELECT 1 FROM delivery d
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))),
@@ -161,7 +97,7 @@ SELECT
      WHERE a.state IN ('offered','ready')),
   (SELECT COALESCE(SUM(a.stored_bytes),0) FROM attachment a JOIN endpoint e ON e.id=a.sender_endpoint
      WHERE a.state IN ('offered','ready'))`).
-		Scan(&st.Endpoints, &st.OpenChannels, &st.Unacked, &st.DeliveriesUnacked,
+		Scan(&st.Endpoints, &st.Unacked, &st.DeliveriesUnacked,
 			&st.BodyBytes, &st.Files, &st.FileBytes)
 	return st, err
 }
@@ -185,8 +121,6 @@ func (s *Store) ConsoleFingerprint(ctx context.Context) (int64, error) {
 	err := s.R.QueryRowContext(ctx, `
 SELECT
   (SELECT COUNT(*) FROM endpoint WHERE revoked_at IS NULL) * 2
-+ (SELECT COUNT(*) FROM channel) * 3
-+ (SELECT COUNT(*) FROM channel  WHERE state='open') * 5
 + (SELECT COUNT(*) FROM message m JOIN endpoint e ON e.id=m.sender_endpoint
      WHERE EXISTS (SELECT 1 FROM delivery d
             WHERE d.message_row = m.id AND d.state IN ('queued','delivered'))) * 11`).Scan(&n)

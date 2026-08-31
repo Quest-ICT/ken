@@ -24,9 +24,11 @@ import (
 func TestPollScopeFilterDrainsOneConversationAndHidesTheRest(t *testing.T) {
 	sess, _, ctx := dirHarness(t)
 
-	// TWO SCOPES, BOTH ADDRESSED TO THE CALLER'S PARTY: a pairing-code channel and a
-	// room. One scope cannot show a filter working — narrowing to the only thing there is
-	// looks identical to not narrowing at all.
+	// TWO SCOPES, BOTH ADDRESSED TO THE CALLER'S PARTY: a direct pair and a room. One scope
+	// cannot show a filter working — narrowing to the only thing there is looks identical to not
+	// narrowing at all. The pair replaced a channel here when slice 7 deleted the channel; the
+	// property under test is the FILTER, and it needs two namespaces rather than two of anything
+	// in particular.
 	seedRoom(t, "ops", "s:"+dirStation, "s:sender-station")
 	sender := stationBoundEndpoint(t, "sender-station")
 
@@ -34,13 +36,10 @@ func TestPollScopeFilterDrainsOneConversationAndHidesTheRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch := openChannel(t, dirComm, me, sender, "hub<->sender")
-	if !ch.Open() {
-		t.Fatalf("setup: channel state %q — nothing below would be testing what it claims", ch.State)
-	}
-	chScope := "ch:" + ch.ChannelID
+	linkedTo(t, dirComm, me, sender)
+	pairScope := pairScopeOf(dirStation, "sender-station")
 
-	chMsg, err := dirComm.Send(ctx, sender, ch.ChannelID, "channel one", comm.SendOpts{})
+	chMsg, err := dirComm.SendToStation(ctx, sender, dirStation, "pair one", comm.SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,15 +58,15 @@ func TestPollScopeFilterDrainsOneConversationAndHidesTheRest(t *testing.T) {
 		t.Errorf("scope_filter = %q on an unfiltered poll, want empty", all.ScopeFilter)
 	}
 
-	// THE CHANNEL, ALONE.
-	got := callPoll(t, sess, ctx, map[string]any{"scope": chScope})
-	if len(got.Messages) != 1 || got.Messages[0].Body != "channel one" {
-		t.Fatalf("scope=%q returned %d messages %s, want exactly the channel message",
-			chScope, len(got.Messages), bodiesOf(got))
+	// THE PAIR, ALONE.
+	got := callPoll(t, sess, ctx, map[string]any{"scope": pairScope})
+	if len(got.Messages) != 1 || got.Messages[0].Body != "pair one" {
+		t.Fatalf("scope=%q returned %d messages %s, want exactly the pair message",
+			pairScope, len(got.Messages), bodiesOf(got))
 	}
-	if got.ScopeFilter != chScope {
+	if got.ScopeFilter != pairScope {
 		t.Errorf("scope_filter = %q, want %q — a caller cannot otherwise tell a server that applied "+
-			"the filter from one that ignored it", got.ScopeFilter, chScope)
+			"the filter from one that ignored it", got.ScopeFilter, pairScope)
 	}
 
 	// THE ROOM, ALONE. Two arms, not one: a filter hardcoded to either namespace, or one
@@ -87,7 +86,7 @@ func TestPollScopeFilterDrainsOneConversationAndHidesTheRest(t *testing.T) {
 	if n, err := dirComm.Ack(ctx, me, chMsg.MessageID); err != nil || n == 0 {
 		t.Fatalf("setup: ack settled %d deliveries (%v) — without it this arm cannot isolate the wait path", n, err)
 	}
-	parked := callPoll(t, sess, ctx, map[string]any{"scope": chScope, "wait_seconds": 1})
+	parked := callPoll(t, sess, ctx, map[string]any{"scope": pairScope, "wait_seconds": 1})
 	if !parked.Waited {
 		t.Fatal("the scoped poll did not park, so it never reached the second store call — " +
 			"this arm proves nothing until it does")
@@ -125,7 +124,7 @@ func TestPollRefusesAScopeThatNamesNoNamespaceAndAcceptsTheCorrectedOne(t *testi
 			"would read an empty result as an empty inbox")
 	}
 	txt := toolResultText(res)
-	for _, want := range []string{"ch:<channel_id>", "r:<room_id>"} {
+	for _, want := range []string{"r:<room_id>", "p:<station>|<station>"} {
 		if !strings.Contains(txt, want) {
 			t.Errorf("the refusal does not name %q, so it does not say how to fix it.\ngot: %s", want, txt)
 		}
@@ -139,12 +138,12 @@ func TestPollRefusesAScopeThatNamesNoNamespaceAndAcceptsTheCorrectedOne(t *testi
 	}
 
 	// A WELL-FORMED SCOPE THAT NAMES NOTHING IS NOT AN ERROR. Refusing here would make the
-	// tool an existence oracle for channel ids.
-	got = callPoll(t, sess, ctx, map[string]any{"scope": "ch:no-such-channel"})
+	// tool an existence oracle for room and station ids.
+	got = callPoll(t, sess, ctx, map[string]any{"scope": "r:no-such-room"})
 	if len(got.Messages) != 0 {
-		t.Fatalf("a scope naming no channel returned %d messages", len(got.Messages))
+		t.Fatalf("a scope naming no room returned %d messages", len(got.Messages))
 	}
-	if got.ScopeFilter != "ch:no-such-channel" {
+	if got.ScopeFilter != "r:no-such-room" {
 		t.Errorf("scope_filter = %q, want the filter echoed even when it matched nothing", got.ScopeFilter)
 	}
 }
@@ -258,4 +257,14 @@ func bodiesOf(o pollOut) string {
 		out = append(out, m.Body)
 	}
 	return "[" + strings.Join(out, ", ") + "]"
+}
+
+// pairScopeOf mirrors internal/comm's pairScope: the two station ids, ordered, behind "p:".
+// Duplicated rather than exported, because a test helper that forces a package to widen its API
+// is a worse trade than four lines here.
+func pairScopeOf(x, y string) string {
+	if x > y {
+		x, y = y, x
+	}
+	return "p:" + x + "|" + y
 }

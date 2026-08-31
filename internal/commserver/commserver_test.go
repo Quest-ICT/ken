@@ -631,11 +631,12 @@ func deliveredCorpus(t *testing.T) string {
 		}
 		n++
 	}
-	// FLOOR LOWERED FROM 10 TO 8 when comm_register, comm_bind and comm_unbind were deleted — a
-	// station comes with a mailbox, so there is nothing to register, attach or detach. It is still
-	// a POSITIVE CONTROL on the scanner: a regexp that silently stopped matching would make this
-	// test pass by finding nothing to check.
-	if n < 8 {
+	// FLOOR LOWERED 10 -> 8 when comm_register, comm_bind and comm_unbind were deleted (a station
+	// comes with a mailbox, so there is nothing to register, attach or detach), then 8 -> 7 when
+	// slice 7 deleted comm_open_channel. It remains a POSITIVE CONTROL on the scanner: a regexp
+	// that silently stopped matching would make this test pass by finding nothing to check, which
+	// is the failure this floor exists to make impossible.
+	if n < 7 {
 		t.Fatalf("only %d tool descriptions parsed from commserver.go; the scanner is broken, not the text", n)
 	}
 	return sb.String()

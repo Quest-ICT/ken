@@ -60,7 +60,7 @@ func newFileFixture(t *testing.T) *fileFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch := openChannel(t, cs, a, b, "t")
+	ch := linkedTo(t, cs, a, b)
 
 	deps := Deps{Comm: cs, Store: kb}
 	h := NewHTTPHandler(deps)
@@ -69,7 +69,7 @@ func newFileFixture(t *testing.T) *fileFixture {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	return &fileFixture{deps: deps, srv: srv, cs: cs, a: a, b: b, channel: ch.ChannelID, tok: tok, commTok: commTok}
+	return &fileFixture{deps: deps, srv: srv, cs: cs, a: a, b: b, channel: ch, tok: tok, commTok: commTok}
 }
 
 func (f *fileFixture) do(t *testing.T, method, urlPath, bearer string, body []byte) *http.Response {
@@ -105,7 +105,7 @@ func TestFileRelayRoundTrip(t *testing.T) {
 	f := newFileFixture(t)
 	content := []byte("the payload bytes: \x00\x01\x02 binary is fine")
 
-	res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{ChannelID: f.channel}, comm.FileOffer{
+	res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{StationID: f.channel}, comm.FileOffer{
 		Name: "handout.md", SizeBytes: int64(len(content)), SHA256: hexSHA(content),
 		Transfer: "upload", Note: "over to you",
 	})
@@ -172,7 +172,7 @@ func TestUploadRejectsChecksumMismatch(t *testing.T) {
 	f := newFileFixture(t)
 	content := []byte("declared-content")
 
-	res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{ChannelID: f.channel}, comm.FileOffer{
+	res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{StationID: f.channel}, comm.FileOffer{
 		Name: "x.bin", SizeBytes: int64(len(content)), SHA256: hexSHA(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -195,7 +195,7 @@ func TestUploadRejectsSizeMismatch(t *testing.T) {
 	content := []byte("exactly-16-bytes")
 
 	for _, c := range [][]byte{content[:10], append(append([]byte{}, content...), 'x')} {
-		res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{ChannelID: f.channel}, comm.FileOffer{
+		res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{StationID: f.channel}, comm.FileOffer{
 			Name: "s.bin", SizeBytes: int64(len(content)), SHA256: hexSHA(content), Transfer: "upload",
 		})
 		if err != nil {
@@ -214,7 +214,7 @@ func TestFilesDisabledIsALiveKillSwitch(t *testing.T) {
 	f := newFileFixture(t)
 	content := []byte("z")
 
-	res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{ChannelID: f.channel}, comm.FileOffer{
+	res, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{StationID: f.channel}, comm.FileOffer{
 		Name: "z", SizeBytes: 1, SHA256: hexSHA(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -229,7 +229,7 @@ func TestFilesDisabledIsALiveKillSwitch(t *testing.T) {
 		t.Fatalf("disabled relay accepted bytes: HTTP %d", resp.StatusCode)
 	}
 	// And the store-level surface refuses new offers too.
-	if _, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{ChannelID: f.channel}, comm.FileOffer{
+	if _, err := f.cs.OfferFile(ctx, f.a, comm.FileAddr{StationID: f.channel}, comm.FileOffer{
 		Name: "z2", SizeBytes: 1, SHA256: hexSHA(content), Transfer: "upload",
 	}); err == nil {
 		t.Fatal("disabled file exchange accepted an offer")

@@ -17,7 +17,7 @@ func TestASenderLearnsTheirMessageExpiredUnread(t *testing.T) {
 	ctx := context.Background()
 	a, _, chID := pair(t, st)
 
-	m, err := st.Send(ctx, a, chID, "nobody will read this", SendOpts{IdempotencyKey: "the-subject-line"})
+	m, err := st.SendToStation(ctx, a, chID, "nobody will read this", SendOpts{IdempotencyKey: "the-subject-line"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestNoNoticeForAMessageThatWasActuallyRead(t *testing.T) {
 	ctx := context.Background()
 	a, b, chID := pair(t, st)
 
-	m, err := st.Send(ctx, a, chID, "this one lands", SendOpts{})
+	m, err := st.SendToStation(ctx, a, chID, "this one lands", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestTheWatermarkClearsWhatWasSeenAndNothingElse(t *testing.T) {
 	a, _, chID := pair(t, st)
 	senderParty := PartyOf(a)
 
-	first, err := st.Send(ctx, a, chID, "one", SendOpts{})
+	first, err := st.SendToStation(ctx, a, chID, "one", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestTheWatermarkClearsWhatWasSeenAndNothingElse(t *testing.T) {
 
 	// A SECOND failure, later, must still arrive. This is the half a "mark everything
 	// read" implementation would silently break.
-	second, err := st.Send(ctx, a, chID, "two", SendOpts{})
+	second, err := st.SendToStation(ctx, a, chID, "two", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestAPollDoesNotClearTheNoticesItIsShowing(t *testing.T) {
 	a, _, chID := pair(t, st)
 	party := PartyOf(a)
 
-	m, err := st.Send(ctx, a, chID, "nobody home", SendOpts{})
+	m, err := st.SendToStation(ctx, a, chID, "nobody home", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestAPollDoesNotClearTheNoticesItIsShowing(t *testing.T) {
 		t.Fatal(err)
 	}
 	// NOW the interesting one: a second failure, against an existing watermark row.
-	m2, err := st.Send(ctx, a, chID, "nobody home either", SendOpts{})
+	m2, err := st.SendToStation(ctx, a, chID, "nobody home either", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestConfirmingTheLastPollDoesNotSwallowAFailureThatArrivedSince(t *testing.
 	a, _, chID := pair(t, st)
 	party := PartyOf(a)
 
-	first, err := st.Send(ctx, a, chID, "one", SendOpts{})
+	first, err := st.SendToStation(ctx, a, chID, "one", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestConfirmingTheLastPollDoesNotSwallowAFailureThatArrivedSince(t *testing.
 	}
 
 	// B fails BETWEEN the two polls.
-	second, err := st.Send(ctx, a, chID, "two", SendOpts{})
+	second, err := st.SendToStation(ctx, a, chID, "two", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

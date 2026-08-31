@@ -182,25 +182,10 @@ func (a *app) renderStations(w http.ResponseWriter, r *http.Request, sess *store
 	// checked. Two fields rather than one because a bare int cannot say "unknown".
 	type linkView struct {
 		store.StationLink
-		LiveChannels int
-		KnownLive    bool
 	}
 	linkViews := make([]linkView, 0, len(links))
 	for _, l := range links {
 		v := linkView{StationLink: l}
-		if a.comm != nil {
-			n, err := a.comm.CountOpenChannelsBetweenStations(ctx, l.StationA, l.StationB)
-			if err != nil {
-				// DEGRADE, never 500. comm.db is the EXPENDABLE database and this
-				// page is gated on the stations flag alone — tying the whole
-				// operator surface (pending requests, station keys, the
-				// cross-station task list) to a comm.db failure would hide a
-				// feature that is running perfectly well.
-				log.Printf("web: link live channels %s: %v", l.LinkID, err)
-			} else {
-				v.LiveChannels, v.KnownLive = n, true
-			}
-		}
 		linkViews = append(linkViews, v)
 	}
 
@@ -345,47 +330,24 @@ func (a *app) handleStationLinkSuspend(w http.ResponseWriter, r *http.Request, s
 
 	pair := link.NameA + " / " + link.NameB
 
-	// *** RESUME HAS ITS OWN EXIT, BECAUSE EVERY PATH BELOW SPEAKS THE REVOKE VOCABULARY. ***
+	// *** SUSPEND IS NO LONGER RETROACTIVE, BECAUSE THERE IS NOTHING LEFT TO CLOSE. ***
 	//
-	// `suspend` was the only place the two verbs were distinguished, so pressing Resume — the wave's
-	// headline reversible control — rendered "Link ended: dev / prod. No channels were open." in all
-	// three locales. There is also nothing for the channel sweep to do on the way back: resuming
-	// restores the PERMISSION, and the channels a suspension closed stay closed because the sessions
-	// that held them are gone. Sweeping again would be a pointless write with a misleading name.
-	if !suspend {
-		a.syncRoomMirror(r)
-		flashRedirect(w, r, "/stations", "flash.station_link_resumed", pair)
-		return
-	}
-
-	closed := 0
-	// P2: WITHDRAW THE PAIR SCOPE FIRST, before anything that can fail. Every exit path
-	// below returns, and one of them returns on an error — so a refresh placed after the
-	// channel sweep would be skipped exactly when the sweep is having trouble, leaving a
-	// revoked link still authorising sends. This is a no-op when COMM is off.
+	// It used to sweep the link's open channels and report how many it shut. Channels are gone
+	// (slice 7), so a suspension now withdraws the PERMISSION and nothing else: the pair scope is
+	// removed from the mirror, and the next send is refused. Nothing is closed because nothing was
+	// open in that sense.
+	//
+	// That also removes the asymmetry the old control had. Suspend used to be partly irreversible
+	// — the permission came back on Resume, the channels did not, because the sessions holding
+	// them were gone. Suspend and Resume are now exact inverses, which is what the control always
+	// claimed to be.
+	//
+	// THE MIRROR REFRESH STILL COMES FIRST, and for the reason it always did: every path below
+	// returns, so a refresh placed after a fallible step is skipped exactly when that step is in
+	// trouble, leaving a suspended link still authorising sends. It is a no-op when COMM is off.
 	a.syncRoomMirror(r)
-	if a.comm == nil {
-		// COMM is off in THIS server, which says nothing about comm.db: open channels
-		// outlive the flag. Do not claim none were open — that is a fact nobody
-		// checked, and re-enabling COMM later would resume a conversation the
-		// operator was told had been fully withdrawn.
-		flashRedirect(w, r, "/stations", "flash.station_link_revoked_comm_off", pair)
-		return
-	}
-	n, err := a.comm.RevokeChannelsBetweenStations(r.Context(), link.StationA, link.StationB)
-	if err != nil {
-		// The permission is already gone; say so, and say what did NOT happen, so the
-		// operator knows to retry — which now works.
-		log.Printf("web: revoke channels for link %s: %v", id, err)
-		flashRedirect(w, r, "/stations", "flash.station_link_revoked_channels_failed", pair)
-		return
-	}
-	closed = n
-	// Two keys rather than one with a spliced count: flash carries a single argument,
-	// and a number formatted into the argument would arrive in the operator's language
-	// with an English "channels closed" glued to it. The exact count is on the page.
-	if closed > 0 {
-		flashRedirect(w, r, "/stations", "flash.station_link_revoked_channels", pair)
+	if !suspend {
+		flashRedirect(w, r, "/stations", "flash.station_link_resumed", pair)
 		return
 	}
 	flashRedirect(w, r, "/stations", "flash.station_link_revoked", pair)

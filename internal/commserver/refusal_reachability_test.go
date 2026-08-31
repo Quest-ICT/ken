@@ -67,7 +67,10 @@ func TestEveryCallerFacingRefusalSurvivesTheMapper(t *testing.T) {
 		// was a branch no input could reach — an unreachable branch with a passing test over it,
 		// which is exactly what this file exists to prevent. The live sentinel,
 		// station.ErrStationArchived, is CallerSafe and reaches the caller on the default path.
-		{"CallerSafe ChannelFor room-as-channel", comm.CallerSafe(fmt.Errorf("%w: %q is a ROOM, not a channel", comm.ErrNotFound, "r1"))},
+		// The room-as-CHANNEL entry went with the channel. Its replacement is the refusal the send
+		// path now raises when no address is given at all — the one caller-authored sentence on
+		// that path, and therefore the one that must survive the mapper untouched.
+		{"CallerSafe send with no address", comm.CallerSafe(errors.New("give exactly one of to_station, to_room, or to_room:\"all\""))},
 	}
 	for _, c := range intact {
 		got := commError(c.err)

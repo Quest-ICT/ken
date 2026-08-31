@@ -29,15 +29,30 @@ func owner(token string) Owner { return Owner{TokenID: token, ActorID: 7} }
 // B" could later become an accept flow without tightening a shipped tool. The pairing code is gone
 // with the second human gate on comm, and with it the two-sidedness: a channel between two linked
 // stations opens in one call, because the relationship was already agreed.
+// pair returns two mailboxes that may write to each other, and the STATION id of the second.
+//
+// The third value used to be a channel_id, and every caller passed it straight to Send. Slice 7
+// deleted the channel, so the thing two stations share is now the LINK and the address is the peer
+// station — which is why the value changed meaning rather than disappearing: the fixture answers
+// the same question ("who can this endpoint write to, and how"), with the addressing the server
+// still has.
+// linkedTo establishes the link two stations need and returns the PEER STATION id.
+//
+// It replaces openChannel, and the signature is deliberately the same shape: every caller wanted
+// "these two can now write to each other, and here is the address to use". That address is a
+// station id since slice 7 — a link, not a channel row.
+func linkedTo(t *testing.T, st *Store, a, b *Endpoint) string {
+	t.Helper()
+	linkFixture(t, st, [2]string{a.StationID, b.StationID})
+	return b.StationID
+}
+
 func pair(t *testing.T, st *Store) (*Endpoint, *Endpoint, string) {
 	t.Helper()
 	a := mailbox(t, st, "dev", "tok-a")
 	b := mailbox(t, st, "test", "tok-b")
-	ch := openChannel(t, st, a, b, "dev<->test")
-	if !ch.Open() {
-		t.Fatalf("channel not open: state=%q", ch.State)
-	}
-	return a, b, ch.ChannelID
+	linkFixture(t, st, [2]string{a.StationID, b.StationID})
+	return a, b, b.StationID
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {
@@ -79,35 +94,6 @@ func TestAStationHasExactlyOneMailbox(t *testing.T) {
 	}
 }
 
-// A CHANNEL HAS EXACTLY TWO SEATS AND NOBODY ELSE GETS IN.
-//
-// This was TestPairingCodeIsSingleUseByTwoEndpoints: a code could be redeemed once by each of two
-// endpoints and never by a third. The code is gone, and two of its three assertions went with it —
-// the idempotent re-join and the two-sided open were properties of redeeming, not of channels.
-//
-// The third is the one that was never about the code: a station on neither seat must not be able
-// to resolve the channel. That is a membership property, it survives every change to how channels
-// come into existence, and it is what this asserts now — with the second half restored, that a
-// member CAN resolve it, without which "nobody resolves it" would pass on a broken lookup.
-func TestOnlyTheTwoStationsOnAChannelCanResolveIt(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-	a, b, channelID := pair(t, st)
-
-	// POSITIVE CONTROL FIRST. If ChannelFor refused everyone, the refusal below would prove
-	// nothing at all about membership.
-	for _, member := range []*Endpoint{a, b} {
-		if _, _, err := st.ChannelFor(ctx, member, channelID); err != nil {
-			t.Fatalf("a station seated on the channel cannot resolve it: %v", err)
-		}
-	}
-
-	c := mailbox(t, st, "intruder", "tok-c")
-	if _, _, err := st.ChannelFor(ctx, c, channelID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("non-member must not resolve the channel: got %v", err)
-	}
-}
-
 // TestUnknownOrExpiredCodeIsIndistinguishable IS DELETED WITH THE PAIRING CODE. It asserted that a
 // redeem of an unknown code and of an expired one both returned ErrNotFound, so a caller could not
 // probe which codes existed or had existed. Nothing mints a code and nothing redeems one.
@@ -121,7 +107,7 @@ func TestSendPollAckRoundTrip(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "hello", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "hello", SendOpts{})
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -161,7 +147,7 @@ func TestUnackedMessageIsRedelivered(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	if _, err := st.Send(ctx, a, channelID, "again", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a, channelID, "again", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 3; i++ {
@@ -189,7 +175,7 @@ func TestAckDropsBodyButKeepsMetadata(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "body-here", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "body-here", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +214,7 @@ func TestZeroRetentionRestoresBlankOnAck(t *testing.T) {
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "body-here", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "body-here", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +243,7 @@ func TestAckIsIdempotent(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "x", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "x", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,11 +264,11 @@ func TestSendIsIdempotentPerKey(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	first, err := st.Send(ctx, a, channelID, "once", SendOpts{IdempotencyKey: "k1"})
+	first, err := st.SendToStation(ctx, a, channelID, "once", SendOpts{IdempotencyKey: "k1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := st.Send(ctx, a, channelID, "once", SendOpts{IdempotencyKey: "k1"})
+	second, err := st.SendToStation(ctx, a, channelID, "once", SendOpts{IdempotencyKey: "k1"})
 	if err != nil {
 		t.Fatalf("resend: %v", err)
 	}
@@ -316,9 +302,9 @@ func TestSequenceIsPerConversationNotPerSender(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	a1, _ := st.Send(ctx, a, channelID, "a1", SendOpts{})
-	a2, _ := st.Send(ctx, a, channelID, "a2", SendOpts{})
-	b1, err := st.Send(ctx, b, channelID, "b1", SendOpts{})
+	a1, _ := st.SendToStation(ctx, a, channelID, "a1", SendOpts{})
+	a2, _ := st.SendToStation(ctx, a, channelID, "a2", SendOpts{})
+	b1, err := st.SendToStation(ctx, b, a.StationID, "b1", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +334,7 @@ func TestRequestResponseCorrelation(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	req, err := st.Send(ctx, a, channelID, "please do X", SendOpts{RequiresResponse: true})
+	req, err := st.SendToStation(ctx, a, channelID, "please do X", SendOpts{RequiresResponse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +362,7 @@ func TestRequestResponseCorrelation(t *testing.T) {
 	if _, err := st.Poll(ctx, b, 10); err != nil {
 		t.Fatal(err)
 	}
-	reply, err := st.Send(ctx, b, channelID, "done", SendOpts{ReplyToMessageID: req.MessageID})
+	reply, err := st.SendToStation(ctx, b, a.StationID, "done", SendOpts{ReplyToMessageID: req.MessageID})
 	if err != nil {
 		t.Fatalf("reply: %v", err)
 	}
@@ -400,12 +386,12 @@ func TestReplyToForeignMessageIsRejected(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	own, err := st.Send(ctx, a, channelID, "mine", SendOpts{})
+	own, err := st.SendToStation(ctx, a, channelID, "mine", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A tries to reply to its OWN message (it is not the recipient).
-	if _, err := st.Send(ctx, a, channelID, "bogus", SendOpts{ReplyToMessageID: own.MessageID}); !errors.Is(err, ErrNotFound) {
+	if _, err := st.SendToStation(ctx, a, channelID, "bogus", SendOpts{ReplyToMessageID: own.MessageID}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 	_ = b
@@ -418,7 +404,7 @@ func TestRequiresResponseRetainsBodyUntilReplied(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	req, err := st.Send(ctx, a, channelID, "the request text", SendOpts{RequiresResponse: true})
+	req, err := st.SendToStation(ctx, a, channelID, "the request text", SendOpts{RequiresResponse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +423,7 @@ func TestRequiresResponseRetainsBodyUntilReplied(t *testing.T) {
 		t.Fatalf("unanswered request lost its body on ack: %q", m.Body)
 	}
 
-	if _, err := st.Send(ctx, b, channelID, "answer", SendOpts{ReplyToMessageID: req.MessageID}); err != nil {
+	if _, err := st.SendToStation(ctx, b, a.StationID, "answer", SendOpts{ReplyToMessageID: req.MessageID}); err != nil {
 		t.Fatal(err)
 	}
 	// Once answered, the sweeper is free to drop it; the reply link is what the
@@ -455,11 +441,11 @@ func TestBackpressureCapsUnackedDepth(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	for i := 0; i < 3; i++ {
-		if _, err := st.Send(ctx, a, channelID, "m", SendOpts{}); err != nil {
+		if _, err := st.SendToStation(ctx, a, channelID, "m", SendOpts{}); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
 	}
-	if _, err := st.Send(ctx, a, channelID, "overflow", SendOpts{}); !errors.Is(err, ErrBackpressure) {
+	if _, err := st.SendToStation(ctx, a, channelID, "overflow", SendOpts{}); !errors.Is(err, ErrBackpressure) {
 		t.Fatalf("want ErrBackpressure, got %v", err)
 	}
 
@@ -471,7 +457,7 @@ func TestBackpressureCapsUnackedDepth(t *testing.T) {
 	if _, err := st.Ack(ctx, b, got[0].MessageID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Send(ctx, a, channelID, "now-ok", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a, channelID, "now-ok", SendOpts{}); err != nil {
 		t.Fatalf("send after ack should succeed: %v", err)
 	}
 }
@@ -483,21 +469,8 @@ func TestBodyCapRejectsOversizeMessage(t *testing.T) {
 	st := newStore(t, l)
 	a, _, channelID := pair(t, st)
 
-	if _, err := st.Send(ctx, a, channelID, "0123456789abcdefX", SendOpts{}); !errors.Is(err, ErrTooLarge) {
+	if _, err := st.SendToStation(ctx, a, channelID, "0123456789abcdefX", SendOpts{}); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("want ErrTooLarge, got %v", err)
-	}
-}
-
-func TestRevokedChannelStopsTraffic(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-	a, _, channelID := pair(t, st)
-
-	if err := st.RevokeChannel(ctx, channelID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Send(ctx, a, channelID, "after revoke", SendOpts{}); !errors.Is(err, ErrChannelClosed) {
-		t.Fatalf("want ErrChannelClosed, got %v", err)
 	}
 }
 
@@ -510,7 +483,7 @@ func TestSweepExpiresDeliveredButUnackedMessages(t *testing.T) {
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "doomed", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "doomed", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +521,7 @@ func TestSweepPurgesSettledMetadata(t *testing.T) {
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "transient", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "transient", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -610,7 +583,7 @@ func TestReceivedSinceKeysOnDelivery(t *testing.T) {
 		t.Fatal("reported comm traffic before anything was sent")
 	}
 
-	if _, err := st.Send(ctx, a, channelID, "hearsay", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a, channelID, "hearsay", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := st.ReceivedSince(ctx, 7, 3600); got {
@@ -637,7 +610,7 @@ func TestReceivedSinceSurvivesAck(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	m, err := st.Send(ctx, a, channelID, "x", SendOpts{})
+	m, err := st.SendToStation(ctx, a, channelID, "x", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +630,7 @@ func TestReceivedSinceWindowAndUnknownActors(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
-	if _, err := st.Send(ctx, a, channelID, "x", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a, channelID, "x", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Poll(ctx, b, 10); err != nil {
@@ -748,8 +721,8 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 	a := mailbox(t, st, "dev-v1", "tok-a")
 	peer := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	ch := openChannel(t, st, a, peer, "dev<->peer")
-	if _, err := st.Send(ctx, peer, ch.ChannelID, "the archive host is refusing the pull", SendOpts{}); err != nil {
+	linkedTo(t, st, a, peer)
+	if _, err := st.SendToStation(ctx, peer, a.StationID, "the archive host is refusing the pull", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -792,9 +765,9 @@ func TestAReplacementReaderInheritsTheStationsUnreadMail(t *testing.T) {
 func TestUnboundEndpointsAreUnaffectedByClaiming(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
-	a, b, chID := pair(t, st)
+	a, b, _ := pair(t, st)
 
-	if _, err := st.Send(ctx, b, chID, "hello", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, b, a.StationID, "hello", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// Polling twice must return it twice: for an unbound endpoint, polling is a pure
@@ -829,9 +802,9 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 	a := mailbox(t, st, "dev-v1", "tok-a")
 	peer := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, station, "kens_key1")
-	ch := openChannel(t, st, a, peer, "x")
+	linkedTo(t, st, a, peer)
 	for _, body := range []string{"first", "second"} {
-		if _, err := st.Send(ctx, peer, ch.ChannelID, body, SendOpts{}); err != nil {
+		if _, err := st.SendToStation(ctx, peer, a.StationID, body, SendOpts{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -848,11 +821,11 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 		t.Fatalf("replacement polled %d messages, want 2", len(got))
 	}
 	// It must be able to ANSWER what it inherited.
-	if _, err := st.Send(ctx, b, ch.ChannelID, "picking this up from my predecessor", SendOpts{}); err != nil {
-		t.Fatalf("the replacement cannot reply on the inherited channel: %v — polling mail it cannot answer is a half-feature", err)
+	if _, err := st.SendToStation(ctx, b, peer.StationID, "picking this up from my predecessor", SendOpts{}); err != nil {
+		t.Fatalf("the replacement cannot reply on the inherited conversation: %v — polling mail it cannot answer is a half-feature", err)
 	}
 	// And settle it cumulatively, the form the tool description advertises.
-	if _, err := st.AckUpTo(ctx, b, ch.ChannelID, got[len(got)-1].Seq); err != nil {
+	if _, err := st.AckUpTo(ctx, b, peer.StationID, got[len(got)-1].Seq); err != nil {
 		t.Fatalf("cumulative ack failed for the replacement: %v", err)
 	}
 	again, err := st.Poll(ctx, b, 10)
@@ -861,64 +834,6 @@ func TestAReplacementReaderCanReplyAndAckCumulatively(t *testing.T) {
 	}
 	if len(again) != 0 {
 		t.Fatalf("%d message(s) redelivered after a cumulative ack — this is the infinite-redelivery loop the fix exists to prevent", len(again))
-	}
-}
-
-// TestRevokingAnEndpointReleasesItsClaims IS DELETED with the claim lease — see above.
-
-// The payoff of a link: two stations open a channel with NO pairing code, because a
-// human approved the relationship once instead of approving each conversation.
-//
-// The gate is not removed, only moved: the channel exists because a person said these
-// two posts may talk. What is removed is the per-conversation step.
-func TestLinkedStationsOpenAChannelWithoutAPairingCode(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-
-	a := mailbox(t, st, "dev", "tok-a")
-	b := mailbox(t, st, "prod", "tok-b")
-	a = bindEndpoint(t, st, a, "stn_dev", "kens_a")
-	b = bindEndpoint(t, st, b, "stn_prod", "kens_b")
-
-	ch, err := st.OpenLinkedChannel(ctx, a, b, 42, "dev <-> prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ch.Open() {
-		t.Fatalf("a linked channel opened in state %q — there is no rendezvous to wait for, both stations are already approved", ch.State)
-	}
-	// It must carry real traffic, not merely exist.
-	if _, err := st.Send(ctx, a, ch.ChannelID, "opened from a link", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := st.Poll(ctx, b, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Body != "opened from a link" {
-		t.Fatalf("the peer received %d message(s): %+v", len(got), got)
-	}
-
-	// Idempotent: a retry after a lost response must not fragment one conversation
-	// into two channels.
-	again, err := st.OpenLinkedChannel(ctx, a, b, 42, "dev <-> prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.ChannelID != ch.ChannelID {
-		t.Fatalf("a second open produced a NEW channel (%s vs %s) — a retry would split the conversation", again.ChannelID, ch.ChannelID)
-	}
-
-	// And a REPLACEMENT session on one side rejoins the SAME conversation, because
-	// the match is on stations rather than endpoints.
-	a2 := mailbox(t, st, "dev-v2", "tok-a")
-	a2 = bindEndpoint(t, st, a2, "stn_dev", "kens_a")
-	rejoined, err := st.OpenLinkedChannel(ctx, a2, b, 42, "dev <-> prod")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rejoined.ChannelID != ch.ChannelID {
-		t.Fatalf("a replacement session started a PARALLEL channel (%s vs %s) instead of finding its predecessor's", rejoined.ChannelID, ch.ChannelID)
 	}
 }
 
@@ -940,14 +855,11 @@ func TestSequenceDoesNotRestartWhenASessionIsReplaced(t *testing.T) {
 	b := mailbox(t, st, "peer", "tok-b")
 	a = bindEndpoint(t, st, a, "stn_dev", "k")
 	b = bindEndpoint(t, st, b, "stn_peer", "k")
-	ch, err := st.OpenLinkedChannel(ctx, a, b, 1, "x")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ch := linkedTo(t, st, a, b)
 
 	var last int64
 	for _, body := range []string{"first", "second"} {
-		m, err := st.Send(ctx, a, ch.ChannelID, body, SendOpts{})
+		m, err := st.SendToStation(ctx, a, ch, body, SendOpts{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -957,7 +869,7 @@ func TestSequenceDoesNotRestartWhenASessionIsReplaced(t *testing.T) {
 	// The session dies; a replacement binds to the SAME station and sends.
 	a2 := mailbox(t, st, "dev-v2", "tok-a")
 	a2 = bindEndpoint(t, st, a2, "stn_dev", "k")
-	m, err := st.Send(ctx, a2, ch.ChannelID, "first from the replacement", SendOpts{})
+	m, err := st.SendToStation(ctx, a2, ch, "first from the replacement", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1014,20 +926,4 @@ func mailbox(t *testing.T, st *Store, station, token string) *Endpoint {
 		t.Fatalf("mailbox for %s: %v", station, err)
 	}
 	return ep
-}
-
-// openChannel opens a channel between two station mailboxes.
-//
-// IT REPLACES A MINT-AND-JOIN PAIR that appeared in ten test files. Channels used to be created by
-// redeeming a human-minted pairing code from both sides, so every test needing one paid for the
-// whole ceremony; the code was deleted with the second human gate on comm, and OpenLinkedChannel —
-// the path the console has always used — is what remains. The tests that were ABOUT the code are
-// gone; these only ever needed a channel to exist.
-func openChannel(t *testing.T, st *Store, a, b *Endpoint, label string) *Channel {
-	t.Helper()
-	ch, err := st.OpenLinkedChannel(context.Background(), a, b, 42, label)
-	if err != nil {
-		t.Fatalf("open channel %s<->%s: %v", a.EndpointID, b.EndpointID, err)
-	}
-	return ch
 }

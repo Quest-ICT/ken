@@ -15,22 +15,23 @@ import (
 func TestPollScopedRefusesAScopeThatNamesNoNamespace(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t, DefaultLimits())
-	a, b, channelID := pair(t, st)
-	if _, err := st.Send(ctx, a, channelID, "one", SendOpts{}); err != nil {
+	a, b, peer := pair(t, st)
+	if _, err := st.SendToStation(ctx, a, peer, "one", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, bad := range []string{"ops", "ch:", "r:", "b:", "p:", "p:only-one", "p:|b", "p:a|", "x:1", " ch:1"} {
+	for _, bad := range []string{"ops", "ch:", "ch:anything", "r:", "b:", "p:", "p:only-one", "p:|b", "p:a|", "x:1", " r:1"} {
 		if _, err := st.PollScoped(ctx, b, 10, bad); !errors.Is(err, ErrBadScope) {
 			t.Errorf("PollScoped(scope=%q) returned %v, want ErrBadScope — an unparseable filter that "+
 				"returns an empty list is indistinguishable from an empty inbox", bad, err)
 		}
 	}
 
-	// ACCEPTED, AND ACTUALLY NARROWING.
-	got, err := st.PollScoped(ctx, b, 10, "ch:"+channelID)
+	// ACCEPTED, AND ACTUALLY NARROWING. The pair scope replaced the channel scope: "ch:" is now
+	// one of the malformed forms above rather than the one accepted form.
+	got, err := st.PollScoped(ctx, b, 10, pairScope(a.StationID, b.StationID))
 	if err != nil {
-		t.Fatalf("a well-formed channel scope was refused: %v", err)
+		t.Fatalf("a well-formed pair scope was refused: %v", err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("the accepted scope returned %d messages, want 1 — the refusals above prove nothing "+

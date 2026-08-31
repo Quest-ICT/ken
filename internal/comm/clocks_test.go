@@ -57,7 +57,7 @@ func TestAMessageSurvivesAWeekendUnpolled(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "sent Friday afternoon", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "sent Friday afternoon", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestTheUndeliveredBackstopStillExpiresAbandonedMail(t *testing.T) {
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "nobody is ever coming back", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "nobody is ever coming back", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestDeliveryArmsTheClocksOnceAndOnlyOnce(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "q", SendOpts{RequiresResponse: true})
+	sent, err := st.SendToStation(ctx, a, channelID, "q", SendOpts{RequiresResponse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestExpiryKeepsTheBodyOfAMessageNobodyRead(t *testing.T) {
 	st := newStore(t, l)
 	a, _, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "the thing nobody got to read", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "the thing nobody got to read", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,20 +198,20 @@ func TestAckUpToCannotSettleUndeliveredMail(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	first, err := st.Send(ctx, a, channelID, "read this one", SendOpts{})
+	first, err := st.SendToStation(ctx, a, channelID, "read this one", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Poll(ctx, b, 10); err != nil { // delivers only the first
 		t.Fatal(err)
 	}
-	second, err := st.Send(ctx, a, channelID, "never shown to anyone", SendOpts{})
+	second, err := st.SendToStation(ctx, a, channelID, "never shown to anyone", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// A cumulative ack covering BOTH sequence numbers.
-	if _, err := st.AckUpTo(ctx, b, channelID, second.Seq); err != nil {
+	if _, err := st.AckUpTo(ctx, b, a.StationID, second.Seq); err != nil {
 		t.Fatal(err)
 	}
 	m1, err := st.MessageByID(ctx, first.MessageID)
@@ -252,7 +252,7 @@ func TestPollLimitAboveTheCeilingYieldsTheCeiling(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	for i := 0; i < 120; i++ {
-		if _, err := st.Send(ctx, a, channelID, "m", SendOpts{}); err != nil {
+		if _, err := st.SendToStation(ctx, a, channelID, "m", SendOpts{}); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
 	}
@@ -281,7 +281,7 @@ func TestUnreadBodySurvivesExpiryUnderShippedDefaults(t *testing.T) {
 	st := newStore(t, DefaultLimits()) // deliberately untouched
 	a, _, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "nobody ever polled this", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "nobody ever polled this", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestSendReportsClampingAndWaitingMail(t *testing.T) {
 
 	// CONTROL: a request INSIDE the ceiling is honoured and reported as unclamped, so
 	// a later non-zero cannot be the field simply always being set.
-	ok, err := st.Send(ctx, a, channelID, "modest", SendOpts{TTLSeconds: 120})
+	ok, err := st.SendToStation(ctx, a, channelID, "modest", SendOpts{TTLSeconds: 120})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestSendReportsClampingAndWaitingMail(t *testing.T) {
 
 	// Over the ceiling: the sender is told what it asked for, not left to diff a
 	// timestamp against a number it has to remember passing.
-	clamped, err := st.Send(ctx, a, channelID, "greedy", SendOpts{TTLSeconds: 365 * 24 * 3600})
+	clamped, err := st.SendToStation(ctx, a, channelID, "greedy", SendOpts{TTLSeconds: 365 * 24 * 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,10 +353,10 @@ func TestSendReportsClampingAndWaitingMail(t *testing.T) {
 	}
 
 	// Now mail is waiting for A: B replies, and A sends again without reading it.
-	if _, err := st.Send(ctx, b, channelID, "you should read this first", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, b, a.StationID, "you should read this first", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	blind, err := st.Send(ctx, a, channelID, "sent without looking", SendOpts{})
+	blind, err := st.SendToStation(ctx, a, channelID, "sent without looking", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestSendReportsClampingAndWaitingMail(t *testing.T) {
 	if _, err := st.Poll(ctx, a, 10); err != nil {
 		t.Fatal(err)
 	}
-	informed, err := st.Send(ctx, a, channelID, "sent having read it", SendOpts{})
+	informed, err := st.SendToStation(ctx, a, channelID, "sent having read it", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -235,7 +235,6 @@ func recipientFor(ctx context.Context, t *sql.Tx, chRow any, ep *Endpoint) any {
 // comm_send already offers, arriving late on the file surface because attachments were
 // channel-shaped until migration 0017.
 type FileAddr struct {
-	ChannelID string
 	RoomID    string
 	StationID string
 }
@@ -248,14 +247,14 @@ type FileAddr struct {
 // offer exactly when a pair send is. Two rules for the same relationship is how they drift.
 func (s *Store) resolveOfferScope(ctx context.Context, t *sql.Tx, ep *Endpoint, addr FileAddr) (scope string, chRow any, err error) {
 	set := 0
-	for _, v := range []string{addr.ChannelID, addr.RoomID, addr.StationID} {
+	for _, v := range []string{addr.RoomID, addr.StationID} {
 		if v != "" {
 			set++
 		}
 	}
 	if set != 1 {
 		return "", nil, CallerSafe(errors.New(
-			"give exactly one of channel_id, to_room or to_station — a file goes to one place, " +
+			"give exactly one of to_room or to_station — a file goes to one place, " +
 				"and which one decides who can fetch it"))
 	}
 
@@ -292,11 +291,10 @@ func (s *Store) resolveOfferScope(ctx context.Context, t *sql.Tx, ep *Endpoint, 
 		return pairScope(from, addr.StationID), nil, nil
 
 	default:
-		ch, _, err := s.ChannelFor(ctx, ep, addr.ChannelID)
-		if err != nil {
-			return "", nil, err
-		}
-		return channelScope(ch.ChannelID), ch.ID, nil
+		// THE CHANNEL ARM IS GONE WITH THE CHANNEL. An address that names neither a room nor a
+		// station names nothing this server can authorise, and saying so plainly beats resolving
+		// an id that can no longer exist.
+		return "", nil, fmt.Errorf("%w: address a file offer with to_room or to_station", ErrNotFound)
 	}
 }
 
@@ -553,23 +551,13 @@ func (s *Store) GrantDownload(ctx context.Context, ep *Endpoint, attachmentID st
 		// moves, so every LATER offer to that station was stamped with the same revoked row
 		// and was equally ungrantable. Re-offering — the remedy the relay's own errors
 		// prescribe — could not clear it.
-		// FOR A CHANNEL, THE CHANNEL'S STATE IS STILL THE TEST. For a room or a pair there
-		// is no channel to ask, and none is needed: the membership check above already asked
-		// the live roster, so a station removed from the room is refused there. That is the
-		// same property this check provides for channels, arrived at from the other side —
-		// which is why there is no third branch here rather than a missing one.
-		if _, isChannel := channelIDOfScope(a.ScopeID); isChannel {
-			var chState string
-			if err := t.QueryRowContext(ctx, `
-SELECT c.state FROM attachment a
-JOIN channel c ON c.id = a.channel_id
-WHERE a.id=?`, a.rowID).Scan(&chState); err != nil {
-				return err
-			}
-			if chState != "open" {
-				return ErrChannelClosed
-			}
-		}
+		// THE CHANNEL-STATE BRANCH IS GONE WITH THE CHANNEL, AND NOTHING REPLACES IT.
+		//
+		// It asked whether the attachment's channel was still open before minting a download
+		// grant. For a room or a pair there was never a channel to ask, and none was needed: the
+		// membership check above asks the LIVE roster, so a station removed from the room is
+		// refused there. That is the same property, arrived at from the other side — which is why
+		// deleting the branch leaves no gap rather than a hole.
 		g, err := mintGrant(ctx, t, a.rowID, ep.ID, "download", s.lim().GrantTTLSeconds)
 		if err != nil {
 			return err

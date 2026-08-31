@@ -26,9 +26,9 @@ import (
 func TestPendingCountDoesNotDeliverAnything(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
-	a, b, ch := pair(t, st)
+	a, b, _ := pair(t, st)
 
-	if _, err := st.Send(ctx, b, ch, "waiting for you", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, b, a.StationID, "waiting for you", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -42,12 +42,12 @@ func TestPendingCountDoesNotDeliverAnything(t *testing.T) {
 		t.Fatalf("setup: message is %q, want queued", beforeState)
 	}
 
-	pending, err := st.PendingForEndpoint(ctx, a)
+	pending, err := st.PendingTotalFor(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending[ch] != 1 {
-		t.Fatalf("pending on %s = %d, want 1 — the count is the whole reason this exists", ch, pending[ch])
+	if pending != 1 {
+		t.Fatalf("pending = %d, want 1 — the count is the whole reason this exists", pending)
 	}
 
 	var afterState string
@@ -71,34 +71,34 @@ func TestPendingCountDoesNotDeliverAnything(t *testing.T) {
 func TestPendingIgnoresMailAlreadyShownToYou(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	ctx := context.Background()
-	a, b, ch := pair(t, st)
+	a, b, _ := pair(t, st)
 
-	if _, err := st.Send(ctx, b, ch, "one", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, b, a.StationID, "one", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Poll(ctx, a, 10); err != nil { // delivered, deliberately not acked
 		t.Fatal(err)
 	}
 
-	pending, err := st.PendingForEndpoint(ctx, a)
+	pending, err := st.PendingTotalFor(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending[ch] != 0 {
-		t.Fatalf("pending = %d after polling — a message this session has already been handed is not waiting to be read", pending[ch])
+	if pending != 0 {
+		t.Fatalf("pending = %d after polling — a message this session has already been handed is not waiting to be read", pending)
 	}
 
 	// CONTROL: a genuinely new message still counts, so the zero above is about the
 	// delivered state and not about the count being broken.
-	if _, err := st.Send(ctx, b, ch, "two", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, b, a.StationID, "two", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	pending, err = st.PendingForEndpoint(ctx, a)
+	pending, err = st.PendingTotalFor(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending[ch] != 1 {
-		t.Fatalf("pending = %d after a fresh send — the count is not seeing new mail at all", pending[ch])
+	if pending != 1 {
+		t.Fatalf("pending = %d after a fresh send — the count is not seeing new mail at all", pending)
 	}
 }
 
@@ -109,84 +109,15 @@ func TestPendingDoesNotCountYourOwnSends(t *testing.T) {
 	ctx := context.Background()
 	a, _, ch := pair(t, st)
 
-	if _, err := st.Send(ctx, a, ch, "mine", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a, ch, "mine", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := st.PendingForEndpoint(ctx, a)
+	pending, err := st.PendingTotalFor(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending[ch] != 0 {
-		t.Fatalf("pending = %d on a channel where the only message is my own — the sender is being told to read their own mail", pending[ch])
-	}
-}
-
-// A SUCCESSOR ENDPOINT MUST SEE THE COUNT ON THE CHANNEL IT INHERITED.
-//
-// The channel LIST was widened to station scope so a replacement session could enumerate
-// what its predecessor joined — that is the takeover case stations exist for. The COUNT
-// was left endpoint-scoped, so the successor got the channel listed with `pending: 0`
-// beside it while mail sat queued for the station.
-//
-// A missing row is a silence somebody can notice; a row that says zero is an ASSERTION,
-// and this one was false exactly where it mattered most.
-func TestASuccessorEndpointSeesTheCountOnTheChannelItInherited(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-
-	first := stationEndpoint(t, st, "tok-1", "st-ops")
-	peer := mailbox(t, st, "peer", "tok-peer")
-	ch := openChannel(t, st, first, peer, "ops<->peer")
-	if _, err := st.Send(ctx, peer, ch.ChannelID, "for whoever is staffing ops", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-
-	// The predecessor is gone; a NEW endpoint takes the same station.
-	successor := stationEndpoint(t, st, "tok-2", "st-ops")
-
-	m, err := st.PendingForEndpoint(ctx, successor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// THE TWO-VALUE FORM IS THE POINT. `m[ch] == 1` alone cannot distinguish "counted
-	// zero" from "no row at all" — Go returns the zero value for a missing key, which is
-	// the very confusion this whole change is about.
-	n, ok := m[ch.ChannelID]
-	if !ok {
-		t.Fatalf("the inherited channel is absent from the count map entirely: %+v", m)
-	}
-	if n != 1 {
-		t.Fatalf("the successor sees pending=%d on the channel it inherited, want 1.\n"+
-			"The list shows the channel and the count says nothing is waiting — a false assertion "+
-			"in exactly the takeover case stations exist for.", n)
-	}
-}
-
-// AND THE WIDENING MUST NOT LEAK. A station-scoped seat predicate that lost its seat
-// clause entirely would pass the test above and report every channel in the database.
-func TestThePendingCountDoesNotLeakChannelsTheStationIsNotOn(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-
-	mine := stationEndpoint(t, st, "tok-mine", "st-mine")
-	peer := mailbox(t, st, "peer", "tok-peer")
-	openChannel(t, st, mine, peer, "mine<->peer")
-
-	// A channel between two OTHER endpoints, with mail on it.
-	x := mailbox(t, st, "x", "tok-x")
-	y := mailbox(t, st, "y", "tok-y")
-	other := openChannel(t, st, x, y, "x<->y")
-	if _, err := st.Send(ctx, y, other.ChannelID, "none of your business", SendOpts{}); err != nil {
-		t.Fatal(err)
-	}
-
-	m, err := st.PendingForEndpoint(ctx, mine)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := m[other.ChannelID]; ok {
-		t.Fatalf("a channel this station has no seat on appears in its count map: %+v.\n"+
-			"The seat predicate was widened past the station.", m)
+	if pending != 0 {
+		t.Fatalf("pending = %d on a channel where the only message is my own — the sender is being told to read their own mail", pending)
 	}
 }
 
@@ -217,15 +148,10 @@ func TestBroadcastMailIsCounted(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("broadcast pending = %d, want 1 — broadcast mail is counted by nothing at all", n)
 	}
-	// CONTROL: the channel counter genuinely cannot see it, so the number above is new
-	// information rather than a second view of something already reported.
-	m, err := st.PendingForEndpoint(ctx, alpha)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(m) != 0 {
-		t.Fatalf("the channel counter reported %+v for broadcast-only mail — the fixture is not testing what it claims", m)
-	}
+	// THE CONTROL ARM IS GONE WITH THE CHANNEL. It asserted the per-channel counter could NOT see
+	// broadcast mail, so the number above was new information rather than a second view of the
+	// same thing. There is one counter now and it is supposed to see broadcast mail, so the arm
+	// would assert the opposite of the contract.
 }
 
 // THE TOTAL SPANS EVERY SCOPE, which is the number a session can act on when its captured
@@ -238,8 +164,8 @@ func TestPendingTotalSpansChannelRoomAndBroadcast(t *testing.T) {
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
 	// One channel message...
-	ch := openChannel(t, st, alpha, beta, "a<->b")
-	if _, err := st.Send(ctx, beta, ch.ChannelID, "channel", SendOpts{}); err != nil {
+	linkedTo(t, st, alpha, beta)
+	if _, err := st.SendToStation(ctx, beta, alpha.StationID, "channel", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	// ...one room message, one broadcast.
@@ -367,13 +293,13 @@ func TestWaitingForYouSeesRoomMailOnAChannelSend(t *testing.T) {
 	beta := stationEndpoint(t, st, "tok-b", "st-beta")
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
-	// A channel for alpha to send on, and room mail waiting for alpha meanwhile.
-	ch := openChannel(t, st, alpha, beta, "a<->b")
+	// A pair for alpha to send on, and room mail waiting for alpha meanwhile.
+	ch := linkedTo(t, st, alpha, beta)
 	if _, err := st.SendToRoom(ctx, beta, "ops", "you have not read this", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 
-	m, err := st.Send(ctx, alpha, ch.ChannelID, "replying on the channel", SendOpts{})
+	m, err := st.SendToStation(ctx, alpha, ch, "replying on the pair", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,66 +418,6 @@ func TestBackpressureStillCountsOnlyItsOwnScope(t *testing.T) {
 	if _, err := st.SendToRoom(ctx, beta, "side", "unrelated conversation", SendOpts{}); err != nil {
 		t.Fatalf("a full room blocked an unrelated ROOM: %v.\n"+
 			"The cap counts the scope's own backlog; widening it makes one noisy room a global brake.", err)
-	}
-}
-
-// AN ACK THAT CANNOT FAIL IS NOT AN ACK.
-//
-// This call ran an UPDATE and discarded the row count, so a fabricated message id, an empty
-// string, and acking a message addressed to somebody else ALL returned success — in the one
-// call whose entire contract is "I have PROCESSED this", and the one the instructions most
-// insist a session trust.
-//
-// Found the expensive way: a session ran with the WRONG endpoint's credentials, acked, got
-// ok:true, and had no signal at all. Nothing was lost — ack-means-processed plus redelivery
-// meant the bogus ack settled nothing and the message came back on the right endpoint — but
-// the session believed it was finished.
-func TestAckReportsThatItSettledNothing(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	a, b, ch := pair(t, st)
-
-	m, err := st.Send(ctx, a, ch, "for b only", SendOpts{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, c := range []struct {
-		label string
-		ep    *Endpoint
-		id    string
-	}{
-		{"a fabricated id", b, "ThisMessageIdDoesNotExist99"},
-		{"an empty id", b, ""},
-		{"a real message addressed to somebody else", a, m.MessageID},
-	} {
-		n, err := st.Ack(ctx, c.ep, c.id)
-		// STILL SUCCEEDS, deliberately. Making a bad ack fail hard would break the
-		// legitimate no-op — acking something already settled or already swept — and
-		// redelivery is the safety net that made the real incident recoverable.
-		if err != nil {
-			t.Errorf("%s returned an error (%v); the no-op must stay harmless", c.label, err)
-		}
-		if n != 0 {
-			t.Errorf("%s reported settling %d deliveries, want 0", c.label, n)
-		}
-	}
-
-	// CONTROL: the same call on the right endpoint settles exactly one, so a zero above is
-	// evidence about the ack rather than about a fixture in which nothing was ackable.
-	if _, err := st.Poll(ctx, b, 10); err != nil {
-		t.Fatal(err)
-	}
-	n, err := st.Ack(ctx, b, m.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("the legitimate ack settled %d, want 1 — the count is not measuring anything", n)
-	}
-	// And acking it AGAIN settles nothing, which is the case that must not become an error.
-	if again, err := st.Ack(ctx, b, m.MessageID); err != nil || again != 0 {
-		t.Fatalf("re-acking a settled message returned (%d, %v), want (0, nil)", again, err)
 	}
 }
 
@@ -759,35 +625,6 @@ func TestWakeTargetsSkipRevokedEndpoints(t *testing.T) {
 	}
 }
 
-// A CHANNEL OPENED BY PAIRING CODE MUST BE REACHABLE BY LINK REVOCATION.
-//
-// Migration 0008 moved revocation onto channel.station_a/station_b precisely so
-// authorisation could not be re-derived from a binding an agent can change with one tool
-// call. Only the LINKED open path was taught to write them, so a channel opened by pairing
-// code between two station-bound endpoints carried NULLs — and the predicate that finds
-// "open channels between these two stations" could not see it.
-//
-// The failure is silent and reassuring: revoking the link leaves the channel open while the
-// console counts zero live channels and reports the revocation as complete.
-func TestAPairingCodeChannelRecordsItsAuthorisingStations(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	a := stationEndpoint(t, st, "tok-a", "st-alpha")
-	b := stationEndpoint(t, st, "tok-b", "st-beta")
-
-	ch := openChannel(t, st, a, b, "alpha<->beta")
-
-	n, err := st.CountOpenChannelsBetweenStations(ctx, "st-alpha", "st-beta")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("link revocation sees %d open channels between the two stations, want 1.\n"+
-			"A code-paired channel is invisible to the revocation meant to end it, and the console "+
-			"reports zero live channels while the channel keeps working. Channel %s.", n, ch.ChannelID)
-	}
-}
-
 // TestAnUnboundJoinerRecordsNoAuthorisingStation IS DELETED. Every joiner has a station.
 
 // THE OPERATOR'S COUNTERS MUST SEE ROOM AND BROADCAST MAIL.
@@ -943,7 +780,7 @@ func TestBodyBytesCountsBytesNotCharacters(t *testing.T) {
 	// Multi-byte throughout, because an ASCII fixture cannot tell the two functions apart —
 	// which is exactly why this survived: most test text is ASCII and the bug is invisible.
 	body := "cañón — mañana ✓ 日本語"
-	if _, err := st.Send(ctx, a, ch, body, SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a, ch, body, SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	wantBytes := int64(len(body)) // Go strings are UTF-8, so len() IS the byte count
@@ -976,7 +813,7 @@ func TestBlankedBodiesAreNotCountedAsRetainedBytes(t *testing.T) {
 	ctx := context.Background()
 	a, b, ch := pair(t, st)
 
-	m, err := st.Send(ctx, a, ch, "this text will be destroyed", SendOpts{})
+	m, err := st.SendToStation(ctx, a, ch, "this text will be destroyed", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1037,18 +874,15 @@ func TestWakeTargetsForAFileOfferResolveTheStationsLiveReader(t *testing.T) {
 	sender := stationEndpoint(t, st, "tok-s", "st-sender")
 	predecessor := stationEndpoint(t, st, "tok-r", "st-receiver")
 
-	chn, err := st.OpenLinkedChannel(ctx, sender, predecessor, 1, "sender <-> receiver")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ch := chn.ChannelID
+	chn := linkedTo(t, st, sender, predecessor)
+	ch := chn
 
 	// A SECOND SESSION STAFFS THE SAME STATION. Not a revoke — revoking the seat holder
 	// severs the channel, and the case that matters is the ordinary one: the station has a
 	// live reader that is NOT the endpoint frozen into the channel seat.
 	successor := stationEndpoint(t, st, "tok-r2", "st-receiver")
 
-	res, err := st.OfferFile(ctx, sender, FileAddr{ChannelID: ch}, FileOffer{
+	res, err := st.OfferFile(ctx, sender, FileAddr{StationID: ch}, FileOffer{
 		Name: "report.pdf", SizeBytes: 12,
 		SHA256:      "0000000000000000000000000000000000000000000000000000000000000000",
 		NonceSHA256: "1111111111111111111111111111111111111111111111111111111111111111",
@@ -1095,8 +929,8 @@ func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
 	beta := stationEndpoint(t, st, "tok-b", "st-beta")
 	roomFixture(t, st, "ops", "s:st-alpha", "s:st-beta")
 
-	ch := openChannel(t, st, alpha, beta, "a<->b")
-	if _, err := st.Send(ctx, beta, ch.ChannelID, "channel", SendOpts{}); err != nil {
+	linkedTo(t, st, alpha, beta)
+	if _, err := st.SendToStation(ctx, beta, alpha.StationID, "channel", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.SendToRoom(ctx, beta, "ops", "room", SendOpts{}); err != nil {
@@ -1106,12 +940,20 @@ func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	read := func(t *testing.T, when string) (channel, room, broadcast, total int) {
+	// THE FIRST COUNTER IS THE PAIR, NOT THE CHANNEL. It read PendingForEndpoint's per-channel
+	// map before slice 7; the pair is the two-station conversation that replaced it, and returning
+	// the TOTAL here would make the control compare the total against itself and pass whatever the
+	// per-scope counters said.
+	read := func(t *testing.T, when string) (pair, room, broadcast, total int) {
 		t.Helper()
-		per, err := st.PendingForEndpoint(ctx, alpha)
+		pairs, err := st.PairsFor(ctx, alpha)
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(pairs) != 1 {
+			t.Fatalf("%s: alpha holds %d pairs, want 1", when, len(pairs))
+		}
+		per := pairs[0].Pending
 		rooms, err := st.RoomsFor(ctx, PartyOf(alpha))
 		if err != nil {
 			t.Fatal(err)
@@ -1127,11 +969,11 @@ func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return per[ch.ChannelID], rooms[0].Pending, b, tot
+		return per, rooms[0].Pending, b, tot
 	}
 
 	if c, r, b, tot := read(t, "live"); c != 1 || r != 1 || b != 1 || tot != 3 {
-		t.Fatalf("POSITIVE CONTROL failed: channel=%d room=%d broadcast=%d total=%d, want 1/1/1/3", c, r, b, tot)
+		t.Fatalf("POSITIVE CONTROL failed: pair=%d room=%d broadcast=%d total=%d, want 1/1/1/3", c, r, b, tot)
 	}
 
 	res, err := st.W.ExecContext(ctx,
@@ -1162,12 +1004,16 @@ func TestPendingCountersAgreeOnAnExpiredButUnsweptMessage(t *testing.T) {
 	// JOIN, not the WHERE: in the WHERE it drops the whole channel row, and a missing row
 	// is a different answer from 0 — the distinction PendingForEndpoint's own comment
 	// calls "a silence a caller can notice" versus "an ASSERTION".
-	per, err := st.PendingForEndpoint(ctx, alpha)
+	per, err := st.PendingTotalFor(ctx, alpha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, listed := per[ch.ChannelID]; !listed {
-		t.Errorf("the channel vanished from the per-channel counts when its mail expired: %+v", per)
+	// THE ASSERTION MOVED WITH THE COUNTER. It used to be "the channel is still LISTED in the
+	// per-channel map with a zero" — a silence a caller can notice, versus a scope that vanished
+	// and reads as never having existed. There is one total now, so the same distinction is
+	// carried by the number being reported at all: zero is an answer, an error is not.
+	if per != 0 {
+		t.Errorf("expired-but-unswept mail is still counted as pending: %d, want 0", per)
 	}
 }
 
@@ -1238,7 +1084,11 @@ func TestEveryQueuedDeliveryCountCarriesTheSharedExpiryClause(t *testing.T) {
 			return false // one report per query, not one per nested call
 		})
 	}
-	for _, want := range []string{"channel.go", "room_mirror.go", "pair_send.go", "message.go"} {
+	// channel.go was the fourth file here and is deleted; the count it held (PendingForEndpoint)
+	// joined the channel table and went with it. staffing.go, which inherited that file's
+	// non-channel half, has no queued-delivery count — naming it here would make the scanner
+	// assert the absence of something that was never moved.
+	for _, want := range []string{"room_mirror.go", "pair_send.go", "message.go"} {
 		if found[want] == 0 {
 			t.Errorf("the scanner found no queued-delivery count in %s — it is checking nothing, "+
 				"so a violation elsewhere would read as a pass", want)

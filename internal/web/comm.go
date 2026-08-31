@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/Quest-ICT/ken/internal/comm"
 	"github.com/Quest-ICT/ken/internal/store"
@@ -50,12 +49,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	channels, err := a.comm.ListChannelsForConsole(ctx)
-	if err != nil {
-		log.Printf("web: comm channels: %v", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 	stats, err := a.comm.StatsFor(ctx)
 	if err != nil {
 		log.Printf("web: comm stats: %v", err)
@@ -82,8 +75,6 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	// opaque id and a self-chosen label do not.
 	type epView struct {
 		comm.Endpoint
-		OpenChannels int
-		ChannelsLine string // human channel names, comma-joined; "" when none
 		// Bound decides which WARNING the confirm dialog shows. Revoking an UNBOUND
 		// endpoint ends the relationship — nobody else can act on its channels, and the
 		// peer really must re-pair. Revoking a BOUND one cuts off a reader: the station
@@ -118,44 +109,17 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 		Targets   []any // where its endpoints may be moved: repointTarget or binderTarget
 	}
 	//
-	// GROUPED BY STATION WHERE THERE IS ONE, because a channel belongs to the station and
-	// every reader of that station is affected by anything done to it. Keyed by endpoint
-	// id, the blast radius landed on the wrong row in both directions: the successor —
-	// the station's ONLY live reader, which joined nothing — showed zero channels, so the
-	// row whose revocation actually silences the station carried no warning at all, while
-	// a predecessor that had merely died still carried the full list.
-	byEndpoint := map[string][]string{}
-	byStation := map[string][]string{}
-	for _, ch := range channels {
-		if ch.State != "open" {
-			continue
-		}
-		name := ch.Label
-		if name == "" {
-			name = ch.ChannelID
-		}
-		for _, seat := range []struct{ ep, station string }{
-			{ch.EndpointA, ch.StationA}, {ch.EndpointB, ch.StationB},
-		} {
-			if seat.station != "" {
-				byStation[seat.station] = append(byStation[seat.station], name)
-				continue
-			}
-			if seat.ep != "" {
-				byEndpoint[seat.ep] = append(byEndpoint[seat.ep], name)
-			}
-		}
-	}
+	// *** THE CHANNEL BLAST-RADIUS BLOCK IS DELETED WITH THE CHANNEL (slice 7, 5.0.0). ***
+	//
+	// It grouped a credential's open channels by station so the console could warn what retiring
+	// that credential would silence. There are no channels to silence: a conversation is the LINK,
+	// and the reversible control for one is Suspend on the Stations page.
 
 	eps := make([]epView, 0, len(endpoints))
 	for _, ep := range endpoints {
-		names := byEndpoint[ep.EndpointID]
-		if ep.StationID != "" {
-			names = byStation[ep.StationID]
-		}
 		v := epView{
-			Endpoint: ep, OpenChannels: len(names), ChannelsLine: strings.Join(names, ", "),
-			Bound: ep.StationID != "",
+			Endpoint: ep,
+			Bound:    ep.StationID != "",
 		}
 		eps = append(eps, v)
 	}
@@ -220,7 +184,7 @@ func (a *app) renderComm(w http.ResponseWriter, r *http.Request, sess *store.Ses
 	binders := []credential{}
 
 	a.render(w, r, sess, "comm", map[string]any{
-		"Endpoints": eps, "Channels": channels, "Stats": stats,
+		"Endpoints": eps, "Stats": stats,
 		"Owners": owners, "Binders": binders,
 		"CommURL": a.publicCommURL(r), "Fingerprint": fp,
 	})
@@ -253,23 +217,11 @@ func (a *app) handleCommCount(w http.ResponseWriter, r *http.Request, _ *store.S
 // relationship is created by the first message and the console's control is Suspend, which unlike
 // a code the human can also undo.
 
-// handleCommRevokeChannel is the brake: it closes a channel permanently.
-func (a *app) handleCommRevokeChannel(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if a.comm == nil {
-		http.NotFound(w, r)
-		return
-	}
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	id := r.PathValue("id")
-	if err := a.comm.RevokeChannel(r.Context(), id); err != nil {
-		flashRedirect(w, r, "/comm", "flash.comm_revoke_failed", err.Error())
-		return
-	}
-	flashRedirect(w, r, "/comm", "flash.comm_channel_revoked", id)
-}
+// *** handleCommRevokeChannel IS DELETED WITH THE CHANNEL (slice 7, 5.0.0). ***
+//
+// It was the brake on one channel: close it permanently, from the console. There is nothing left
+// to brake — a conversation between two stations is the LINK, and the control for a link is
+// Suspend on the Stations page, which is reversible where this was not.
 
 // handleCommRotateEndpoint IS DELETED. It was the console half of secret rotation — the one
 // control only a human could reach, existing because a lost secret was otherwise terminal. A

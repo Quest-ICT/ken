@@ -408,107 +408,21 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		return nil, out, nil
 	})
 
-	addTool(s, d.Metrics, &mcp.Tool{
-		Name: "comm_open_channel",
-		Description: "RARELY NEEDED — prefer comm_send{to_station}, which reaches any station with nothing to open. " +
-			"This opens a named channel with another STATION, worth it only when you want a durable channel_id to " +
-			"address one long exchange by. " +
-			"reaches a peer with nothing to open, join or expire, and creates the relationship on first contact. " +
-			"A channel is worth opening when you want a durable id to address a long exchange by, which both sides " +
-			"can resolve after either of them is replaced by a successor session. " +
-			"Both sides must be staffing a station, and the link between them must not be SUSPENDED — that is your " +
-			"human turning the relationship off at Ken's console, and the only way past it is to ask them.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, in openLinkedIn) (*mcp.CallToolResult, openLinkedOut, error) {
-		ep, err := auth(ctx, d, req, in.SessionKey)
-		if err != nil {
-			return nil, openLinkedOut{}, err
-		}
-		if ep.StationID == "" {
-			// SHOULD BE UNREACHABLE: a mailbox is created against a resolved station, so there is no
-			// supported way to hold one without a station behind it. The old text sent the reader to
-			// the X-Ken-Workspace header and comm_bind, both deleted — an error confidently
-			// instructing into a dead end is worse than none.
-			return nil, openLinkedOut{}, errors.New("this mailbox has no station behind it, so it has no relationships to spend. " +
-				"That should not be possible — tell your human")
-		}
-		p := principalFrom(ctx)
-		// ONE refusal for every unavailable target, and it is deliberate.
-		//
-		// These three checks used to fail distinguishably: "no such station", "not
-		// linked", and "nobody is staffing <name>". That is an enumeration oracle. A
-		// caller could separate "exists" from "does not exist", then "linked" from
-		// "not linked" — and the third message echoed the RESOLVED name, so guessing
-		// "PROD" confirmed the station is really called "prod", case and all.
-		//
-		// The cost is that a legitimate caller can no longer tell a typo from an
-		// unstaffed peer. That is what comm_directory is for: discovery belongs in a
-		// surface where visibility is gated per asker, not in an error string handed
-		// to whoever guessed. Point there instead of leaking.
-		//
-		// Every early return below uses errStationUnavailable, which is a package
-		// const precisely so the three paths CANNOT drift apart: a single divergent
-		// message reopens the oracle, and the test compares them byte for byte.
-		target, err := d.Store.StationByName(ctx, strings.TrimSpace(in.ToStation))
-		if err != nil {
-			return nil, openLinkedOut{}, errors.New(errStationUnavailable)
-		}
-		// The authorization lives in the DURABLE database and is read from there.
-		// comm.db holds no standing permission and must not start: a link is a human
-		// decision, and human decisions survive a comm.db loss (S7, S9).
-		linked, err := d.Store.AreStationsLinked(ctx, ep.StationID, target.StationID)
-		if err != nil {
-			return nil, openLinkedOut{}, err
-		}
-		if !linked {
-			// THE ONE-REFUSAL RULE IS RETIRED HERE, BECAUSE THE ORACLE IT CLOSED IS GONE.
-			//
-			// errStationUnavailable exists so a caller cannot separate "exists" from "does not"
-			// and so a guessed name is worth nothing — correct while the directory was gated per
-			// asker. The directory now lists EVERY live station, so there is nothing to enumerate
-			// and nothing a precise refusal can reveal that comm_directory does not hand over on
-			// request.
-			//
-			// The cost of keeping it was concrete: a peer nobody has ever written to was told
-			// "its link is SUSPENDED — your human turned that relationship off", which is the one
-			// refusal a session must not retry and must escalate. Sending a human after a
-			// relationship that never existed is worse than any leak this const now prevents.
-			return nil, openLinkedOut{}, commError(
-				refineStationRefusal(ctx, d, ep.StationID, target.StationID, comm.ErrNotLinked))
-		}
-		// Someone must be staffing the other side for a channel to have two ends.
-		peer, err := d.Comm.LiveEndpointForStation(ctx, target.StationID)
-		if err != nil {
-			// DISTINCT FROM "not linked", and it has to be: an unstaffed peer is a matter of
-			// timing that resolves itself when somebody arrives, while an unlinked one is a
-			// standing fact. Collapsing them told a session to wait when it should act, and to
-			// act when it should wait.
-			return nil, openLinkedOut{}, comm.CallerSafe(errors.New("nobody is staffing that station " +
-				"right now, so a channel has no second end to open. Use comm_send{to_station:\"" +
-				target.StationID + "\"} instead — station-addressed mail waits for whoever arrives — " +
-				"or try again once a session is there"))
-		}
-		label := strings.TrimSpace(in.Label)
-		if label == "" {
-			label = stationLabel(ctx, d, ep.StationID) + " <-> " + target.Name
-		}
-		ch, err := d.Comm.OpenLinkedChannel(ctx, ep, peer, p.ActorID, label)
-		if err != nil {
-			return nil, openLinkedOut{}, commError(err)
-		}
-		return nil, openLinkedOut{ChannelID: ch.ChannelID, Open: ch.Open()}, nil
-	})
-
-	// *** comm_join IS DELETED WITH THE PAIRING CODE, THE SECOND HUMAN GATE. ***
+	// *** THE CHANNEL IS RETIRED, AND comm_open_channel WITH IT (slice 7, 5.0.0). ***
 	//
-	// It joined a channel using a code a human minted in the web UI, and both sessions had to
-	// present the same code before the channel opened. Vlad removed both gates on comm in this
-	// wave: "links auto-approved on first contact; pairing code no longer required." Its own
-	// description already called it "the OLDER path", pointing at comm_send{to_station}, "because
-	// there is then nothing to open, join or expire".
+	// It opened a named, durable channel_id between two stations. 4.0.0 had already removed its
+	// reason to exist: a link is created by the FIRST MESSAGE, so comm_send{to_station} reaches any
+	// station with nothing to open, nothing to join and nothing to expire. Its own description had
+	// been reduced to "RARELY NEEDED — prefer comm_send{to_station}".
 	//
-	// What it did that nothing else does — connect two stations with no relationship — is now what
-	// the FIRST MESSAGE does, and the link it creates is durable rather than expiring in fifteen
-	// minutes while its human is away from the keyboard.
+	// What the channel cost was a second place for a conversation to live. Two stations could hold
+	// a pair scope AND one or more channel scopes at once, each with its own sequence, its own
+	// backpressure and its own idea of what "the conversation" was — and every surface that
+	// counted, closed or listed traffic had to know about both. Deleting it removes an addressing
+	// mode, four table columns and a whole branch from send, ack, file-offer and suspend.
+	//
+	// comm_channels SURVIVES and keeps its name: it still reports rooms and pairs, which is what a
+	// session actually needs to survey, and renaming a tool costs a reconnect for nothing.
 
 	addTool(s, d.Metrics, &mcp.Tool{
 		Name: "comm_channels",
@@ -525,36 +439,13 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		if err != nil {
 			return nil, channelsOut{}, err
 		}
-		list, err := d.Comm.ListChannels(ctx, ep)
-		if err != nil {
-			return nil, channelsOut{}, commError(err)
-		}
-		// Counted without delivering, which is the whole point: this is the only way a
-		// session can find out what is waiting without taking it. A failure here must
-		// not fail the listing — the counts are guidance, the channel list is the answer.
-		//
-		// LOGGED, unlike before. A persistent count failure used to be indistinguishable
-		// from an empty inbox in the result AND in the operator's logs, so nobody could
-		// find out it was happening from either end.
-		pending, err := d.Comm.PendingForEndpoint(ctx, ep)
-		if err != nil {
-			log.Printf("comm: pending counts for endpoint %d: %v", ep.ID, err)
-			pending = nil
-		}
 		out := channelsOut{
-			Channels: make([]channelView, 0, len(list)),
 			// PRE-INITIALISED, never left nil: a nil slice marshals as `null`, and a
 			// caller cannot distinguish `null` from a build that has no rooms field at
 			// all. `[]` says "asked, and you are in none" — which is the answer.
 			Rooms:      []channelRoomView{},
 			KenVersion: version.Version,
 			YouAre:     whoAmI(ctx, d, ep),
-		}
-		for _, c := range list {
-			out.Channels = append(out.Channels, channelView{
-				ChannelID: c.ChannelID, State: c.State, Open: c.Open(),
-				CreatedAt: c.CreatedAt, Pending: pending[c.ChannelID],
-			})
 		}
 
 		// ROOMS — the absence this whole change exists to close. comm_channels reported no
@@ -709,47 +600,17 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		case in.ToRoom != "":
 			m, err = d.Comm.SendToRoom(ctx, ep, in.ToRoom, in.Body, opts)
 		default:
-			// Kept for its CALLER-FACING ERROR, not for authorisation: this is where a
-			// room id passed as channel_id earns the guidance that told a working station
-			// rooms were receive-only. The send re-checks membership itself. It no longer
-			// resolves a peer — the wake below asks the party instead.
-			if _, _, err = d.Comm.ChannelFor(ctx, ep, in.ChannelID); err != nil {
-				return nil, sendOut{}, commError(err)
-			}
-			// *** THE SECOND DOOR INTO THE DEAD-SEAT DEFECT, CLOSED HERE BECAUSE IT CANNOT BE
-			// CLOSED WHERE THE FIRST ONE WAS. ***
+			// *** THE CHANNEL ARM IS GONE, AND SO IS THE DEAD-SEAT GUARD THAT LIVED IN IT. ***
 			//
-			// ChannelFor refuses a peer seat that is revoked and unbound, reading
-			// endpoint.revoked_at. ken-prod-ops found the hole by watching an ordinary operator
-			// action on the live estate: Vlad revoked a machine's API tokens during credential
-			// cleanup and one of them owned a comm endpoint. store.RevokeToken writes api_token
-			// and NOTHING else — it never opens comm.db — so revoked_at stays NULL while the
-			// endpoint is exactly as dead: nobody can present the revoked token, and any other
-			// token fails the ep.Owner.TokenID comparison in auth(). Reproduced in-process before
-			// this was written: send accepted, recipients=1, filed under e:<rowid>, unretrievable.
-			//
-			// IT LIVES HERE BECAUSE api_token IS IN ken.db AND comm.db HAS NO HANDLE ON IT. The
-			// comm package imports nothing from the store, deliberately, so it can report the
-			// seat's owner but can never judge it. This is the same at-use shape auth() uses for
-			// station keys, for the reason its own comment gives and this bug demonstrates: the
-			// revoking end cannot be relied upon, and failing closed at use covers every
-			// revocation path "including ones added later that forget stations exist."
-			//
-			// SCOPED TO UNBOUND, exactly like the first door. A bound seat's mail files under
-			// s:<station> and a successor endpoint collects it, so a bound peer whose owner token
-			// was revoked must still accept mail — that is successor inheritance, not a leak.
-			//
-			// A LOOKUP FAILURE DOES NOT REFUSE. If either query errors the send proceeds: this is
-			// a deliverability warning, and turning a database hiccup into a refused message would
-			// trade a rare silent loss for a common loud one.
-			if tokenID, stationID, sErr := d.Comm.PeerSeatOwner(ctx, ep, in.ChannelID); sErr == nil && stationID == "" {
-				if dead, rErr := d.Store.TokenIsRevoked(ctx, tokenID); rErr == nil && dead {
-					return nil, sendOut{}, errors.New("the other side of this channel is owned by a revoked token and was never bound to a station, " +
-						"so nothing can ever read mail sent here — this is not a peer who is merely offline. " +
-						"Ask your human to re-pair, or address the station directly with to_station if a link joins you")
-				}
-			}
-			m, err = d.Comm.Send(ctx, ep, in.ChannelID, in.Body, opts)
+			// That guard closed a real hole — a peer seat owned by a revoked API token, unbound,
+			// whose mail filed under e:<rowid> and could never be read. It had to live here because
+			// api_token is in ken.db and comm.db has no handle on it. It is not lost by neglect:
+			// an UNBOUND seat is what it protected, and with channels gone every send addresses a
+			// STATION, whose mail files under s:<station> and is collected by whatever endpoint
+			// staffs it next. Successor inheritance covers what the guard covered.
+			return nil, sendOut{}, comm.CallerSafe(errors.New(
+				"give exactly one of to_station, to_room, or to_room:\"all\" — channel_id is gone " +
+					"with the channel, and to_station reaches any station with nothing to open"))
 		}
 		if err != nil {
 			// *** THE REASON FOR A REFUSED PAIR SEND IS DECIDED FROM ken.db, NOT FROM THE MIRROR. ***
@@ -961,7 +822,7 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 		// address is one the caller may use, and splitting "is it well-formed" from "is it
 		// allowed" across two layers is how the two answers drift.
 		res, err := d.Comm.OfferFile(ctx, ep, comm.FileAddr{
-			ChannelID: in.ChannelID, RoomID: in.ToRoom, StationID: in.ToStation,
+			RoomID: in.ToRoom, StationID: in.ToStation,
 		}, comm.FileOffer{
 			Name: in.Name, SizeBytes: in.SizeBytes, SHA256: in.SHA256,
 			Transfer: in.Transfer, NonceSHA256: in.NonceSHA256, Note: in.Note,
@@ -980,7 +841,7 @@ func RegisterTools(s *mcp.Server, d Deps, h *Handler) {
 					log.Printf("COMM: link %s <-> %s created on first contact via file offer (actor %d)",
 						ep.StationID, in.ToStation, p.ActorID)
 					res, err = d.Comm.OfferFile(ctx, ep, comm.FileAddr{
-						ChannelID: in.ChannelID, RoomID: in.ToRoom, StationID: in.ToStation,
+						RoomID: in.ToRoom, StationID: in.ToStation,
 					}, comm.FileOffer{
 						Name: in.Name, SizeBytes: in.SizeBytes, SHA256: in.SHA256,
 						Transfer: in.Transfer, NonceSHA256: in.NonceSHA256, Note: in.Note,

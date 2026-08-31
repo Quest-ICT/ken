@@ -65,7 +65,10 @@ func deliveredCommInstructions(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) < 10 {
+	// FLOOR LOWERED 10 -> 9 when slice 7 deleted comm_open_channel. It is a positive control on the
+	// CORPUS, not on the rule: a listing that returned nothing would otherwise make every assertion
+	// below vacuously true.
+	if len(tools.Tools) < 9 {
 		t.Fatalf("only %d tools listed; the corpus is broken, not the text", len(tools.Tools))
 	}
 	for _, tl := range tools.Tools {

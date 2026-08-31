@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
-	"strings"
 )
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -130,24 +129,13 @@ ORDER BY t.created_at DESC`)
 	return out, rows.Err()
 }
 
-// TokenIsRevoked reports whether a token id is revoked or simply absent.
+// *** TokenIsRevoked IS DELETED — the guard it existed for is gone. ***
 //
-// ABSENT COUNTS AS REVOKED, deliberately. The caller asks this to decide whether a credential can
-// ever be presented again, and a token id with no row can no more be presented than a revoked one.
-// Answering "not revoked" for a missing row would be technically true and operationally backwards.
-//
-// Added 2026-08-27 for the SECOND DOOR into the dead-seat defect: revoking a token marks api_token
-// and never touches comm.db, so an endpoint owned by a revoked token is unreachable while its own
-// revoked_at stays NULL. See comm.PeerSeatOwner for the whole account.
-func (s *Store) TokenIsRevoked(ctx context.Context, tokenID string) (bool, error) {
-	if strings.TrimSpace(tokenID) == "" {
-		return true, nil
-	}
-	var live int
-	err := s.R.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM api_token WHERE token_id=? AND revoked_at IS NULL`, tokenID).Scan(&live)
-	return live == 0, err
-}
+// It let commserver ask ken.db whether a peer seat's owning API token had been revoked, closing a
+// hole where a revoked token left an UNBOUND seat that accepted mail nobody could read. That guard
+// lived on the channel send path. Every send addresses a STATION now, whose mail files under
+// s:<station> and is collected by whatever endpoint staffs it next, so successor inheritance covers
+// what the guard covered and there is no unbound seat to strand mail in.
 
 // RevokeToken soft-revokes a token by id.
 func (s *Store) RevokeToken(ctx context.Context, tokenID string) error {

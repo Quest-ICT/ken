@@ -121,7 +121,7 @@ func TestCommChannelsPendingTotalCoversRoomMail(t *testing.T) {
 	// CONTROL: the per-channel view genuinely cannot see it, so the total is new
 	// information rather than a second rendering of something already reported.
 	sum := 0
-	for _, c := range out.Channels {
+	for _, c := range out.Pairs {
 		sum += c.Pending
 	}
 	if sum != 0 {
@@ -219,8 +219,8 @@ func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch := openChannel(t, dirComm, me, sender, "me<->sender")
-	if _, err := dirComm.Send(ctx, sender, ch.ChannelID, "on the channel", comm.SendOpts{}); err != nil {
+	linkedTo(t, dirComm, me, sender)
+	if _, err := dirComm.SendToStation(ctx, sender, me.StationID, "on the pair", comm.SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dirComm.SendToRoom(ctx, sender, "ops", "in the room", comm.SendOpts{}); err != nil {
@@ -230,10 +230,10 @@ func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
 	// POSITIVE CONTROL: every number sees its message while it is live, so the zeros
 	// asserted below cannot pass on an empty fixture.
 	out := callChannels(t, sess, ctx)
-	if out.PendingTotal != 2 || len(out.Channels) != 1 || out.Channels[0].Pending != 1 ||
-		len(out.Rooms) != 1 || out.Rooms[0].Pending != 1 {
-		t.Fatalf("POSITIVE CONTROL failed: total=%d channels=%+v rooms=%+v, want 2 with 1 each",
-			out.PendingTotal, out.Channels, out.Rooms)
+	if out.PendingTotal != 2 || len(out.Rooms) != 1 || out.Rooms[0].Pending != 1 ||
+		len(out.Pairs) != 1 || out.Pairs[0].Pending != 1 {
+		t.Fatalf("POSITIVE CONTROL failed: total=%d rooms=%+v pairs=%+v, want 2 with 1 each",
+			out.PendingTotal, out.Rooms, out.Pairs)
 	}
 
 	// Both messages expire, and NO SWEEP RUNS — the window this defect lives in. The
@@ -257,11 +257,14 @@ func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
 	}
 
 	out = callChannels(t, sess, ctx)
-	for _, c := range out.Channels {
+	// THE ROWS ARE ROOMS AND PAIRS NOW. The channel row this loop was written for is gone, and the
+	// property is not about channels: NO per-scope count may exceed the total sitting beside it in
+	// the same result, whatever namespace the row belongs to.
+	for _, c := range out.Pairs {
 		if c.Pending > out.PendingTotal {
-			t.Errorf("channel %s reports pending=%d beside pending_total=%d in ONE result — "+
+			t.Errorf("pair %s reports pending=%d beside pending_total=%d in ONE result — "+
 				"a session told to read the total first is sent away from mail the row beside it claims",
-				c.ChannelID, c.Pending, out.PendingTotal)
+				c.StationID, c.Pending, out.PendingTotal)
 		}
 	}
 	for _, r := range out.Rooms {
@@ -270,9 +273,14 @@ func TestCommChannelsCountsDoNotContradictTheTotal(t *testing.T) {
 				r.RoomID, r.Pending, out.PendingTotal)
 		}
 	}
-	if out.PendingTotal != 0 || out.Channels[0].Pending != 0 || out.Rooms[0].Pending != 0 {
-		t.Fatalf("after expiry: total=%d channel=%d room=%d, want 0/0/0 — a poll would hand over "+
-			"none of it", out.PendingTotal, out.Channels[0].Pending, out.Rooms[0].Pending)
+	if len(out.Pairs) != 1 || len(out.Rooms) != 1 {
+		t.Fatalf("after expiry the rows themselves vanished (pairs=%d rooms=%d) — a row that "+
+			"disappears is a different claim from one that reports zero, and only the second is "+
+			"what this asserts", len(out.Pairs), len(out.Rooms))
+	}
+	if out.PendingTotal != 0 || out.Pairs[0].Pending != 0 || out.Rooms[0].Pending != 0 {
+		t.Fatalf("after expiry: total=%d pair=%d room=%d, want 0/0/0 — a poll would hand over "+
+			"none of it", out.PendingTotal, out.Pairs[0].Pending, out.Rooms[0].Pending)
 	}
 }
 
@@ -415,13 +423,16 @@ func TestAnArchivedStationCannotUseComm(t *testing.T) {
 // state is now behind station.Resolve, which requires state='active' and answers every miss with
 // one wording — so there is no second answer to compare against.
 
-// openChannel opens a channel between two station mailboxes. See the note on the twin helper in
-// internal/comm: the mint-and-join pair it replaces went with the pairing code.
-func openChannel(t *testing.T, st *comm.Store, a, b *comm.Endpoint, label string) *comm.Channel {
+// linkedTo gives two station mailboxes the LINK they need and returns the peer's station id.
+//
+// It replaces openChannel, which opened a channel row between them. Both answered the same
+// question — "these two can write to each other, and here is the address" — and slice 7 changed
+// only the answer: a link, addressed by station id.
+func linkedTo(t *testing.T, st *comm.Store, a, b *comm.Endpoint) string {
 	t.Helper()
-	ch, err := st.OpenLinkedChannel(context.Background(), a, b, 42, label)
-	if err != nil {
-		t.Fatalf("open channel: %v", err)
+	if err := st.ReplaceLinkMirror(context.Background(),
+		[][2]string{{a.StationID, b.StationID}}, 1); err != nil {
+		t.Fatalf("link %s <-> %s: %v", a.StationID, b.StationID, err)
 	}
-	return ch
+	return b.StationID
 }

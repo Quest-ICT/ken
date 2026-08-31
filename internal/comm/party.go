@@ -11,7 +11,7 @@ import (
 // Party and scope — the two identities the delivery split introduced, and the only
 // two the message layer is allowed to reason about (migration 0009).
 //
-//	SCOPE   where a message lives.     'ch:<channel_id>' | 'r:<room_id>'
+//	SCOPE   where a message lives.     'r:<room_id>' | 'p:<station>|<station>' | 'b:<party>'
 //	PARTY   who a message is for.      's:<station_id>'  | 'e:<endpoint rowid>'
 //
 // Both are tagged strings, and the tag is load-bearing rather than decorative: a
@@ -27,12 +27,11 @@ import (
 // do at read time. Storing the party makes it true at WRITE time, which is what a
 // third participant needs.
 
-// scopePrefixChannel and scopePrefixRoom tag the two scope namespaces. Rooms arrive
-// with slice 5; the constant is here because the parser must reject an unknown tag
-// rather than treat it as a channel.
+// The scope namespaces. scopePrefixChannel ("ch:") is DELETED with the channel in 5.0.0 — it is
+// now simply an unknown tag, which the parser rejects like any other, so a caller still holding an
+// old channel scope gets a refusal rather than an empty result it would read as an empty inbox.
 const (
-	scopePrefixChannel = "ch:"
-	scopePrefixRoom    = "r:"
+	scopePrefixRoom = "r:"
 	// A BROADCAST scope belongs to its sender rather than to a place. There is no
 	// standing set of participants to point at — the audience is computed at send time
 	// from the rooms the sender is in — so the scope names the only stable thing
@@ -93,19 +92,6 @@ func pairStationsOfScope(scope string) (string, string, bool) {
 		return "", "", false
 	}
 	return a, b, true
-}
-
-// channelScope is the scope id for a two-party channel.
-func channelScope(channelID string) string { return scopePrefixChannel + channelID }
-
-// channelIDOfScope returns the channel id inside a 'ch:' scope, and false for any
-// other shape. Callers that still need a channel row (the file surface, the console)
-// use it to bridge; a room scope answers false and they refuse rather than guess.
-func channelIDOfScope(scope string) (string, bool) {
-	if rest, ok := strings.CutPrefix(scope, scopePrefixChannel); ok && rest != "" {
-		return rest, true
-	}
-	return "", false
 }
 
 // endpointParty is the party key of an endpoint row: its station when it has one,
@@ -169,38 +155,12 @@ func membersOfScope(ctx context.Context, t *sql.Tx, scope string) ([]scopeMember
 	if a, b, ok := pairStationsOfScope(scope); ok {
 		return []scopeMember{{Party: stationParty(a)}, {Party: stationParty(b)}}, nil
 	}
-	chID, ok := channelIDOfScope(scope)
-	if !ok {
-		// Refusing loudly beats defaulting to "nobody", which would accept a send and
-		// deliver it to no one — a success that delivered nothing is the worst answer
-		// available here.
-		return nil, CallerSafe(errors.New("unknown scope kind: " + scope))
-	}
-	rows, err := t.QueryContext(ctx, `
-SELECT e.id, e.station_id
-  FROM channel c
-  JOIN endpoint e ON e.id IN (c.endpoint_a, c.endpoint_b)
- WHERE c.channel_id = ?`, chID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []scopeMember
-	for rows.Next() {
-		var id int64
-		var station sql.NullString
-		if err := rows.Scan(&id, &station); err != nil {
-			return nil, err
-		}
-		m := scopeMember{Endpoint: sql.NullInt64{Int64: id, Valid: true}}
-		if station.Valid && station.String != "" {
-			m.Party = stationParty(station.String)
-		} else {
-			m.Party = endpointPartyKey(id)
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	// EVERY SURVIVING NAMESPACE IS HANDLED ABOVE, so anything reaching here names none of them —
+	// including a 'ch:' scope written before 5.0.0, which is now simply an unknown tag.
+	//
+	// Refusing loudly beats defaulting to "nobody", which would accept a send and deliver it to no
+	// one: a success that delivered nothing is the worst answer available here.
+	return nil, CallerSafe(errors.New("unknown scope kind: " + scope))
 }
 
 // nextScopeSeq allocates the next sequence number for a scope.
@@ -285,9 +245,6 @@ func broadcastScope(senderParty string) string { return scopePrefixBroadcast + s
 // namespace can never be accepted here in a shape those parsers would reject — 'p:' with
 // no separator being the case that actually differs.
 func validScope(s string) bool {
-	if _, ok := channelIDOfScope(s); ok {
-		return true
-	}
 	if _, ok := roomIDOfScope(s); ok {
 		return true
 	}

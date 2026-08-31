@@ -3,7 +3,6 @@ package comm
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -16,12 +15,7 @@ func stationEndpoint(t *testing.T, st *Store, token, stationID string) *Endpoint
 	if err != nil {
 		t.Fatal(err)
 	}
-	ep = mailbox(t, st, stationID, "tok")
-	bound, err := st.MailboxFor(ctx, ep.StationID, owner("tok"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return bound
+	return ep
 }
 
 // roomFixture builds a room in the MIRROR directly. ken.db owns rooms and this package
@@ -533,58 +527,6 @@ func TestTheSweepSurvivesEveryScopeKindAndBothNoticeReasons(t *testing.T) {
 	}
 }
 
-// D2. A ROOM ID PASSED AS channel_id MUST NAME THE RIGHT PARAMETER.
-//
-// ken-promo, cold: passed a room id as channel_id because that is the only addressing
-// parameter their captured schema has, got a bare "not found", concluded rooms were
-// receive-only, and reported that to their human. They are the promotion station.
-//
-// The same call answers precisely once you already know the answer — passing both
-// parameters returns "pass exactly one of channel_id or to_room". The good error is
-// unreachable from the state a new caller is in, which is the defect.
-func TestARoomIDPassedAsAChannelSaysSo(t *testing.T) {
-	st := newStore(t, DefaultLimits())
-	ctx := context.Background()
-	alpha := stationEndpoint(t, st, "tok-a", "st-alpha")
-	roomFixture(t, st, "room1", "s:st-alpha", "s:st-beta")
-
-	_, _, err := st.ChannelFor(ctx, alpha, "room1")
-	if err == nil {
-		t.Fatal("a room id was accepted as a channel id")
-	}
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("error is not ErrNotFound: %v", err)
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "to_room") {
-		t.Fatalf("the refusal does not name the parameter that WOULD work: %q\n"+
-			"That omission cost a working station twenty minutes and a wrong report to its human.", msg)
-	}
-	if !strings.Contains(strings.ToLower(msg), "room") {
-		t.Errorf("the refusal never says the word room: %q", msg)
-	}
-
-	// AN UNKNOWN ID STILL MENTIONS ROOMS AS A CONCEPT, so a caller who mistyped a
-	// channel id also learns the parameter exists — that caller is equally stuck.
-	_, _, err = st.ChannelFor(ctx, alpha, "no-such-thing-at-all")
-	if err == nil || !strings.Contains(err.Error(), "to_room") {
-		t.Errorf("an unknown id gives no hint that rooms exist: %v", err)
-	}
-
-	// AND IT MUST NOT BECOME AN ORACLE. A room the caller is NOT in must not be
-	// confirmed as existing — that is the probing comm_open_channel's uniform refusal
-	// closes, and a helpful error is exactly how it would be reopened.
-	beta := stationEndpoint(t, st, "tok-x", "st-outsider")
-	_, _, err = st.ChannelFor(ctx, beta, "room1")
-	if err == nil {
-		t.Fatal("a non-member got a channel")
-	}
-	if strings.Contains(err.Error(), "is a ROOM") {
-		t.Fatal("the refusal CONFIRMS a room exists to a station that is not in it — " +
-			"a helpful message reopened the oracle the uniform refusal was built to close")
-	}
-}
-
 // D3 — A RECEIVED ROOM MESSAGE MUST SAY WHERE IT CAME FROM.
 //
 // The highest-severity defect of the rooms debugging, confirmed independently by two
@@ -626,16 +568,12 @@ func TestAReceivedRoomMessageCarriesItsScopeAndSender(t *testing.T) {
 		t.Errorf("audience = %d, want 2 — a reply to a broadcast reaches the scope rather than a "+
 			"person, and a reader cannot know that without the number", m.AudienceSize)
 	}
-	// A room message belongs to no channel, and saying so is the point: the field being
-	// empty is information, not an omission.
-	if m.ChannelID != "" {
-		t.Errorf("channel_id = %q on a room message, want empty", m.ChannelID)
-	}
-
-	// CONTROL: a CHANNEL message still carries its channel and is not marked broadcast.
-	// Without this, everything above could be satisfied by a change that broke channels.
-	c1, c2, chID := pair(t, st)
-	if _, err := st.Send(ctx, c1, chID, "just you", SendOpts{}); err != nil {
+	// THE CONTROL IS NOW A PAIR, NOT A CHANNEL. It asserted that a channel message still carried
+	// its channel_id and an audience of 1 — so that everything above could not be satisfied by a
+	// change which merely broke channels. The control still earns its place with the channel gone:
+	// a PAIR send must stay a one-reader conversation and must not be badged as a broadcast.
+	c1, c2, peer := pair(t, st)
+	if _, err := st.SendToStation(ctx, c1, peer, "just you", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	cgot, err := st.Poll(ctx, c2, 10)
@@ -643,16 +581,10 @@ func TestAReceivedRoomMessageCarriesItsScopeAndSender(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(cgot) != 1 {
-		t.Fatalf("polled %d channel messages, want 1", len(cgot))
-	}
-	if cgot[0].ChannelID != chID {
-		t.Errorf("a channel message lost its channel_id: %q", cgot[0].ChannelID)
-	}
-	if cgot[0].Scope != "ch:"+chID {
-		t.Errorf("channel scope = %q, want ch:%s", cgot[0].Scope, chID)
+		t.Fatalf("polled %d pair messages, want 1", len(cgot))
 	}
 	if cgot[0].AudienceSize != 1 {
-		t.Errorf("a channel message reports an audience of %d, want 1 — it would be badged "+
+		t.Errorf("a pair message reports an audience of %d, want 1 — it would be badged "+
 			"as a broadcast", cgot[0].AudienceSize)
 	}
 }

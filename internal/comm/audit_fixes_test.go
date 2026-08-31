@@ -7,45 +7,6 @@ import (
 	"testing"
 )
 
-// A human's revoke is a brake, and re-opening a channel must not undo it.
-//
-// The original hazard was a still-valid pairing code: one session joined, the human revoked, and
-// the second session's join would flip the revoked row back to 'open'. The code is gone, and with
-// it the two-sided join — so the surviving question is whether OpenLinkedChannel, which REUSES an
-// existing open channel between two stations, can resurrect a revoked one. It must not: reuse is
-// scoped to state='open', so a revoked channel is passed over and a new one is created rather than
-// the human's decision being quietly reversed.
-func TestARevokedChannelIsNeverReopened(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-	a := mailbox(t, st, "dev", "tok-a")
-	b := mailbox(t, st, "test", "tok-b")
-	ch := openChannel(t, st, a, b, "")
-	if err := st.RevokeChannel(ctx, ch.ChannelID); err != nil {
-		t.Fatal(err)
-	}
-
-	again := openChannel(t, st, a, b, "")
-	if again.ChannelID == ch.ChannelID {
-		t.Fatal("opening a channel between the same two stations returned the REVOKED one — the " +
-			"human's brake would be released by the next call that wanted a channel")
-	}
-	list, err := st.ListChannelsForConsole(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var revoked int
-	for _, c := range list {
-		if c.State == "revoked" {
-			revoked++
-		}
-	}
-	if revoked != 1 {
-		t.Fatalf("%d revoked channels after one revoke; the row must survive as the record of the "+
-			"decision: %+v", revoked, list)
-	}
-}
-
 // A caller may ask for a SHORTER lifetime, never a longer one — otherwise a
 // session mints messages no sweep can settle.
 func TestTTLIsClampedToTheOperatorSetting(t *testing.T) {
@@ -59,11 +20,11 @@ func TestTTLIsClampedToTheOperatorSetting(t *testing.T) {
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
-	long, err := st.Send(ctx, a, channelID, "x", SendOpts{TTLSeconds: 365 * 24 * 3600})
+	long, err := st.SendToStation(ctx, a, channelID, "x", SendOpts{TTLSeconds: 365 * 24 * 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	short, err := st.Send(ctx, a, channelID, "y", SendOpts{TTLSeconds: 30})
+	short, err := st.SendToStation(ctx, a, channelID, "y", SendOpts{TTLSeconds: 30})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +57,7 @@ func TestSequenceSurvivesMetadataPurge(t *testing.T) {
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
-	first, err := st.Send(ctx, a, channelID, "one", SendOpts{})
+	first, err := st.SendToStation(ctx, a, channelID, "one", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +71,7 @@ func TestSequenceSurvivesMetadataPurge(t *testing.T) {
 		t.Fatalf("sweep purged=%d err=%v", purged, err)
 	}
 
-	next, err := st.Send(ctx, a, channelID, "two", SendOpts{})
+	next, err := st.SendToStation(ctx, a, channelID, "two", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +89,7 @@ func TestSenderIsNotifiedWhenAReplyIsOverdue(t *testing.T) {
 	st := newStore(t, l)
 	a, b, channelID := pair(t, st)
 
-	req, err := st.Send(ctx, a, channelID, "please do X", SendOpts{RequiresResponse: true})
+	req, err := st.SendToStation(ctx, a, channelID, "please do X", SendOpts{RequiresResponse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +143,7 @@ func TestSenderIsNotifiedWhenAMessageExpires(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, _, channelID := pair(t, st)
 
-	sent, err := st.Send(ctx, a, channelID, "never read", SendOpts{})
+	sent, err := st.SendToStation(ctx, a, channelID, "never read", SendOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,13 +195,13 @@ func TestASenderAtTheBackpressureCapIsStillTold(t *testing.T) {
 	a, _, channelID := pair(t, st)
 
 	for i := 0; i < 2; i++ {
-		if _, err := st.Send(ctx, a, channelID, "m", SendOpts{}); err != nil {
+		if _, err := st.SendToStation(ctx, a, channelID, "m", SendOpts{}); err != nil {
 			t.Fatalf("send %d: %v", i, err)
 		}
 	}
 	// CONTROL: the channel really is at its cap, so the assertion below is about
 	// notices surviving backpressure rather than about backpressure never happening.
-	if _, err := st.Send(ctx, a, channelID, "one too many", SendOpts{}); !errors.Is(err, ErrBackpressure) {
+	if _, err := st.SendToStation(ctx, a, channelID, "one too many", SendOpts{}); !errors.Is(err, ErrBackpressure) {
 		t.Fatalf("a third send past a cap of 2 returned %v, want ErrBackpressure — the fixture is not at the cap", err)
 	}
 	if _, err := st.W.Exec(`UPDATE message SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 second')`); err != nil {
@@ -264,7 +225,7 @@ func TestAnsweredRequestBodyIsDropped(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	req, err := st.Send(ctx, a, channelID, "the request text", SendOpts{RequiresResponse: true})
+	req, err := st.SendToStation(ctx, a, channelID, "the request text", SendOpts{RequiresResponse: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +239,7 @@ func TestAnsweredRequestBodyIsDropped(t *testing.T) {
 	if m, _ := st.MessageByID(ctx, req.MessageID); m.Body == "" {
 		t.Fatal("an unanswered request lost its body on ack")
 	}
-	if _, err := st.Send(ctx, b, channelID, "done", SendOpts{ReplyToMessageID: req.MessageID}); err != nil {
+	if _, err := st.SendToStation(ctx, b, a.StationID, "done", SendOpts{ReplyToMessageID: req.MessageID}); err != nil {
 		t.Fatal(err)
 	}
 	// AN ANSWERED REQUEST NOW FOLLOWS THE SAME RETENTION RULE AS EVERYTHING ELSE.
@@ -317,44 +278,16 @@ func TestBudgetReservesInFlightUploads(t *testing.T) {
 	st := newStore(t, l)
 	a, _, channelID := pair(t, st)
 
-	if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
+	if _, err := st.OfferFile(ctx, a, FileAddr{StationID: channelID}, FileOffer{
 		Name: "a", SizeBytes: 80, SHA256: shaOf([]byte("a")), Transfer: "upload",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// 80 declared but not yet uploaded: a second 80-byte offer must be refused.
-	if _, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
+	if _, err := st.OfferFile(ctx, a, FileAddr{StationID: channelID}, FileOffer{
 		Name: "b", SizeBytes: 80, SHA256: shaOf([]byte("b")), Transfer: "upload",
 	}); !errors.Is(err, ErrQuota) {
 		t.Fatalf("in-flight bytes were invisible to the budget: %v", err)
-	}
-}
-
-// Revoking a channel must stop BYTES, not just new messages.
-func TestRevokedChannelStopsDownloadGrants(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, fileLimits())
-	a, b, channelID := pair(t, st)
-
-	content := []byte("payload")
-	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
-		Name: "p", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	gi, _ := st.ConsumeGrant(ctx, res.UploadGrant, "upload")
-	if _, err := st.CompleteUpload(ctx, gi.AttachmentRow, int64(len(content))); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.GrantDownload(ctx, b, res.Attachment.AttachmentID); err != nil {
-		t.Fatalf("grant before revoke: %v", err)
-	}
-	if err := st.RevokeChannel(ctx, channelID); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.GrantDownload(ctx, b, res.Attachment.AttachmentID); !errors.Is(err, ErrChannelClosed) {
-		t.Fatalf("revoked channel still grants downloads: %v", err)
 	}
 }
 
@@ -365,7 +298,7 @@ func TestReOfferAfterFailureMintsAFreshGrant(t *testing.T) {
 	a, _, channelID := pair(t, st)
 
 	o := FileOffer{Name: "f", SizeBytes: 4, SHA256: shaOf([]byte("abcd")), Transfer: "upload", IdempotencyKey: "k9"}
-	first, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, o)
+	first, err := st.OfferFile(ctx, a, FileAddr{StationID: channelID}, o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +307,7 @@ func TestReOfferAfterFailureMintsAFreshGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	again, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, o)
+	again, err := st.OfferFile(ctx, a, FileAddr{StationID: channelID}, o)
 	if err != nil {
 		t.Fatalf("re-offer after failure: %v", err)
 	}
@@ -394,7 +327,7 @@ func TestSweepKeepsAccountingWhenBytesRemain(t *testing.T) {
 	a, b, channelID := pair(t, st)
 
 	content := []byte("bytes")
-	res, err := st.OfferFile(ctx, a, FileAddr{ChannelID: channelID}, FileOffer{
+	res, err := st.OfferFile(ctx, a, FileAddr{StationID: channelID}, FileOffer{
 		Name: "d", SizeBytes: int64(len(content)), SHA256: shaOf(content), Transfer: "upload",
 	})
 	if err != nil {
@@ -440,7 +373,7 @@ func TestProvenanceSeesRedelivery(t *testing.T) {
 	st := newStore(t, DefaultLimits())
 	a, b, channelID := pair(t, st)
 
-	if _, err := st.Send(ctx, a, channelID, "hearsay", SendOpts{}); err != nil {
+	if _, err := st.SendToStation(ctx, a, channelID, "hearsay", SendOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.Poll(ctx, b, 10); err != nil {
@@ -464,51 +397,6 @@ func TestProvenanceSeesRedelivery(t *testing.T) {
 	if got, _ := st.ReceivedSince(ctx, 7, 3600); !got {
 		t.Fatal("a message acted upon inside the window did not mark the actor")
 	}
-}
-
-// The pairing-code label must travel onto the channel so the console can lead
-// with the human name the operator chose, not the opaque id or the drifting
-// endpoint labels.
-func TestChannelCarriesPairingLabel(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-	a := mailbox(t, st, "public-dev", "tok-a")
-	b := mailbox(t, st, "ken-prod-ops", "tok-b")
-	openChannel(t, st, a, b, "Ken dev <-> prod")
-
-	rows, err := st.ListChannelsForConsole(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("want 1 channel, got %d", len(rows))
-	}
-	if rows[0].Label != "Ken dev <-> prod" {
-		t.Fatalf("channel label = %q, want the pairing-code label", rows[0].Label)
-	}
-}
-
-// A code with no label leaves the channel label empty (the console falls back to
-// the endpoint labels), not broken.
-func TestChannelLabelEmptyWhenCodeUnlabelled(t *testing.T) {
-	ctx := context.Background()
-	st := newStore(t, DefaultLimits())
-	a, b, channelID := pair(t, st) // pair() mints a code with a label, so re-do plainly
-	_ = channelID
-	c := mailbox(t, st, "x", "tok-c")
-	d := mailbox(t, st, "y", "tok-d")
-	openChannel(t, st, c, d, "")
-	rows, err := st.ListChannelsForConsole(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range rows {
-		// the unlabelled channel (between x and y) must have an empty label, not a crash
-		if r.LabelA == "x" && r.Label != "" {
-			t.Fatalf("unlabelled channel got label %q", r.Label)
-		}
-	}
-	_, _ = a, b
 }
 
 // *** A STATION'S MAILBOX MUST SURVIVE EVERY SWEEP, AND THE CASE THAT MATTERS IS PAIR MAIL. ***

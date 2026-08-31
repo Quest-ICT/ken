@@ -7,77 +7,6 @@ import (
 	"testing"
 )
 
-// *** ONE PAIR MESSAGE PERMANENTLY DISABLES THE REVOKED-CHANNEL PURGE. ***
-//
-// The purge is `id NOT IN (SELECT channel_id FROM message)`. `message.channel_id` became
-// NULLABLE in migration 0009 — a pair or room message belongs to no channel and writes NULL —
-// and `NOT IN` over a set containing NULL is never true. So the first `to_station` send this
-// deployment ever makes turns the purge into a permanent no-op, with no error and no log line.
-//
-// The rule is written verbatim twelve lines above the defect, in the endpoint purge:
-// `WHERE recipient_endpoint IS NOT NULL` and `WHERE endpoint_b IS NOT NULL`. That arm got the
-// guard when 0009 landed; this one did not.
-//
-// EXISTING SWEEP TESTS CANNOT CATCH THIS. Their fixtures leave `message` empty, and `NOT IN`
-// over an EMPTY set is true — so the purge works perfectly in a test and never in production.
-// That is why this test seeds a pair message first: the poison IS the fixture.
-func TestOnePairMessageDoesNotDisableTheRevokedChannelPurge(t *testing.T) {
-	ctx := context.Background()
-
-	revokedAndSwept := func(t *testing.T, withPairMessage bool) int {
-		t.Helper()
-		lim := DefaultLimits()
-		lim.MetadataTTLSeconds = 1
-		st := newStore(t, lim)
-		a := stationEndpoint(t, st, "tok-a", "st-alpha")
-		b := stationEndpoint(t, st, "tok-b", "st-beta")
-
-		// A channel that is revoked and aged well past the metadata TTL, referenced by nothing.
-		ch := openChannel(t, st, a, b, "")
-		if err := st.RevokeChannel(ctx, ch.ChannelID); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.W.ExecContext(ctx,
-			`UPDATE channel SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')`); err != nil {
-			t.Fatal(err)
-		}
-
-		if withPairMessage {
-			// THE POISON: one station-addressed send, which writes channel_id = NULL.
-			linkFixture(t, st, [2]string{"st-alpha", "st-beta"})
-			if _, err := st.SendToStation(ctx, a, "st-beta", "hello", SendOpts{}); err != nil {
-				t.Fatal(err)
-			}
-			var nulls int
-			if err := st.R.QueryRowContext(ctx,
-				`SELECT COUNT(*) FROM message WHERE channel_id IS NULL`).Scan(&nulls); err != nil {
-				t.Fatal(err)
-			}
-			if nulls == 0 {
-				t.Fatal("fixture: the pair send did not produce a NULL channel_id, so this test proves nothing")
-			}
-		}
-
-		if _, _, err := st.Sweep(ctx); err != nil {
-			t.Fatal(err)
-		}
-		var left int
-		if err := st.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM channel WHERE state='revoked'`).Scan(&left); err != nil {
-			t.Fatal(err)
-		}
-		return left
-	}
-
-	// CONTROL, and it is the whole point: with no pair message the purge works, which is
-	// exactly why every existing sweep test passes over this defect.
-	if left := revokedAndSwept(t, false); left != 0 {
-		t.Fatalf("control: the purge left %d revoked channel(s) with no pair message — the fixture is wrong, not the code", left)
-	}
-	if left := revokedAndSwept(t, true); left != 0 {
-		t.Fatalf("one pair message left %d revoked channel(s) unpurged — NOT IN over a NULL-containing set is never true", left)
-	}
-}
-
 // *** A FILE CAN NOW BE OFFERED TO A ROOM, WHICH IS THE POINT OF MIGRATION 0017. ***
 //
 // This test asserted the OPPOSITE one release ago: that the refusal at least said "files are
@@ -101,11 +30,6 @@ func TestAFileCanBeOfferedToARoom(t *testing.T) {
 	}
 	if res.Attachment.ScopeID != "r:r-ops" {
 		t.Fatalf("attachment scope = %q, want r:r-ops", res.Attachment.ScopeID)
-	}
-	// AND IT CARRIES NO CHANNEL. A room attachment that quietly acquired one would mean the
-	// offer had been filed into some channel's stream instead of the room's.
-	if res.Attachment.ChannelID != "" {
-		t.Fatalf("a room attachment carries channel %q", res.Attachment.ChannelID)
 	}
 
 	// A NON-MEMBER IS REFUSED. Membership is the authorisation for a room offer exactly as
@@ -172,7 +96,6 @@ func TestOfferFileRequiresExactlyOneAddress(t *testing.T) {
 	}{
 		{"none", FileAddr{}},
 		{"room and station", FileAddr{RoomID: "r-ops", StationID: "st-beta"}},
-		{"channel and room", FileAddr{ChannelID: "c1", RoomID: "r-ops"}},
 	} {
 		_, err := st.OfferFile(ctx, a, c.addr, o)
 		if err == nil {

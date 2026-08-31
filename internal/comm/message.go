@@ -118,232 +118,6 @@ type SendOpts struct {
 	TTLSeconds int
 }
 
-// Send enqueues one message from ep to its peer on the named channel.
-//
-// Enforced inside the writing transaction: channel membership and openness, the
-// body cap, the per-channel un-acked cap (backpressure), and sequence assignment.
-// Quotas are checked here rather than in the shared rate-limiter bucket because
-// that bucket fails OPEN when saturated — correct for keys an attacker cannot mint
-// cheaply, wrong for identifiers a caller creates in a loop.
-func (s *Store) Send(ctx context.Context, ep *Endpoint, channelID, body string, opts SendOpts) (*Message, error) {
-	if len(body) > s.lim().MaxBodyBytes {
-		return nil, ErrTooLarge
-	}
-	ch, peer, err := s.ChannelFor(ctx, ep, channelID)
-	if err != nil {
-		return nil, err
-	}
-
-	// The send-time stamp is the UNDELIVERED backstop, not the message's real
-	// lifetime: the delivered clock is armed at first delivery (see Poll). A
-	// sender's ttl_seconds therefore means "how long should this stay deliverable
-	// while nobody has picked it up", which is the only lifetime a sender can
-	// meaningfully choose.
-	undelivered := s.lim().UndeliveredTTLSeconds
-	if undelivered <= 0 || undelivered < s.lim().MessageTTLSeconds {
-		undelivered = DefaultLimits().UndeliveredTTLSeconds
-	}
-	ttl := clampTTL(opts.TTLSeconds, undelivered)
-	clampedFrom := 0
-	if opts.TTLSeconds > 0 && opts.TTLSeconds != ttl {
-		clampedFrom = opts.TTLSeconds
-	}
-
-	scope := channelScope(channelID)
-
-	var out *Message
-	err = s.tx(ctx, func(t *sql.Tx) error {
-		// Resolved inside the transaction so a binding that lands mid-send cannot
-		// file the message under one identity and its deliveries under another.
-		senderParty, err := endpointParty(ctx, t, ep.ID)
-		if err != nil {
-			return err
-		}
-
-		// Idempotent resend: return the original rather than sending a second copy.
-		if opts.IdempotencyKey != "" {
-			var existing string
-			// Keyed on the SENDER PARTY, not the sending endpoint: a session that
-			// reconnects under a new endpoint and retries the same key must get its
-			// original message back rather than send a second copy.
-			err := t.QueryRowContext(ctx, `
-SELECT message_id FROM message
-WHERE scope_id=? AND sender_party=? AND idempotency_key=?`,
-				scope, senderParty, opts.IdempotencyKey).Scan(&existing)
-			if err == nil {
-				out, err = messageByID(ctx, t, existing)
-				// RECIPIENTS IS SET ON THE REPLAY TOO. It is assigned after the insert, below,
-				// which this branch returns before — so an idempotent retry reported
-				// `recipients: 0` for a message that has a delivery row and was sent to one
-				// party. A sender reading that as "it reached nobody" would resend under a new
-				// key, which is precisely what the idempotency key exists to prevent.
-				if out != nil {
-					out.Recipients = 1
-				}
-				return err
-			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-		}
-
-		// Backpressure: cap un-acked depth per channel. Full-duplex has no
-		// turn-taking, so two auto-processing sessions could otherwise enter a
-		// reply loop that grows the database without bound.
-		// One scan, two aggregates over DIFFERENT state sets, and the difference is
-		// the point.
-		//
-		// Backpressure counts queued AND delivered, because both occupy the channel.
-		// The sender's prompt counts ONLY 'queued' — mail that has never been handed
-		// to them. 'delivered' means they have already been shown it; telling them to
-		// "poll it and reconsider" would be advice they have already taken, and the
-		// prompt fires on a session that read its mail, is mid-reply, and simply has
-		// not acked yet.
-		//
-		// Found within minutes of shipping, by the field firing on ME while I was
-		// replying to the very message it was counting. It is the same queued-versus-
-		// delivered distinction I argued for on the refusal design and then failed to
-		// apply to the warning I built alongside it.
-		// BACKPRESSURE STAYS SCOPE-LOCAL. The cap is about this conversation's backlog,
-		// and widening it would let one busy room throttle unrelated traffic.
-		var unacked int
-		if err := t.QueryRowContext(ctx, `
-SELECT COUNT(*)
-  FROM delivery d JOIN message m ON m.id = d.message_row
- WHERE m.scope_id = ? AND d.state IN ('queued','delivered')`, scope).Scan(&unacked); err != nil {
-			return err
-		}
-		if unacked >= s.lim().MaxUnackedPerChannel {
-			return ErrBackpressure
-		}
-		// The sender's own waiting mail is a SEPARATE, party-wide question — see
-		// queuedForEndpoint. It used to be the second half of the aggregate above, which
-		// is why it could only ever see this one scope.
-		waitingForSender, err := queuedForEndpoint(ctx, t, ep)
-		if err != nil {
-			return err
-		}
-
-		// Correlate a reply, if any. The referenced request must be on this channel
-		// and addressed TO this sender — otherwise a reply could be pinned to an
-		// unrelated message.
-		var replyTo any
-		var replyToRow int64
-		if opts.ReplyToMessageID != "" {
-			err := t.QueryRowContext(ctx, `
-SELECT m.id FROM message m
-  JOIN delivery d ON d.message_row = m.id AND d.party_key = ?
- WHERE m.message_id = ? AND m.scope_id = ?`,
-				senderParty, opts.ReplyToMessageID, scope).Scan(&replyToRow)
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrNotFound
-			}
-			if err != nil {
-				return err
-			}
-			replyTo = replyToRow
-		}
-
-		seq, err := nextScopeSeq(ctx, t, scope)
-		if err != nil {
-			return err
-		}
-
-		messageID, err := randBase62(22)
-		if err != nil {
-			return err
-		}
-
-		// NO deadline at send. It is armed at FIRST DELIVERY (see Poll), because a
-		// deadline anchored at send starts running while the recipient has no way
-		// to know the message exists: measured median delivery latency is 11 min,
-		// p90 144 min, max 23.7 h, against a 1 h default — 18% of messages used to
-		// arrive with the deadline already blown, which made the retention the
-		// deadline governs dead on arrival for nearly a fifth of all traffic.
-		// Every placeholder is a plain `?`: mixing `?` with explicit `?N` in one
-		// statement renumbers the auto-assigned ones and silently binds the wrong
-		// values.
-		if _, err := t.ExecContext(ctx, `
-INSERT INTO message(message_id, scope_id, scope_seq, channel_id, sender_endpoint, sender_party,
-                    idempotency_key, body, body_sha256, body_bytes, requires_response, reply_to,
-                    audience_size, expires_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now',?))`,
-			messageID, scope, seq, ch.ID, ep.ID, senderParty, nullStr(opts.IdempotencyKey),
-			body, sha256Hex(body), len(body), boolInt(opts.RequiresResponse), replyTo,
-			1, nowExpr(ttl)); err != nil {
-			return err
-		}
-
-		// One delivery row per recipient party. `peer` is still the addressee for a
-		// channel, but it is resolved to a PARTY first, so a message sent to a staffed
-		// peer is filed against the station rather than the connection that happens to
-		// be reading it — the whole point of the split, and what makes N of these
-		// rows a room.
-		//
-		// NO reply deadline here. It is armed at FIRST DELIVERY (see Poll), because a
-		// deadline anchored at send runs while the recipient has no way to know the
-		// message exists: measured median delivery latency 11 min, p90 144 min, max
-		// 23.7 h against a 1 h default — 18% of messages used to arrive already
-		// expired, which made the retention that deadline governs dead on arrival for
-		// nearly a fifth of all traffic.
-		recipientParty, err := endpointParty(ctx, t, peer)
-		if err != nil {
-			return err
-		}
-		if _, err := t.ExecContext(ctx, `
-INSERT INTO delivery(message_row, party_key, recipient_endpoint)
-SELECT id, ?, ? FROM message WHERE message_id = ?`,
-			recipientParty, peer, messageID); err != nil {
-			return err
-		}
-
-		// Link the request to its reply so a sender can tell what was answered.
-		if replyTo != nil {
-			var newRow int64
-			if err := t.QueryRowContext(ctx, `SELECT id FROM message WHERE message_id=?`, messageID).Scan(&newRow); err != nil {
-				return err
-			}
-			// Clearing the body here matters: a request acked BEFORE its reply arrived
-			// The body is NOT blanked here any more, and the comment that used to
-			// justify blanking is why: it said Sweep's later pass "only considers
-			// rows with replied_by IS NULL", which was true of the OLD pass and is
-			// false of the retention pass that replaced it — that one has no
-			// replied_by predicate at all. So this line was silently bypassing
-			// BodyRetentionSeconds for exactly the messages a curator is most likely
-			// to want: the ones that got an answer.
-			//
-			// A rewritten pass left its dependant untouched, which is the same shape
-			// as a stale comment naming an enforcer that never existed. Retention now
-			// governs every settled body, with no side door.
-			// Recorded against the DELIVERY that owed the answer, not the message: with
-			// several recipients "was this answered" is a different question per
-			// party, and `answered_at` on the message is the any-recipient roll-up.
-			if _, err := t.ExecContext(ctx, `
-UPDATE delivery SET replied_by=?
-WHERE message_row=? AND party_key=? AND replied_by IS NULL`,
-				newRow, replyToRow, senderParty); err != nil {
-				return err
-			}
-			if _, err := t.ExecContext(ctx, `
-UPDATE message SET answered_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-WHERE id=? AND answered_at IS NULL`, replyToRow); err != nil {
-				return err
-			}
-		}
-
-		out, err = messageByID(ctx, t, messageID)
-		if out != nil {
-			out.TTLClampedFrom, out.WaitingForYou = clampedFrom, waitingForSender
-			out.Recipients = 1
-		}
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // THE PER-CHANNEL SEQUENCE GENERATION IS GONE, along with the error it could raise.
 //
 // `channel_seq` numbered the `message.seq` column per (channel, sender). Migration 0009
@@ -407,7 +181,7 @@ func (s *Store) Poll(ctx context.Context, ep *Endpoint, limit int) ([]Message, e
 // returning an empty list is indistinguishable from an empty inbox, which is the one
 // answer the caller it exists for cannot act on.
 var ErrBadScope = CallerSafe(errors.New(
-	"scope must name one namespace: 'ch:<channel_id>', 'r:<room_id>', 'p:<station>|<station>' or 'b:<party>'. " +
+	"scope must name one namespace: 'r:<room_id>', 'p:<station>|<station>' or 'b:<party>'. " +
 		"Copy it verbatim from the `scope` field of a polled message, or build it as 'ch:'+channel_id or 'r:'+room_id. " +
 		"Omit scope to poll every scope at once"))
 
@@ -837,25 +611,43 @@ SELECT m.message_id FROM delivery d JOIN message m ON m.id = d.message_row
 	return total, nil
 }
 
-// cumulativeAckScope resolves an id the caller passed as `channel_id` to the scope it may
-// cumulatively ack in — refusing anything it does not belong to.
+// cumulativeAckScope resolves an id to the scope the caller may cumulatively ack in — refusing
+// anything it does not belong to.
 //
-// The room branch keys on MEMBERSHIP, not existence, for the same reason the room-vs-channel
-// error does: telling a non-member "that is a room" confirms the room exists, which is exactly
-// the oracle comm_open_channel's uniform refusal is built to close.
+// It keys on MEMBERSHIP, not existence: telling a non-member "that is a room" confirms the room
+// exists, and an id that resolves to nothing must be indistinguishable from one that resolves to
+// somebody else's. The channel arm is gone with the channel.
 func (s *Store) cumulativeAckScope(ctx context.Context, ep *Endpoint, id string) (string, error) {
-	if _, _, err := s.ChannelFor(ctx, ep, id); err == nil {
-		return channelScope(id), nil
-	} else if !errors.Is(err, ErrNotFound) {
-		// A real failure — a revoked channel, a database error — is not a licence to go
-		// looking for a room with the same id.
-		return "", err
-	}
 	if s.callerIsInRoom(ctx, ep, id) {
 		return roomScope(id), nil
 	}
-	return "", CallerSafe(fmt.Errorf("%w: no channel or room %q that you belong to. "+
-		"comm_ack takes the SAME id you polled the message from — a room_id works here, in channel_id", ErrNotFound, id))
+	// *** THE PAIR ARM REPLACES THE CHANNEL ARM, AND WITHOUT IT CUMULATIVE ACK HAD NO SUBJECT. ***
+	//
+	// Deleting the channel removed the only id a caller could cumulatively ack by that was not a
+	// room — so a two-station conversation, which is now the ordinary case, could be acked one
+	// message at a time and no other way. The peer's STATION id is the id a caller polled the
+	// message under, which is what this function's contract promises.
+	//
+	// A LINK IS NOT REQUIRED. Acking settles mail already received; refusing to settle it because
+	// the relationship has since been suspended would strand exactly the messages a suspension is
+	// meant to stop arriving, not the ones already read.
+	// SCOPED TO A STATION THIS SERVER ACTUALLY KNOWS, not to "anything that is not a room".
+	// A bare non-self id would make every wrong id resolve to a pair scope — including a room the
+	// caller is not in, which turns the uniform refusal into an oracle and settles nothing while
+	// reporting success.
+	if ep.StationID != "" && id != ep.StationID {
+		var known int
+		if err := s.R.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM endpoint WHERE station_id = ? AND revoked_at IS NULL`, id).Scan(&known); err != nil {
+			return "", err
+		}
+		if known > 0 {
+			return pairScope(ep.StationID, id), nil
+		}
+	}
+	return "", CallerSafe(fmt.Errorf("%w: no room or station %q you can ack in. "+
+		"comm_ack takes the SAME id you polled the message from — a room_id, or the peer's "+
+		"station_id for a direct conversation", ErrNotFound, id))
 }
 
 // PendingReplies lists this endpoint's sent messages that still owe a response.

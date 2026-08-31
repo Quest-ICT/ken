@@ -26,7 +26,7 @@ import (
 // want to be able to 'resume' it). 'revoke' concept is out of the table." A relationship between
 // two of one human's own stations is never terminal, so the operation that ends traffic must be
 // one they can undo.
-func TestStationsConsoleSuspendsALinkAndItsLiveChannels(t *testing.T) {
+func TestStationsConsoleSuspendsALinkAndWithdrawsThePairScope(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "k.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -68,23 +68,13 @@ func TestStationsConsoleSuspendsALinkAndItsLiveChannels(t *testing.T) {
 	}
 	link := linkBetween(t, ctx, st, devSt.StationID, prodSt.StationID)
 
-	// And a live channel between them, which is the thing the link authorised.
-	epA, err := cs.MailboxFor(ctx, devSt.StationID, comm.Owner{TokenID: "tok-a", ActorID: actorID})
-	if err != nil {
+	// A mailbox at each end, so the pair has somewhere to deliver and the mirror has
+	// something to withdraw.
+	if _, err := cs.MailboxFor(ctx, devSt.StationID, comm.Owner{TokenID: "tok-a", ActorID: actorID}); err != nil {
 		t.Fatal(err)
 	}
-	epB, err := cs.MailboxFor(ctx, prodSt.StationID, comm.Owner{TokenID: "tok-b", ActorID: actorID})
-	if err != nil {
+	if _, err := cs.MailboxFor(ctx, prodSt.StationID, comm.Owner{TokenID: "tok-b", ActorID: actorID}); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := cs.OpenLinkedChannel(ctx, epA, epB, actorID, "dev <-> prod"); err != nil {
-		t.Fatal(err)
-	}
-	// PRE-CHECK, so the post-suspend assertion cannot pass vacuously: if the channel
-	// were never opened, "0 open channels afterwards" would be true for the wrong
-	// reason and this test would certify a suspend that does nothing.
-	if n, err := cs.CountOpenChannelsBetweenStations(ctx, devSt.StationID, prodSt.StationID); err != nil || n != 1 {
-		t.Fatalf("setup: %d open channel(s) before suspend (err=%v), want 1", n, err)
 	}
 
 	srv := httptest.NewServer(Handler(Deps{Store: st, Comm: cs}))
@@ -116,13 +106,26 @@ func TestStationsConsoleSuspendsALinkAndItsLiveChannels(t *testing.T) {
 		// a failure that would have reported the wrong expectation to whoever hit it.
 		t.Fatalf("link state is %q after suspend, want %q", got.State, "suspended")
 	}
-	// The permission AND its traffic. Ending one without the other is the defect.
-	n, err := cs.CountOpenChannelsBetweenStations(ctx, devSt.StationID, prodSt.StationID)
+	// *** SUSPEND AND RESUME ARE NOW EXACT INVERSES, WHICH THEY WERE NOT. ***
+	//
+	// This used to assert that suspending also closed the link's live channels — the permission
+	// and its traffic, because ending one without the other was the defect. Slice 7 deleted the
+	// channel, so there is no second thing to end, and the asymmetry goes with it: suspend used to
+	// be partly irreversible, since resume restored the permission and never the channels.
+	//
+	// So the assertion moves to the property that replaced it. Resume must put the link back
+	// exactly as it was, with nothing left behind.
+	csrf = extract(t, cli, srv.URL+"/stations", `name="csrf" value="([^"]+)"`)
+	postForm(t, cli, srv.URL+"/stations/links/"+link.LinkID+"/suspend",
+		url.Values{"csrf": {csrf}, "resume": {"1"}})
+
+	back, err := st.StationLinkByID(ctx, link.LinkID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("%d channel(s) still open after the link was suspended — the permission stopped and the conversation did not", n)
+	if back.State != "active" {
+		t.Fatalf("link state is %q after resume, want %q — suspend and resume must be exact "+
+			"inverses now that there is no traffic left for suspend to destroy", back.State, "active")
 	}
 }
 
