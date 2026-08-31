@@ -61,7 +61,7 @@ func commHarness(t *testing.T, label string) (*store.Store, *comm.Store, *mcp.Cl
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
+	srv := httptest.NewServer(testHandler(t, Deps{Comm: cs, Store: st}))
 	t.Cleanup(srv.Close)
 	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{

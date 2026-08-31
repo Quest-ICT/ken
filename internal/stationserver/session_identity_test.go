@@ -39,7 +39,7 @@ func TestAnInvalidKeyIsRefusedByTheTransportBeforeAnyHandlerRuns(t *testing.T) {
 	if err := st.Migrate(); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Store: st}))
+	srv := httptest.NewServer(testHandler(t, Deps{Store: st}))
 	defer srv.Close()
 
 	req, _ := http.NewRequest("POST", srv.URL+"/station/mcp",

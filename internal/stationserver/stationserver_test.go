@@ -59,7 +59,7 @@ func harness(t *testing.T, scopes ...string) (*store.Store, *httptest.Server, st
 	if _, _, err := st.ClaimStationForSession(ctx, harnessKey, "prod-ops", actorID, station.StationID); err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Store: st}))
+	srv := httptest.NewServer(testHandler(t, Deps{Store: st}))
 	t.Cleanup(srv.Close)
 	return st, srv, key, station
 }
@@ -130,17 +130,22 @@ func TestAuthAcceptsOnlyAStationKey(t *testing.T) {
 // makes the feature work rather than merely exist. A briefing the model reads and does
 // not relay is the original failure with extra steps (§11.9).
 func TestInstructionsCarryTheRelaySentence(t *testing.T) {
-	// The corpus is the block PLUS every tool description: the block is truncated at
-	// version.InstructionBudget and per-tool rules were moved to where they arrive intact, so
-	// asserting on the block alone would force text back into the field that cuts it.
+	// The corpus is every TOOL DESCRIPTION. It used to include this package's connect block too;
+	// that block was deleted with the server nothing served, and what a session actually receives
+	// is allserver.Instructions, asserted in that package. Per-tool rules were already moved to
+	// where they arrive intact, which is why the descriptions are the right corpus here.
+	//
+	// One needle changed wording with the block: the closing rule now reads "Do this the moment a
+	// thing is done, not at the end of the session" on station_task_close. The needle matches the
+	// part both wordings share, which is the rule rather than a sentence.
 	corpus := stationCorpus(t)
 	for _, want := range []string{
-		"TELL YOUR HUMAN IN WORDS", // the relay duty
-		"blocked_on is required",   // the enum, defined where it is used
-		"CLOSE the moment a thing is done",
+		"TELL YOUR HUMAN IN WORDS",         // the relay duty
+		"blocked_on is required",           // the enum, defined where it is used
+		"the moment a thing is done",       // closing promptly; station_task_close carries it now
 		"do NOT drop something your human", // the protected pile
 		"handoff",                          // the continuity convention
-		"NEVER a token, key or password",   // the locker rule Ken cannot enforce
+		"token, key or password",           // the locker rule Ken cannot enforce; station_locker_put carries it
 	} {
 		if !strings.Contains(corpus, want) {
 			t.Errorf("nothing a session receives carries %q — not the connect-time block and not any "+
@@ -298,8 +303,11 @@ func stationCorpus(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The connect instructions are no longer part of this corpus: this package's own block was
+	// deleted with the /station/mcp server nothing served. What a session actually receives is
+	// allserver.Instructions, covered by that package's own tests. The corpus here is the TOOL
+	// DESCRIPTIONS, which is what this file is about.
 	var sb strings.Builder
-	sb.WriteString(instructions)
 	lit := regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
 	n := 0
 	for _, m := range regexp.MustCompile(`Description:\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)`).FindAllSubmatch(b, -1) {

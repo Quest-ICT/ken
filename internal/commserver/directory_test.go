@@ -78,7 +78,7 @@ func dirHarness(t *testing.T) (*mcp.ClientSession, *store.Store, context.Context
 		t.Fatal(err)
 	}
 
-	h := NewHTTPHandler(Deps{Comm: cs, Store: st})
+	h := testHandler(t, Deps{Comm: cs, Store: st})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 

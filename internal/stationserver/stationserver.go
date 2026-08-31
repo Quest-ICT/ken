@@ -185,57 +185,6 @@ func (h *Handler) SetLimits(task store.StationTaskLimits, note store.StationNote
 // authorization control — the middleware re-authenticates every HTTP request.
 const sessionTimeout = 30 * time.Minute
 
-func NewHTTPHandler(d Deps) *Handler {
-	if d.TaskLimits.MaxOpen == 0 {
-		d.TaskLimits = store.DefaultStationTaskLimits()
-	}
-	if d.NoteLimits.MaxPageBytes == 0 {
-		d.NoteLimits = store.DefaultStationNoteLimits()
-	}
-	if d.LockerLimits.MaxBlobBytes == 0 {
-		d.LockerLimits = store.DefaultStationLockerLimits()
-	}
-	if d.VaultLimits.MaxSecretBytes == 0 {
-		d.VaultLimits = store.DefaultStationVaultLimits()
-	}
-	h := &Handler{}
-	h.SetLimits(d.taskLim(), d.noteLim(), d.lockerLim(), d.vaultLim())
-	d.limits = func() *limits { return h.lim.Load() }
-	srv := newServer(d)
-	// Idle sessions are closed. The SDK's zero value means "never", which is what
-	// passing nil asked for: a connection opened once stayed open, and authorized from
-	// the handler's point of view, for as long as the client held it.
-	inner := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv },
-		&mcp.StreamableHTTPOptions{SessionTimeout: sessionTimeout})
-	h.Handler = authMiddleware(d.Store, d.TokenLimiter, d.Metrics, d.SkipTokenTouch, inner)
-	return h
-}
-
-// instructions are delivered on connect. The FOURTH sentence about tasks is the one that
-// makes the feature work rather than merely exist: a briefing the model reads and does
-// not relay is the original failure with extra steps (§11.9).
-//
-// This text is not a control — Ken cannot verify that a model captured an item or told
-// the human about one (§11.2). It changes behaviour in the common case, which is worth
-// having, and the design says plainly where it stops.
-const instructions = `Ken stations — a durable working identity you STAFF: a post that outlives this conversation.
-
-THREE MCP SURFACES: /station/mcp (station_*, this post), /mcp (kb_*, the knowledge base), /comm/mcp (comm_*, messaging with other AI sessions). Each is a SEPARATE entry your human configures; you hold only the ones they set up, so ask for the others BY NAME.
-
-Your station owns a notebook, a task list, a locker and a vault; all still here next time.
-
-FIRST, EVERY SESSION: call station_me. Then, IN YOUR FIRST MESSAGE, TELL YOUR HUMAN IN WORDS every task blocked on them and everything past its date. The briefing is a tool result; it reaches nobody unless you say it. This is the point of the whole feature.
-
-BEFORE TELLING THEM THEY OWE SOMETHING, CHECK THE UNDERLYING STATE — NOT THE FLAG. blocked_on is set once, at creation, and nothing ever revisits it, so a task already satisfied looks exactly like one still waiting, and both count as waiting on them. One kb_search for a knowledge-base item, one command for a release: far cheaper than telling your human twice that they owe what they finished last week.
-
-TASKS: add the moment you say "we should"; adding late means not adding. blocked_on is required: self = you can act now; human = it cannot move until your human does or decides; peer = another station owes something. CLOSE the moment a thing is done, not at session end.
-
-NOTEBOOK is working state: keep the handoff current AS YOU GO with mode='replace', not append. Would a session on a DIFFERENT station want it months from now? Then it is kb_save, not a note.
-
-Credentials go in the vault: NEVER a token, key or password in a locker or a note.
-
-Your human reads all of it; none of it is private from them.`
-
 // mcpKeepAlive matches the interval on the other MCP surfaces. The measurement behind the 30s,
 // and why Server.ReadTimeout does not interact with it, are in internal/mcpserver/server.go.
 const mcpKeepAlive = 30 * time.Second
@@ -246,19 +195,6 @@ const mcpKeepAlive = 30 * time.Second
 // mcpserver.AuthMiddleware for why chaining is the mechanism.
 func AuthMiddleware(d Deps, next http.Handler) http.Handler {
 	return authMiddleware(d.Store, d.TokenLimiter, d.Metrics, d.SkipTokenTouch, next)
-}
-
-func newServer(d Deps) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "ken-station", Version: "1"},
-		&mcp.ServerOptions{Instructions: version.InstructionStamp() + instructions, KeepAlive: mcpKeepAlive})
-	RegisterTools(s, d)
-	// THE META TOOLS ARE REGISTERED HERE, NOT IN RegisterTools, and the distinction is what keeps
-	// the unified endpoint honest. RegisterTools is called three times against ONE server there,
-	// and mcp.AddTool replaces a tool of the same name without a word — so a pair registered per
-	// package collapsed to whichever package ran last, and ken_instructions answered for one
-	// surface while looking complete. allserver calls version.RegisterMetaTools itself, once.
-	version.RegisterMetaTools(s, func() string { return instructions })
-	return s
 }
 
 func RegisterTools(s *mcp.Server, d Deps) {

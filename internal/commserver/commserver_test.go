@@ -618,9 +618,12 @@ func deliveredCorpus(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The connect block is no longer part of this corpus: this package's own text was deleted with
+	// the /comm/mcp server nothing served. What a session receives is allserver.Instructions,
+	// covered by that package's tests. The corpus here is the TOOL DESCRIPTIONS, which is what
+	// this file asserts on.
 	var sb strings.Builder
 	sb.WriteString(version.InstructionStamp())
-	sb.WriteString(instructions)
 	desc := regexp.MustCompile(`Description:\s*((?:"(?:[^"\\]|\\.)*"\s*\+?\s*)+)`)
 	lit := regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
 	n := 0

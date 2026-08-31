@@ -68,7 +68,7 @@ func dirSession(t *testing.T, staffing func(context.Context) (map[string]Station
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Store: st, Staffing: staffing}))
+	srv := httptest.NewServer(testHandler(t, Deps{Store: st, Staffing: staffing}))
 	t.Cleanup(srv.Close)
 
 	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)

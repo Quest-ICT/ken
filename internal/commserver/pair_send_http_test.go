@@ -125,7 +125,7 @@ func TestSendToStationOverHTTP(t *testing.T) {
 			len(pairs))
 	}
 
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
+	srv := httptest.NewServer(testHandler(t, Deps{Comm: cs, Store: st}))
 	t.Cleanup(srv.Close)
 	connect := func(tok, _ string) *mcp.ClientSession {
 		t.Helper()
@@ -631,7 +631,7 @@ func TestARefusedOfferLeavesNoLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	tok := mintToken(t, st, "offer-a", "comm", "comm-file")
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
+	srv := httptest.NewServer(testHandler(t, Deps{Comm: cs, Store: st}))
 	t.Cleanup(srv.Close)
 	cli := mcp.NewClient(&mcp.Implementation{Name: "offer", Version: "0"}, nil)
 	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{

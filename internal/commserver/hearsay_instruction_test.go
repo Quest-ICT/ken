@@ -36,7 +36,7 @@ func deliveredCommInstructions(t *testing.T) string {
 	}
 	tok := mintToken(t, st, "hearsay-agent", "comm")
 
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Comm: cs, Store: st}))
+	srv := httptest.NewServer(testHandler(t, Deps{Comm: cs, Store: st}))
 	t.Cleanup(srv.Close)
 
 	cli := mcp.NewClient(&mcp.Implementation{Name: "hearsay", Version: "0"}, nil)
@@ -65,10 +65,11 @@ func deliveredCommInstructions(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// FLOOR LOWERED 10 -> 9 when slice 7 deleted comm_open_channel. It is a positive control on the
+	// FLOOR LOWERED 10 -> 9 when slice 7 deleted comm_open_channel, then 9 -> 7 when the harness
+	// stopped being the production server: it registers THIS package's tools, not the estate's. It is a positive control on the
 	// CORPUS, not on the rule: a listing that returned nothing would otherwise make every assertion
 	// below vacuously true.
-	if len(tools.Tools) < 9 {
+	if len(tools.Tools) < 7 {
 		t.Fatalf("only %d tools listed; the corpus is broken, not the text", len(tools.Tools))
 	}
 	for _, tl := range tools.Tools {
@@ -102,15 +103,19 @@ func deliveredCommInstructions(t *testing.T) string {
 func TestTheHearsayRuleNamesTheDurableIdentity(t *testing.T) {
 	got := deliveredCommInstructions(t)
 
-	// POSITIVE CONTROL, asserted FIRST. Every check below is "the text contains X" or
-	// "does not contain Y", and an empty Instructions string satisfies every negative
-	// one of them. So prove the block arrived before concluding anything about what is
-	// in it.
-	const anchor = "Ken COMM — inter-session messaging between AI sessions."
+	// POSITIVE CONTROL, asserted FIRST. Every check below is "the text contains X" or "does not
+	// contain Y", and an empty corpus satisfies every negative one of them. So prove the corpus
+	// arrived before concluding anything about what is in it.
+	//
+	// THE ANCHOR MOVED WITH THE BLOCK. It used to be the connect text's opening line; this package
+	// no longer has connect text, because the server that served it was deleted along with
+	// /comm/mcp. The corpus is now the TOOL DESCRIPTIONS read off a live session, so the anchor is
+	// a sentence one of them is built around.
+	const anchor = "comm_directory"
 	if !strings.Contains(got, anchor) {
-		t.Fatalf("the initialize result carried %d characters of instructions and not the opening line.\n"+
-			"Nothing below this point would be evidence of anything: an absent block passes every "+
-			"\"must not contain\" check in this test.", len(got))
+		t.Fatalf("the initialize result and tool list carried %d characters and not %q.\n"+
+			"Nothing below this point would be evidence of anything: an absent corpus passes every "+
+			"\"must not contain\" check in this test.", len(got), anchor)
 	}
 
 	// EACH CHECK NAMES A PROPERTY AND ACCEPTS ANY WORDING THAT CARRIES IT.
@@ -134,7 +139,12 @@ func TestTheHearsayRuleNamesTheDurableIdentity(t *testing.T) {
 		{"what to do when the sender has no station at all",
 			[]string{"from_station_id is empty", "from_station_id IS EMPTY", "holds no station"}},
 		{"that a session never records an outcome for a peer",
-			[]string{"never record an outcome or assert verification on another session's behalf"}},
+			// The long form lived in this package's connect block, which was deleted with the server
+			// nothing served. The rule moved to comm_poll's own description, where ken_instructions
+			// serves it uncut — and it had to fit that field's 2048-character budget, which is why
+			// the wording is shorter rather than the same sentence relocated.
+			[]string{"never record an outcome or assert verification on another session's behalf",
+				"never record an outcome for another session"}},
 	} {
 		found := false
 		for _, w := range c.anyOf {

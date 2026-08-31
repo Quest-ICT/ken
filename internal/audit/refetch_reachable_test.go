@@ -36,8 +36,6 @@ func TestEveryServerWiresTheInstructionRefetch(t *testing.T) {
 	servers := map[string]string{
 		"unified /mcp": "../allserver/allserver.go",
 		"knowledge":    "../mcpserver/server.go",
-		"comm":         "../commserver/commserver.go",
-		"station":      "../stationserver/stationserver.go",
 	}
 	for name, path := range servers {
 		b, err := os.ReadFile(path)

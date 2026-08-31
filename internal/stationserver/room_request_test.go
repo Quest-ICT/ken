@@ -33,7 +33,7 @@ func roomAsker(t *testing.T) (*store.Store, context.Context, *mcp.ClientSession,
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(NewHTTPHandler(Deps{Store: st}))
+	srv := httptest.NewServer(testHandler(t, Deps{Store: st}))
 	t.Cleanup(srv.Close)
 	cli := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
 	sess, err := cli.Connect(ctx, &mcp.StreamableClientTransport{

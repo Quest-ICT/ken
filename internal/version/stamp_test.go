@@ -127,10 +127,14 @@ func TestTheStampTellsASessionWhatToDoWithADiscrepancy(t *testing.T) {
 // Source-level, and deliberately so: this asserts REGISTRATION, which is what a
 // behavioural test on one surface would silently not cover for the other two.
 func TestEverySurfaceOffersTheVersionToolAndStampsItsInstructions(t *testing.T) {
+	// ONE SURFACE BUILDS A SERVER NOW. commserver and stationserver were listed here until 5.0.0
+	// deleted the servers they were still constructing for endpoints removed in 4.0.0 — this gate
+	// was asserting that two unserved servers stamped instructions nobody received. The served
+	// assembly is allserver, which is covered by its own package's tests; mcpserver is kept here
+	// because it still builds a server of its own.
 	surfaces := map[string]string{
 		"knowledge base": filepath.Join("..", "mcpserver", "server.go"),
-		"comm":           filepath.Join("..", "commserver", "commserver.go"),
-		"stations":       filepath.Join("..", "stationserver", "stationserver.go"),
+		"unified /mcp":   filepath.Join("..", "allserver", "allserver.go"),
 	}
 	for name, path := range surfaces {
 		body, err := os.ReadFile(path)
