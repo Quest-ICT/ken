@@ -44,6 +44,17 @@ jobs:
         run: go test ./...
         env: { CGO_ENABLED: "0" }
 
+      # The race detector needs cgo, which is why it is a SEPARATE step rather than an
+      # argument on the one above: the rest of the build is deliberately CGO_ENABLED=0.
+      #
+      # It earns its place. The smoke suite drives the built binary as a subprocess and
+      # reads what it logged; the first version of that harness read the output buffer
+      # while exec was still writing it. Every assertion over that log is NEGATIVE, so a
+      # short read passed. `go test ./...` was green the whole time and shipped it.
+      - name: test -race
+        run: go test -race ./...
+        env: { CGO_ENABLED: "1" }
+
       # Shell: the shared snapshot library carries security-critical logic (leak-safe
       # encryption, comment-safe recipient parsing) that Go tests don't reach.
       - name: snapshot-lib tests

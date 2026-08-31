@@ -365,6 +365,15 @@ func TestUpgradeFromPreviousReleaseDoesNotDegradeComm(t *testing.T) {
 
 	// Now boot HEAD on it and read the log.
 	log := runFor(t, kenBinary(t), data, 30*time.Second)
+
+	// PROVE THE LOG ARRIVED BEFORE TRUSTING WHAT IT DOES NOT SAY. Every check below is negative,
+	// so an empty or truncated log satisfies all of them. Anchor on a line HEAD always prints at
+	// boot: if this fails, the negative checks below never had anything to read and their silence
+	// means nothing.
+	if !strings.Contains(log, "COMM:") {
+		t.Fatalf("no COMM boot lines in the log, so the checks below prove nothing; got %d bytes:\n%s",
+			len(log), log)
+	}
 	if strings.Contains(log, "DEGRADED") {
 		t.Errorf("upgrading from %s degrades COMM:\n%s\n\n"+
 			"A migration that leaves a dangling reference commits its version first, so this does not "+
@@ -399,10 +408,28 @@ func runFor(t *testing.T, bin, dataDir string, budget time.Duration) string {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start %s: %v", bin, err)
 	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
+
+	// STOP THE PROCESS BEFORE READING THE LOG, AND JOIN ITS COPIERS.
+	//
+	// exec fills `out` from goroutines it owns, so reading out.String() while the child is alive is
+	// a data race — and the earlier shape did exactly that behind a 200ms "let the startup lines
+	// flush" sleep. The race is the smaller half of the problem. The caller's assertion is
+	// NEGATIVE ("the log must not contain DEGRADED"), so a log that is merely SHORT passes it: a
+	// flush that lost the race made this test green by having nothing to read. That is the failure
+	// mode this whole file exists to catch, reproduced inside the instrument.
+	//
+	// cmd.Wait() joins the stdout/stderr copiers, so after it returns `out` is complete and reading
+	// it is race-free. No sleep, and nothing to tune.
+	stopped := false
+	stop := func() string {
+		if !stopped {
+			stopped = true
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+		return out.String()
+	}
+	defer func() { _ = stop() }()
 
 	deadline := time.Now().Add(budget)
 	for time.Now().Before(deadline) {
@@ -410,13 +437,12 @@ func runFor(t *testing.T, bin, dataDir string, budget time.Duration) string {
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				time.Sleep(200 * time.Millisecond) // let the startup lines flush
-				return out.String()
+				return stop()
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("%s did not become healthy within %s:\n%s", bin, budget, out.String())
+	t.Fatalf("%s did not become healthy within %s:\n%s", bin, budget, stop())
 	return ""
 }
 

@@ -15,7 +15,23 @@ same change — never "docs later".
 
 ## [Unreleased]
 
-_Nothing yet — everything below is tagged, built and published._
+### Fixed
+
+- **The upgrade smoke test could pass by reading nothing.** `runFor` read the subprocess's output
+  buffer while `os/exec` was still filling it, behind a 200ms "let the startup lines flush" sleep.
+  Every assertion over that log is NEGATIVE — "the log must not say DEGRADED" — so a read that lost
+  the race made the test green by having nothing to read. That is the exact failure mode
+  `cmd/ken/smoke_test.go` was written to catch, reproduced inside the instrument, over the one
+  migration three audit rounds found broken three separate times. `runFor` now kills the child and
+  calls `cmd.Wait()` — which joins the copiers — before reading, so the log is complete and the read
+  is race-free, with no sleep to tune. The upgrade test additionally anchors on a line HEAD always
+  prints, so an empty log fails loudly instead of satisfying every negative check.
+
+### Changed
+
+- **CI runs `go test -race ./...`.** It never did, which is why the above shipped: the race is
+  invisible to `go test ./...`, and that is all CI and the release workflow ran. A separate step,
+  because the detector needs cgo and the rest of the build is deliberately `CGO_ENABLED=0`.
 
 ## [4.0.0] — 2026-08-30
 
