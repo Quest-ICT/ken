@@ -41,13 +41,13 @@ func TestCurationSentenceNamesTheLanguages(t *testing.T) {
 		t.Fatalf("an empty language list should produce no text, got %q", got)
 	}
 	got := curationSentence([]string{"fr", "zh"})
-	for _, want := range []string{"curated in", "French (fr)", "Chinese (zh)", "never translate", "promoted"} {
+	for _, want := range []string{"read by your human in", "French (fr)", "Chinese (zh)", "never translate", "goes live either way"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("curation sentence missing %q:\n%s", want, got)
 		}
 	}
 	// An unknown code falls back to the bare code (no CLDR table needed).
-	if !strings.Contains(curationSentence([]string{"xx"}), "curated in xx.") {
+	if !strings.Contains(curationSentence([]string{"xx"}), "read by your human in xx.") {
 		t.Fatal("unknown language code should fall back to the bare code")
 	}
 	// AND IT NEVER RE-ENTERS THE INSTRUCTIONS. buildInstructions takes no argument at all now, so

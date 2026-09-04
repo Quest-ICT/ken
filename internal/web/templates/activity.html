@@ -1,0 +1,61 @@
+{{define "title"}}{{.T "activity.tab"}}{{end}}
+{{define "content"}}
+<section>
+  <p class="eyebrow">{{.T "activity.eyebrow"}}</p>
+  <h1 class="h1">{{.T "activity.heading"}}</h1>
+  <p class="lede">{{.T "activity.lede"}}</p>
+
+  <!-- THIS PAGE REPLACED /proposals IN 6.0.0 AND THE DIFFERENCE IS THE POINT: it reports what
+       already happened and asks for nothing. The queue it replaced blocked every write until a
+       human clicked, and the clicking was not review. Nothing here is a debt, so there is no
+       badge and no count in the nav. -->
+  <!-- The poller compares /activity/count against THIS rendered number and reloads when they
+       diverge — same mechanism the proposal queue used, pointed at events instead of a debt. -->
+  <p class="live-checked" data-live-refresh="{{.Data.Total}}">{{.T "status.last_checked"}} <time data-live-checked></time></p>
+  <div>
+  {{if .Data.Error}}
+    <div class="panel panel--warn">
+      <h3>{{.T "activity.error_heading"}}</h3>
+      <p>{{.T "activity.error_body"}}</p>
+      <pre class="muted">{{.Data.Error}}</pre>
+    </div>
+  {{else if .Data.Empty}}
+    <div class="panel">
+      <h3>{{.T "activity.empty_heading"}}</h3>
+      <p>{{printf (.T "activity.empty_body") .Data.Days}}</p>
+      <a class="btn btn--ghost" href="/browse">{{.T "activity.browse_library"}}</a>
+    </div>
+  {{else}}
+    <p class="muted">{{printf (.T "activity.window") .Data.Days}}</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{.T "activity.col_when"}}</th>
+          <th>{{.T "activity.col_what"}}</th>
+          <th>{{.T "activity.col_entry"}}</th>
+          <th class="num">{{.T "activity.col_rev"}}</th>
+          <th>{{.T "activity.col_who"}}</th>
+          <th>{{.T "activity.col_note"}}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Data.Rows}}
+        <tr>
+          <td class="muted">{{.CreatedAt}}</td>
+          <td><span class="badge badge--sm badge--plain">{{$.T (printf "activity.event.%s" .EventType)}}</span></td>
+          <td>{{.Title}}
+            {{if .ViaComm}}<span class="badge badge--warn badge--sm" title="{{$.T "activity.via_comm_hint"}}">{{$.T "activity.via_comm"}}</span>{{end}}
+          </td>
+          <td class="num">{{if .RevNo}}{{.RevNo}}{{end}}</td>
+          <td class="muted">{{.ActorKind}}{{if .SessionID}} · {{.SessionID}}{{end}}</td>
+          <td>{{.Note}}</td>
+          <td><a class="btn btn--ghost btn--sm" href="/entry/{{.Slug}}">{{$.T "activity.open"}}</a></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  {{end}}
+  </div>
+</section>
+{{end}}

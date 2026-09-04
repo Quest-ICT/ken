@@ -106,10 +106,6 @@ func TestMaturityReadsTheOutcomesThatWereActuallyRecorded(t *testing.T) {
 	// The seed tier is asserted by the unit test above rather than here: an unpromoted entry
 	// is not searchable at all, so this query can never observe one. That is correct — a
 	// draft should not be retrievable — and it is worth stating, because "search returns
-	// nothing" and "the badge is seed" are indistinguishable from the outside.
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatal(err)
-	}
 	if got := find(t); got != "curated" {
 		t.Fatalf("a promoted entry with no outcomes reports %q, want curated", got)
 	}
@@ -146,17 +142,15 @@ func TestMaturityReadsTheOutcomesThatWereActuallyRecorded(t *testing.T) {
 		t.Fatalf("after a 'was-wrong' the entry still reports %q, want curated", got)
 	}
 
-	// AND PROMOTING A CORRECTION CLEARS IT — the anchor is the last promotion, so one
-	// report is not permanently fatal.
+	// AND WRITING A CORRECTION CLEARS IT — the anchor is the head version's own timestamp, so a
+	// report against content that has since been rewritten is answered and one report is not
+	// permanently fatal. Before 6.0.0 this said "promoting a correction", and the correction sat
+	// in a queue until somebody clicked; now the revision IS the correction.
 	fixed := "Return the connection in a defer; the idle cap was not the cause."
-	pr, err := st.ProposeEnhancement(ctx, ProposeInput{
+	if _, err := st.ProposeEnhancement(ctx, ProposeInput{
 		Slug: sr.Slug, ChangeNote: "the refutation was right about the cause",
 		Patch: Patch{Solution: &fixed}, AuthorKind: "ai",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: pr.VersionID, ActorKind: "human"}); err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if got := find(t); got != "battle-tested" {

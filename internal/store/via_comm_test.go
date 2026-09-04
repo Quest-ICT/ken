@@ -113,27 +113,37 @@ func TestViaCommRejectsZero(t *testing.T) {
 	}
 }
 
-// The review queue surfaces the mark, which is the whole point: the curator sees it
-// before promoting.
-func TestProposalRowCarriesViaComm(t *testing.T) {
+// *** THE HEARSAY MARK MUST STILL REACH A HUMAN, AND 6.0.0 MOVED WHERE. ***
+//
+// The review queue used to surface it — "the curator sees it before promoting". There is no
+// queue and no promoting, so the mark would have had exactly two readers left, both deleted, and
+// COMM's three hearsay mitigations would have quietly become two. It now rides the ACTIVITY feed,
+// which is the surface a human actually looks at after the fact.
+//
+// This test exists because the mark going dark is silent by construction: knowledge from a peer
+// would keep arriving, keep being stored with via_comm set, and simply stop being shown.
+func TestActivityFeedCarriesTheHearsayMark(t *testing.T) {
 	ctx := context.Background()
 	st := viaCommStore(t)
 	saveWith(t, st, "hearsay", true)
 	saveWith(t, st, "firsthand", false)
 
-	rows, err := st.ListProposals(ctx)
+	rows, err := st.ListActivity(ctx, 30, 100, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
 	for _, r := range rows {
-		seen[r.Slug] = r.LatestViaComm
+		if r.EventType == "wrote" {
+			seen[r.Slug] = r.ViaComm
+		}
 	}
 	if !seen["hearsay"] {
-		t.Fatal("the marked proposal is not flagged on the review queue")
+		t.Fatal("a write that arrived over COMM is not flagged as hearsay on the activity feed — " +
+			"the mark has nowhere left to be seen")
 	}
 	if seen["firsthand"] {
-		t.Fatal("an unmarked proposal was flagged")
+		t.Fatal("a first-hand write was flagged as hearsay")
 	}
 }
 

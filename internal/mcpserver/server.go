@@ -201,7 +201,7 @@ func actorID(ctx context.Context) int64 {
 
 type searchIn struct {
 	Query    string `json:"query" jsonschema:"natural-language query plus the concrete symptoms you are seeing"`
-	Scope    string `json:"scope,omitempty" jsonschema:"curated (default) | proposals | history | all"`
+	Scope    string `json:"scope,omitempty" jsonschema:"default (the live head of every entry) | history (superseded and rejected versions) | all. 'proposals' is accepted and means the default — nothing is un-published any more"`
 	Kind     string `json:"kind,omitempty" jsonschema:"filter by kind: user | feedback | project | reference"`
 	Category string `json:"category,omitempty" jsonschema:"filter by category"`
 	K        int    `json:"k,omitempty" jsonschema:"max results, default 12, max 25"`
@@ -346,6 +346,20 @@ type flagOut struct {
 	Staleness string `json:"staleness"`
 }
 
+// --- kb_retract (6.0.0) ---
+
+type retractIn struct {
+	Slug string `json:"slug"`
+	// Reason is required by the tool AND by the store, so no caller can skip it.
+	Reason string `json:"reason"`
+}
+
+type retractOut struct {
+	Slug      string `json:"slug"`
+	Lifecycle string `json:"lifecycle"`
+	Note      string `json:"note"`
+}
+
 // --- kb_diff ---
 
 type diffIn struct {
@@ -451,10 +465,16 @@ func curationSentence(curationLangs []string) string {
 	for i, l := range curationLangs {
 		names[i] = langLabel(l)
 	}
-	return " CURATION LANGUAGE: this KB is curated in " + strings.Join(names, ", ") +
-		". Write every human-readable field — title, summary, problem, solution, rationale, caveats — in one of those; " +
-		"a proposal the curator cannot read is stranded and can never be promoted. Keep triggers, code, identifiers and " +
-		"verbatim error text in their original form: they are language-neutral retrieval keys, so never translate them."
+	// The CONSEQUENCE changed in 6.0.0 and the sentence had to change with it. It used to say an
+	// unreadable proposal "is stranded and can never be promoted" — which was true, and was the
+	// worse failure: the write succeeded, the human could not read it, and the only call that
+	// could publish it would always refuse. Nothing is refused for its language now. What remains
+	// true is that your human cannot ACT on what they cannot read, and after 6.0.0 acting is the
+	// only control left — they can no longer decline it on the way in.
+	return " CURATION LANGUAGE: this KB is read by your human in " + strings.Join(names, ", ") +
+		". Write every human-readable field — title, summary, problem, solution, rationale, caveats — in one of those. " +
+		"Your write goes live either way; what your human loses is the ability to notice it is wrong. Keep triggers, code, " +
+		"identifiers and verbatim error text in their original form: they are language-neutral retrieval keys, so never translate them."
 }
 
 // langLabel renders a BCP-47 primary subtag as "Name (code)" for the common
@@ -590,7 +610,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name:        "kb_get",
-		Description: "Fetch full entries by slug (max 10). response_format 'concise' (default) returns the curated head body; 'detailed' adds provenance.",
+		Description: "Fetch full entries by slug (max 10). response_format 'concise' (default) returns the live head body; 'detailed' adds provenance. A RETIRED entry still answers here, saying so and why — it stops appearing in search, it does not vanish.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getIn) (*mcp.CallToolResult, getOut, error) {
 		if err := requireScope(ctx, scopeRead); err != nil {
 			return nil, getOut{}, err
@@ -646,9 +666,11 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "kb_propose_enhancement",
-		Description: "Append an enhancement (a new immutable version) to an existing entry. Never overwrites the curated head; a human promotes it later. " +
-			"Use it when the problem is the SAME and your answer is better. If a search surfaced an entry whose pending proposal is written in a " +
-			"language you were not asked to use, propose a re-authored revision rather than adding a second one alongside it." + curation,
+		Description: "Revise an existing entry: append a new immutable version, which BECOMES THE LIVE HEAD immediately. " +
+			"Use it when the problem is the SAME and your answer is better — a correction takes effect for the next reader with no human step. " +
+			"The version it replaces is kept and your human can put it back in one click, so correcting a mistake is cheap and so is undoing yours. " +
+			"IF THE RESULT CARRIES A warning, you revised an entry someone had already changed: your version is now the head and theirs is not, so read it and re-apply anything of theirs that still matters. " +
+			"Say what changed in change_note — it is what your human reads on the activity feed, and often the only description of your edit that survives." + curation,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in proposeIn) (*mcp.CallToolResult, proposeOut, error) {
 		if err := requireScope(ctx, scopePropose); err != nil {
 			return nil, proposeOut{}, err
@@ -676,7 +698,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name:        "kb_flag_stale",
-		Description: "Flag an entry as possibly stale (a dependency moved, a fact changed). Raises a concern; it does not assert freshness (that is a curation act).",
+		Description: "Flag an entry as possibly stale (a dependency moved, a fact changed). Raises a concern without changing the content. If you KNOW what it should say, revise it instead with kb_propose_enhancement — that takes effect immediately and is the more useful act.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in flagIn) (*mcp.CallToolResult, flagOut, error) {
 		if err := requireScope(ctx, scopePropose); err != nil {
 			return nil, flagOut{}, err
@@ -695,9 +717,40 @@ func RegisterTools(s *mcp.Server, d Deps) {
 		return nil, flagOut{Slug: in.Slug, Staleness: st}, nil
 	})
 
+	// *** kb_retract — NEW IN 6.0.0, AND IT IS THE OTHER HALF OF REMOVING THE GATE. ***
+	//
+	// Before this, NOBODY could take an entry out of circulation: `lifecycle` carried 'archived'
+	// with no writer anywhere and there is no DELETE in the tree. The queue at least meant a bad
+	// entry could be stopped before it was served. Deleting the queue without this would have
+	// traded a delay barrier for a permanent inability to withdraw anything.
+	//
+	// The agent gets it because the owner's premise is that the agent is the real corrector. It is
+	// bounded so that being wrong is cheap: nothing is deleted, kb_get still answers, the reason
+	// is required and recorded, and the console restores it in one click.
+	addTool(s, d, &mcp.Tool{
+		Name: "kb_retract",
+		Description: "Retire an entry that should no longer be found: it stops appearing in search and browse. NOT a delete — every version is kept, kb_get still answers for it saying it was retired, and your human can restore it in one click. " +
+			"Use it when knowledge is OBSOLETE OR HARMFUL, not when it is merely wrong: if you know what it should say, revise it with kb_propose_enhancement instead — a correction keeps the entry findable and is almost always the better act. " +
+			"The reason is REQUIRED and is what your human sees on the activity feed; it is the only explanation the next session will find. TELL YOUR HUMAN IN WORDS that you retired something and why.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in retractIn) (*mcp.CallToolResult, retractOut, error) {
+		// scopePropose, not a new scope: retracting is a content act, and minting a scope no
+		// issued token carries would make this unreachable for every existing session.
+		if err := requireScope(ctx, scopePropose); err != nil {
+			return nil, retractOut{}, err
+		}
+		if in.Slug == "" || strings.TrimSpace(in.Reason) == "" {
+			return nil, retractOut{}, errors.New("slug and reason are required — an entry that stops appearing in every search with no recorded reason is the quietest way this system can lose knowledge")
+		}
+		if err := d.Store.SetLifecycle(ctx, in.Slug, "archived", in.Reason, actorID(ctx), "ai"); err != nil {
+			return nil, retractOut{}, mcpError(err)
+		}
+		return nil, retractOut{Slug: in.Slug, Lifecycle: "archived",
+			Note: "Retired. It no longer appears in search or browse; kb_get still answers for it. Tell your human in words — this result reaches nobody otherwise."}, nil
+	})
+
 	addTool(s, d, &mcp.Tool{
 		Name:        "kb_diff",
-		Description: "Field-by-field diff of two revisions of an entry (rev_a vs rev_b) — e.g. compare a superseded version with the curated head.",
+		Description: "Field-by-field diff of two revisions of an entry (rev_a vs rev_b) — e.g. compare a superseded version with the live head to see what a revision changed.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in diffIn) (*mcp.CallToolResult, diffOut, error) {
 		if err := requireScope(ctx, scopeRead); err != nil {
 			return nil, diffOut{}, err
@@ -715,7 +768,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name:        "kb_record_outcome",
-		Description: "Report whether a fetched entry actually resolved your problem: helped | didnt-apply | was-wrong. 'was-wrong' flags the entry stale for human review. This feeds the self-curating signal — use it after acting on an entry.",
+		Description: "Report whether a fetched entry actually resolved your problem: helped | didnt-apply | was-wrong. THIS IS THE QUALITY SIGNAL NOW — nothing is reviewed before it goes live, so an entry's standing rests on what readers report about it. 'was-wrong' marks it stale and blocks its top maturity tier until the content is rewritten. Use it after acting on an entry.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in outcomeIn) (*mcp.CallToolResult, outcomeOut, error) {
 		if err := requireScope(ctx, scopePropose); err != nil {
 			return nil, outcomeOut{}, err
@@ -735,7 +788,7 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name:        "kb_recent_context",
-		Description: "A compact briefing of entries recently added or curated (default last 14 days) — call it once to warm up a fresh session without a specific query.",
+		Description: "A compact briefing of entries recently written or revised (default last 14 days) — call it once to warm up a fresh session without a specific query.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in recentIn) (*mcp.CallToolResult, recentOut, error) {
 		if err := requireScope(ctx, scopeRead); err != nil {
 			return nil, recentOut{}, err

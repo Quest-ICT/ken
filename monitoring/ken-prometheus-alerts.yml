@@ -32,15 +32,6 @@ groups:
           summary: "Ken auto-blocked an abusive IP"
           description: "{{ $value }} requests were refused (403) from auto-blocked IPs in the last 15m."
 
-      - alert: KenProposalsBacklog
-        expr: ken_kb_proposals_pending > 25
-        for: 24h
-        labels:
-          severity: info
-        annotations:
-          summary: "Ken proposal queue is backing up"
-          description: "{{ $value }} proposals have awaited human promotion for over 24h — review the queue."
-
       - alert: KenEmbeddingBackfillLag
         expr: (ken_kb_embeddable_versions - ken_kb_embeddings) > 50
         for: 1h

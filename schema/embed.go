@@ -30,7 +30,7 @@ import _ "embed"
 var Ken string
 
 // KenVersion is the schema version Ken.sql records and the server requires.
-const KenVersion = 26
+const KenVersion = 27
 
 // Comm is the expendable message database. If it is ever unrecoverable the supported answer is to
 // delete it and restart: messaging rebuilds empty and nothing durable is affected.

@@ -41,7 +41,7 @@ func TestContentLangDetectedOnSave(t *testing.T) {
 func TestSearchExposesLanguage(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
-	sr, err := st.Save(ctx, SaveInput{
+	_, err := st.Save(ctx, SaveInput{
 		Kind: "project", AuthorKind: "ai",
 		Content: Content{
 			Title:    "Fix the flaky login integration test",
@@ -51,9 +51,6 @@ func TestSearchExposesLanguage(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("save: %v", err)
-	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatalf("promote: %v", err)
 	}
 	res, err := st.Search(ctx, "flaky login integration test session cookie race", SearchOpts{})
 	if err != nil || len(res) == 0 {
@@ -80,9 +77,6 @@ func TestContentLangDeltaOnPropose(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("save: %v", err)
-	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatalf("promote: %v", err)
 	}
 
 	// A French caveats addition — the delta is French even though the merged entry
@@ -116,7 +110,7 @@ func TestContentLangDeltaOnPropose(t *testing.T) {
 // TestPromoteComprehensionGate: a version in a non-curation language is refused;
 // the same version promotes once its language is allowed; undetermined/off never
 // block.
-func TestPromoteComprehensionGate(t *testing.T) {
+func TestComprehensionGateGuardsTheHumanNotTheWrite(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
@@ -138,21 +132,35 @@ func TestPromoteComprehensionGate(t *testing.T) {
 		return sr
 	}
 
-	// English curator can't promote a French proposal…
+	// *** THE COMPREHENSION GATE MOVED, AND IT NOW GUARDS THE HUMAN'S ACTION ONLY. ***
+	//
+	// It used to refuse a PROMOTE, which meant an out-of-language write was accepted, stored, and
+	// then stranded forever: the only call that could publish it would always refuse. Under 6.0.0
+	// a write is never refused for its language — refusing a write loses knowledge, which is the
+	// one thing this release must not do — so the check survives exactly where it costs nothing:
+	// on SetHead, a human deliberately choosing which version serves.
 	sr := frEntry(t)
-	err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human", CurationLangs: []string{"en"}})
-	if !errors.Is(err, ErrForeignLang) {
-		t.Fatalf("promote of fr under [en] = %v, want ErrForeignLang", err)
-	}
-	// …but the SAME version promotes once French is a curation language.
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human", CurationLangs: []string{"fr", "en"}}); err != nil {
-		t.Fatalf("promote of fr under [fr en] = %v, want ok", err)
-	}
-
-	// Feature off (no curation langs) never blocks.
 	sr2 := frEntry(t)
-	if err := st.Promote(ctx, PromoteInput{Slug: sr2.Slug, VersionID: sr2.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatalf("promote with no curation langs = %v, want ok", err)
+	_ = sr2
+
+	// A French write LANDS under an English-only curation setting. It is the head immediately.
+	if e, _ := st.GetEntry(ctx, sr.Slug); e.Head == nil || e.Head.RevNo != 1 {
+		t.Fatal("a French entry did not land as its own head — the language check refused a write")
+	}
+	// Give it a second version so there is a non-head version to point at.
+	fr2, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "suite",
+		AuthorKind: "ai", Patch: Patch{Solution: strptr("Attendre le cookie de session avant de vérifier la redirection du navigateur.")}})
+	if err != nil {
+		t.Fatalf("fr revision: %v", err)
+	}
+	_ = fr2
+	// The human CANNOT set the head back to a French version while curating only in English…
+	if err := st.SetHead(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human", CurationLangs: []string{"en"}}); !errors.Is(err, ErrForeignLang) {
+		t.Fatalf("SetHead to fr under [en] = %v, want ErrForeignLang", err)
+	}
+	// …and CAN once French is a curation language.
+	if err := st.SetHead(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human", CurationLangs: []string{"fr", "en"}}); err != nil {
+		t.Fatalf("SetHead to fr under [fr en] = %v, want ok", err)
 	}
 
 	// Undetermined language (short prose ⇒ 'und') fails open.
@@ -163,7 +171,11 @@ func TestPromoteComprehensionGate(t *testing.T) {
 	if got := versionLang(t, st, su.VersionID); got != "und" {
 		t.Fatalf("short prose content_lang = %q, want und", got)
 	}
-	if err := st.Promote(ctx, PromoteInput{Slug: su.Slug, VersionID: su.VersionID, ActorKind: "human", CurationLangs: []string{"fr"}}); err != nil {
-		t.Fatalf("promote of und under [fr] = %v, want ok (fails open)", err)
+	// Undetermined fails OPEN, which is what keeps the entire legacy corpus and every short entry
+	// reachable. Asserted through the write, since that is the path everything takes now.
+	if e, _ := st.GetEntry(ctx, su.Slug); e.Head == nil {
+		t.Fatal("an undetermined-language entry has no head — the check failed closed")
 	}
 }
+
+func strptr(v string) *string { return &v }

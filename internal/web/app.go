@@ -98,7 +98,7 @@ func parsePages() map[string]*template.Template {
 		"localtime":     func(iso string) template.HTML { return timeEl(iso, "") },
 		"localdeadline": func(iso string) template.HTML { return timeEl(iso, "relative") },
 	}
-	for _, p := range []string{"login", "setup", "dashboard", "search", "browse", "entry", "proposals", "tokens", "settings", "consent", "comm", "stations"} {
+	for _, p := range []string{"login", "setup", "dashboard", "search", "browse", "entry", "activity", "tokens", "settings", "consent", "comm", "stations"} {
 		m[p] = template.Must(template.New("base.html").Funcs(funcs).
 			ParseFS(tplFS, "templates/base.html", "templates/"+p+".html"))
 	}
@@ -162,11 +162,14 @@ func (a *app) routes() http.Handler {
 	mux.HandleFunc("GET /search", a.requireAuth(a.handleSearch))
 	mux.HandleFunc("GET /browse", a.requireAuth(a.handleBrowse))
 	mux.HandleFunc("GET /entry/{slug}", a.requireAuth(a.handleEntry))
-	mux.HandleFunc("POST /entry/{slug}/revert/{vid}", a.requireAuth(a.handleRevert))
-	mux.HandleFunc("GET /proposals", a.requireAuth(a.handleProposals))
-	mux.HandleFunc("GET /proposals/count", a.requireAuth(a.handleProposalsCount))
-	mux.HandleFunc("POST /proposals/{vid}/promote", a.requireAuth(a.handlePromote))
-	mux.HandleFunc("POST /proposals/{vid}/reject", a.requireAuth(a.handleReject))
+	// /proposals AND ITS TWO POST VERBS ARE DELETED WITH THE GATE (6.0.0). What replaces them is
+	// /activity — the same information after the fact instead of in front of the write — plus the
+	// two powers the human never actually had: retire an entry, and set the head back.
+	mux.HandleFunc("POST /entry/{slug}/head/{vid}", a.requireAuth(a.handleSetHead))
+	mux.HandleFunc("POST /entry/{slug}/archive", a.requireAuth(a.handleArchive))
+	mux.HandleFunc("POST /entry/{slug}/restore", a.requireAuth(a.handleRestore))
+	mux.HandleFunc("GET /activity", a.requireAuth(a.handleActivity))
+	mux.HandleFunc("GET /activity/count", a.requireAuth(a.handleActivityCount))
 	mux.HandleFunc("GET /tokens", a.requireAuth(a.handleTokens))
 	mux.HandleFunc("POST /tokens", a.requireAuth(a.handleTokenCreate))
 	mux.HandleFunc("POST /tokens/{id}/revoke", a.requireAuth(a.handleTokenRevoke))
@@ -306,9 +309,8 @@ func (a *app) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
 // --- view + rendering ---
 
 type view struct {
-	Session   *store.Session
-	Flash     string
-	PropCount int
+	Session *store.Session
+	Flash   string
 	// StationCount is open tasks marked blocked_on=human across every station. Zero when
 	// stations are off, so the badge simply never renders.
 	StationCount int
@@ -370,12 +372,15 @@ func (v view) Langs() []i18n.Lang {
 func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session, page string, data any) {
 	a.i18n.MaybeReload() // pick up dropped-in files before resolving/rendering
 	lang := a.resolveLang(r)
-	pc := 0
-	if sess != nil {
-		if rows, err := a.store.ListProposals(r.Context()); err == nil {
-			pc = len(rows)
-		}
-	}
+	// *** THE SWALLOWED ERROR IS GONE WITH THE QUEUE IT COUNTED. ***
+	//
+	// This was `if rows, err := ...; err == nil { pc = len(rows) }` with no else, so a FAILED
+	// query rendered as "0 pending" in the nav badge and on the dashboard — a dead instrument and
+	// a genuinely empty queue printing the same digit. It is the shape this project keeps paying
+	// for, and it sat on the gate's own alarm.
+	//
+	// The activity feed does not get a badge. A count of "things that happened" is not a debt and
+	// a number nobody owes anything against is decoration that can only ever mislead.
 	// THE STATION PILE NEEDS A PULL, not just a page. §11.8 built the cross-station view for
 	// the human's question — "what is everyone waiting on me for?" — and then left it somewhere
 	// nothing points at, so it answers that question only for a human who already thought to
@@ -383,7 +388,7 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 	// others, including stations whose session is not running. The badge is what makes the
 	// view reachable without remembering it exists.
 	//
-	// Counted on every render, like PropCount, and for the same reason: a badge computed once
+	// Counted on every render, and for the same reason a proposal badge used to be: a badge computed once
 	// and cached is a badge that goes stale silently. Both are one indexed COUNT.
 	//
 	// A COUNT OF WHAT IS RECORDED, not of what is owed. `blocked_on` is set when a task is
@@ -423,7 +428,7 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, sess *store.Session
 	if c, err := r.Cookie(themeCookie); err == nil && (c.Value == "light" || c.Value == "dark") {
 		theme = c.Value
 	}
-	v := view{Session: sess, Flash: flash, PropCount: pc, StationCount: sc, Version: version.Version, SourceURL: version.SourceURL(), Data: data,
+	v := view{Session: sess, Flash: flash, StationCount: sc, Version: version.Version, SourceURL: version.SourceURL(), Data: data,
 		Lang: lang, Path: r.URL.RequestURI(), Chrome: chrome, Theme: theme, CommEnabled: a.commEnabled(), tr: a.i18n}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.pages[page].ExecuteTemplate(w, "base.html", v); err != nil {
@@ -709,9 +714,12 @@ func (a *app) handleBrowse(w http.ResponseWriter, r *http.Request, sess *store.S
 		"Categories":  cats,
 		"Kinds":       []string{"user", "feedback", "project", "reference"},
 		"Stalenesses": []string{"fresh", "aging", "stale", "refuted"},
-		"Lifecycles":  []string{"draft", "active", "deprecated"},
-		"Sorts":       []string{"updated", "title", "used", "created", "kind"},
-		"F":           f,
+		// 'draft' and 'deprecated' had NO WRITER ANYWHERE, so two of the three options could only
+		// ever return an empty page. 'archived' finally has one (SetLifecycle), so the filter now
+		// offers exactly the two states the code can produce.
+		"Lifecycles": []string{"active", "archived"},
+		"Sorts":      []string{"updated", "title", "used", "created", "kind"},
+		"F":          f,
 	})
 }
 
@@ -722,12 +730,22 @@ func (a *app) handleEntry(w http.ResponseWriter, r *http.Request, sess *store.Se
 		http.NotFound(w, r)
 		return
 	}
-	hist, _ := a.store.History(r.Context(), slug)
-	var review *store.ReviewData
-	if entry.HasProvisional {
-		review, _ = a.store.ProvisionalReview(r.Context(), slug)
+	// The Review branch is deleted with the gate: there is no pending version to diff against a
+	// head, because a write IS the head. The lineage rail below carries every version and each
+	// non-head node now offers "make this the head" as a first-class button rather than a quiet
+	// link — reverting is the primary human control now, not an escape hatch.
+	hist, err := a.store.History(r.Context(), slug)
+	if err != nil {
+		// Was `hist, _ :=`. An entry page that silently renders an empty history looks exactly
+		// like an entry with one version, which is the reading that matters least and is wrong
+		// most often.
+		log.Printf("web: history for %s: %v", slug, err)
 	}
-	a.render(w, r, sess, "entry", map[string]any{"Entry": entry, "History": hist, "Review": review})
+	retired := ""
+	if entry.Lifecycle == "archived" {
+		retired, _ = a.store.RetiredReason(r.Context(), slug)
+	}
+	a.render(w, r, sess, "entry", map[string]any{"Entry": entry, "History": hist, "RetiredReason": retired})
 }
 
 // curationLangs returns the configured curation languages (nil when settings are
@@ -739,83 +757,57 @@ func (a *app) curationLangs() []string {
 	return a.settings.Current().CurationLangSet
 }
 
-// proposalView decorates a store proposal row with the review-queue's
-// out-of-language flag (computed against the live curation languages).
-type proposalView struct {
-	store.ProposalRow
-	Foreign bool
-}
-
-func (a *app) handleProposals(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	props, _ := a.store.ListProposals(r.Context())
-	langs := a.curationLangs()
-	views := make([]proposalView, len(props))
-	for i, p := range props {
-		views[i] = proposalView{ProposalRow: p, Foreign: store.LangForeign(p.LatestLang, langs)}
+// handleActivity renders what the knowledge base has DONE, newest first.
+//
+// *** THIS IS WHAT REPLACED THE PROPOSAL QUEUE, AND THE DIFFERENCE IS THE WHOLE RELEASE. ***
+//
+// /proposals asked "what is waiting for your approval" and blocked every write until it was
+// answered. /activity says "here is what happened" and blocks nothing. The owner's account of how
+// he used the queue — open the entry, read the title, approve — is a description of a page being
+// acknowledged, not read. A page nobody has to answer can be glanced at honestly.
+func (a *app) handleActivity(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	days := 14
+	if v, err := strconv.Atoi(r.URL.Query().Get("days")); err == nil && v > 0 && v <= 365 {
+		days = v
 	}
-	a.render(w, r, sess, "proposals", map[string]any{"Proposals": views})
+	rows, err := a.store.ListActivity(r.Context(), days, 200, 0)
+	if err != nil {
+		// NOT swallowed. The page this replaced rendered a failed query as "all proposals have
+		// been curated" — the most reassuring sentence available, produced by a broken query.
+		log.Printf("web: activity: %v", err)
+		a.render(w, r, sess, "activity", map[string]any{"Error": err.Error(), "Days": days})
+		return
+	}
+	// Total is what the live poller compares against /activity/count. It must be the count over
+	// the SAME window the endpoint uses, or the page reloads forever.
+	total, cErr := a.store.CountActivitySince(r.Context(), time.Now().UTC().AddDate(0, 0, -14).Format("2006-01-02T15:04:05.000Z"))
+	if cErr != nil {
+		log.Printf("web: activity total: %v", cErr)
+	}
+	a.render(w, r, sess, "activity", map[string]any{"Rows": rows, "Days": days, "Empty": len(rows) == 0, "Total": total})
 }
 
-// handleProposalsCount answers the Proposals page poller with the current
-// pending-proposal count as JSON. Read-only and cheap (one COUNT); behind
-// requireAuth like the page itself, so it is not an unauthenticated info leak.
-func (a *app) handleProposalsCount(w http.ResponseWriter, r *http.Request, _ *store.Session) {
-	n, err := a.store.CountProposals(r.Context())
+// handleActivityCount answers the live-refresh poller with the number of events in the window.
+//
+// A CHANGE DETECTOR, NOT A DEBT. Nobody owes anything against this number; it exists so an open
+// page reloads when the KB moves.
+func (a *app) handleActivityCount(w http.ResponseWriter, r *http.Request, _ *store.Session) {
+	n, err := a.store.CountActivitySince(r.Context(), time.Now().UTC().AddDate(0, 0, -14).Format("2006-01-02T15:04:05.000Z"))
 	if err != nil {
+		log.Printf("web: activity count: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"count":%d}`, n)
 }
 
-func (a *app) handlePromote(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	vid, err := strconv.ParseInt(r.PathValue("vid"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	slug := r.FormValue("slug")
-	if err := a.store.Promote(r.Context(), store.PromoteInput{
-		Slug: slug, VersionID: vid, ActorID: sess.ActorID, ActorKind: "human",
-		Note: "promoted by " + sess.ActorName, CurationLangs: a.curationLangs(),
-	}); err != nil {
-		if errors.Is(err, store.ErrForeignLang) {
-			flashRedirect(w, r, "/proposals", "flash.promote_foreign_lang", "")
-			return
-		}
-		flashRedirect(w, r, "/proposals", "flash.promote_failed", err.Error())
-		return
-	}
-	flashRedirect(w, r, "/proposals", "flash.promoted", slug)
-}
-
-func (a *app) handleReject(w http.ResponseWriter, r *http.Request, sess *store.Session) {
-	if !a.checkCSRF(r, sess) {
-		http.Error(w, "bad CSRF token", http.StatusForbidden)
-		return
-	}
-	vid, err := strconv.ParseInt(r.PathValue("vid"), 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	slug := r.FormValue("slug")
-	if err := a.store.Reject(r.Context(), slug, vid, sess.ActorID, "human", "rejected by "+sess.ActorName); err != nil {
-		flashRedirect(w, r, "/proposals", "flash.reject_failed", err.Error())
-		return
-	}
-	flashRedirect(w, r, "/proposals", "flash.rejected", slug)
-}
-
-// handleRevert re-promotes a historical (superseded/rejected) version back to the
-// curated head — the human recovery path when promotions regressed the head.
-func (a *app) handleRevert(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+// handleSetHead points an entry's head at an existing historical version.
+//
+// Was handleRevert. Renamed because after 6.0.0 this is not an exceptional recovery from a bad
+// promotion — it is the human's PRIMARY control over content, and the only one that can undo an
+// agent's write. The route moved from /revert/{vid} to /head/{vid} to say so.
+func (a *app) handleSetHead(w http.ResponseWriter, r *http.Request, sess *store.Session) {
 	if !a.checkCSRF(r, sess) {
 		http.Error(w, "bad CSRF token", http.StatusForbidden)
 		return
@@ -826,9 +818,9 @@ func (a *app) handleRevert(w http.ResponseWriter, r *http.Request, sess *store.S
 		http.NotFound(w, r)
 		return
 	}
-	if err := a.store.Repromote(r.Context(), store.PromoteInput{
+	if err := a.store.SetHead(r.Context(), store.PromoteInput{
 		Slug: slug, VersionID: vid, ActorID: sess.ActorID, ActorKind: "human",
-		Note: "reverted by " + sess.ActorName, CurationLangs: a.curationLangs(),
+		Note: "head set by " + sess.ActorName, CurationLangs: a.curationLangs(),
 	}); err != nil {
 		if errors.Is(err, store.ErrForeignLang) {
 			flashRedirect(w, r, "/entry/"+slug, "flash.revert_foreign_lang", "")
@@ -840,10 +832,52 @@ func (a *app) handleRevert(w http.ResponseWriter, r *http.Request, sess *store.S
 	flashRedirect(w, r, "/entry/"+slug, "flash.reverted", slug)
 }
 
+// handleArchive retires an entry: it stops appearing in browse and in the default search, keeps
+// every version, and kb_get still answers for it saying that it was retired and why.
+//
+// The reason is REQUIRED by the store, not by this handler, so the CLI and any future caller
+// cannot skip it. An entry vanishing from every search with no recorded explanation is the
+// quietest way this system could lose knowledge.
+func (a *app) handleArchive(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	slug := r.PathValue("slug")
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if err := a.store.SetLifecycle(r.Context(), slug, "archived", reason, sess.ActorID, "human"); err != nil {
+		if errors.Is(err, store.ErrReasonRequired) {
+			flashRedirect(w, r, "/entry/"+slug, "flash.archive_needs_reason", "")
+			return
+		}
+		flashRedirect(w, r, "/entry/"+slug, "flash.archive_failed", err.Error())
+		return
+	}
+	flashRedirect(w, r, "/entry/"+slug, "flash.archived", slug)
+}
+
+// handleRestore un-retires an entry. No reason required: restoring puts knowledge back where
+// readers can find it, and the risk of doing it silently is the opposite of the risk of retiring.
+func (a *app) handleRestore(w http.ResponseWriter, r *http.Request, sess *store.Session) {
+	if !a.checkCSRF(r, sess) {
+		http.Error(w, "bad CSRF token", http.StatusForbidden)
+		return
+	}
+	slug := r.PathValue("slug")
+	if err := a.store.SetLifecycle(r.Context(), slug, "active", "restored by "+sess.ActorName, sess.ActorID, "human"); err != nil {
+		flashRedirect(w, r, "/entry/"+slug, "flash.restore_failed", err.Error())
+		return
+	}
+	flashRedirect(w, r, "/entry/"+slug, "flash.restored", slug)
+}
+
 // --- agent tokens (superadmin) ---
 
 // agentScopes are the KNOWLEDGE-BASE scopes an agent token may hold from the web UI.
-// 'curate' is deliberately excluded — that is the human-only curation gate.
+//
+// 'curate' is not here because it no longer exists: 6.0.0 deleted the gate it named. It is NOT
+// stripped from tokens that already carry it — auth unmarshals stored scopes with no vocabulary
+// check, so an already-minted token keeps authenticating with everything else it holds.
 var agentScopes = []string{"read", "write-draft", "propose"}
 
 // consoleCommScopes are the COMM scopes the web UI may mint.

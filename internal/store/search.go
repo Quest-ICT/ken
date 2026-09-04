@@ -62,14 +62,20 @@ SELECT e.slug, ev.title, ev.summary, e.kind, COALESCE(e.category,''), e.stalenes
        (SELECT COUNT(DISTINCT o.session_id) FROM entry_outcome o
          WHERE o.entry_id = e.id AND o.outcome = 'helped'
            AND o.session_id IS NOT NULL AND o.session_id <> '') AS helped_sessions,
-       -- A 'was-wrong' SINCE THE LAST PROMOTION blocks the top tier. Anchored at the
-       -- promotion because promoting a correction is precisely how a was-wrong is answered;
-       -- without the anchor an entry could never recover from one report.
+       -- A 'was-wrong' SINCE THE HEAD WAS WRITTEN blocks the top tier.
+       --
+       -- RE-ANCHORED IN 6.0.0, AND IT HAD TO BE. It used to key on the last 'promoted' event and
+       -- COALESCE a miss to '' — so with promotion gone, every entry's anchor would fall to the
+       -- empty string, every historical was-wrong would count as "since", and entries would be
+       -- permanently stuck below the top tier with nothing failing. The head VERSION's own
+       -- created_at is the honest anchor and always exists (no COALESCE): a report against
+       -- content that has since been rewritten is answered by the rewrite. It is also
+       -- revert-correct — setting the head back to an older version restores that version's
+       -- older timestamp, so the reports it had drawn come back with it.
        EXISTS (SELECT 1 FROM entry_outcome o
                 WHERE o.entry_id = e.id AND o.outcome = 'was-wrong'
-                  AND o.created_at > COALESCE(
-                        (SELECT MAX(ce.created_at) FROM curation_event ce
-                          WHERE ce.entry_id = e.id AND ce.event_type = 'promoted'), '')) AS refuted_since,
+                  AND o.created_at > (SELECT created_at FROM entry_version
+                                       WHERE id = e.curated_version_id)) AS refuted_since,
        f.score,
        (e.provisional_version_id IS NOT NULL) AS has_provisional,
        COALESCE(ev.content_lang,'')
@@ -186,7 +192,16 @@ func buildVecCTE(pairs []vecPair) (string, []any) {
 func scopeStatePredicate(scope string) string {
 	switch scope {
 	case "proposals":
-		return "ev.state = 'proposed'"
+		// KEPT AS AN ACCEPTED VALUE, ALIASED TO THE DEFAULT (6.0.0). Nothing is 'proposed' any
+		// more, so the old predicate would match nothing, forever, and a scope that silently
+		// returns empty reads as "no such knowledge" — the defect class this release exists to
+		// end, shipped as its own migration path. A session whose frozen tool schema still offers
+		// this scope gets the right answer instead of a convincing void.
+		//
+		// Returns the default predicate EXPLICITLY rather than falling through: Go's fallthrough
+		// enters the NEXT case body in source order, which is 'history', so the tidy-looking
+		// version of this silently served superseded content to anyone asking for proposals.
+		return "ev.state = 'curated'"
 	case "history":
 		return "ev.state IN ('superseded','rejected','withdrawn')"
 	case "all":

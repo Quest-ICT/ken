@@ -55,7 +55,7 @@ scrape_configs:
 | `ken_ratelimit_blocked_total` | counter | | 403s from auto-blocked IPs |
 | `ken_kb_entries` | gauge | | Entries (curated or draft) |
 | `ken_kb_versions` | gauge | | Versions (append-only history) |
-| `ken_kb_proposals_pending` | gauge | | Proposals awaiting human promotion |
+| `ken_kb_changes_24h` | gauge | | KB changes in the last 24h (writes, revisions, reverts, retirements). Replaced `ken_kb_proposals_pending` in 6.0.0 when the curation queue was deleted |
 | `ken_kb_embeddings` | gauge | | Versions with an embedding |
 | `ken_kb_embeddable_versions` | gauge | | Total versions (embedding denominator) |
 | `ken_users` | gauge | | Human users |

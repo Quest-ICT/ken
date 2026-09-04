@@ -6,7 +6,7 @@ an MCP-capable agent (Claude Code, or any client that speaks streamable-HTTP MCP
 
 Paste the block in [§3](#3-the-standard-prompt-drop-in) into the agent's standing instructions — for
 Claude Code, your project or user `CLAUDE.md` — and it will use Ken correctly, including the one rule
-that matters most: **the AI authors and proposes; only a human promotes.**
+that matters most: **the AI writes, and its writes go live immediately.** (Until 6.0.0 this said *"only a human promotes"* — the curation gate is deleted; see docs/DESIGN.md D4 for why and what replaced it.)
 
 > **Ken now also teaches itself.** On connect, Ken's MCP server hands the agent a distilled version of
 > these rules (in the `initialize` response), so the core loop — search-first → record-outcome →
@@ -26,7 +26,7 @@ ken token add --actor "claude-code" --label "laptop" \
 # → prints the token ONCE; store it now
 ```
 
-Never `curate` — that exclusion IS the curation gate.
+The `curate` scope no longer exists — it named a gate that is gone.
 
 **Until 4.0.0 the default scopes were enough**, because `/mcp` served the knowledge base alone and a
 token could hold knowledge-base OR comm scopes but never both. Both rules are gone; a token minted
@@ -62,20 +62,24 @@ complete enough to drive the whole loop.
 ````markdown
 # Ken — knowledge base operating rules
 
-Ken is your durable, cross-session memory (remote MCP, `kb_*` tools; SQLite is the source of truth). **You are the sole author; the human is only a curator** — they browse, search, and promote, but never write entries. Your writes land as **proposed revisions**: usable immediately this session, but only a **human promotion** turns a version *curated* and advances the head. Lifecycle: `kb_save`/`kb_propose` → proposed rev (usable now via `scope:proposals`) → human promotes → curated head. You capture, enhance, and flag all day; **you never curate or assert freshness.** That gate is exactly what makes Ken trustworthy — respect it.
+Ken is your durable, cross-session memory (remote MCP, `kb_*` tools; SQLite is the source of truth). **You are the sole author, and your writes ARE the knowledge base.** `kb_save` and `kb_propose_enhancement` each append an immutable version that becomes the entry's live head in the same transaction — findable by the next search, in the next session, with no human step.
 
-**Connect once:** `claude mcp add --transport http ken https://<ken-host>/mcp --header "Authorization: Bearer $KEN_TOKEN" --scope user`. Token scopes: `read`, `write-draft`, `propose` — never `curate`.
+**That means the quality of Ken is now your problem, not a reviewer's.** Nothing is checked before it is served. Three things follow, and they are the whole of your responsibility here: **record outcomes** (`kb_record_outcome`) — that is the only remaining quality signal; **fix what is wrong** (`kb_propose_enhancement`) rather than working around it or writing a second entry beside it; and **retire what is obsolete or harmful** (`kb_retract`), which stops it being found without destroying it.
+
+Nothing you do is irreversible. Every version is kept, your human can set the head back to any of them in one click, and a retired entry restores in one. Being wrong is cheap; leaving something wrong in place is not.
+
+**Connect once:** `claude mcp add --transport http ken https://<ken-host>/mcp --header "Authorization: Bearer $KEN_TOKEN" --scope user`. Token scopes: `read`, `write-draft`, `propose`.
 
 **Quick loop:** warm up → **search first** (keep the `dedup_check_token`) → `kb_get` the few → act → **record outcome** → save/enhance what you learned.
 
 ### Warm up — fresh session, no specific problem yet
-`kb_recent_context` (`since_days`≈14, `kind?`, `limit?`) → briefing of recently-curated entries. Skip if you already have a concrete problem to search.
+`kb_recent_context` (`since_days`≈14, `kind?`, `limit?`) → briefing of entries recently written or revised. Skip if you already have a concrete problem to search.
 
 ### Search FIRST — about to debug an error or solve anything non-trivial
-`kb_search` is your default first move. **in:** `query` = natural language **+ the exact symptoms/error text you see**; optional `scope`(`curated` default | `proposals` | `history`), `kind`, `category`, `k`(≤25), `offset`. **out:** ranked token-light summaries `{slug,title,summary,kind,category,staleness,maturity,score,has_provisional}` (no bodies) + `has_more`/`next_offset` + a **`dedup_check_token`**. Scan many cheaply.
+`kb_search` is your default first move. **in:** `query` = natural language **+ the exact symptoms/error text you see**; optional `scope`(default = the live head of every entry | `history` = superseded and rejected versions | `all`; `proposals` is accepted and means the default), `kind`, `category`, `k`(≤25), `offset`. **out:** ranked token-light summaries `{slug,title,summary,kind,category,staleness,maturity,score}` (no bodies) + `has_more`/`next_offset` + a **`dedup_check_token`**. Scan many cheaply.
 - **Keep the `dedup_check_token`** — `kb_save` requires it, and it must be **fresh**: re-search if substantial work has happened since.
-- Read the triage signals: prefer **mature** entries; **distrust a `staleness` badge**; `has_provisional: true` means **a proposal is already pending** on that entry — search `scope:proposals` before you duplicate an in-flight enhancement.
-- Your own drafts/proposals never appear in `curated` search. To re-find or build on your in-session (or another agent's) uncurated work, search **`scope:proposals`** — that is what those scopes are for.
+- Read the triage signals: prefer **mature** entries and **distrust a `staleness` badge**. Since 6.0.0 nothing is reviewed before it is served, so `maturity` and `staleness` are carrying weight a human used to carry — an entry marked stale is one a reader reported as wrong and nobody has fixed yet. Fixing it is a better contribution than working around it.
+- **Your own writes appear in the default search immediately**, and so do other sessions'. There is no pending state to go looking for.
 
 ### Fetch — the few that matter
 `kb_get` `slugs[]`(≤10), `response_format` — **default `concise`** for token economy; use `detailed` only when you actually need provenance / `based_on_rev`. Bumps `use_count`.
@@ -94,10 +98,10 @@ After acting on any fetched entry, `kb_record_outcome` (`slug`, `outcome`, `note
 Rule of thumb: *same problem, better answer* → enhance (new rev, same slug); *different problem that merely shares vocabulary* → new entry + link. (The visible `score` is a ranking signal, not this cosine — follow Ken's returned guidance.)
 
 ### Save new  (write-draft)
-`kb_save` creates a NEW entry as **proposed rev 1** — needs a fresh `dedup_check_token` (no search, no save); won't show in curated search until a human promotes it. Fields: `slug?`, `kind`(`user`|`feedback`|`project`|`reference`), `title`, `summary`, `category?`, `problem`, `solution`, `rationale`, `caveats`, `code[{lang,caption,snippet}]`, `tags[]`, `triggers[]` (symptoms a future agent would type), `applies_to[]`, `verified_against[{tool,version,date}]`, `confidence`(0..1), `links[{to_slug,link_type}]`. Write `triggers` + `applies_to` well (that is how the next agent finds this); give an honest `confidence`.
+`kb_save` creates a NEW entry as **live rev 1** — needs a fresh `dedup_check_token` (no search, no save). It is searchable the moment it returns, which is why the dedup token matters more than it did: a near-duplicate is now visible to every reader instead of waiting where a human might have merged it. Fields: `slug?`, `kind`(`user`|`feedback`|`project`|`reference`), `title`, `summary`, `category?`, `problem`, `solution`, `rationale`, `caveats`, `code[{lang,caption,snippet}]`, `tags[]`, `triggers[]` (symptoms a future agent would type), `applies_to[]`, `verified_against[{tool,version,date}]`, `confidence`(0..1), `links[{to_slug,link_type}]`. Write `triggers` + `applies_to` well (that is how the next agent finds this); give an honest `confidence`.
 
 ### Enhance existing  (propose)
-`kb_propose_enhancement` APPENDS an immutable new rev; never moves the curated head. **in:** `slug`, `based_on_rev?`(0 = head), `change_note` **required** (WHAT changed + WHY), `confidence?`, `patch{...}` (omitted fields inherit from `based_on_rev`). If it returns a `warning` that you based on an old rev, rebase onto the head and re-propose.
+`kb_propose_enhancement` APPENDS an immutable new rev **and makes it the head**; the version it replaces is kept and restorable in one click. **in:** `slug`, `based_on_rev?`(0 = head), `change_note` **required** (WHAT changed + WHY), `confidence?`, `patch{...}` (omitted fields inherit from `based_on_rev`). If it returns a `warning` that you based on an old rev, your revision IS ALREADY THE HEAD and the other one's changes are no longer served — read the entry and re-apply anything of theirs that still matters.
 
 ### Flag stale  (propose)
 `kb_flag_stale` (`slug`, `reason` required, `suspected_applies_to?`) when a dependency moved or a fact changed. The entry stays authoritative but ranks lower with a badge. You can flag, never assert freshness.
@@ -112,7 +116,7 @@ Rule of thumb: *same problem, better answer* → enhance (new rev, same slug); *
 
 Some agents generalize better when they understand Ken's model first — this longer version teaches the
 three load-bearing ideas (search is structurally gated by the dedup token, knowledge is append-only,
-the AI proposes while only a human promotes), then gives the same rules:
+the AI writes and its writes go live), then gives the same rules:
 
 ````markdown
 # Ken — how it works, and how you use it
@@ -123,18 +127,18 @@ Ken is an **AI-first personal knowledge base** — your durable, cross-session m
 - **You are the sole author. The human is only a curator.** The human browses, searches, and **promotes** entries; they never write new ones. Every entry in Ken was authored by an agent like you. Do not think of entries as a colleague's private notes — they are the shared, agent-written record you are responsible for growing.
 - **SQLite is the source of truth; enhancements are append-only; the curated head advances ONLY on human promotion.** Your writes never mutate history and never auto-publish.
 
-**Entry lifecycle:** `kb_save` (new) or `kb_propose_enhancement` (revision) creates a **proposed revision** → it is usable *immediately this session* and re-findable via `scope:proposals` → a **human promotes** it → it becomes the **curated head** that `scope:curated` (the default) returns. You can capture, enhance, flag stale, and record outcomes all day, but **you can never promote/curate or assert freshness.** That boundary is not a limitation to route around — it is exactly what keeps the curated layer trustworthy. Respect it precisely.
+**Entry lifecycle:** `kb_save` (new) or `kb_propose_enhancement` (revision) appends an immutable version **and makes it the live head in the same transaction** — findable by the next search, in the next session, with no human step. Nothing is reviewed on the way in. **So the quality of Ken is your responsibility now:** record outcomes, revise what is wrong instead of routing around it, and retire what is obsolete (`kb_retract`). Nothing is irreversible — every version is kept and your human can set the head back, or restore a retired entry, in one click.
 
-**Why the non-curated scopes exist:** because your own output does **not** appear in default (`curated`) search until a human promotes it, `scope:proposals` is how you re-find, build on, or avoid duplicating in-flight work — yours or another agent's. `scope:history` exposes superseded revisions. Reach for these deliberately; they are the whole point of the scope switch.
+**Why the scope switch exists:** the default returns each entry's live head, which is what you almost always want. `scope:history` reaches superseded and rejected versions — worth it when you need to know what the KB used to say, or why an approach was abandoned. `scope:proposals` is accepted and now means the default; nothing is un-published any more.
 
-**Reading triage signals in search results:** `maturity` (prefer mature, well-exercised entries), `staleness` (a badge you should **distrust** — treat as "verify before relying"), `score` (a ranking signal, not a raw similarity number), and `has_provisional` (**true = a proposal is already pending on this entry** — check `scope:proposals` before you write a competing enhancement).
+**Reading triage signals in search results:** `maturity` (prefer mature, well-exercised entries), `staleness` (a badge you should **distrust** — treat as "verify before relying"), and `score` (a ranking signal, not a raw similarity number). There is no `has_provisional` any more — nothing is pending, so nothing can be pending on an entry.
 
 ## Connect (once)
 ```
 claude mcp add --transport http ken https://<ken-host>/mcp \
   --header "Authorization: Bearer $KEN_TOKEN" --scope user
 ```
-Your token scopes are `read`, `write-draft`, `propose`. Never `curate` — that exclusion *is* the curation gate.
+Your token scopes are `read`, `write-draft`, `propose`. The `curate` scope no longer exists — it named a gate that is gone.
 
 ## The loop
 `warm up → search first (keep the dedup_check_token) → kb_get the few → act → record outcome → save or enhance what you learned.`
@@ -144,10 +148,10 @@ Call `kb_recent_context` (`since_days`≈14, `kind?`, `limit?`) once for a compa
 
 ### When you're about to debug an error or solve anything non-trivial → search FIRST
 `kb_search` is your default first move, always, before you start solving.
-- **in:** `query` = natural language **+ the exact symptoms/error text you're seeing**; optional `scope`(`curated` default | `proposals` | `history`), `kind`, `category`, `k`(≤25), `offset`.
-- **out:** ranked, token-light summaries `{slug, title, summary, kind, category, staleness, maturity, score, has_provisional}` — **no bodies** — plus `has_more`/`next_offset` and a **`dedup_check_token`**. Scan many summaries cheaply, then fetch only the few worth reading.
+- **in:** `query` = natural language **+ the exact symptoms/error text you're seeing**; optional `scope`(default = the live head | `history` | `all`), `kind`, `category`, `k`(≤25), `offset`.
+- **out:** ranked, token-light summaries `{slug, title, summary, kind, category, staleness, maturity, score}` — **no bodies** — plus `has_more`/`next_offset` and a **`dedup_check_token`**. Scan many summaries cheaply, then fetch only the few worth reading.
 - **Keep the `dedup_check_token`.** `kb_save` structurally requires it (search-before-save is enforced), and it must be **fresh** — re-run `kb_search` if substantial work has happened since you got it.
-- If a hit shows `has_provisional`, or you want to build on uncurated work, re-search `scope:proposals` before writing anything new.
+- Every write is live, so a search shows you the current state of the KB. If an entry is wrong, revise it — do not write a competing one beside it.
 
 ### When a summary looks relevant → fetch it
 `kb_get` `slugs[]` (≤10), `response_format` — **default to `concise`** to save tokens; use `detailed` only when you genuinely need provenance or a `based_on_rev`. `kb_get` bumps `use_count` (the signal that an entry is earning its keep).
@@ -172,12 +176,12 @@ Ken returns a save-vs-enhance rubric alongside your search hits. Follow it:
 Rule of thumb: *same problem, better answer* → enhance (new revision, same slug). *Different problem that merely shares vocabulary* → new entry plus a link. (Don't equate the visible `score` with this cosine — prefer Ken's returned guidance, and use these thresholds when you must judge yourself.)
 
 ### Save new (write-draft)
-`kb_save` creates a NEW entry as **proposed rev 1**. It needs a **fresh `dedup_check_token`** from a recent search (no search, no save), and it will **not** appear in curated search until a human promotes it. Fields:
+`kb_save` creates a NEW entry as **live rev 1**. It needs a **fresh `dedup_check_token`** from a recent search (no search, no save), and it is searchable the moment it returns. Fields:
 `slug?`, `kind`(`user`|`feedback`|`project`|`reference`), `title`, `summary`, `category?`, `problem`, `solution`, `rationale`, `caveats`, `code[{lang,caption,snippet}]`, `tags[]`, `triggers[]` (the symptoms/error text a future agent would type), `applies_to[]` (versions/contexts it holds for), `verified_against[{tool,version,date}]`, `confidence`(0..1), `links[{to_slug,link_type}]`.
 Invest in `triggers` and `applies_to` — that is how the next agent finds this. Record `verified_against{tool,version,date}` to substantiate your `applies_to`; that provenance is what makes a later `kb_flag_stale` meaningful when the tool/version moves. Give an honest `confidence`.
 
 ### Enhance existing (propose)
-`kb_propose_enhancement` APPENDS an immutable new revision to an existing entry; it never moves the curated head (a human promotes later).
+`kb_propose_enhancement` APPENDS an immutable new revision to an existing entry **and makes it the live head**; the version it replaces is kept and restorable.
 - **in:** `slug`, `based_on_rev?` (0 = current head), `change_note` (**required** — your commit message: WHAT changed + WHY), `confidence?`, `patch{...}` (any field you omit inherits from `based_on_rev`).
 - If it returns a `warning` that you based on an old rev, rebase onto the head and re-propose.
 
@@ -199,7 +203,7 @@ Durable, reusable, curated-worthy knowledge: solved problems, pitfalls/gotchas, 
 ## Recommended for a capable agent: the hybrid
 
 **If you're wiring a strong agentic model — Claude included — use this one.** Ken's contract is
-*counterintuitive* (you are the sole author, you never curate, search is structurally gated), and a
+*counterintuitive* (you are the sole author, your writes go live unreviewed, search is structurally gated), and a
 capable model is precisely the one most likely to "helpfully" route *around* a rule whose reason it can't
 see. So this block leads with the three load-bearing ideas (the *why*), then hands over the **same terse
 mechanics as §3**. It is only a few lines longer than the standard block and buys correct judgment in the
@@ -215,10 +219,10 @@ standing-instruction context (read once per turn, prompt-cached), not per-tool-c
 ## Why this works the way it does (internalize once)
 Three load-bearing ideas; get these and the rules below follow:
 1. **You are the sole author; the human is only a curator.** Every entry in Ken was written by an agent like you — the human browses, searches, and **promotes**, but never writes. Don't defer authoring to them.
-2. **Enhancements are append-only; the curated head advances ONLY on human promotion.** Your writes never mutate history and never auto-publish: they land as *proposed revisions* — usable this session via `scope:proposals`, curated only once a human promotes.
+2. **Enhancements are append-only, and the head advances on YOUR write.** Your writes never mutate history — the version you replace is kept and restorable — but they do publish immediately. There is no human promotion step; it was deleted in 6.0.0 because it was not performing review, only delay.
 3. **You capture, enhance, flag stale, and record outcomes — you NEVER curate or assert freshness.** That boundary is not friction to route around; it is exactly what keeps the curated layer trustworthy. Respect it precisely.
 
-**Connect once:** `claude mcp add --transport http ken https://<ken-host>/mcp --header "Authorization: Bearer $KEN_TOKEN" --scope user`. Token scopes: `read`, `write-draft`, `propose` — never `curate` (that exclusion *is* the curation gate).
+**Connect once:** `claude mcp add --transport http ken https://<ken-host>/mcp --header "Authorization: Bearer $KEN_TOKEN" --scope user`. Token scopes: `read`, `write-draft`, `propose`.
 
 **Quick loop:** warm up → **search first** (keep the `dedup_check_token`) → `kb_get` the few → act → **record outcome** → save/enhance what you learned.
 
@@ -226,9 +230,9 @@ Three load-bearing ideas; get these and the rules below follow:
 `kb_recent_context` (`since_days`≈14, `kind?`, `limit?`) → briefing of recently-curated entries. Skip if you already have a concrete problem to search.
 
 ### Search FIRST — about to debug an error or solve anything non-trivial
-`kb_search` is your default first move. **in:** `query` = natural language **+ the exact symptoms/error text you see**; optional `scope`(`curated` default | `proposals` | `history`), `kind`, `category`, `k`(≤25), `offset`. **out:** ranked token-light summaries `{slug,title,summary,kind,category,staleness,maturity,score,has_provisional}` (no bodies) + `has_more`/`next_offset` + a **`dedup_check_token`**. Scan many cheaply.
+`kb_search` is your default first move. **in:** `query` = natural language **+ the exact symptoms/error text you see**; optional `scope`(default = the live head | `history` | `all`), `kind`, `category`, `k`(≤25), `offset`. **out:** ranked token-light summaries `{slug,title,summary,kind,category,staleness,maturity,score}` (no bodies) + `has_more`/`next_offset` + a **`dedup_check_token`**. Scan many cheaply.
 - **Keep the `dedup_check_token`** — `kb_save` requires it, and it must be **fresh**: re-search if substantial work has happened since.
-- Read the triage signals: prefer **mature** entries; **distrust a `staleness` badge**; `has_provisional: true` means **a proposal is already pending** on that entry — search `scope:proposals` before you duplicate an in-flight enhancement.
+- Read the triage signals: prefer **mature** entries and **distrust a `staleness` badge** — since 6.0.0 nothing is reviewed before it is served, so a stale badge means a reader reported the entry wrong and nobody has fixed it yet. Fixing it beats routing around it.
 - Your own drafts/proposals never appear in `curated` search. To re-find or build on your in-session (or another agent's) uncurated work, search **`scope:proposals`** — that is what those scopes are for.
 
 ### Fetch — the few that matter
@@ -248,10 +252,10 @@ After acting on any fetched entry, `kb_record_outcome` (`slug`, `outcome`, `note
 Rule of thumb: *same problem, better answer* → enhance (new rev, same slug); *different problem that merely shares vocabulary* → new entry + link. (The visible `score` is a ranking signal, not this cosine — follow Ken's returned guidance.)
 
 ### Save new  (write-draft)
-`kb_save` creates a NEW entry as **proposed rev 1** — needs a fresh `dedup_check_token` (no search, no save); won't show in curated search until a human promotes it. Fields: `slug?`, `kind`(`user`|`feedback`|`project`|`reference`), `title`, `summary`, `category?`, `problem`, `solution`, `rationale`, `caveats`, `code[{lang,caption,snippet}]`, `tags[]`, `triggers[]` (symptoms a future agent would type), `applies_to[]`, `verified_against[{tool,version,date}]`, `confidence`(0..1), `links[{to_slug,link_type}]`. Write `triggers` + `applies_to` well (that is how the next agent finds this); give an honest `confidence`.
+`kb_save` creates a NEW entry as **live rev 1** — needs a fresh `dedup_check_token` (no search, no save); it is searchable the moment it returns. Fields: `slug?`, `kind`(`user`|`feedback`|`project`|`reference`), `title`, `summary`, `category?`, `problem`, `solution`, `rationale`, `caveats`, `code[{lang,caption,snippet}]`, `tags[]`, `triggers[]` (symptoms a future agent would type), `applies_to[]`, `verified_against[{tool,version,date}]`, `confidence`(0..1), `links[{to_slug,link_type}]`. Write `triggers` + `applies_to` well (that is how the next agent finds this); give an honest `confidence`.
 
 ### Enhance existing  (propose)
-`kb_propose_enhancement` APPENDS an immutable new rev; never moves the curated head. **in:** `slug`, `based_on_rev?`(0 = head), `change_note` **required** (WHAT changed + WHY), `confidence?`, `patch{...}` (omitted fields inherit from `based_on_rev`). If it returns a `warning` that you based on an old rev, rebase onto the head and re-propose.
+`kb_propose_enhancement` APPENDS an immutable new rev **and makes it the head**. **in:** `slug`, `based_on_rev?`(0 = head), `change_note` **required** (WHAT changed + WHY), `confidence?`, `patch{...}` (omitted fields inherit from `based_on_rev`). If it returns a `warning` that you based on an old rev, your revision is ALREADY the head — read the entry and re-apply anything of the displaced version's that still matters.
 
 ### Flag stale  (propose)
 `kb_flag_stale` (`slug`, `reason` required, `suspected_applies_to?`) when a dependency moved or a fact changed. The entry stays authoritative but ranks lower with a badge. You can flag, never assert freshness.
@@ -423,14 +427,18 @@ Ken also **detects** each version's language automatically (over the prose only)
 ways — never in retrieval:
 - **Review queue:** `/proposals` shows a **Language** column and flags any proposal outside the
   curation languages, so a stranded entry can't rot unseen.
-- **Promote gate (server-side):** the curator cannot promote a version whose language isn't a
-  curation language — *can't promote what you can't read*. It fails **open**: with the feature off,
-  or a legacy/undetected version, nothing is blocked.
+- **Set-head gate (server-side, 6.0.0):** your human cannot set the head to a version whose
+  language isn't a curation language — *can't choose what you can't read*. It fails **open**: with
+  the feature off, or a legacy/undetected version, nothing is blocked.
+  **Your WRITE is never refused for its language.** It used to be refused at promotion, which was
+  worse: the write succeeded, was stored, and could never be published — stranded forever by the
+  only call that could have published it. Now it goes live like any other write. What your human
+  loses is the ability to notice it is wrong, and after 6.0.0 noticing is the only control left.
 
-For agents, `kb_search` results carry a `language` field. If you find an entry with a pending
-proposal (`has_provisional`) in a language the curator can't read, **propose a re-authored revision
-in a curation language** (`kb_propose_enhancement`) — you are the translation engine; the human
-can't do it, and Ken makes no external calls.
+For agents, `kb_search` results carry a `language` field. If you find an entry in a language your
+human can't read, **revise it into a curation language** (`kb_propose_enhancement`) — you are the
+translation engine; the human can't do it, and Ken makes no external calls. Your revision becomes
+the head immediately, so the entry is readable by them from that moment.
 
 ## Reference
 

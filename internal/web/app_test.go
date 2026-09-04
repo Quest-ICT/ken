@@ -68,50 +68,23 @@ func TestWebLoginBrowsePromote(t *testing.T) {
 		t.Fatalf("login did not land on dashboard: %s", trunc(body))
 	}
 
-	// Proposal queue shows the draft.
-	if pbody := get(t, cli, srv.URL+"/proposals"); !strings.Contains(pbody, sr.Slug) {
-		t.Fatalf("proposals page missing slug %q: %s", sr.Slug, trunc(pbody))
+	// *** THE PROPOSAL QUEUE, THE PROMOTE VERB AND THE REJECT VERB ARE ALL GONE (6.0.0). ***
+	// What used to be asserted here — that a saved entry appears on /proposals awaiting a click —
+	// is now the defect. The write is already live, and the same information appears AFTER the
+	// fact on /activity, which asks for nothing.
+	if abody := get(t, cli, srv.URL+"/activity"); !strings.Contains(abody, sr.Slug) {
+		t.Fatalf("activity feed missing the entry that was just written %q: %s", sr.Slug, trunc(abody))
 	}
-
-	vid := strconv.FormatInt(sr.VersionID, 10)
-
-	// Promote with a bad CSRF token -> 403 (before touching the store).
-	resp := rawPostForm(t, cli, srv.URL+"/proposals/"+vid+"/promote", url.Values{"csrf": {"wrong"}, "slug": {sr.Slug}})
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("bad CSRF should be 403, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-
-	// Promote with the real CSRF token from the entry page (the review page was
-	// folded into it — the promote/reject forms now live on /entry/{slug}).
-	csrf := extract(t, cli, srv.URL+"/entry/"+sr.Slug, `name="csrf" value="([^"]+)"`)
-	postForm(t, cli, srv.URL+"/proposals/"+vid+"/promote", url.Values{"csrf": {csrf}, "slug": {sr.Slug}})
-
-	e, err := st.GetEntry(ctx, sr.Slug)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if e.Lifecycle != "active" || e.CuratedRev != 1 {
-		t.Fatalf("promote via web did not take effect: %+v", e)
-	}
-
-	// Forced-logout protection (review #7): a forged POST /logout without the CSRF
-	// token is a 403 and must NOT clear the session.
-	if r := rawPostForm(t, cli, srv.URL+"/logout", url.Values{"csrf": {"wrong"}}); r.StatusCode != http.StatusForbidden {
-		r.Body.Close()
-		t.Fatalf("bad-CSRF logout should be 403, got %d", r.StatusCode)
-	} else {
-		r.Body.Close()
-	}
-	if b := get(t, cli, srv.URL+"/"); !strings.Contains(b, "Recent activity") {
-		t.Fatal("session must survive a forged logout")
+	// And the queue is really gone, not merely unlinked — a route that still answered would be a
+	// promote button quietly no-oping.
+	if resp, err := cli.Get(srv.URL + "/proposals"); err == nil {
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("/proposals still answers with HTTP %d", resp.StatusCode)
+		}
 	}
 }
 
-// TestWebTokenReveal exercises the one-time-secret reveal on /tokens: it must show
-// the freshly issued secret, a copy-paste registration command carrying the request's
-// real host (not a placeholder), both per-field copy buttons, and the static copy
-// script must be served same-origin as JavaScript.
 func TestWebTokenReveal(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -250,22 +223,20 @@ func TestWebRevertAndDowngrade(t *testing.T) {
 	ctx := context.Background()
 	sp := func(s string) *string { return &s }
 	hash, _ := passwd.Hash("supersecret", passwd.Standard)
-	admin, err := st.CreateHumanUser(ctx, "admin", hash)
-	if err != nil {
+	if _, err := st.CreateHumanUser(ctx, "admin", hash); err != nil {
 		t.Fatal(err)
 	}
 
-	// Entry A: rev1 curated, then rev2 curated (so rev1 is superseded → revertable).
+	// Entry A: rev1 is the head on arrival, then rev2 displaces it — so rev1 is superseded and
+	// can be set back as the head. No promote step: 6.0.0 made the write the head.
 	a1, _ := st.Save(ctx, store.SaveInput{Kind: "reference", Content: store.Content{Title: "A", Summary: "s", Solution: "S1"}, AuthorKind: "ai"})
-	must(t, st.Promote(ctx, store.PromoteInput{Slug: a1.Slug, VersionID: a1.VersionID, ActorID: admin, ActorKind: "human", Note: "p"}))
-	a2, _ := st.ProposeEnhancement(ctx, store.ProposeInput{Slug: a1.Slug, ChangeNote: "S2", AuthorKind: "ai", Patch: store.Patch{Solution: sp("S2")}})
-	must(t, st.Promote(ctx, store.PromoteInput{Slug: a1.Slug, VersionID: a2.VersionID, ActorID: admin, ActorKind: "human", Note: "p"}))
+	st.ProposeEnhancement(ctx, store.ProposeInput{Slug: a1.Slug, ChangeNote: "S2", AuthorKind: "ai", Patch: store.Patch{Solution: sp("S2")}})
 
-	// Entry B: rev1..rev3 proposed; promote the tip → provisional becomes rev2 (older than head).
+	// Entry B: three writes, each displacing the last, so the head is rev3 and rev1/rev2 are
+	// superseded behind it.
 	b1, _ := st.Save(ctx, store.SaveInput{Kind: "reference", Content: store.Content{Title: "B", Summary: "s", Solution: "S1"}, AuthorKind: "ai"})
 	st.ProposeEnhancement(ctx, store.ProposeInput{Slug: b1.Slug, ChangeNote: "S2", AuthorKind: "ai", Patch: store.Patch{Solution: sp("S2")}})
-	b3, _ := st.ProposeEnhancement(ctx, store.ProposeInput{Slug: b1.Slug, ChangeNote: "S3", AuthorKind: "ai", Patch: store.Patch{Solution: sp("S3")}})
-	must(t, st.Promote(ctx, store.PromoteInput{Slug: b1.Slug, VersionID: b3.VersionID, ActorID: admin, ActorKind: "human", Note: "p"}))
+	st.ProposeEnhancement(ctx, store.ProposeInput{Slug: b1.Slug, ChangeNote: "S3", AuthorKind: "ai", Patch: store.Patch{Solution: sp("S3")}})
 
 	srv := httptest.NewServer(Handler(Deps{Store: st}))
 	defer srv.Close()
@@ -276,17 +247,20 @@ func TestWebRevertAndDowngrade(t *testing.T) {
 
 	// A's superseded rev1 shows a "Revert to this" form; the downgrade confirm...
 	bodyA := get(t, cli, srv.URL+"/entry/"+a1.Slug)
-	if !strings.Contains(bodyA, `action="/entry/`+a1.Slug+`/revert/`) || !strings.Contains(bodyA, "Revert to this") {
+	if !strings.Contains(bodyA, `action="/entry/`+a1.Slug+`/head/`) || !strings.Contains(bodyA, "Revert to this") {
 		t.Fatalf("entry A missing revert form for the superseded rev:\n%s", trunc(bodyA))
 	}
-	// B's promote button warns because the pending rev (2) is older than the head (3).
+	// The promote button and its downgrade warning are gone with the gate. The DOWNGRADE WARNING
+	// ITSELF survives, on set-head, where it now matters more: putting an older version back in
+	// front is the human's undo, and doing it by accident is the one way this console can lose
+	// current knowledge.
 	bodyB := get(t, cli, srv.URL+"/entry/"+b1.Slug)
-	if !strings.Contains(bodyB, `data-confirm="This promotes rev 2, which is OLDER`) {
-		t.Fatalf("entry B promote button missing the downgrade confirm:\n%s", trunc(bodyB))
+	if !strings.Contains(bodyB, "is OLDER content") {
+		t.Fatalf("entry B set-head form missing the downgrade confirm:\n%s", trunc(bodyB))
 	}
 
 	// Bad-CSRF revert is refused.
-	revert := srv.URL + "/entry/" + a1.Slug + "/revert/" + strconv.FormatInt(a1.VersionID, 10)
+	revert := srv.URL + "/entry/" + a1.Slug + "/head/" + strconv.FormatInt(a1.VersionID, 10)
 	if r := rawPostForm(t, cli, revert, url.Values{"csrf": {"wrong"}}); r.StatusCode != http.StatusForbidden {
 		r.Body.Close()
 		t.Fatalf("bad-CSRF revert should be 403, got %d", r.StatusCode)
@@ -324,67 +298,6 @@ func TestSanitizeHost(t *testing.T) {
 // TestWebEntryReviewPanel checks the consolidated review UI: the entry page shows
 // a pending ENHANCEMENT proposal (curated head above, proposed content in the
 // panel, promote/reject forms), and the queue no longer has a separate Review link.
-func TestWebEntryReviewPanel(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	if err := st.Migrate(); err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	hash, _ := passwd.Hash("supersecret", passwd.Standard)
-	admin, err := st.CreateHumanUser(ctx, "admin", hash)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// A curated entry: save a draft, then promote it.
-	sr, err := st.Save(ctx, store.SaveInput{Kind: "reference", Content: store.Content{Title: "Widget", Summary: "s", Solution: "original solution"}, AuthorKind: "ai"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Promote(ctx, store.PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorID: admin, ActorKind: "human", Note: "promote"}); err != nil {
-		t.Fatal(err)
-	}
-	// Then a pending enhancement (rev 2, proposed) that revises the solution.
-	newSol := "revised solution XYZZY"
-	if _, err := st.ProposeEnhancement(ctx, store.ProposeInput{Slug: sr.Slug, ChangeNote: "improve it", AuthorKind: "ai", Patch: store.Patch{Solution: &newSol}}); err != nil {
-		t.Fatal(err)
-	}
-
-	srv := httptest.NewServer(Handler(Deps{Store: st}))
-	defer srv.Close()
-	jar, _ := cookiejar.New(nil)
-	cli := &http.Client{Jar: jar}
-	lcsrf := extract(t, cli, srv.URL+"/login", `name="lcsrf" value="([^"]+)"`)
-	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
-
-	body := get(t, cli, srv.URL+"/entry/"+sr.Slug)
-	for _, want := range []string{
-		`id="review"`,                  // the review panel section
-		"rev 2 · proposed",             // proposal identity in the review header
-		"Curated rev 1 is shown above", // the enhancement (HasCurated) branch
-		"original solution",            // curated head still shown above the panel
-		newSol,                         // proposed content shown inside the panel
-		`action="/proposals/`,          // promote/reject act on the proposal here
-		"Promote to curated",
-	} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("entry review panel missing %q: %s", want, trunc(body))
-		}
-	}
-
-	// The queue lost its separate Review column / link.
-	q := get(t, cli, srv.URL+"/proposals")
-	if strings.Contains(q, "Review →") || strings.Contains(q, `"/proposals/`) {
-		t.Fatalf("proposals queue still links to a separate review page: %s", trunc(q))
-	}
-}
-
-// --- helpers ---
-
 func get(t *testing.T, cli *http.Client, u string) string {
 	t.Helper()
 	resp, err := cli.Get(u)
@@ -430,10 +343,58 @@ func trunc(s string) string {
 	return s
 }
 
-// The Proposals page auto-refresh: /proposals/count must require auth, return the
-// live pending count as JSON, and the page must carry the marker the poller keys
-// on. Without these the curator's open Proposals tab would never notice new work.
-func TestProposalsCountEndpoint(t *testing.T) {
+// The review panel is DELETED (6.0.0). What the entry page must carry instead is the human's two
+// remaining powers: set the head back to any earlier version, and retire the entry. This test
+// exists because both are one form each — easy to drop in a template edit, and invisible when
+// missing until the day somebody needs to take back a bad write.
+func TestWebEntryOffersRetireAndSetHead(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hash, _ := passwd.Hash("supersecret", passwd.Standard)
+	if _, err := st.CreateHumanUser(ctx, "admin", hash); err != nil {
+		t.Fatal(err)
+	}
+	sp := func(v string) *string { return &v }
+	sr, _ := st.Save(ctx, store.SaveInput{Kind: "reference",
+		Content: store.Content{Title: "R", Summary: "s", Solution: "S1"}, AuthorKind: "ai"})
+	if _, err := st.ProposeEnhancement(ctx, store.ProposeInput{Slug: sr.Slug, ChangeNote: "better",
+		AuthorKind: "ai", Patch: store.Patch{Solution: sp("S2")}}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(Handler(Deps{Store: st}))
+	defer srv.Close()
+	jar, _ := cookiejar.New(nil)
+	cli := &http.Client{Jar: jar}
+	lcsrf := extract(t, cli, srv.URL+"/login", `name="lcsrf" value="([^"]+)"`)
+	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
+
+	body := get(t, cli, srv.URL+"/entry/"+sr.Slug)
+	for _, want := range []string{
+		`action="/entry/` + sr.Slug + `/head/`,
+		`action="/entry/` + sr.Slug + `/archive"`,
+		`name="reason"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("entry page missing %q — the human lost a power the gate's removal was "+
+				"supposed to give him:\n%s", want, trunc(body))
+		}
+	}
+	for _, gone := range []string{`id="review"`, "Promote to curated", `action="/proposals/`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("the entry page still carries gate UI %q", gone)
+		}
+	}
+}
+
+func TestActivityCountEndpoint(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -453,7 +414,7 @@ func TestProposalsCountEndpoint(t *testing.T) {
 
 	// Unauthenticated: bounced to login, never the count.
 	noAuth := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := noAuth.Get(srv.URL + "/proposals/count")
+	resp, err := noAuth.Get(srv.URL + "/activity/count")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,15 +429,15 @@ func TestProposalsCountEndpoint(t *testing.T) {
 	postForm(t, cli, srv.URL+"/login", url.Values{"name": {"admin"}, "password": {"supersecret"}, "lcsrf": {lcsrf}})
 
 	// Zero pending, and the page marker agrees.
-	if got := get(t, cli, srv.URL+"/proposals/count"); strings.TrimSpace(got) != `{"count":0}` {
+	if got := get(t, cli, srv.URL+"/activity/count"); strings.TrimSpace(got) != `{"count":0}` {
 		t.Fatalf("count with no proposals = %q, want {\"count\":0}", got)
 	}
-	page := get(t, cli, srv.URL+"/proposals")
+	page := get(t, cli, srv.URL+"/activity")
 	if !strings.Contains(page, `data-live-refresh="0"`) {
-		t.Fatalf("proposals page missing the live marker: %s", trunc(page))
+		t.Fatalf("activity page missing the live marker: %s", trunc(page))
 	}
 	if !strings.Contains(page, `data-live-checked`) {
-		t.Fatalf("proposals page missing the last-checked stamp: %s", trunc(page))
+		t.Fatalf("activity page missing the last-checked stamp: %s", trunc(page))
 	}
 
 	// One pending proposal moves the count, which is what the poller detects.
@@ -485,10 +446,10 @@ func TestProposalsCountEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = sr
-	if got := get(t, cli, srv.URL+"/proposals/count"); strings.TrimSpace(got) != `{"count":1}` {
+	if got := get(t, cli, srv.URL+"/activity/count"); strings.TrimSpace(got) != `{"count":1}` {
 		t.Fatalf("count after one save = %q, want {\"count\":1}", got)
 	}
-	if page := get(t, cli, srv.URL+"/proposals"); !strings.Contains(page, `data-live-refresh="1"`) {
+	if page := get(t, cli, srv.URL+"/activity"); !strings.Contains(page, `data-live-refresh="1"`) {
 		t.Fatalf("proposals page marker did not update: %s", trunc(page))
 	}
 }

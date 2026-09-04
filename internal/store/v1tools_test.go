@@ -14,15 +14,8 @@ func TestV1Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatal(err)
-	}
 	newSol := "new solution"
-	p2, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "c", Patch: Patch{Solution: &newSol}, AuthorKind: "ai"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: p2.VersionID, ActorKind: "human"}); err != nil {
+	if _, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "c", Patch: Patch{Solution: &newSol}, AuthorKind: "ai"}); err != nil {
 		t.Fatal(err)
 	}
 

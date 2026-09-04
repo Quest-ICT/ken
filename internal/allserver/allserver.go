@@ -80,7 +80,7 @@ Then, IN YOUR FIRST MESSAGE, tell your human in words what station_me says is wa
 
 EACH TOOL'S LIST ENTRY IS ONE SENTENCE; its real rules are in ken_instructions{tool:"<name>"}. CALL THAT BEFORE YOU FIRST USE A TOOL HERE. This block and every description froze when the conversation began and never refresh — a tool result is computed now, so it is the only guidance that is never stale and never cut. With no argument it lists every tool you can ask about.
 
-SEARCH KEN BEFORE DEBUGGING ANYTHING NON-TRIVIAL (kb_search), record an outcome after you act on an entry (kb_record_outcome), and save durable lessons back (kb_save). Your writes are PROPOSALS; a human promotes them. You never curate.`
+SEARCH KEN BEFORE DEBUGGING ANYTHING NON-TRIVIAL (kb_search), record an outcome after you act (kb_record_outcome), and save lessons back (kb_save). YOUR WRITES GO LIVE AT ONCE — fix a wrong entry yourself (kb_propose_enhancement). Outcomes are the quality signal.`
 
 // Deps carries the three surfaces' dependency sets. Each is built exactly as it is for that
 // surface's own endpoint — this package adapts nothing, so the unified endpoint cannot drift from

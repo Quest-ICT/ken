@@ -6,22 +6,23 @@ import (
 	"testing"
 )
 
-func TestPromoteDoubleIsRejected(t *testing.T) {
+// Was TestPromoteDoubleIsRejected. There is no promotion to repeat in 6.0.0; the guard that
+// survives is SetHead's, and it is the one that matters now — the human's undo must refuse to
+// "revert" to the version that is already serving, or the reflog fills with events that changed
+// nothing and a real revert becomes impossible to find among them.
+func TestSetHeadRefusesTheVersionAlreadyServing(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	sr, err := st.Save(ctx, SaveInput{Kind: "reference", Content: Content{Title: "T", Summary: "s"}, AuthorKind: "ai"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatal(err)
+	// Save landed this version AS the head. Asking to set the head to it must be refused.
+	if err := st.SetHead(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
+		t.Fatalf("setting the head to the version already serving should be ErrBadVersion, got %v", err)
 	}
-	// The same (now curated) version can't be promoted again — the state check rejects it.
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
-		t.Fatalf("double promote should be ErrBadVersion, got %v", err)
-	}
-	if e, _ := st.GetEntry(ctx, sr.Slug); e.CuratedRev != 1 {
-		t.Fatalf("curated_rev should stay 1 after a rejected re-promote, got %d", e.CuratedRev)
+	if e, _ := st.GetEntry(ctx, sr.Slug); e.Head == nil || e.Head.RevNo != 1 {
+		t.Fatal("the head moved on a refused SetHead")
 	}
 }
 

@@ -154,9 +154,34 @@ For **ken.db** there is no such exit, which is why the snapshot above is not opt
 | From | To | Script | What it does |
 |---|---|---|---|
 | comm 21 (4.x) | comm 22 (5.0.0) | `upgrade/comm-4.x-to-5.0.0.sql` | drops the channel table and its columns, rebuilds the file-offer idempotency index on `scope_id`, drops the mailbox secret and binding columns |
+| ken 26 (5.x) | ken 27 (6.0.0) | `upgrade/ken-5.x-to-6.0.0.sql` | **adopts every pending proposal as its entry's live head**, widens the `curation_event` type list by four, adds the one-head-per-entry index |
 
-**ken.db does not change in 5.0.0.** A 4.x `ken.db` is already at version 26, which is what 5.0.0
-requires, so there is nothing to run and Ken starts against it untouched.
+**ken.db does not change between 4.x and 5.2.0.** A 4.x `ken.db` is already at version 26, which is
+what 5.x requires, so there is nothing to run and Ken starts against it untouched. Coming from
+anywhere below 6.0.0 you run the ken script; coming from 4.x you run both.
+
+### ⚠️ The 6.0.0 ken script makes a decision on your behalf — read the list first
+
+6.0.0 deletes the curation gate. Anything still sitting in `/proposals` becomes **live** when you
+run the script, because after the upgrade there is no page left to promote it from. **Open
+`/proposals` and read it before you stop the service.** Step 0 of the script prints exactly what
+will change, and step 0b prints every entry that will be RETIRED because every version it ever had
+was rejected.
+
+**Versions you rejected are never adopted.** The gate is going; that decision is not.
+
+### ⚠️ The ken script needs an SQLite built with FTS5
+
+`entry_version` carries FTS5 sync triggers, so a client without the extension fails part-way with:
+
+```
+SQL logic error: error in trigger entry_version_ad_fts: no such module: fts5
+```
+
+The error names a trigger rather than the missing module's real consequence, which makes it easy to
+misread as database damage. It is not — the script runs in one transaction and rolls back cleanly.
+**Use the python3 fallback below**: its bundled SQLite has FTS5 (verified). The comm script does not
+need it, because `comm.db` has no full-text index.
 
 ## For the curious: what guarantees these agree
 

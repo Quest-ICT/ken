@@ -73,7 +73,80 @@ provider SPI; `sqlite-vec` table empty ⇒ FTS-only with **no query-path change*
   int8 ONNX (bge-small at 2 GB, EmbeddingGemma-308M at 4 GB), then a background re-embed job. Ranking uses
   RRF over **rank position only** — never compare raw BM25 vs L2 distance.
 
-### D4 — Versioning & curation: "objects immutable, refs move"
+### D4 — Versioning: "objects immutable, refs move" *(the CURATION half is REVERSED in 6.0.0)*
+
+An **entry** is a stable identity carrying ONE moving pointer: `curated_version_id`, the live head.
+Every write — a `kb_save` or a `kb_propose_enhancement` — is an **append** of a new immutable
+`entry_version`, and it **advances the head in the same transaction that stores it**.
+
+> **🔴 THE CURATION GATE IS DELETED, AND THE REVERSAL IS RECORDED HERE RATHER THAN EDITED OVER.**
+>
+> The original D4 read: *"the curated base advances **only** when the human moves the head
+> (promotes). **The AI can never self-promote — that exclusion IS the curation gate.**"* It also
+> specified a second pointer, `provisional_version_id`, and a per-entry **trust policy**
+> (`curated_only` / `high_confidence` / `all_proposals`) governing whether an un-curated proposal
+> was served at all.
+>
+> **What the owner measured, after using Ken since v1:** he did not curate. He opened the entry,
+> frequently read only the title, and approved. That is not review — it is a queue being
+> acknowledged. What the gate actually bought was DELAY, in the one direction that hurts: a lesson
+> found in one session was invisible to the next until somebody clicked.
+>
+> **The project had already written this down and not acted on it.** `docs/STATIONS.md:456-457`:
+> *"a human who reflexively approves has converted the gate into a rubber stamp. No server-side
+> design fixes that, and this document will not pretend otherwise."*
+>
+> **Two things were found to be untrue of the shipped code while removing it, and both are worse
+> than the feature being unloved:**
+> - **`trust_policy` was never implemented.** The column exists and has **zero Go references** —
+>   no reader, no writer, no default, no test. Every sentence above about it described machinery
+>   that never ran. (Already sitting in PARKING-LOT as #140/#152.)
+> - **The gate gated DISCOVERY, never ACCESS.** `kb_get` has always fallen back to the provisional
+>   body, so an un-promoted entry was served in full to anyone who knew its slug, while
+>   `kb_search` returned nothing. D4's stated default — *"existence signaled, body withheld"* — was
+>   wrong in **both** directions.
+> - And the queue showed the entry's **curated** title beside a **proposed** version's content. The
+>   title a rubber-stamping human glanced at was not the title he approved.
+>
+> **Why it could not be repaired instead of removed.** Reaching one station has needed no human
+> since 4.0.0; the directory filter and room-as-permission went for the same reason. There is one
+> human, one Claude account, and no other tenant to protect against (IDENTITY.md §4). A gate whose
+> only operator is the sole owner of everything behind it is a gate against himself.
+
+**What survives, and it now carries more load, not less:**
+
+- **Append-only versions are untouched.** Every version is immutable (enforced by the
+  `entry_version_immutable` trigger, which freezes content and deliberately leaves `state` and
+  `superseded_by_version_id` free so the head can move). With writes going live, **history is the
+  entire recovery mechanism** — it was a nicety under the gate and is load-bearing without it.
+- **Superseded / rejected versions stay first-class and retained**, not tombstones. Nothing new can
+  produce a `rejected` row, and the state stays legal because existing rows are true statements
+  about decisions a human really made.
+- **The `curation_event` reflog keeps its name and gains rows** — one per write, revision, revert
+  and retirement. It is what the `/activity` console feed reads, and it had nine writers and zero
+  readers before 6.0.0.
+- **Staleness is still orthogonal to lifecycle**, and `kb_record_outcome` is now the primary
+  quality signal: nothing is reviewed before it goes live, so an entry's standing rests on what
+  readers report about it. A `was-wrong` blocks the top maturity tier until the content is
+  rewritten — re-anchored in 6.0.0 on the head version's own timestamp, because the event it used
+  to anchor on (`promoted`) no longer occurs.
+
+**What replaced the gate, all of it BELOW the write rather than in front of it:**
+
+- **`/activity`** — what the KB has done, newest first. It reports; it asks for nothing, and it has
+  no badge, because activity is not a debt.
+- **Set head** — point an entry at any earlier version, one click. The human's undo, and the only
+  way to take back an agent's write.
+- **Retire / restore** (`kb_retract`, and the console) — an entry stops being findable, keeps every
+  version, still answers `kb_get` saying it was retired and why, and comes back in one click.
+  **Before 6.0.0 nobody could do this at all**: `lifecycle` carried `archived` with no writer
+  anywhere and there is no `DELETE` in the tree. Removing the queue without adding this would have
+  traded a delay barrier for a permanent inability to withdraw anything.
+
+<details>
+<summary>The original D4, verbatim, as it stood until 6.0.0</summary>
+
+#### D4 (superseded)
 An **entry** is a stable identity carrying two moving pointers: `curated_version_id` (authoritative head)
 and `provisional_version_id` (best usable proposal). Every enhancement is an **append** — a new immutable
 `entry_version(state='proposed')` — that moves **no** authoritative pointer.
@@ -90,6 +163,8 @@ and `provisional_version_id` (best usable proposal). Every enhancement is an **a
 - **Staleness is orthogonal to lifecycle:** each version carries `applies_to` (e.g. `["spring-boot 4.0.x"]`),
   `verified_at`, `verify_ttl_days`. Time / explicit flag / recorded dependency-bump can age an entry to
   `stale` — still authoritative, ranks lower, carries a "verify before relying" badge.
+
+</details>
 
 ### D5 — Storage: SQLite is the single source of truth; **no** git/Markdown mirror  *(chosen: SQLite-only)*
 - **Why:** the whole point of the mirror would have been durability and browsability, and neither needs it.

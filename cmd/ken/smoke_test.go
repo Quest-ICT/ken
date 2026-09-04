@@ -15,8 +15,9 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
+	"github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
+	"github.com/ncruces/go-sqlite3/ext/fts5"
 )
 
 // *** THE SUITE COULD NOT SEE THE WIRING, AND THAT IS WHY THE SAME CLASS KEPT SHIPPING. ***
@@ -860,7 +861,7 @@ func TestTheBootSaysWhatItDidToTheSchema(t *testing.T) {
 
 	second := runFor(t, bin, data, 30*time.Second)
 	for _, want := range []string{
-		"schema: ken.db at version 26, as required", "schema: comm.db at version 22, as required",
+		"schema: ken.db at version 27, as required", "schema: comm.db at version 22, as required",
 		"foreign_key_check clean",
 	} {
 		if !strings.Contains(second, want) {
@@ -931,6 +932,10 @@ func TestAPreviousReleasesDatabaseIsRefusedThenUpgradedByTheScript(t *testing.T)
 	if _, err := os.Stat(commDB); err != nil {
 		t.Fatalf("%s did not create comm.db at %s, so this test would prove nothing: %v", prev, commDB, err)
 	}
+	kenDB := filepath.Join(data, "ken.db")
+	if _, err := os.Stat(kenDB); err != nil {
+		t.Fatalf("%s did not create ken.db at %s: %v", prev, kenDB, err)
+	}
 
 	// *** AND IT MUST CONTAIN THE ROWS THE MIGRATION ACTUALLY MOVES. ***
 	//
@@ -968,6 +973,11 @@ func TestAPreviousReleasesDatabaseIsRefusedThenUpgradedByTheScript(t *testing.T)
 	// database from outside the process. If this stops working, so does the only supported path
 	// from 4.x — and it would fail here rather than on somebody's deployment.
 	applySQLFile(t, commDB, filepath.Join(repo, "upgrade", "comm-4.x-to-5.0.0.sql"))
+	// AND THE ken.db SCRIPT. 6.0.0 moves the durable schema 26 -> 27 as well, so an operator
+	// coming from 4.x or 5.x runs both. Applying only one leaves Ken refusing on the other, which
+	// is the refusal working — but this test exists to prove the DOCUMENTED path arrives, and the
+	// documented path is both files.
+	applySQLFile(t, kenDB, filepath.Join(repo, "upgrade", "ken-5.x-to-6.0.0.sql"))
 
 	log := bootAndCapture(t, kenBinary(t), data, 30*time.Second)
 	if !strings.Contains(log, "COMM:") {
@@ -1109,7 +1119,15 @@ func applySQLFile(t *testing.T, dbPath, sqlPath string) {
 	if err != nil {
 		t.Fatalf("read %s: %v", sqlPath, err)
 	}
-	db, err := sql.Open("sqlite3", "file:"+dbPath)
+	// *** REGISTERS fts5, BECAUSE ken.db's UPGRADE CANNOT RUN WITHOUT IT. ***
+	//
+	// entry_version carries FTS5 sync triggers, so any statement that touches it fails with
+	// "no such module: fts5" on a connection that has not loaded the extension — which is what
+	// this helper used to open. That is not merely a test detail: an operator whose sqlite3 was
+	// built without FTS5 hits exactly this, and the failure names a trigger rather than the
+	// missing module's real consequence. docs/UPGRADING-THE-DATABASE.md now says so and gives the
+	// python3 fallback, whose bundled SQLite has FTS5 (verified while writing this script).
+	db, err := driver.Open("file:"+dbPath, fts5.Register)
 	if err != nil {
 		t.Fatalf("open %s: %v", dbPath, err)
 	}

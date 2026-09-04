@@ -147,3 +147,78 @@ LIMIT ?`, fmt.Sprintf("-%d days", sinceDays), kind, kind, limit)
 	}
 	return out, rows.Err()
 }
+
+// ActivityRow is one thing that happened to the knowledge base.
+//
+// *** THIS IS THE OVERSIGHT SURFACE THAT REPLACED THE CURATION QUEUE IN 6.0.0. ***
+//
+// The queue answered "what needs your approval" and blocked writes until it was answered. This
+// answers "what happened", blocks nothing, and — unlike the queue — is honest about who did it:
+// ListProposals showed the entry's CURATED title beside a PROPOSED version's content, so the line
+// a human read was never the line he approved. Every column here comes from the event and the
+// version it names.
+type ActivityRow struct {
+	EntryID   int64
+	Slug      string
+	Title     string // the title of the version this event is ABOUT, not the entry's current one
+	EventType string
+	FromState string
+	ToState   string
+	RevNo     int
+	ActorKind string
+	SessionID string
+	Note      string
+	ViaComm   bool // knowledge that arrived as hearsay from another station
+	CreatedAt string
+}
+
+// ListActivity returns curation_event rows in a window, newest first.
+//
+// DELIBERATELY NOT GROUPED BY ENTRY. kb_recent_context collapses with GROUP BY e.id, which is
+// right for "what has this session been near" and wrong here: a feed that hides the second write
+// of the day under the first cannot perform oversight, and the second write is the one that
+// changed what everybody now reads.
+//
+// curation_event.note had nine writers and zero readers before this. That is what an audit trail
+// nobody can see looks like from the inside.
+func (s *Store) ListActivity(ctx context.Context, sinceDays, limit, offset int) ([]ActivityRow, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.R.QueryContext(ctx, `
+SELECT ce.entry_id, e.slug,
+       COALESCE(ev.title, e.title), ce.event_type,
+       COALESCE(ce.from_state,''), COALESCE(ce.to_state,''),
+       COALESCE(ev.rev_no,0), COALESCE(ce.actor_kind,''), COALESCE(ce.session_id,''),
+       COALESCE(ce.note,''), COALESCE(ev.via_comm,0), ce.created_at
+  FROM curation_event ce
+  JOIN entry e          ON e.id  = ce.entry_id
+  LEFT JOIN entry_version ev ON ev.id = ce.version_id
+ WHERE ce.created_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now', ?)
+ ORDER BY ce.created_at DESC, ce.id DESC
+ LIMIT ? OFFSET ?`, fmt.Sprintf("-%d days", sinceDays), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ActivityRow
+	for rows.Next() {
+		var a ActivityRow
+		var via int
+		if err := rows.Scan(&a.EntryID, &a.Slug, &a.Title, &a.EventType, &a.FromState, &a.ToState,
+			&a.RevNo, &a.ActorKind, &a.SessionID, &a.Note, &via, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		a.ViaComm = via == 1
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// CountActivitySince counts events at or after an ISO instant, for the console's change detector.
+func (s *Store) CountActivitySince(ctx context.Context, iso string) (int, error) {
+	var n int
+	err := s.R.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM curation_event WHERE created_at >= ?`, iso).Scan(&n)
+	return n, err
+}

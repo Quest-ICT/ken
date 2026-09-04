@@ -15,16 +15,14 @@
     <span class="stat__num">{{.Data.Entries}}</span>
     <span class="stat__sub">{{.T "dashboard.stat_entries_sub"}}</span>
   </div>
-  <div class="stat stat--attention">
-    <span class="stat__label">
-      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="14" height="14"><path d="M12 3.5 21 19H3L12 3.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 10v4M12 16.5v.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-      {{.T "dashboard.stat_pending"}}
-    </span>
-    <a class="stat__num" href="/proposals">{{.PropCount}}</a>
-    <span class="stat__sub">{{.T "dashboard.stat_pending_sub"}}</span>
-  </div>
-  <!-- The station pile, beside the proposal pile. Both are queues the human owns and
-       neither announces itself; this one had no surface outside /stations at all.
+  <!-- THE PENDING-PROPOSALS STAT IS DELETED WITH THE QUEUE (6.0.0). It was a stat--attention
+       tile pointing at work the human owed the machine, and the work was clicking approve on
+       entries he had already decided to keep. There is no replacement tile: activity is not a
+       debt, and a number nobody owes anything against is decoration that can only mislead. The
+       feed is one click away in the nav, and it is meant to be glanced at, not answered. -->
+  <!-- The station pile. It IS a queue the human owns, and it does not announce itself;
+       it had no surface outside /stations at all. (It used to sit beside the proposal pile,
+       which 6.0.0 deleted — this one stays because someone really is waiting on him.)
        Rendered only when stations are on AND something is waiting — a permanent zero
        teaches the eye to skip the row it will one day need to notice. -->
   {{if .StationCount}}
@@ -49,18 +47,10 @@
   </div>
 </section>
 
-{{if .PropCount}}
-<div class="cta-inline" style="margin-top:var(--sp-5)">
-  <div class="txt">
-    <b>{{.TN "dashboard.cta_waiting" .PropCount}}</b>
-    <span>{{.T "dashboard.cta_sub"}}</span>
-  </div>
-  <a class="btn btn--primary" href="/proposals">
-    {{.T "dashboard.cta_action"}}
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-  </a>
-</div>
-{{end}}
+<!-- THE "N PROPOSALS WAITING" CALL-TO-ACTION IS DELETED WITH THE QUEUE (6.0.0). It was the
+     dashboard's most prominent element and it pointed at work the human owed the machine:
+     clicking approve on entries he had already decided to keep. Nothing replaces it, because
+     activity is not a debt — the feed is in the nav and is meant to be glanced at, not answered. -->
 
 <section aria-labelledby="act-h" style="margin-top:var(--sp-6)">
   <div class="section-head">

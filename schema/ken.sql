@@ -19,7 +19,7 @@
 --
 -- GENERATED, not hand-written. Regenerate rather than editing.
 --
--- SCHEMA VERSION 26.
+-- SCHEMA VERSION 27.
 
 -- NO `PRAGMA foreign_keys=OFF` HERE, AND THAT ABSENCE IS LOAD-BEARING.
 --
@@ -100,8 +100,15 @@ CREATE TABLE curation_event (
   id         INTEGER PRIMARY KEY,
   entry_id   INTEGER NOT NULL REFERENCES entry(id) ON DELETE CASCADE,
   version_id INTEGER REFERENCES entry_version(id),
+  -- 6.0.0 ADDS FOUR AND REMOVES NONE. 'wrote'/'revised' are what an agent's write emits now that
+  -- it is the head on arrival; 'reverted' is the human's undo (Repromote used to log itself as
+  -- 'promoted' because the enum had no alternative, and revert is now the primary control, so that
+  -- ambiguity moved from a footnote to the centre); 'restored' is un-retiring an entry.
+  -- 'proposed', 'promoted' and 'rejected' STAY: every historical row is a true statement about
+  -- what happened in 2026 and keeps its exact meaning. Narrowing the enum would rewrite history.
   event_type TEXT NOT NULL CHECK (event_type IN
-               ('proposed','promoted','superseded','rejected','withdrawn',
+               ('wrote','revised','reverted','restored',
+                'proposed','promoted','superseded','rejected','withdrawn',
                 'deprecated','archived','reverified','refuted','flagged_stale')),
   from_state TEXT,
   to_state   TEXT,
@@ -622,6 +629,6 @@ END;
 -- The rows a freshly created database carries.
 INSERT INTO comm_roster_epoch(id, epoch) VALUES (1, 1);
 
-INSERT INTO schema_migration(version) VALUES (26);
+INSERT INTO schema_migration(version) VALUES (27);
 
 COMMIT;

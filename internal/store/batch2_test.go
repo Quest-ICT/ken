@@ -17,7 +17,7 @@ func TestContentCapsRejected(t *testing.T) {
 	}
 }
 
-func TestDraftReturnsProvisionalBodyAndProvenance(t *testing.T) {
+func TestAFreshWriteServesItsBodyAndProvenance(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	sr, err := st.Save(ctx, SaveInput{Kind: "reference",
@@ -25,20 +25,23 @@ func TestDraftReturnsProvisionalBodyAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Not promoted: no curated head, but the provisional body must still be returned.
+	// Was "not promoted: no curated head, but the provisional body must still be returned". There
+	// is no un-promoted state left — the write IS the head — so what this now pins is the part
+	// that always mattered and was always right: GetEntry serves the body. Withholding a body
+	// while signalling that an entry exists was the gate's exact mistake.
 	e, err := st.GetEntry(ctx, sr.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Lifecycle != "draft" || e.Head == nil || e.Head.Solution != "draft solution" {
-		t.Fatalf("draft should return the provisional body: lifecycle=%s head=%+v", e.Lifecycle, e.Head)
+	if e.Lifecycle != "active" || e.Head == nil || e.Head.Solution != "draft solution" {
+		t.Fatalf("a fresh write must be active with its body served: lifecycle=%s head=%+v", e.Lifecycle, e.Head)
 	}
 	// detailed mode attaches provenance.
 	entries, _, err := st.Get(ctx, []string{sr.Slug}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Provenance == nil || entries[0].Provenance.State != "proposed" {
-		t.Fatalf("detailed should include provenance (state=proposed): %+v", entries)
+	if len(entries) != 1 || entries[0].Provenance == nil || entries[0].Provenance.State != "curated" {
+		t.Fatalf("detailed should include provenance (state=curated): %+v", entries)
 	}
 }

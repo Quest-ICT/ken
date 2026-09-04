@@ -79,7 +79,7 @@ Prometheus text format (`Content-Type: text/plain; version=0.0.4`). See
   there is no equivalent of the `ken_comm_*` series counting stations, notebook bytes or open tasks.
   Per-tool call counts are the only station signal today. The per-station usage an operator actually
   wants — assets against their caps — is on the `/stations` console instead.
-- **Knowledge base** — `ken_kb_entries`, `ken_kb_versions`, `ken_kb_proposals_pending`,
+- **Knowledge base** — `ken_kb_entries`, `ken_kb_versions`, `ken_kb_changes_24h`,
   `ken_kb_embeddings` / `ken_kb_embeddable_versions`, `ken_users`, `ken_tokens_active`.
 - **Inter-session comms** (core, always registered; these series are absent only if `comm.db`
   could not be opened and COMM degraded to disabled — a runtime state, not a setting, and

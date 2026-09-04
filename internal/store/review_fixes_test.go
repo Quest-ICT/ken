@@ -23,46 +23,15 @@ func TestCreateFirstAdminAtomic(t *testing.T) {
 	}
 }
 
-// TestProvisionalRecomputedOnPromote (review finding #3): promoting one proposal
-// must not erase the has_provisional signal when other proposals remain pending.
-func TestProvisionalRecomputedOnPromote(t *testing.T) {
-	st := newStore(t)
-	ctx := context.Background()
+// TestProvisionalRecomputedOnPromote IS DELETED (6.0.0). It asserted that promoting one proposal
+// must not erase the has_provisional badge while other proposals were still pending. There are no
+// pending proposals and no has_provisional: every write is the head, and the versions behind it are
+// superseded rather than waiting. The property that replaced it — a revision displaces the head and
+// the displaced version stays reachable — is asserted in write_test.go and repromote_test.go.
 
-	sr, err := st.Save(ctx, SaveInput{Kind: "project", Content: Content{Title: "E", Summary: "s"}, AuthorKind: "ai"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatal(err)
-	}
-
-	s2 := "v2"
-	p2, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "a", Patch: Patch{Summary: &s2}, AuthorKind: "ai"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s3 := "v3"
-	if _, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "b", Patch: Patch{Summary: &s3}, AuthorKind: "ai"}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Promote the OLDER proposal (p2); the newer one stays pending.
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: p2.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatal(err)
-	}
-	e, err := st.GetEntry(ctx, sr.Slug)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !e.HasProvisional {
-		t.Fatal("entry should still report has_provisional (the newer proposal is still pending)")
-	}
-}
-
-// TestHistoryScopeFindsRejected (review finding #9): a rejected version is retained
-// and must be reachable via the history search scope.
-func TestHistoryScopeFindsRejected(t *testing.T) {
+// A version that is no longer the head is retained and must stay reachable via the history
+// search scope — the whole recovery story after 6.0.0 rests on it.
+func TestHistoryScopeFindsSupersededContent(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 
@@ -70,15 +39,15 @@ func TestHistoryScopeFindsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatal(err)
-	}
-	sol := "zebra frobnicator rejected variant"
-	p2, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "x", Patch: Patch{Summary: &sol}, AuthorKind: "ai"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Reject(ctx, sr.Slug, p2.VersionID, 0, "human", "no"); err != nil {
+	// A superseded version must stay reachable through the history scope. Before 6.0.0 this used
+	// a REJECTED version, because rejection was the only way to make a version non-current. There
+	// is no Reject any more; a revision supersedes its predecessor, which is the same question —
+	// "can I still find what we used to believe" — reached the way it is now actually reached.
+	//
+	// Rejected rows themselves are NOT gone: the state stays legal, existing rows keep their
+	// meaning, and the history scope still selects them. Nothing new can produce one.
+	sol := "zebra frobnicator superseded variant"
+	if _, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "x", Patch: Patch{Summary: &sol}, AuthorKind: "ai"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,9 +78,6 @@ func TestAllScopeSpansEveryState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-		t.Fatal(err)
-	}
 	// A proposed enhancement whose distinctive token exists in NO curated version.
 	sol := "kiwi quokka pending proposal"
 	if _, err := st.ProposeEnhancement(ctx, ProposeInput{Slug: sr.Slug, ChangeNote: "x", Patch: Patch{Summary: &sol}, AuthorKind: "ai"}); err != nil {
@@ -127,12 +93,15 @@ func TestAllScopeSpansEveryState(t *testing.T) {
 		return false
 	}
 
-	// "all" reaches the proposed-only token; curated (default) must not.
+	// The default scope now REACHES a token that lives only in the newest version, because the
+	// newest version is the head. This assertion used to require the opposite — that the default
+	// must NOT surface it — which is precisely the invisibility 6.0.0 removed.
 	if r, _ := st.Search(ctx, "quokka", SearchOpts{Scope: "all"}); !has(r) {
-		t.Fatal("all scope should reach a token that lives only in a pending version")
+		t.Fatal("all scope should reach a token in the newest version")
 	}
-	if r, _ := st.Search(ctx, "quokka", SearchOpts{}); has(r) {
-		t.Fatal("curated scope must NOT surface a pending-only token")
+	if r, _ := st.Search(ctx, "quokka", SearchOpts{}); !has(r) {
+		t.Fatal("the DEFAULT scope must reach a token in the newest version — a write that cannot " +
+			"be found by the next search is the barrier this release removed")
 	}
 	// "all" still finds curated content too.
 	if r, _ := st.Search(ctx, "kiwi baseline", SearchOpts{Scope: "all"}); !has(r) {

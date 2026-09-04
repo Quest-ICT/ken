@@ -896,8 +896,17 @@ func registerCollectors(reg *metrics.Registry, st *store.Store) {
 		if n, err := st.CountVersions(ctx); err == nil {
 			add("ken_kb_versions", "Entry versions (append-only history).", n)
 		}
-		if rows, err := st.ListProposals(ctx); err == nil {
-			add("ken_kb_proposals_pending", "Proposals awaiting human promotion.", len(rows))
+		// ken_kb_proposals_pending IS DELETED, NOT LEFT TO GO QUIET (6.0.0). It measured a
+		// queue that no longer fills. A gauge that stops being emitted keeps its NAME alive in
+		// the exposition and in the store for a whole retention window, so an alert on it reads
+		// healthy while measuring nothing — the lesson collector-proxy-prod paid for on
+		// 2026-08-31: verify a removal by querying for samples in a recent window, never by
+		// looking for the name. Its alert and its Grafana panel go in the same change.
+		//
+		// The replacement measures the thing that now matters: how much the KB is CHANGING,
+		// which is what an operator watches when writes no longer pass a human.
+		if n, err := st.CountActivitySince(ctx, time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02T15:04:05.000Z")); err == nil {
+			add("ken_kb_changes_24h", "Knowledge-base changes in the last 24h (writes, revisions, reverts, retirements).", n)
 		}
 		if done, total, err := st.EmbeddingStats(ctx); err == nil {
 			add("ken_kb_embeddings", "Versions that have an embedding.", done)

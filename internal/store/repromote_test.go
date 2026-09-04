@@ -10,7 +10,7 @@ import (
 
 // TestRepromoteRecoversWrongOrderPromotion reproduces the "promoted newest-first so
 // the head regressed" bug and verifies Repromote restores the intended head.
-func TestRepromoteRecoversWrongOrderPromotion(t *testing.T) {
+func TestSetHeadRecoversFromABadWrite(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -36,18 +36,24 @@ func TestRepromoteRecoversWrongOrderPromotion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Promote newest-first (the bug): each older promote regresses the head → rev1.
-	for _, vid := range []int64{r3.VersionID, r2.VersionID, r1.VersionID} {
-		if err := st.Promote(ctx, PromoteInput{Slug: r1.Slug, VersionID: vid, ActorKind: "human", Note: "promote"}); err != nil {
-			t.Fatalf("promote %d: %v", vid, err)
-		}
-	}
-	if e, _ := st.GetEntry(ctx, r1.Slug); e.Head == nil || e.Head.Solution != "S1" {
-		t.Fatalf("expected head to have regressed to S1, got %+v", e.Head)
+	// Three writes leave the head at rev 3 with no human involved — that is 6.0.0.
+	if e, _ := st.GetEntry(ctx, r1.Slug); e.Head == nil || e.Head.Solution != "S3" {
+		t.Fatalf("three writes should leave the newest as the head, got %+v", e.Head)
 	}
 
-	// Repromote rev3 to recover.
-	if err := st.Repromote(ctx, PromoteInput{Slug: r1.Slug, VersionID: r3.VersionID, ActorKind: "human", Note: "revert to rev3"}); err != nil {
+	// A human deliberately puts an OLD version back in front. This is the shape that used to be
+	// reachable only by promoting out of order, and it is now the human's ordinary undo: an agent
+	// wrote something wrong, and the way to take it back is to point the head at what was there
+	// before.
+	if err := st.SetHead(ctx, PromoteInput{Slug: r1.Slug, VersionID: r1.VersionID, ActorKind: "human", Note: "S3 was wrong"}); err != nil {
+		t.Fatalf("set head back to rev1: %v", err)
+	}
+	if e, _ := st.GetEntry(ctx, r1.Slug); e.Head == nil || e.Head.Solution != "S1" {
+		t.Fatalf("expected the head to be back at S1, got %+v", e.Head)
+	}
+
+	// And forward again — recovery is symmetric, so a mistaken undo is not a one-way door.
+	if err := st.SetHead(ctx, PromoteInput{Slug: r1.Slug, VersionID: r3.VersionID, ActorKind: "human", Note: "revert to rev3"}); err != nil {
 		t.Fatalf("repromote: %v", err)
 	}
 	if e, _ := st.GetEntry(ctx, r1.Slug); e.Head == nil || e.Head.Solution != "S3" || e.Head.RevNo != 3 {
@@ -64,14 +70,14 @@ func TestRepromoteRecoversWrongOrderPromotion(t *testing.T) {
 	}
 
 	// Guards.
-	if err := st.Repromote(ctx, PromoteInput{Slug: r1.Slug, VersionID: r3.VersionID, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
+	if err := st.SetHead(ctx, PromoteInput{Slug: r1.Slug, VersionID: r3.VersionID, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
 		t.Errorf("repromote of the current head must be ErrBadVersion, got %v", err)
 	}
 	r4, _ := st.ProposeEnhancement(ctx, ProposeInput{Slug: r1.Slug, ChangeNote: "to S4", AuthorKind: "ai", Patch: Patch{Solution: sp("S4")}})
-	if err := st.Repromote(ctx, PromoteInput{Slug: r1.Slug, VersionID: r4.VersionID, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
+	if err := st.SetHead(ctx, PromoteInput{Slug: r1.Slug, VersionID: r4.VersionID, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
 		t.Errorf("repromote of a still-proposed version must be ErrBadVersion (use Promote), got %v", err)
 	}
-	if err := st.Repromote(ctx, PromoteInput{Slug: r1.Slug, VersionID: 999999, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
+	if err := st.SetHead(ctx, PromoteInput{Slug: r1.Slug, VersionID: 999999, ActorKind: "human"}); !errors.Is(err, ErrBadVersion) {
 		t.Errorf("repromote of a bogus version must be ErrBadVersion, got %v", err)
 	}
 	_ = r2

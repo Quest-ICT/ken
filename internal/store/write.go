@@ -122,7 +122,7 @@ func (s *Store) Save(ctx context.Context, in SaveInput) (SaveResult, error) {
 
 	res, err := tx.ExecContext(ctx, `
 INSERT INTO entry(slug,kind,title,summary,category,tags,triggers,lifecycle,staleness,updater)
-VALUES(?,?,?,?,?,?,?,'draft','fresh',?)`,
+VALUES(?,?,?,?,?,?,?,'active','fresh',?)`,
 		slug, in.Kind, in.Content.Title, in.Content.Summary, nullStr(in.Category),
 		jsonArr(in.Content.Tags), jsonArr(in.Content.Triggers), authorLabel(in.AuthorKind))
 	if err != nil {
@@ -130,15 +130,32 @@ VALUES(?,?,?,?,?,?,?,'draft','fresh',?)`,
 	}
 	entryID, _ := res.LastInsertId()
 
-	vid, revNo, err := insertVersion(ctx, tx, entryID, 1, "proposed", 0, in.Content,
+	// *** 'curated' ON ARRIVAL — THIS IS THE 6.0.0 CHANGE. ***
+	//
+	// A write used to land 'proposed' and wait for a human to move the head. It waited for a
+	// review that was not happening: the owner's own account, after using Ken since v1, is that he
+	// read the entry — often only the title — and approved. docs/STATIONS.md:456-457 had already
+	// written the conclusion down: "a human who reflexively approves has converted the gate into a
+	// rubber stamp. No server-side design fixes that, and this document will not pretend
+	// otherwise." What the gate actually bought was DELAY, and delay in the one direction that
+	// hurts: knowledge found in a session was invisible to the next one until someone clicked.
+	//
+	// The state string stays 'curated' rather than becoming a new value. Every frozen session and
+	// every historical row keeps its meaning, and the default search predicate
+	// (search.go: ev.state = 'curated') is left BYTE-IDENTICAL — the gate dissolves because the
+	// data changed, not because the query did.
+	vid, revNo, err := insertVersion(ctx, tx, entryID, 1, "curated", 0, in.Content,
 		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, "initial capture",
 		s.detectLang(in.Content.prose()...), in.ViaComm, in.ViaCommKind)
 	if err != nil {
 		return SaveResult{}, err
 	}
 
+	// The head moves HERE, in the same transaction as the insert, so the entry is readable by the
+	// next session before this call returns. title/summary/tags/triggers are already correct from
+	// the INSERT above; Revise has to refresh them explicitly and says why.
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE entry SET provisional_version_id=?, lock_version=lock_version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+		`UPDATE entry SET curated_version_id=?, lock_version=lock_version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
 		vid, entryID); err != nil {
 		return SaveResult{}, err
 	}
@@ -155,14 +172,14 @@ VALUES(?,?,(SELECT id FROM entry WHERE slug=?),?,?)`,
 		}
 	}
 
-	if err := insertEvent(ctx, tx, entryID, vid, "proposed", "", "proposed",
+	if err := insertEvent(ctx, tx, entryID, vid, "wrote", "", "curated",
 		in.AuthorActorID, in.AuthorKind, in.SessionID, "initial capture"); err != nil {
 		return SaveResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return SaveResult{}, err
 	}
-	return SaveResult{Slug: slug, EntryID: entryID, VersionID: vid, RevNo: revNo, Lifecycle: "draft", State: "proposed"}, nil
+	return SaveResult{Slug: slug, EntryID: entryID, VersionID: vid, RevNo: revNo, Lifecycle: "active", State: "curated"}, nil
 }
 
 // ProposeInput appends an enhancement to an existing entry.
@@ -188,6 +205,10 @@ type ProposeResult struct {
 	RevNo     int
 	State     string
 	Warning   string
+	// ReplacedRev is the head this revision displaced when the caller based on an older one.
+	// Zero when the caller was up to date. Reported because after 6.0.0 the displacement is
+	// immediate and nobody reviews it.
+	ReplacedRev int
 }
 
 // ProposeEnhancement appends an immutable 'proposed' version. It never moves the
@@ -257,18 +278,61 @@ FROM entry WHERE slug=?`, in.Slug).Scan(&entryID, &curatedVID, &maxRev)
 	}
 
 	newRev := maxRev + 1
-	vid, _, err := insertVersion(ctx, tx, entryID, newRev, "proposed", baseVID, merged,
+	vid, _, err := insertVersion(ctx, tx, entryID, newRev, "curated", baseVID, merged,
 		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, in.ChangeNote, contentLang, in.ViaComm, in.ViaCommKind)
 	if err != nil {
 		return ProposeResult{}, err
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE entry SET provisional_version_id=?, lock_version=lock_version+1, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		vid, entryID); err != nil {
+	// *** THE HEAD MOVES HERE. These three statements are lifted from Promote, which is deleted
+	// in 6.0.0 — a revision IS the promotion now. ***
+	//
+	// 1. The outgoing head is superseded and points at its successor, so the lineage rail can be
+	//    walked in both directions and a revert has somewhere to go back to.
+	if curatedVID.Valid {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entry_version SET state='superseded', superseded_by_version_id=? WHERE id=?`,
+			vid, curatedVID.Int64); err != nil {
+			return ProposeResult{}, err
+		}
+		// The reflog gap Promote left: it set state='superseded' and emitted no event, so the
+		// only record of a version being displaced was the inverse event on its replacement.
+		if err := insertEvent(ctx, tx, entryID, curatedVID.Int64, "superseded", "curated", "superseded",
+			in.AuthorActorID, in.AuthorKind, in.SessionID, in.ChangeNote); err != nil {
+			return ProposeResult{}, err
+		}
+	}
+
+	// 2. *** THE FOUR-COLUMN REFRESH IS NOT OPTIONAL. ***
+	//
+	// get.go reads title/summary/tags/triggers from `entry` and the BODY from the version. They
+	// agreed before 6.0.0 only because Promote was their sole writer and this function never
+	// touched them. Omit the refresh and the first revision that edits a title serves the OLD
+	// title beside the NEW body — in kb_get, in kb_search and on /browse — permanently, with
+	// nothing failing and no way to notice from the outside.
+	//
+	// staleness is reset to 'fresh' ONLY when prose or code actually changed. A tags-only edit
+	// must not clear a standing was-wrong: that would let a trivial write erase a refutation,
+	// which is the one thing removing the gate genuinely makes easier.
+	freshen := len(patchProse(in.Patch)) > 0 || in.Patch.Code != nil
+	if _, err := tx.ExecContext(ctx, `
+UPDATE entry SET
+  curated_version_id = ?1,
+  staleness          = CASE WHEN ?4 = 1 THEN 'fresh' ELSE staleness END,
+  lifecycle          = CASE WHEN lifecycle='archived' THEN lifecycle ELSE 'active' END,
+  title    = (SELECT title    FROM entry_version WHERE id=?1),
+  summary  = (SELECT summary  FROM entry_version WHERE id=?1),
+  tags     = (SELECT tags     FROM entry_version WHERE id=?1),
+  triggers = (SELECT triggers FROM entry_version WHERE id=?1),
+  lock_version = lock_version + 1,
+  updated_at   = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+  updater      = ?2
+WHERE id = ?3`,
+		vid, authorLabel(in.AuthorKind), entryID, boolInt(freshen)); err != nil {
 		return ProposeResult{}, err
 	}
-	if err := insertEvent(ctx, tx, entryID, vid, "proposed", "", "proposed",
+
+	if err := insertEvent(ctx, tx, entryID, vid, "revised", "", "curated",
 		in.AuthorActorID, in.AuthorKind, in.SessionID, in.ChangeNote); err != nil {
 		return ProposeResult{}, err
 	}
@@ -276,9 +340,13 @@ FROM entry WHERE slug=?`, in.Slug).Scan(&entryID, &curatedVID, &maxRev)
 		return ProposeResult{}, err
 	}
 
-	out := ProposeResult{Slug: in.Slug, VersionID: vid, RevNo: newRev, State: "proposed"}
+	out := ProposeResult{Slug: in.Slug, VersionID: vid, RevNo: newRev, State: "curated"}
+	// The rebase warning survives and now means something sharper: the revision LANDED, and it
+	// landed on top of a head the caller had not read. Before 6.0.0 this said "review will show
+	// the drift" — there is no review, so it says what actually happened.
 	if curatedVID.Valid && baseRev != headRev {
-		out.Warning = fmt.Sprintf("rebase: curated head is rev %d but you based on rev %d — review will show the drift", headRev, baseRev)
+		out.ReplacedRev = headRev
+		out.Warning = fmt.Sprintf("you based this on rev %d but the live head was rev %d — your revision is now the head and rev %d's changes are no longer served. Read the entry and re-apply anything of theirs that still matters", baseRev, headRev, headRev)
 	}
 	return out, nil
 }
@@ -574,4 +642,13 @@ func authorLabel(kind string) string {
 		return "system"
 	}
 	return kind
+}
+
+// boolInt renders a Go bool as the 1/0 SQLite understands, so a CASE can branch on a value
+// computed in Go rather than re-derived in SQL from columns that may not carry it.
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

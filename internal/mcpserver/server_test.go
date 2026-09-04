@@ -188,8 +188,10 @@ func TestMCPEndToEnd(t *testing.T) {
 	}
 	var sv saveOut
 	decodeResult(t, good, &sv)
-	if sv.Slug == "" || sv.State != "proposed" || sv.Lifecycle != "draft" {
-		t.Fatalf("unexpected kb_save result: %+v", sv)
+	// 6.0.0: a write is the live head on arrival. This asserted "proposed"/"draft" — the state
+	// that meant "stored but not yet true".
+	if sv.Slug == "" || sv.State != "curated" || sv.Lifecycle != "active" {
+		t.Fatalf("kb_save must land as the live head: %+v", sv)
 	}
 }
 

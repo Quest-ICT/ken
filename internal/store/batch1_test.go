@@ -13,12 +13,8 @@ func TestSearchPageHasMore(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
-		sr, err := st.Save(ctx, SaveInput{Kind: "reference",
-			Content: Content{Title: "widget frobnicator " + string(rune('a'+i)), Summary: "frobnicate the widgets"}, AuthorKind: "ai"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
+		if _, err := st.Save(ctx, SaveInput{Kind: "reference",
+			Content: Content{Title: "widget frobnicator " + string(rune('a'+i)), Summary: "frobnicate the widgets"}, AuthorKind: "ai"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -38,9 +34,8 @@ func TestZeroQueryVectorSkipsArm(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	e := embed.HashEmbedder{Dim: 64}
-	sr, _ := st.Save(ctx, SaveInput{Kind: "reference",
+	st.Save(ctx, SaveInput{Kind: "reference",
 		Content: Content{Title: "Postgres pooling", Summary: "database connection pool"}, AuthorKind: "ai"})
-	_ = st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"})
 	targets, _ := st.VersionsNeedingEmbedding(ctx, e.ID(), 0)
 	for _, tg := range targets {
 		v, _ := e.Embed(ctx, []string{tg.Text})

@@ -55,9 +55,6 @@ func TestVectorSearch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.Promote(ctx, PromoteInput{Slug: sr.Slug, VersionID: sr.VersionID, ActorKind: "human"}); err != nil {
-			t.Fatal(err)
-		}
 		return sr.Slug
 	}
 	db := mk("Postgres pooling", "tune pgbouncer pool size for postgres database connections", "set pool_mode transaction")

@@ -15,6 +15,84 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Changed
+- **THE CURATION GATE IS DELETED. An agent's write is the entry's live head the moment it is
+  stored** — findable by the next search, in the next session, with no human step. `kb_save` and
+  `kb_propose_enhancement` each append an immutable version and advance `curated_version_id` in the
+  same transaction.
+  **Why.** The owner's account after using Ken since v1: he did not curate. He opened the entry,
+  frequently read only the title, and approved. That is a queue being acknowledged, not reviewed —
+  and what it actually bought was DELAY, in the one direction that hurts: a lesson found in one
+  session was invisible to the next until somebody clicked. `docs/STATIONS.md:456-457` had already
+  written the conclusion down and the project had not acted on it: *"a human who reflexively
+  approves has converted the gate into a rubber stamp. No server-side design fixes that, and this
+  document will not pretend otherwise."*
+  **Two things turned out never to have been true of the shipped code**, both worse than the
+  feature being unloved: `trust_policy` — D4's documented mechanism for withholding un-curated
+  bodies — has **zero Go references** and never ran; and the gate gated DISCOVERY, never ACCESS,
+  because `kb_get` always fell back to the provisional body. D4's stated default, *"existence
+  signaled, body withheld"*, was wrong in both directions. The review queue also listed each
+  entry's **curated** title beside a **proposed** version's content, so the title a rubber-stamping
+  human glanced at was not the title he approved.
+  **The reversal of D4 is recorded in `docs/DESIGN.md` beside the original**, which is preserved
+  verbatim, following the S14 precedent.
+
+### Added
+- **`kb_retract`** — an agent can retire an entry that is obsolete or harmful. It stops appearing
+  in search and browse; **nothing is deleted**, `kb_get` still answers for it saying it was retired
+  and why, and one click restores it. A reason is REQUIRED, enforced in the store so no caller can
+  skip it. **Before this, nobody could remove an entry at all** — not the human either: `lifecycle`
+  carried `archived` with no writer anywhere and there is no `DELETE` in the tree. Removing the
+  queue without this would have traded a delay barrier for a permanent inability to withdraw
+  anything.
+- **`/activity`** replaces `/proposals`: what the knowledge base has done, newest first, asking for
+  nothing. Who wrote it, which entry, which revision, the change note, the hearsay badge for
+  knowledge that arrived over COMM, and the reason for every retirement. `curation_event.note` had
+  nine writers and zero readers before this.
+- **Retire / Restore and a first-class Set-head control on every entry page.** Setting the head
+  back to an earlier version was a quiet link for recovering from a bad promotion; it is now the
+  human's primary control over content and the only way to take back an agent's write.
+- `ken_kb_changes_24h` metric, replacing `ken_kb_proposals_pending` — **removed end to end**,
+  including its Prometheus alert and Grafana panel. A gauge that merely stops being emitted keeps
+  its name alive in the exposition for a whole retention window, so an alert on it reads healthy
+  while measuring nothing.
+
+### Removed
+- `store.Promote`, `store.Reject`, the proposal queue and its console pages, `POST /proposals/{vid}/promote`,
+  `POST /proposals/{vid}/reject`, the nav badge, the dashboard's pending stat and its call-to-action.
+- The `curate` token scope. **Already-minted tokens that carry it keep working** — auth unmarshals
+  stored scopes with no vocabulary check.
+- `HasProvisional` from every surface. After the migration it could only ever be false, and a badge
+  that can never light is the silent instrument in miniature.
+
+### Fixed
+- `refuted_since` was anchored on the last `promoted` event and COALESCEd a miss to `''`. With
+  promotion gone, every entry's anchor would have fallen to the empty string, every historical
+  was-wrong would have counted as "since", and entries would have been stuck below the top maturity
+  tier forever with nothing failing. Re-anchored on the head version's own timestamp, which always
+  exists and is revert-correct.
+- `scope:"proposals"` is kept as an accepted value and aliased to the default. Left as
+  `state='proposed'` it would match nothing forever, and a scope that silently returns empty reads
+  as "no such knowledge".
+- The console's lifecycle filter offered `draft`, `active` and `deprecated`; two of the three had
+  no writer, so those options could only ever return an empty page. It now offers `active` and
+  `archived`, which are the two the code can produce.
+- The comprehension-language check moved from promote-time to the human's set-head action. It used
+  to refuse a *promotion*, which meant an out-of-language write succeeded, was stored, and was then
+  stranded forever by the only call that could publish it. Writes are never refused for language.
+- Three swallowed errors on the gate's own surfaces, each rendering a failed query as a reassuring
+  zero or an "all clear" empty state.
+
+### Database
+- **ken.db schema 26 → 27, and it needs `upgrade/ken-5.x-to-6.0.0.sql`.** The behaviour needs no
+  DDL, but the data conversion does, and without a version bump a skipped script is silent: Ken
+  would boot cleanly and serve a knowledge base with a chunk of its entries permanently unfindable,
+  indistinguishable from a small KB. The refusal is the instrument.
+  **The script adopts every pending proposal as its entry's live head** — read `/proposals` before
+  running it. It never adopts a version you rejected, and an entry whose every version was rejected
+  is retired rather than resurrected. comm.db is unchanged at 22.
+
+
 ## [5.2.0] — 2026-08-31
 
 ### Changed
