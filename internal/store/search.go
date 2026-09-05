@@ -72,10 +72,23 @@ SELECT e.slug, ev.title, ev.summary, e.kind, COALESCE(e.category,''), e.stalenes
        -- content that has since been rewritten is answered by the rewrite. It is also
        -- revert-correct — setting the head back to an older version restores that version's
        -- older timestamp, so the reports it had drawn come back with it.
-       EXISTS (SELECT 1 FROM entry_outcome o
-                WHERE o.entry_id = e.id AND o.outcome = 'was-wrong'
-                  AND o.created_at > (SELECT created_at FROM entry_version
-                                       WHERE id = e.curated_version_id)) AS refuted_since,
+       -- *** AND THE staleness FLAG HOLDS IT EVEN WHEN THE TIMESTAMP DOES NOT. ***
+       --
+       -- The timestamp arm alone let ANY revision clear a standing was-wrong, including one that
+       -- changed nothing a reader can see. A new version always carries a new created_at, so every
+       -- prior report falls before it — a tags-only edit, or a one-word touch, and the refutation
+       -- is gone. That is an agent erasing the only evidence against its own entry, and with the
+       -- curation gate removed there is no longer a human in front of the write to notice.
+       --
+       -- entry.staleness is the durable half, and ProposeEnhancement deliberately does NOT clear it
+       -- unless prose or code actually changed. ORing the two means a real rewrite still answers a
+       -- report (which is the correct semantics — the content it was about is gone) while a
+       -- cosmetic one cannot.
+       (e.staleness IN ('stale','refuted')
+        OR EXISTS (SELECT 1 FROM entry_outcome o
+                    WHERE o.entry_id = e.id AND o.outcome = 'was-wrong'
+                      AND o.created_at > (SELECT created_at FROM entry_version
+                                           WHERE id = e.curated_version_id))) AS refuted_since,
        f.score,
        (e.provisional_version_id IS NOT NULL) AS has_provisional,
        COALESCE(ev.content_lang,'')

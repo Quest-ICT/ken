@@ -64,6 +64,19 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 6.0.0** (2026-09-05) — the curation gate is deleted. An agent's write is the entry's
+live head the moment it is stored, findable by the next search with no human step. It was removed
+because it was not performing review: Vlad's account after using Ken since v1 is that he opened the
+entry, frequently read only the title, and approved — and `docs/STATIONS.md` had already recorded
+where that ends. Two things turned out never to have been true of the shipped code: `trust_policy`
+had zero Go references and never ran, and the gate gated DISCOVERY rather than ACCESS, because
+`kb_get` always served the provisional body. The queue also listed each entry's curated title beside
+a proposed version's content. The human's powers moved below the write instead of in front of it:
+set-head on every version, retire/restore with a required reason (nothing in Ken could retire an
+entry before this), and `/activity` in place of `/proposals`. `kb_retract` gives an agent the same,
+bounded. ken.db 26 → 27 with an operator-run script that adopts pending proposals and never
+resurrects a rejected one. D4's reversal is recorded beside the original.
+
 **Released: 5.2.0** (2026-08-31) — a broadcast reached the union of the sender's ROOMS, so on an
 instance with no rooms it reached nobody. Production had thirteen stations and zero rooms: an
 operator holding a confirmed data-integrity defect could not send an estate-wide "stop writing"

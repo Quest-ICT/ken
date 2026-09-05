@@ -15,6 +15,39 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [6.0.0] — 2026-09-05
+
+### Fixed before release (found by an adversarial review of the diff, not by the suite)
+- **`kb_propose_enhancement` would have failed with a UNIQUE constraint on every upgraded
+  database, permanently.** The new version was inserted as `curated` before the outgoing head was
+  demoted, and the migration creates a unique partial index on one curated row per entry; SQLite
+  enforces a unique index per STATEMENT, not at commit. `kb_save` and set-head were unaffected, so
+  the console would have looked healthy while every correction was refused.
+  **Why nothing caught it:** the migration created that index and `schema/ken.sql` did not, so
+  `schema_migration = 27` attested to TWO DIFFERENT SCHEMAS — every test opens a fresh database and
+  could never be in production's shape. The index is now in `schema/ken.sql` too, which is the half
+  of the fix that stops it recurring.
+- **`TestAnUpgradedDatabaseMatchesAFreshOne` only read `comm.db`** — the guard whose own comment
+  claims it catches script-versus-schema drift was blind to the database this release changed. It
+  now checks both, and fresh-versus-upgraded DDL is identical across 80 objects.
+- **Retiring was a one-way door.** `browse` excluded archived entries unconditionally while also
+  offering an `archived` filter, so the two clauses contradicted and the page could only return
+  empty — a retired entry left search AND browse with no console surface able to list it for
+  Restore.
+- **A cosmetic revision erased a standing `was-wrong`.** `refuted_since` compared the report
+  against the head version's timestamp, and every new version carries a new one — so a tags-only
+  edit cleared the only evidence against an entry, written by the agent that owns it. It now also
+  respects `entry.staleness`, which a revision clears only when prose or code actually changed.
+- Set-head silently un-retired an archived entry and reset its staleness, and logged itself as
+  `promoted` although this release added `reverted` for exactly that act.
+- The migration left `provisional_version_id` and `curated_rev` set, painting permanent false
+  "pending proposal" badges and a stale revision number.
+- `kb_save`'s FIRST SENTENCE — the only part delivered to a session's frozen tool list — still said
+  "Create a NEW draft entry".
+- Every entry page linked to `/proposals`, which now 404s; `docs/OPERATION.md` still routed
+  operators there; the Grafana panel was still titled "Proposals pending" while plotting the new
+  metric; the console search still offered a "proposals" scope.
+
 ### Changed
 - **THE CURATION GATE IS DELETED. An agent's write is the entry's live head the moment it is
   stored** — findable by the next search, in the next session, with no human step. `kb_save` and

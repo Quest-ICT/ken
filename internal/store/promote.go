@@ -144,12 +144,18 @@ func (s *Store) SetHead(ctx context.Context, in PromoteInput) error {
 	if _, err := tx.ExecContext(ctx, `
 UPDATE entry SET
   curated_version_id     = ?1,
-  provisional_version_id = (SELECT id FROM entry_version
-                            WHERE entry_id = ?3 AND state='proposed'
-                            ORDER BY rev_no DESC LIMIT 1),
-  curated_rev            = curated_rev + 1,
-  staleness              = 'fresh',
-  lifecycle              = 'active',
+  -- provisional_version_id AND curated_rev ARE NO LONGER WRITTEN.
+  -- Nothing is ever 'proposed' now, so that subquery could only ever store NULL; and curated_rev
+  -- would have counted reverts and nothing else, while still being displayed as a revision number.
+  -- The migration clears both columns once, so neither can carry a stale value forward.
+  --
+  -- staleness AND lifecycle ARE NO LONGER FORCED. They were set to 'fresh' and 'active'
+  -- unconditionally, which was defensible when this ran only as the tail of a human promotion.
+  -- As the primary undo it meant setting the head back SILENTLY UN-RETIRED an archived entry and
+  -- erased a standing was-wrong — two decisions the human never made, from a control that says
+  -- nothing about either.
+  staleness              = staleness,
+  lifecycle              = lifecycle,
   title    = (SELECT title    FROM entry_version WHERE id=?1),
   summary  = (SELECT summary  FROM entry_version WHERE id=?1),
   tags     = (SELECT tags     FROM entry_version WHERE id=?1),
@@ -163,7 +169,10 @@ WHERE id = ?3`,
 	}
 
 	// event_type='promoted' (the CHECK enum has no 'reverted'); the note carries intent.
-	if err := insertEvent(ctx, tx, entryID, in.VersionID, "promoted", vState, "curated",
+	// 'reverted', not 'promoted'. Repromote logged itself as a promotion because the enum had no
+	// alternative; 6.0.0 added one precisely for this, and the activity feed is the only place a
+	// human sees that an agent's write was taken back.
+	if err := insertEvent(ctx, tx, entryID, in.VersionID, "reverted", vState, "curated",
 		in.ActorID, in.ActorKind, "", in.Note); err != nil {
 		return err
 	}

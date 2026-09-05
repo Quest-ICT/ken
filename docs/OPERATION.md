@@ -51,7 +51,9 @@ is gone from the page.
 | Task | Surface |
 |---|---|
 | Every setting the console can change — 43 of 45 (`tls_mode` and `tls_email` are display-only; see §2.1) | Console → **Settings** |
-| Review, promote, reject proposals | Console → **Proposals** |
+| See what agents have written, revised, reverted or retired | Console → **Activity** |
+| Take back an agent's write | Console → the entry → **set the head** to an earlier version |
+| Retire an entry so it stops being found (reversible; a reason is required) | Console → the entry → **Retire**. List retired ones with Browse → lifecycle **archived** |
 | Browse, search, read entries | Console → **Browse** / **Search** |
 | Stations, **rooms**, station vault, links (suspend/resume), station reassignment, station + room + promotion queues | Console → **Stations** |
 | Notebook pages and tasks | Console shows notebook COUNTS only, plus the body of any page a session has asked to promote. Tasks are listed and filterable but **read-only** — writing pages and closing, deferring or reopening tasks is the station MCP surface, not an operator one. |
@@ -79,7 +81,10 @@ existence. That is doing real containment work — see §2.4(f).
 /search           search         query the corpus
 /browse           browse         the curated corpus
 /entry/{slug}     entry          one entry, its versions and history
-/proposals        review queue   what agents have proposed; promote or reject here
+/activity         what happened  writes, revisions, reverts and retirements, newest first.
+                                 It REPORTS; nothing on it is waiting for you. The curation
+                                 queue it replaced was deleted in 6.0.0 — an agent's write is
+                                 the live head the moment it is stored.
 /stations         stations       stations, notebooks, tasks, links (suspend/resume), ROOMS, vault
 /comm             inter-session  mailboxes and channels, with pending counts
 /tokens           tokens         API tokens and their scopes
@@ -341,9 +346,14 @@ the host you booted on — but nothing on the form says so.
 Comma-separated codes, e.g. `en` or `fr,zh`. **Blank turns the feature off entirely** — the
 default, so a fresh install has no language gating until you opt in.
 
-The gate **fails open on an undetermined result**: an entry whose language could not be
-determined promotes without a check, so `und` means *"did not look"*, never *"looked and
-approved"*.
+**Since 6.0.0 the gate guards YOUR set-head action, not the agent's write.** A write is never
+refused for its language — refusing one loses knowledge, and it used to lose it silently: the write
+succeeded, was stored, and could then never be published, because the only call that could publish
+it would always refuse. What the gate now prevents is you making a version you cannot read the
+served head.
+
+It still **fails open on an undetermined result**: a version whose language could not be determined
+is set as the head without a check, so `und` means *"did not look"*, never *"looked and approved"*.
 
 **Corrected in this revision — the earlier length claim was inverted.** The previous text
 said long entries were more likely to come back undetermined, and concluded that "the long,

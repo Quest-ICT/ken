@@ -34,6 +34,47 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 6.0.0
+
+### The curation gate is gone: an agent's write is live immediately
+
+**What you observe.** `/proposals` no longer exists — it is `/activity`, which reports what the
+knowledge base has done and asks for nothing. An agent's `kb_save` or `kb_propose_enhancement` is
+findable by the next search with no click from you. The nav badge and the dashboard's "N waiting"
+tile are gone; nothing is waiting.
+
+**DATABASE UPGRADE REQUIRED — ken.db 26 → 27.** Ken will refuse to start until you run it:
+
+```
+sudo systemctl stop ken
+ken backup snapshot && ken backup verify
+sqlite3 -bail /opt/ken/data/ken.db < upgrade/ken-5.x-to-6.0.0.sql
+sudo systemctl restart ken
+```
+
+**READ `/proposals` BEFORE YOU STOP THE SERVICE.** The script adopts every pending proposal as its
+entry's live head — after the upgrade there is no page left to promote them from. It prints exactly
+what it will change before changing it. **Versions you rejected are never adopted**, and an entry
+whose every version was rejected is retired rather than resurrected.
+
+**If your `sqlite3` lacks FTS5** it fails part-way naming a trigger (`no such module: fts5`). That
+is not damage — the script is one transaction and rolls back. Use the python3 fallback in
+`docs/UPGRADING-THE-DATABASE.md`. comm.db is unchanged at 22.
+
+**What you can still do, and could not before.** Set an entry's head back to any earlier version —
+one click on the entry page, and the only way to take back an agent's write. **Retire an entry**,
+which nothing in Ken could do before this release: it stops appearing in search, keeps every
+version, still answers `kb_get`, and restores in one click. A reason is required.
+
+**Tell your running sessions.** Their tool schemas pin at connect, so they still believe their
+writes are proposals. Nothing they do breaks — writes simply take effect — but they will not know
+they can now fix a wrong entry directly, or retire an obsolete one. Paste the Ken section of
+`docs/AI-INTEGRATION.md`, or have them call `ken_instructions`, which is computed per call.
+
+**If you were relying on the gate to review agent output, it was not doing that.** The queue showed
+each entry's *curated* title beside a *proposed* version's content, so the line you approved was not
+the line that changed. `docs/DESIGN.md` D4 records the whole reversal beside the original decision.
+
 ## 5.2.0
 
 ### `to_room:"all"` now reaches every station, not just your room-mates — and there is no database step

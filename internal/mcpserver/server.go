@@ -632,7 +632,10 @@ func RegisterTools(s *mcp.Server, d Deps) {
 
 	addTool(s, d, &mcp.Tool{
 		Name: "kb_save",
-		Description: "Create a NEW draft entry. Requires a dedup_check_token from a recent kb_search (enforces search-before-save). " +
+		// The FIRST SENTENCE is the only part tooldoc.Brief delivers to a session's tool list, and it
+		// pins for that conversation's life. It said "Create a NEW draft entry" — the one word that
+		// describes the state 6.0.0 deleted, in the one place a session is guaranteed to read.
+		Description: "Create a NEW entry, live and searchable the moment it returns. Requires a dedup_check_token from a recent kb_search (enforces search-before-save). " +
 			"If a close match already exists, prefer kb_propose_enhancement instead. Use kb_save for a genuinely different problem that " +
 			"merely shares vocabulary, and add a `relates` link to the entry it resembles. Write `triggers` as the symptoms a future agent " +
 			"would actually type, fill `applies_to`, and give an HONEST confidence — an inflated one costs the next session more than a low " +

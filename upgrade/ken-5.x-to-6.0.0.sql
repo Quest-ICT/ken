@@ -45,8 +45,10 @@ SELECT e.slug FROM entry e
                       AND (ev.state = 'proposed' OR ev.id = e.curated_version_id));
 
 -- 1. THE INVARIANT FIRST, so a mis-ordered conversion cannot commit at all. One head per entry.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ev_one_head
-    ON entry_version(entry_id) WHERE state = 'curated';
+-- Byte-identical to the statement in schema/ken.sql. sqlite_master stores the text VERBATIM, so a
+-- different line break or a space around the '=' makes an upgraded database differ from a fresh one
+-- forever, in the exact way TestAnUpgradedDatabaseMatchesAFreshOne exists to catch.
+CREATE UNIQUE INDEX idx_ev_one_head ON entry_version(entry_id) WHERE state='curated';
 
 -- 2. Winner per entry = the highest rev_no among {the current head} UNION {everything proposed}.
 --
@@ -98,6 +100,15 @@ UPDATE entry SET
   tags     = COALESCE((SELECT tags     FROM entry_version WHERE id = (SELECT win_vid FROM head_pick WHERE entry_id = entry.id)), tags),
   triggers = COALESCE((SELECT triggers FROM entry_version WHERE id = (SELECT win_vid FROM head_pick WHERE entry_id = entry.id)), triggers),
   staleness = CASE WHEN staleness IN ('aging','refuted') THEN 'stale' ELSE staleness END,
+  -- CLEAR THE TWO COLUMNS WHOSE WRITERS THIS RELEASE DELETED.
+  --
+  -- provisional_version_id meant "a version exists that is not the head" — a state that no longer
+  -- occurs. Left as it was, every entry that had a pending proposal would wear a permanent
+  -- "pending proposal" badge on /browse and /search, pointing at a version that IS now the head.
+  -- curated_rev counted promotions; nothing increments it any more, so a stale value would be
+  -- displayed as a revision number beside rev numbers that had moved past it.
+  provisional_version_id = NULL,
+  curated_rev = 0,
   lock_version = lock_version + 1,
   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
   updater = 'upgrade-6.0.0';
@@ -125,6 +136,10 @@ INSERT INTO curation_event_new SELECT * FROM curation_event;
 DROP INDEX IF EXISTS idx_ce_created;
 DROP INDEX IF EXISTS idx_ce_entry;
 DROP TABLE curation_event;
+-- RENAME quotes the name in sqlite_master ("curation_event"), which a fresh CREATE does not. That
+-- one pair of quotes is a permanent fresh-vs-upgraded divergence, so the fresh schema declares the
+-- name quoted too and the two shapes agree. (entry_embedding, station_link and station_request
+-- already carry the same quotes from earlier rebuilds, for the same reason.)
 ALTER TABLE curation_event_new RENAME TO curation_event;
 CREATE INDEX idx_ce_entry   ON curation_event(entry_id);
 CREATE INDEX idx_ce_created ON curation_event(created_at);

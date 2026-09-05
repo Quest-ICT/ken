@@ -12,10 +12,11 @@ type BrowseFilter struct {
 	Category  string // exact match; "" = any
 	Kind      string // user|feedback|project|reference; "" = any
 	Staleness string // fresh|aging|stale|refuted; "" = any
-	Lifecycle string // draft|active|deprecated; "" = any non-archived
-	Sort      string // updated (default) | title | used | created | kind
-	Limit     int    // default 50, max 200
-	Offset    int
+	Lifecycle string // active|archived; "" = any non-archived. "archived" REVERSES the default
+	//                 hiding rather than intersecting with it — see the CASE in ListEntries.
+	Sort   string // updated (default) | title | used | created | kind
+	Limit  int    // default 50, max 200
+	Offset int
 }
 
 // BrowseRow is one entry as shown in the browse listing. Every field is read
@@ -71,7 +72,17 @@ func (s *Store) ListEntries(ctx context.Context, f BrowseFilter) ([]BrowseRow, b
 SELECT slug, title, summary, kind, COALESCE(category,''), staleness, lifecycle,
        curated_rev, use_count, (provisional_version_id IS NOT NULL), updated_at
 FROM entry
-WHERE lifecycle != 'archived'
+-- *** ARCHIVED IS HIDDEN BY DEFAULT AND REACHABLE ON REQUEST. ***
+--
+-- This was an unconditional  lifecycle != 'archived'  ANDed with an optional  lifecycle = ? , so
+-- the two clauses contradicted each other the moment the filter asked for 'archived' — the page
+-- could only ever come back empty. That was survivable while nothing could archive anything;
+-- 6.0.0 gives 'archived' its first writer, which would have made retire a ONE-WAY DOOR: the entry
+-- leaves search and browse, and no console surface could list it again to restore it.
+--
+-- The default still hides them, because "what is in my knowledge base" should not be padded with
+-- what was withdrawn from it. Asking explicitly is what makes them reachable.
+WHERE (CASE WHEN ? = 'archived' THEN lifecycle = 'archived' ELSE lifecycle != 'archived' END)
   AND (? = '' OR category  = ?)
   AND (? = '' OR kind      = ?)
   AND (? = '' OR staleness = ?)
@@ -80,6 +91,7 @@ ORDER BY ` + browseSortSQL(f.Sort) + `
 LIMIT ? OFFSET ?`
 
 	rows, err := s.R.QueryContext(ctx, q,
+		f.Lifecycle, // the archived CASE above; bound first because it is the first placeholder
 		f.Category, f.Category, f.Kind, f.Kind, f.Staleness, f.Staleness, f.Lifecycle, f.Lifecycle,
 		limit+1, offset)
 	if err != nil {

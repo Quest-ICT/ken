@@ -1011,23 +1011,44 @@ func TestAnUpgradedDatabaseMatchesAFreshOne(t *testing.T) {
 	repo := repoRoot(t)
 	oldBin := buildPreviousRelease(t, repo, prevRelease)
 
-	// Route one: the previous release creates it, the script upgrades it.
+	// Route one: the previous release creates them, the scripts upgrade them.
 	upgraded := t.TempDir()
 	runFor(t, oldBin, upgraded, 20*time.Second)
 	applySQLFile(t, filepath.Join(upgraded, "comm", "comm.db"),
 		filepath.Join(repo, "upgrade", "comm-4.x-to-5.0.0.sql"))
+	applySQLFile(t, filepath.Join(upgraded, "ken.db"),
+		filepath.Join(repo, "upgrade", "ken-5.x-to-6.0.0.sql"))
 
-	// Route two: HEAD creates it from the schema file.
+	// Route two: HEAD creates them from the schema files.
 	fresh := t.TempDir()
 	runFor(t, kenBinary(t), fresh, 30*time.Second)
 
-	a := commDDL(t, filepath.Join(upgraded, "comm", "comm.db"))
-	b := commDDL(t, filepath.Join(fresh, "comm", "comm.db"))
-	if a != b {
-		t.Errorf("an upgraded comm.db and a fresh one have DIFFERENT schemas.\n"+
-			"upgraded:\n%s\n\nfresh:\n%s\n\n"+
-			"The upgrade script and schema/comm.sql have drifted. Every version check would still "+
-			"pass, so nothing else in this tree would notice.", a, b)
+	// *** BOTH DATABASES, AND ken.db IS WHY THIS TEST NOW EXISTS TWICE OVER. ***
+	//
+	// It checked only comm.db until 6.0.0, and its own comment above claims to guard "the upgrade
+	// script and the schema file drifting". The FIRST release to change ken.db's schema found out
+	// what that omission costs: the migration created a unique index that schema/ken.sql did not,
+	// so `schema_migration = 27` attested to TWO DIFFERENT SCHEMAS. Every gate read green — the
+	// version check passed, foreign_key_check passed, 22/22 tests passed — because every test opens
+	// a FRESH database and could never be in production's shape. The divergence made
+	// kb_propose_enhancement fail with a UNIQUE constraint on every upgraded deployment,
+	// permanently, and it was found by an adversarial review rather than by this test.
+	//
+	// A guard that covers one of the two databases it names is the silent instrument in its purest
+	// form: it passes, it is cited in the docs as the thing that makes this safe, and it is not
+	// looking at the half that changed.
+	for _, db := range []struct{ label, rel string }{
+		{"comm.db", filepath.Join("comm", "comm.db")},
+		{"ken.db", "ken.db"},
+	} {
+		a := commDDL(t, filepath.Join(upgraded, db.rel))
+		b := commDDL(t, filepath.Join(fresh, db.rel))
+		if a != b {
+			t.Errorf("an upgraded %s and a fresh one have DIFFERENT schemas.\n"+
+				"upgraded:\n%s\n\nfresh:\n%s\n\n"+
+				"The upgrade script and the schema file have drifted. Every version check would "+
+				"still pass, so nothing else in this tree would notice.", db.label, a, b)
+		}
 	}
 }
 

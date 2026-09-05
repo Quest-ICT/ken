@@ -278,20 +278,45 @@ FROM entry WHERE slug=?`, in.Slug).Scan(&entryID, &curatedVID, &maxRev)
 	}
 
 	newRev := maxRev + 1
+
+	// *** DEMOTE THE OUTGOING HEAD **BEFORE** INSERTING THE NEW ONE. THE ORDER IS LOAD-BEARING. ***
+	//
+	// The natural way to write this — insert the new version as 'curated', then supersede the old
+	// one — leaves TWO rows carrying state='curated' for one entry between the two statements. That
+	// is invisible on a fresh database and fatal on an upgraded one: the 6.0.0 migration creates
+	//
+	//     CREATE UNIQUE INDEX idx_ev_one_head ON entry_version(entry_id) WHERE state='curated'
+	//
+	// and SQLite enforces a unique index PER STATEMENT, not at commit. Written the other way round,
+	// every kb_propose_enhancement on every upgraded deployment fails with an opaque
+	// "UNIQUE constraint failed: entry_version.entry_id" — the agent's whole correction path dead,
+	// permanently, on exactly the databases that carry the knowledge. Save and SetHead are
+	// unaffected, so the console and new entries look healthy while revisions are refused.
+	//
+	// It shipped past every gate because schema/ken.sql did not create that index, so no test could
+	// ever be in production's shape — the schema VERSION attested to two different schemas. The
+	// index is now in schema/ken.sql too (see idx_ev_one_head there), which is the half of this fix
+	// that stops it recurring: fresh and upgraded databases have one shape, and the suite runs
+	// against it. SetHead already demotes first and is the model.
+	if curatedVID.Valid {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entry_version SET state='superseded' WHERE id=?`, curatedVID.Int64); err != nil {
+			return ProposeResult{}, err
+		}
+	}
+
 	vid, _, err := insertVersion(ctx, tx, entryID, newRev, "curated", baseVID, merged,
 		in.AuthorActorID, in.AuthorKind, in.SessionID, in.Confidence, in.ChangeNote, contentLang, in.ViaComm, in.ViaCommKind)
 	if err != nil {
 		return ProposeResult{}, err
 	}
 
-	// *** THE HEAD MOVES HERE. These three statements are lifted from Promote, which is deleted
-	// in 6.0.0 — a revision IS the promotion now. ***
-	//
-	// 1. The outgoing head is superseded and points at its successor, so the lineage rail can be
-	//    walked in both directions and a revert has somewhere to go back to.
 	if curatedVID.Valid {
+		// Now point the displaced version at its successor, so the lineage rail walks both ways and
+		// a revert has somewhere to go back to. Separate from the demotion above only because the
+		// successor's id does not exist until the insert has run.
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE entry_version SET state='superseded', superseded_by_version_id=? WHERE id=?`,
+			`UPDATE entry_version SET superseded_by_version_id=? WHERE id=?`,
 			vid, curatedVID.Int64); err != nil {
 			return ProposeResult{}, err
 		}

@@ -35,7 +35,7 @@
     },
     {
       "type": "stat",
-      "title": "Proposals pending",
+      "title": "KB changes (24h)",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },

@@ -15,7 +15,6 @@
   <select class="select" id="scope" name="scope" aria-label="{{.T "search.scope_label"}}">
     <option value="all"{{if eq .Data.Scope "all"}} selected{{end}}>{{.T "search.scope_all"}}</option>
     <option value="curated"{{if eq .Data.Scope "curated"}} selected{{end}}>{{.T "search.scope_curated"}}</option>
-    <option value="proposals"{{if eq .Data.Scope "proposals"}} selected{{end}}>{{.T "search.scope_proposals"}}</option>
     <option value="history"{{if eq .Data.Scope "history"}} selected{{end}}>{{.T "search.scope_history"}}</option>
   </select>
   <button class="btn btn--primary" type="submit">{{.T "search.submit"}}</button>

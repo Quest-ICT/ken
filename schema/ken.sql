@@ -96,16 +96,21 @@ CREATE TABLE comm_roster_epoch (
   updated_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE TABLE curation_event (
+-- 6.0.0 ADDS FOUR event types AND REMOVES NONE. 'wrote'/'revised' are what an agent's write emits
+-- now that it is the head on arrival; 'reverted' is the human's undo (Repromote used to log itself
+-- as 'promoted' because the enum had no alternative, and revert is now the primary control, so that
+-- ambiguity moved from a footnote to the centre); 'restored' is un-retiring an entry. 'proposed',
+-- 'promoted' and 'rejected' STAY: every historical row is a true statement about what happened in
+-- 2026 and keeps its exact meaning. Narrowing the enum would rewrite history.
+--
+-- THIS COMMENT SITS ABOVE THE STATEMENT, NOT INSIDE IT, AND THAT IS NOT A STYLE CHOICE.
+-- sqlite_master stores the CREATE text verbatim from `CREATE` onward, comments included. The
+-- upgrade script rebuilds this table without the comment, so a comment inside the body makes an
+-- upgraded database differ from a fresh one permanently. It did, and the parity check caught it.
+CREATE TABLE "curation_event" (
   id         INTEGER PRIMARY KEY,
   entry_id   INTEGER NOT NULL REFERENCES entry(id) ON DELETE CASCADE,
   version_id INTEGER REFERENCES entry_version(id),
-  -- 6.0.0 ADDS FOUR AND REMOVES NONE. 'wrote'/'revised' are what an agent's write emits now that
-  -- it is the head on arrival; 'reverted' is the human's undo (Repromote used to log itself as
-  -- 'promoted' because the enum had no alternative, and revert is now the primary control, so that
-  -- ambiguity moved from a footnote to the centre); 'restored' is un-retiring an entry.
-  -- 'proposed', 'promoted' and 'rejected' STAY: every historical row is a true statement about
-  -- what happened in 2026 and keeps its exact meaning. Narrowing the enum would rewrite history.
   event_type TEXT NOT NULL CHECK (event_type IN
                ('wrote','revised','reverted','restored',
                 'proposed','promoted','superseded','rejected','withdrawn',
@@ -520,6 +525,18 @@ CREATE INDEX idx_ev_author ON entry_version(author_actor_id);
 CREATE INDEX idx_ev_content_lang ON entry_version(content_lang);
 
 CREATE INDEX idx_ev_entry  ON entry_version(entry_id);
+-- *** ONE HEAD PER ENTRY, ENFORCED BY THE DATABASE (6.0.0). ***
+--
+-- Added to the FRESH schema as well as to the upgrade script, and the reason is the defect it
+-- caught. The upgrade created this index and schema/ken.sql did not, so schema_migration = 27
+-- attested to TWO DIFFERENT SCHEMAS: every test opened a fresh database that lacked the index,
+-- while every upgraded deployment had it. A write path that briefly holds two curated rows for one
+-- entry therefore passed the entire suite and failed in production on the first revision.
+--
+-- Keeping the two shapes identical is the point. The invariant is worth having on its own — the
+-- head pointer and the version state can no longer disagree — but what it is really doing here is
+-- making the suite run against the shape production is in.
+CREATE UNIQUE INDEX idx_ev_one_head ON entry_version(entry_id) WHERE state='curated';
 
 CREATE INDEX idx_ev_state  ON entry_version(state);
 
