@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -46,8 +47,17 @@ func verifyDedupToken(secret []byte, token, subject string) error {
 	if err != nil {
 		return errors.New("malformed dedup_check_token")
 	}
-	if time.Now().Unix() > exp {
-		return errors.New("dedup_check_token expired — run kb_search again before saving")
+	if now := time.Now().Unix(); now > exp {
+		// *** NAME THE CLOCK, BECAUSE THE OLD TEXT MADE THIS LOOK LIKE A ONE-SHOT TOKEN. ***
+		//
+		// ken-prod hit it mid-batch: one token served SIXTEEN saves and was then refused, which
+		// reads as "the token was consumed" rather than "ten minutes elapsed". The token has a TIME
+		// window and no use count, so a long batch outlives it while a short one never does — the
+		// behaviour looks nondeterministic until you know it is a clock. Their own remedy was one
+		// kb_search per batch of ten, which gave zero refusals over 105 saves.
+		return fmt.Errorf("dedup_check_token expired %ds ago — these last %s from the kb_search that issued them, "+
+			"and are NOT consumed by a save, so one token covers as many saves as you can make inside that window. "+
+			"Run kb_search again and continue", now-exp, dedupTTL)
 	}
 	// One check covers both tampering and a token issued to a different principal:
 	// distinguishing them would tell a caller its stolen token was otherwise valid,

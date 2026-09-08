@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Quest-ICT/ken/internal/model"
 )
 
 // *** THE THREE GUARANTEES 6.0.0 REPLACED THE CURATION GATE WITH. ***
@@ -246,5 +249,64 @@ func TestACosmeticRevisionCannotEraseAWasWrongReport(t *testing.T) {
 	}
 	if refuted("after a real rewrite") {
 		t.Error("a genuine rewrite did not answer the report — one was-wrong would be permanently fatal")
+	}
+}
+
+// *** A MALFORMED TOOL CALL MUST BE REFUSED, NOT STORED AS PROSE. ***
+//
+// ken-prod measured 22 of 118 entries (19%) on the pre-rebuild production KB with the whole body
+// crammed into `problem` — literal `</problem>` and `<parameter name="solution">` in the middle of
+// it — and `solution`, `rationale`, `caveats` all NULL. Then five more among the 23 written after
+// the rebuild, so it is live, not historical. Ken accepted every one: validateContent checked
+// lengths and nothing else, so a corrupt entry returned a slug and a success, entered FTS, and was
+// served to the next session as knowledge.
+//
+// The reproduction ken-prod gave is one line, and it is what this test automates:
+// grep `problem` for `<parameter name=` on any instance.
+//
+// VERIFY BY DELETION: drop the validateNotToolCallSyntax call from validateContent and this goes red.
+func TestAMalformedToolCallIsRefusedRatherThanStoredAsProse(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	// The exact shape ken-prod found: everything in `problem`, the rest empty.
+	crammed := "The plugin refresh cannot tell stale from operator-edited.\n" +
+		"</problem>\n<parameter name=\"solution\">Ship a manifest of what was installed."
+	_, err := st.Save(ctx, SaveInput{Kind: "reference", AuthorKind: "ai",
+		Content: Content{Title: "Shipped manifest", Summary: "plugin refresh staleness",
+			Problem: crammed}})
+	if err == nil {
+		t.Fatal("a body containing this tool's own call syntax was ACCEPTED — the entry is stored " +
+			"corrupt, occupies a slug, enters FTS and is served to the next session as knowledge")
+	}
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("refusal is %v, want ErrInvalid so the caller can tell it apart from a server fault", err)
+	}
+	// The refusal must name the field and say nothing was saved, or an agent cannot act on it.
+	for _, want := range []string{"problem", "NOTHING WAS SAVED", "send it again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not carry %q, so the agent cannot recover from it: %v", want, err)
+		}
+	}
+	var n int
+	if err := st.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM entry`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("%d entry rows written for a refused save", n)
+	}
+
+	// AND THE GUARD MUST NOT REFUSE LEGITIMATE CONTENT. An entry ABOUT XML, or one whose code
+	// snippet contains markup, is ordinary knowledge — refusing it would lose the lesson, which is
+	// the failure this whole release exists to stop.
+	if _, err := st.Save(ctx, SaveInput{Kind: "reference", AuthorKind: "ai",
+		Content: Content{
+			Title:    "Thymeleaf decoupled selectors",
+			Summary:  "a direct-child selector silently matches nothing when the target is nested",
+			Problem:  "In a .th.xml file, <attr sel=\"#row/#cell\"> matches only a direct child.",
+			Solution: "Use // to reach a descendant: <attr sel=\"#row//#cell\">.",
+			Code:     []model.CodeSnippet{{Lang: "xml", Snippet: "<attr sel=\"#row-template//#cell-link\" th:href=\"@{/x}\"/>"}},
+		}}); err != nil {
+		t.Errorf("a legitimate entry about XML was refused by the tool-call guard: %v", err)
 	}
 }

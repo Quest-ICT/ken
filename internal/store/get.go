@@ -46,11 +46,14 @@ func (s *Store) getOne(ctx context.Context, slug string, bump, detailed bool) (*
 	)
 	err := s.R.QueryRowContext(ctx, `
 SELECT slug, kind, title, summary, COALESCE(category,''), tags, triggers,
-       lifecycle, staleness, curated_rev, use_count,
-       curated_version_id, provisional_version_id
+       lifecycle, staleness,
+       -- The HEAD's own rev_no, not the retired curated_rev counter (which is frozen at 0 on the
+       -- 6.0.0 write path and was still being rendered as a revision number).
+       COALESCE((SELECT rev_no FROM entry_version WHERE id = entry.curated_version_id), 0),
+       use_count, curated_version_id, provisional_version_id
 FROM entry WHERE slug = ?`, slug).Scan(
 		&e.Slug, &e.Kind, &e.Title, &e.Summary, &e.Category, &tagsJSON, &trigJSON,
-		&e.Lifecycle, &e.Staleness, &e.CuratedRev, &e.UseCount, &curatedVID, &provVID)
+		&e.Lifecycle, &e.Staleness, &e.HeadRev, &e.UseCount, &curatedVID, &provVID)
 	if err != nil {
 		return nil, err
 	}

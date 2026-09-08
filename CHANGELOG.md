@@ -15,6 +15,26 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+- **A malformed tool call is REFUSED rather than stored as prose.** ken-prod measured 22 of 118
+  entries (19%) on the pre-rebuild KB with the whole body crammed into `problem` — literal
+  `</problem>` and `<parameter name="solution">` inside it — and `solution`, `rationale`, `caveats`
+  all NULL; then five more among the 23 written after the rebuild, so it was live rather than
+  historical. `validateContent` checked lengths and nothing else, so a corrupt entry returned a
+  slug and a success, entered FTS, and was served to the next session as knowledge. The refusal
+  names the field, says NOTHING WAS SAVED, and tells the agent to re-emit — and is narrow enough
+  that an entry legitimately *about* markup still saves.
+- **`curated_rev` is replaced on the wire and in the console by `head_rev`, the head version's own
+  revision number.** It was a promotion counter; nothing promotes any more, so it froze at 0 while
+  still being rendered as a revision number — ken-prod read `curated_rev: 0` against a head at rev
+  2 and had to ask whether it was retired or broken. It was both. It also reverted *incremented*.
+- **The `dedup_check_token` expiry names its own clock.** It has a TIME window and no use count, so
+  one token covers a whole batch and a long batch outlives it — ken-prod had one serve sixteen
+  saves and then be refused, which reads as "consumed" rather than "ten minutes elapsed". The
+  refusal now reports how long ago it expired and states the lifetime; `kb_save`'s description says
+  it too.
+
+
 ## [6.0.0] — 2026-09-05
 
 ### Fixed before release (found by an adversarial review of the diff, not by the suite)

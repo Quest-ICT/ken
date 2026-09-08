@@ -53,16 +53,24 @@ type EntryProvenance struct {
 
 // Entry is a full knowledge entry returned by kb_get.
 type Entry struct {
-	Slug           string           `json:"slug"`
-	Kind           string           `json:"kind"`
-	Title          string           `json:"title"`
-	Summary        string           `json:"summary"`
-	Category       string           `json:"category,omitempty"`
-	Tags           []string         `json:"tags"`
-	Triggers       []string         `json:"triggers"`
-	Lifecycle      string           `json:"lifecycle"`
-	Staleness      string           `json:"staleness"`
-	CuratedRev     int              `json:"curated_rev"`
+	Slug      string   `json:"slug"`
+	Kind      string   `json:"kind"`
+	Title     string   `json:"title"`
+	Summary   string   `json:"summary"`
+	Category  string   `json:"category,omitempty"`
+	Tags      []string `json:"tags"`
+	Triggers  []string `json:"triggers"`
+	Lifecycle string   `json:"lifecycle"`
+	Staleness string   `json:"staleness"`
+	// HeadRev is the head version's own rev_no.
+	//
+	// Was CuratedRev, a promotion COUNTER. Nothing promotes any more, so it froze at 0 while still
+	// being rendered as a revision number beside rev numbers that had moved past it — ken-prod saw
+	// curated_rev 0 against a head at rev 2 and asked whether it was retired or broken. It was
+	// both: retired in effect, and still displayed. It also reverted INCREMENTED, so ten
+	// alternating reverts once took it to 12 and an entry reached "battle-tested" after four
+	// clicks. The head's real rev_no cannot drift from the head, because it IS the head's.
+	HeadRev        int              `json:"head_rev"`
 	UseCount       int              `json:"use_count"`
 	HasProvisional bool             `json:"has_provisional"`
 	Head           *VersionBody     `json:"curated_head,omitempty"`

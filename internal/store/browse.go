@@ -30,7 +30,7 @@ type BrowseRow struct {
 	Category       string
 	Staleness      string
 	Lifecycle      string
-	CuratedRev     int
+	HeadRev        int // the head version's own rev_no; was the retired curated_rev counter
 	UseCount       int
 	HasProvisional bool
 	UpdatedAt      string
@@ -70,7 +70,8 @@ func (s *Store) ListEntries(ctx context.Context, f BrowseFilter) ([]BrowseRow, b
 
 	q := `
 SELECT slug, title, summary, kind, COALESCE(category,''), staleness, lifecycle,
-       curated_rev, use_count, (provisional_version_id IS NOT NULL), updated_at
+       COALESCE((SELECT rev_no FROM entry_version WHERE id = entry.curated_version_id), 0),
+       use_count, (provisional_version_id IS NOT NULL), updated_at
 FROM entry
 -- *** ARCHIVED IS HIDDEN BY DEFAULT AND REACHABLE ON REQUEST. ***
 --
@@ -103,7 +104,7 @@ LIMIT ? OFFSET ?`
 	for rows.Next() {
 		var r BrowseRow
 		if err := rows.Scan(&r.Slug, &r.Title, &r.Summary, &r.Kind, &r.Category, &r.Staleness,
-			&r.Lifecycle, &r.CuratedRev, &r.UseCount, &r.HasProvisional, &r.UpdatedAt); err != nil {
+			&r.Lifecycle, &r.HeadRev, &r.UseCount, &r.HasProvisional, &r.UpdatedAt); err != nil {
 			return nil, false, err
 		}
 		out = append(out, r)

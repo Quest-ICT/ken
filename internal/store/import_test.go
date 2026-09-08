@@ -30,7 +30,7 @@ func TestImportEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Lifecycle != "active" || e.CuratedRev != 1 || e.Head == nil || e.Head.Solution != "do foo carefully" {
+	if e.Lifecycle != "active" || e.HeadRev != 1 || e.Head == nil || e.Head.Solution != "do foo carefully" {
 		t.Fatalf("imported entry not curated as expected: %+v head=%+v", e, e.Head)
 	}
 	if res, _ := st.Search(ctx, "foo carefully", SearchOpts{}); len(res) == 0 {
