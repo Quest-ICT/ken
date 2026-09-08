@@ -15,6 +15,28 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Fixed
+- **6.0.1's tool-call guard ran over INHERITED fields on a revision, so any entry that legitimately
+  quotes a marker became unenhanceable.** ken-prod hit it within the hour of taking the release, by
+  accident, patching only `code` on an entry whose `solution` quotes `<parameter name=` because the
+  entry is *about* this defect. Three consequences, all theirs: such an entry was frozen until
+  somebody rewrote the sentence quoting it; the refusal said "your emission was malformed" when
+  nothing in the emission was; and **the knowledge base could not hold the guard's own message**, so
+  Ken was unable to document its own defect. The guard now checks only the fields THIS call
+  supplied — an inherited field was either written before the guard or has already passed it once,
+  and cannot have been crammed by this call. The 6.0.0 Thymeleaf test covered markup generally and
+  did not cover these strings; the entries most likely to carry them are exactly the ones
+  describing the failure.
+- The refusal now warns that **the parameter named after the marker was probably swallowed** — also
+  ken-prod's, from reading the live refusal back. Without it an agent re-emits the same composition
+  and fails identically.
+- **A CLI subcommand refuses a missing database instead of creating one.** A bare `ken backup …`
+  with `KEN_DB` unset, from a writable directory, silently created a complete empty Ken — schema,
+  `dedup.key`, and `vault.key`, the key that decrypts vault secrets — and reported success. The
+  existing guard fired only when `MkdirAll` FAILED, catching the loud case and missing the
+  dangerous one. The server still creates on first boot; the two paths are now separate functions.
+
+
 ## [6.0.1] — 2026-09-08
 
 ### Fixed

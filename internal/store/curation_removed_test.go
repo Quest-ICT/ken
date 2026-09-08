@@ -283,7 +283,7 @@ func TestAMalformedToolCallIsRefusedRatherThanStoredAsProse(t *testing.T) {
 		t.Errorf("refusal is %v, want ErrInvalid so the caller can tell it apart from a server fault", err)
 	}
 	// The refusal must name the field and say nothing was saved, or an agent cannot act on it.
-	for _, want := range []string{"problem", "NOTHING WAS SAVED", "send it again"} {
+	for _, want := range []string{"problem", "NOTHING WAS SAVED", "resend"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not carry %q, so the agent cannot recover from it: %v", want, err)
 		}
@@ -308,5 +308,74 @@ func TestAMalformedToolCallIsRefusedRatherThanStoredAsProse(t *testing.T) {
 			Code:     []model.CodeSnippet{{Lang: "xml", Snippet: "<attr sel=\"#row-template//#cell-link\" th:href=\"@{/x}\"/>"}},
 		}}); err != nil {
 		t.Errorf("a legitimate entry about XML was refused by the tool-call guard: %v", err)
+	}
+}
+
+// *** AN ENTRY THAT QUOTES A MARKER MUST STAY ENHANCEABLE — INCLUDING THIS ONE. ***
+//
+// 6.0.1 ran the tool-call guard over the MERGED content, so a revision was checked against fields
+// it had inherited. ken-prod hit it within the hour of taking the release, by accident, patching
+// only `code` on an entry whose `solution` quotes `<parameter name=` because the entry is ABOUT
+// this defect. Three consequences, all theirs:
+//
+//   - any entry legitimately mentioning a marker became UNENHANCEABLE, frozen until somebody
+//     rewrote the sentence that quotes it;
+//   - the refusal said "your emission was malformed" when nothing in the emission was;
+//   - and the knowledge base could not hold the guard's own message — Ken could not document its
+//     own defect.
+//
+// The Thymeleaf case in the test above covers markup generally and does NOT cover these particular
+// strings, and the entries most likely to carry them are precisely the ones describing the failure.
+// That is the gap this closes.
+//
+// VERIFY BY DELETION: point ProposeEnhancement's guard back at the merged content and the second
+// half goes red.
+func TestAnEntryQuotingAMarkerStaysEnhanceable(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+
+	// An entry ABOUT the crammed-field defect. Written before the guard existed, as ken-prod's was.
+	sr, err := st.Save(ctx, SaveInput{Kind: "reference", AuthorKind: "ai",
+		Content: Content{
+			Title:   "Crammed tool-call bodies",
+			Summary: "a malformed emission puts the whole body in one field",
+			Problem: "The write succeeds and the entry is corrupt.",
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sr
+	// An entry whose SOLUTION quotes a marker, created the way a pre-guard one really arrives —
+	// through the import path, which does not run the guard because imported records predate it.
+	// (A direct UPDATE is correctly refused by the entry_version immutability trigger, which is
+	// itself worth knowing: version content cannot be edited in place, only superseded.)
+	quoting := "Look for the literal string <parameter name= inside the problem column."
+	imported, err := st.ImportEntry(ctx, ImportInput{
+		Slug: "documents-the-marker", Kind: "reference",
+		Content: Content{Title: "Crammed bodies", Summary: "how to spot one", Solution: quoting},
+	})
+	if err != nil || !imported {
+		t.Fatalf("import: created=%v err=%v", imported, err)
+	}
+
+	// *** NOW REVISE SOMETHING ELSE. This is ken-prod's exact case: patch only one field, and the
+	// marker rides along inherited. It must succeed. ***
+	note := "and check the closing tag too"
+	if _, err := st.ProposeEnhancement(ctx, ProposeInput{
+		Slug: "documents-the-marker", ChangeNote: "add a caveat", AuthorKind: "ai",
+		Patch: Patch{Caveats: &note},
+	}); err != nil {
+		t.Fatalf("an entry whose INHERITED solution quotes a marker could not be enhanced: %v\n\n"+
+			"That freezes every entry documenting this defect — including the one holding the "+
+			"guard's own refusal message.", err)
+	}
+
+	// And the guard still fires on a field this call DID send.
+	bad := "see </problem> for the shape"
+	if _, err := st.ProposeEnhancement(ctx, ProposeInput{
+		Slug: "documents-the-marker", ChangeNote: "bad", AuthorKind: "ai",
+		Patch: Patch{Problem: &bad},
+	}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a marker in a field THIS call sent was accepted: %v", err)
 	}
 }

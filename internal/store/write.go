@@ -78,6 +78,9 @@ func (s *Store) Save(ctx context.Context, in SaveInput) (SaveResult, error) {
 	if in.Content.Title == "" || in.Content.Summary == "" || in.Kind == "" {
 		return SaveResult{}, fmt.Errorf("%w: kind, title and summary are required", ErrInvalid)
 	}
+	if err := validateNotToolCallSyntax(savedFields(in.Content)); err != nil {
+		return SaveResult{}, err
+	}
 	if err := validateContent(in.Content); err != nil {
 		return SaveResult{}, err
 	}
@@ -263,6 +266,11 @@ FROM entry WHERE slug=?`, in.Slug).Scan(&entryID, &curatedVID, &maxRev)
 		return ProposeResult{}, err
 	}
 	merged := applyPatch(base, in.Patch)
+	// Only what THIS revision sent — see validateNotToolCallSyntax. The length caps below still
+	// run over the merged result, because a cap is a property of the stored entry.
+	if err := validateNotToolCallSyntax(patchedFields(in.Patch)); err != nil {
+		return ProposeResult{}, err
+	}
 	if err := validateContent(merged); err != nil {
 		return ProposeResult{}, err
 	}
@@ -585,7 +593,7 @@ func validateContent(c Content) error {
 			return fmt.Errorf("%w: a code snippet exceeds %d bytes", ErrInvalid, maxSnippetLen)
 		}
 	}
-	return validateNotToolCallSyntax(c)
+	return nil
 }
 
 // toolCallMarkers are fragments that only appear in a prose field when a model's tool-call
@@ -593,8 +601,7 @@ func validateContent(c Content) error {
 //
 // Deliberately narrow. These are strings no human writes about a bug and no code snippet needs —
 // a genuine discussion of XML would use the tag alone, not a closing tag for THIS tool's own
-// parameter names. Anything broader would start refusing legitimate content, which is worse than
-// the defect: a refused write loses the lesson entirely.
+// parameter names.
 var toolCallMarkers = []string{
 	"<parameter name=",
 	"</parameter>",
@@ -607,41 +614,77 @@ var toolCallMarkers = []string{
 	"</function_calls>",
 }
 
+// namedField is one prose field together with whether THIS call supplied it.
+type namedField struct {
+	name     string
+	body     string
+	supplied bool
+}
+
 // validateNotToolCallSyntax refuses a body that contains this tool's own call syntax as content.
 //
 // *** MEASURED, NOT HYPOTHETICAL: 22 OF 118 ENTRIES (19%) ON THE PRE-REBUILD PRODUCTION KB. ***
 //
-// ken-prod found them, and then found five more among the 23 written after the rebuild, so this is
-// live rather than historical. The shape is always the same: the whole entry body lands in
-// `problem` as one blob with literal `</problem>` and `<parameter name="solution">` in the middle
-// of it, and `solution`, `rationale` and `caveats` arrive EMPTY. The closing markers are
-// inconsistent between records, so the emission was already malformed on arrival.
+// The shape is always the same: the whole entry body lands in `problem` as one blob with literal
+// `</problem>` and `<parameter name="solution">` in the middle of it, and the sibling fields arrive
+// EMPTY. Ken accepted every one — validateContent checked lengths and nothing else — so a corrupt
+// entry returned a slug and a success, entered FTS, and was served to the next session as
+// knowledge. Roughly 40% of writes in one window, over thirteen days.
 //
-// Ken accepted every one of them. validateContent checked lengths and nothing else, so a corrupt
-// entry returned a slug and a success, went into FTS, and was served to the next session as
-// knowledge — roughly 40% of writes in one window, interleaved with good ones, spread over
-// thirteen days. That is this project's defect class in its purest form: the failure rendered
-// exactly like the success.
+// *** IT CHECKS ONLY THE FIELDS THIS CALL SUPPLIED, AND THAT IS A CORRECTION, NOT A REFINEMENT. ***
 //
-// REFUSING IS THE RIGHT ANSWER AND IT IS NOT OBVIOUS. A refused write loses the lesson, which is
-// the one thing 6.0.0 exists to stop. But a SILENTLY corrupt entry loses it too AND consumes a
-// slug, occupies search results, and reads as knowledge to every session that finds it. A refusal
-// the agent can act on — it still holds the content, and can re-emit — costs one retry.
-func validateNotToolCallSyntax(c Content) error {
-	for _, f := range []struct{ name, body string }{
-		{"title", c.Title}, {"summary", c.Summary}, {"problem", c.Problem},
-		{"solution", c.Solution}, {"rationale", c.Rationale}, {"caveats", c.Caveats},
-	} {
+// 6.0.1 shipped this over the MERGED content, so a revision was checked against fields it had
+// inherited. ken-prod found the consequence within the hour, by accident, patching only `code` on
+// an entry whose `solution` quotes a marker because the entry is ABOUT this defect:
+//
+//   - any entry that legitimately mentions a marker became UNENHANCEABLE — frozen until somebody
+//     rewrote the sentence that quotes it;
+//   - the refusal said "your emission was malformed" when nothing in the emission was;
+//   - and the knowledge base could not hold the guard's own message, so Ken was unable to document
+//     its own defect.
+//
+// An inherited field cannot have been crammed by THIS call: it was either written before the guard
+// existed or already passed it once. Checking it re-litigates a decision already made, and the
+// entries most likely to fail are exactly the ones documenting the failure.
+func validateNotToolCallSyntax(fields []namedField) error {
+	for _, f := range fields {
+		if !f.supplied {
+			continue
+		}
 		for _, m := range toolCallMarkers {
 			if strings.Contains(f.body, m) {
-				return fmt.Errorf("%w: the %s field contains %q, which is tool-call syntax rather than content. "+
-					"Your emission was malformed: the whole body has probably landed in one field with the other "+
-					"fields empty. NOTHING WAS SAVED — send it again with each field carrying only its own prose",
-					ErrInvalid, f.name, m)
+				return fmt.Errorf("%w: the %s field you sent contains %q, which is tool-call syntax rather "+
+					"than content. Your emission was malformed: the whole body has probably landed in one "+
+					"field, and THE PARAMETER NAMED AFTER THE MARKER WAS PROBABLY SWALLOWED — check it is "+
+					"present before you resend, or the same composition will fail the same way. "+
+					"NOTHING WAS SAVED", ErrInvalid, f.name, m)
 			}
 		}
 	}
 	return nil
+}
+
+// savedFields is every prose field of a NEW entry: a kb_save supplies all of them.
+func savedFields(c Content) []namedField {
+	return []namedField{
+		{"title", c.Title, true}, {"summary", c.Summary, true}, {"problem", c.Problem, true},
+		{"solution", c.Solution, true}, {"rationale", c.Rationale, true}, {"caveats", c.Caveats, true},
+	}
+}
+
+// patchedFields is the prose a REVISION supplied. A nil pointer means "inherit", so it is not this
+// call's content and is not checked.
+func patchedFields(p Patch) []namedField {
+	f := func(name string, v *string) namedField {
+		if v == nil {
+			return namedField{name, "", false}
+		}
+		return namedField{name, *v, true}
+	}
+	return []namedField{
+		f("title", p.Title), f("summary", p.Summary), f("problem", p.Problem),
+		f("solution", p.Solution), f("rationale", p.Rationale), f("caveats", p.Caveats),
+	}
 }
 
 func slugify(s string) string {
