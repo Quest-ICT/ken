@@ -215,3 +215,64 @@ func TestVerbAfterFlagRefuses(t *testing.T) {
 		t.Fatalf("stderr does not name the stray argument: %q", got.stderr)
 	}
 }
+
+// *** A SUBCOMMAND WITHOUT KEN_DB MUST REFUSE, NOT CONJURE A SECOND KEN. ***
+//
+// ken-prod hit this on 2026-09-05: a bare `ken backup …` with KEN_DB unset, run from a writable
+// home directory, silently created a complete empty Ken under ./data/ — the schema, dedup.key, and
+// vault.key, THE KEY THAT DECRYPTS VAULT SECRETS — and reported success. It surfaced days later
+// when `ken embed --help` from that directory opened the stray database and reported "database is
+// OLDER than this binary", sending the reader to diagnose a version mismatch on a file they never
+// meant to exist.
+//
+// The old guard fired only when MkdirAll FAILED, so it caught the unwritable case and missed the
+// writable one — which is the dangerous half. An unwritable directory is a loud error; a writable
+// one is a second database and stray key material, with nothing said.
+//
+// Reproduced against the pre-fix binary while writing this: it created data/ken.db AND
+// data/vault.key, then printed "provider: none" as though it had done its job.
+//
+// VERIFY BY DELETION: remove the os.Stat refusal from mustOpenStore and this goes red on the file
+// count, which is the assertion that matters — the exit status alone would not have caught it,
+// because the old behaviour SUCCEEDED.
+func TestASubcommandWithoutADatabaseRefusesInsteadOfCreatingOne(t *testing.T) {
+	bin := kenBinary(t)
+	dir := t.TempDir()
+
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "KEN_") {
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "HOME="+dir) // KEN_DB deliberately absent — that is the case under test
+
+	cmd := exec.Command(bin, "embed", "status")
+	cmd.Env = env
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Errorf("a subcommand with no database and no KEN_DB SUCCEEDED:\n%s", out)
+	}
+
+	// The refusal has to be actionable or the operator will just set a path at random.
+	for _, want := range []string{"will not create one", "KEN_DB", "Nothing was written"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("the refusal does not carry %q:\n%s", want, out)
+		}
+	}
+
+	// *** THE ASSERTION THAT MATTERS: NOTHING ON DISK. ***
+	var made []string
+	_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() {
+			made = append(made, strings.TrimPrefix(p, dir))
+		}
+		return nil
+	})
+	if len(made) != 0 {
+		t.Fatalf("a refused subcommand left %d file(s) behind: %v\n"+
+			"The pre-fix binary left data/ken.db and data/vault.key here — a second Ken and its "+
+			"vault key, wherever the operator happened to be standing.", len(made), made)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -206,7 +207,10 @@ func runServe(args []string) {
 		die(fmt.Sprintf("ken: serve takes no arguments, got %q — if you meant a subcommand, it must come first. Try `ken help`.", fs.Arg(0)))
 	}
 
-	st := mustOpenStore(*dbPath)
+	// The SERVER creates on first boot — that is how a new deployment comes up. Only the CLI
+	// subcommands refuse, because a subcommand asking to operate on "the database" means an
+	// existing one. See mustOpenStore / mustOpenExistingStore.
+	st := mustOpenStoreCreating(*dbPath)
 	defer st.Close()
 
 	// Resolve the TLS posture (KEN_TLS=off|acme|file). The ACME cert cache defaults
@@ -820,7 +824,43 @@ func runServe(args []string) {
 	servers.Shutdown(ctx)
 }
 
+// mustOpenStore opens the database a CLI subcommand operates on.
+//
+// *** A SUBCOMMAND NEVER CREATES A DATABASE. IT REFUSES. ***
+//
+// ken-prod hit this on 2026-09-05: a bare `ken backup …` run without KEN_DB, from a writable home
+// directory, silently created a complete empty Ken — schema tables, `dedup.key`, and `vault.key`,
+// the key that decrypts vault secrets — under `./data/`. Nothing failed and nothing said so. It
+// surfaced days later when `ken embed --help` from the same directory opened that stray database
+// and reported "database is OLDER than this binary", sending the reader to diagnose a version
+// mismatch on a file they never meant to exist.
+//
+// The old guard only fired when MkdirAll FAILED, so it caught the unwritable case and missed the
+// writable one — which is the dangerous half: an unwritable directory is a loud error, a writable
+// one is a second Ken and stray key material.
+//
+// The server still creates on first boot; that is its job. A subcommand asking to operate on "the
+// database" must mean an existing one, so an absent file is a mistake to report rather than a state
+// to manufacture.
 func mustOpenStore(dbPath string) *store.Store {
+	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+		hint := ""
+		if !filepath.IsAbs(dbPath) && os.Getenv("KEN_DB") == "" {
+			hint = "\nKEN_DB is not set, so this fell back to the relative default — set it to your " +
+				"database path, e.g. KEN_DB=/opt/ken/data/ken.db"
+		}
+		log.Fatalf("no database at %q, and a subcommand will not create one.%s\n"+
+			"Nothing was written. (The server creates a database on first boot; the CLI does not, "+
+			"because creating one silently leaves a second Ken and its vault key wherever you "+
+			"happened to be standing.)", dbPath, hint)
+	}
+	return mustOpenStoreCreating(dbPath)
+}
+
+// mustOpenStoreCreating is the SERVER's path: it creates the data directory and the database when
+// they are absent, which is exactly what a first boot needs. Kept separate from mustOpenStore so
+// the CLI's refusal cannot be re-shared into it by accident.
+func mustOpenStoreCreating(dbPath string) *store.Store {
 	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			// Name the CAUSE, not just the symptom. The overwhelmingly common way to
