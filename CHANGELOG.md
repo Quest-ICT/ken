@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [6.0.1] — 2026-09-08
+
 ### Fixed
 - **A malformed tool call is REFUSED rather than stored as prose.** ken-prod measured 22 of 118
   entries (19%) on the pre-rebuild KB with the whole body crammed into `problem` — literal

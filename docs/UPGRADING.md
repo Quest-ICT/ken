@@ -34,6 +34,36 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 6.0.1
+
+### A malformed tool call is refused instead of being stored as prose
+
+**NO DATABASE STEP.** ken.db stays at 27, comm.db at 22.
+
+```
+sudo ken-upgrade --version 6.0.1 && sudo systemctl restart ken
+```
+
+**What you observe.** `kb_save` now refuses a body whose fields contain this tool's own call
+syntax — `<parameter name=`, `</problem>` and similar — naming the field and saying nothing was
+saved. ken-prod measured **22 of 118 entries (19%)** on the pre-rebuild knowledge base stored that
+way: the whole body crammed into `problem`, the other fields NULL. Ken accepted every one, so a
+corrupt entry returned a slug and a success and was served to the next session as knowledge.
+Agents will now occasionally see a refusal and re-emit; that is the fix working.
+
+It is deliberately narrow — an entry *about* markup, with tags in its prose and its code snippet,
+still saves.
+
+**`curated_rev` is gone from the wire and the console, replaced by `head_rev`.** It counted
+promotions, nothing promotes any more, so it was frozen at 0 while being displayed as a revision
+number beside rev numbers that had moved past it. If you have tooling reading `curated_rev` from
+`kb_get`, read `head_rev` instead.
+
+**The `dedup_check_token` refusal now names its clock.** The token lasts 10 minutes from the
+`kb_search` that issued it and is NOT consumed by a save, so one covers a whole batch — a long
+batch outlives it and a short one never does. One `kb_search` per ten saves is the pattern that
+works.
+
 ## 6.0.0
 
 ### The curation gate is gone: an agent's write is live immediately

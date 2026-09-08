@@ -64,6 +64,16 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 6.0.1** (2026-09-08) — `kb_save` refuses a body containing its own tool-call syntax
+instead of storing it as prose. ken-prod measured 22 of 118 entries (19%) on the pre-rebuild KB
+with the whole body crammed into `problem` and the other fields NULL; `validateContent` checked
+lengths and nothing else, so every one returned a slug and a success and was served as knowledge.
+Reported as historical, corrected by ken-prod when five more appeared among the 23 written after
+the rebuild. The guard is narrow enough that an entry about markup still saves. Also: `curated_rev`
+(frozen at 0 on the 6.0.0 write path, still displayed as a revision number, and incremented by
+reverts) is replaced by `head_rev`; and the `dedup_check_token` refusal states its 10-minute
+lifetime, since the token expires on a clock and is not consumed by a save.
+
 **Released: 6.0.0** (2026-09-05) — the curation gate is deleted. An agent's write is the entry's
 live head the moment it is stored, findable by the next search with no human step. It was removed
 because it was not performing review: Vlad's account after using Ken since v1 is that he opened the
