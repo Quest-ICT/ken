@@ -1133,6 +1133,9 @@ func addTool[In, Out any](s *mcp.Server, reg *metrics.Registry, t *mcp.Tool,
 	// them for ken_instructions{tool:"…"} — a RESULT, computed per call — and the tool list gets
 	// the first sentence plus a pointer. A description pins when the conversation begins and never
 	// refreshes; a result never does either of those things.
+	// ANNOTATE BEFORE REGISTERING. Unannotated, the SDK advertises a tool as destructive and
+	// open-world, which is how kb_search came to need a human's permission on claude.ai.
+	tooldoc.Annotate(t)
 	tooldoc.Register(t.Name, t.Description)
 	t.Description = tooldoc.Brief(t.Name, t.Description)
 	mcp.AddTool(s, t, handler)

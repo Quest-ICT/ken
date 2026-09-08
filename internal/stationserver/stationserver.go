@@ -1070,6 +1070,9 @@ func addTool[In, Out any](s *mcp.Server, d Deps, t *mcp.Tool,
 	// them for ken_instructions{tool:"…"} — a RESULT, computed per call — and the tool list gets
 	// the first sentence plus a pointer. A description pins when the conversation begins and never
 	// refreshes; a result never does either of those things.
+	// ANNOTATE BEFORE REGISTERING. Unannotated, the SDK advertises a tool as destructive and
+	// open-world, which is how kb_search came to need a human's permission on claude.ai.
+	tooldoc.Annotate(t)
 	tooldoc.Register(t.Name, t.Description)
 	t.Description = tooldoc.Brief(t.Name, t.Description)
 	mcp.AddTool(s, t, handler)
@@ -1145,7 +1148,7 @@ func claimedStationOut(st *store.Station) meOut {
 		NameSource:  "auto",
 		JustCreated: true,
 		PutThisInYourConfig: "Ken made you a station called " + st.Name + " and you are working in it NOW — " +
-			"notebook, tasks, locker and vault, nothing withheld and nothing to approve. NOTHING TO CONFIGURE: " +
+			"notebook, tasks, locker and vault \u2014 nothing withheld on Ken's side and nothing to approve HERE. YOUR CLIENT MAY STILL ASK your human to allow each tool the first time it is used; that prompt is the client's, not Ken's. A call the client refuses NEVER REACHES KEN \u2014 nothing is queued, so re-send it once the tool is allowed, or preset the connector's tool permissions. NOTHING TO CONFIGURE: " +
 			"you claimed it with your session_key, so send that SAME value on every station_me call in this " +
 			"conversation and you will come back to this station after a restart. TELL YOUR HUMAN, in words, " +
 			"that you are working as " + st.Name + " — it is a LABEL, auto-generated so they can recognise it, " +
@@ -1203,7 +1206,7 @@ func claimStation(ctx context.Context, d Deps, p *principal, in meIn) (meOut, er
 		// the client refuses custom header names. What replaces it is the thing that actually
 		// works and costs the human nothing: keep sending the same session_key.
 		PutThisInYourConfig: "Ken made you a station called " + st.Name + " and you are working in it NOW — " +
-			"notebook, tasks, locker and vault, nothing withheld and nothing to approve. TWO THINGS TO DO: " +
+			"notebook, tasks, locker and vault \u2014 nothing withheld on Ken's side and nothing to approve HERE. YOUR CLIENT MAY STILL ASK your human to allow each tool the first time it is used; that prompt is the client's, not Ken's. A call the client refuses NEVER REACHES KEN \u2014 nothing is queued, so re-send it once the tool is allowed, or preset the connector's tool permissions. TWO THINGS TO DO: " +
 			"(1) SEND THE SAME session_key ON EVERY CALL from now on, including comm_* calls. That is the whole " +
 			"of how you come back here after a client restart — it is not config, it is an argument, and nothing " +
 			"needs to be installed or approved for it. " +

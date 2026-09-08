@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -50,6 +51,12 @@ func runStation(args []string) {
 			die(fmt.Sprintf("a station named %q already exists in this space", *name))
 		}
 		must(err)
+		// LOG IT AS WELL AS PRINTING IT. stdout reaches whoever ran the command; the journal is
+		// where an operator reconstructs "where did this station come from" weeks later, and it is
+		// the only record if the mint was scripted. station_me's auto-name path has logged since
+		// it existed; this one printed and vanished.
+		log.Printf("STATION: minted station %s (%q) from the CLI by actor %d — no approval required (IDENTITY.md §5)",
+			s.StationID, s.Name, actorID)
 		fmt.Printf("station %s created (id %s)\n", s.Name, s.StationID)
 		// NO NEXT STEP TO PRINT, AND THAT IS THE FEATURE. This used to say "mint a key for a
 		// machine with: ken station key …" — a subcommand retired in 4.0.0, so the line handed the

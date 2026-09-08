@@ -15,6 +15,30 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+- **Every tool now carries MCP annotations.** All 42 set only Name and Description, and the SDK's
+  documented defaults are `DestructiveHint: true` and `OpenWorldHint: true` — so `kb_search`,
+  `comm_directory` and `ken_version` each advertised themselves to every client as a destructive
+  tool reaching an open world of external entities. ken-prod measured the consequence: a claude.ai
+  session had three calls refused with "No approval received", proven client-side from
+  `ken_mcp_tool_calls_total` (the calls never reached a handler; the string exists nowhere in Ken
+  or the SDK). Read tools are now `readOnlyHint` + `idempotentHint`; additive writes are
+  `destructiveHint: false`; `kb_retract`, `station_task_drop`, `station_locker_delete` and
+  `station_vault_delete` stay destructive. **Ken is a closed world, so `openWorldHint` is false on
+  every tool.** A new tool without an entry in the table fails `TestEveryRegisteredToolIsAnnotated`
+  rather than silently inheriting the worst reading — the defect was an ABSENT annotation, and
+  absence is what defaults badly.
+- `ken station add` logs the mint. It printed to stdout and vanished; `station_me`'s auto-name path
+  has always logged, so a scripted CLI mint was the one station whose origin left no journal trace.
+
+### Fixed
+- **`station_me`'s connect-time copy said "nothing to approve" and was true of Ken while false of
+  the experience** — a claude.ai session read it and was refused a task write minutes later. It now
+  says the client may still ask, that the prompt is the client's rather than Ken's, and — the part
+  the affected session added — that **a refused call never reaches Ken and nothing is queued**, so
+  it must be re-sent. "No approval received" reads as *pending* to anyone who has not seen the
+  counters, and a session that believes its save is queued will not send it again.
+
 ### Fixed
 - **6.0.1's tool-call guard ran over INHERITED fields on a revision, so any entry that legitimately
   quotes a marker became unenhanceable.** ken-prod hit it within the hour of taking the release, by
