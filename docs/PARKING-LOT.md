@@ -2388,3 +2388,62 @@ is a marker on the briefing, not a relabelling, and it belongs with the identity
 ---
 
 *Swept 2026-08-18 from the tree at a0ed9ec. Spot-checks in the header were run by hand; everything else is the sweep's own verification.*
+
+---
+
+## 6.0.0 pre-release review — findings NOT fixed
+
+*Recorded 2026-09-25 by ken-dev, at the close of the session that shipped 6.0.0 / 6.0.1.*
+
+**Read the provenance before the list.** A four-lens adversarial review of the
+curation-removal diff produced 58 confirmed findings (zero refuted). The blockers and
+the highest-reach serious ones were fixed and shipped; **the full write-up is LOST.** It
+lived only in the harness scratchpad under `/tmp`, which is tmpfs, and was swept between
+2026-09-08 and 2026-09-25. What survives below is the title and location of each
+outstanding item, recovered from the session transcript — enough to re-find each one,
+not enough to skip re-reading the code.
+
+**That loss is the point of CC Rule 1** and it is recorded here rather than quietly:
+the review's own conclusions were the most valuable artifact of the release and they
+were never written into the project folder. Everything that went into code comments,
+tests, the CHANGELOG and the docs survived, because it was written where the work is.
+
+### Outstanding, roughly by consequence
+
+| Finding | Where |
+|---|---|
+| `kb_get` promises a retired entry says "why"; no MCP surface returns the reason | `internal/mcpserver/server.go` (kb_get description) |
+| `kb_retract` removes an entry from search and browse but **not** from `kb_recent_context`, which a retraction then promotes to the top of | `internal/store/v1tools.go` |
+| `kb_retract` has no instrument: a mass retraction reads as a busier-than-usual day | `cmd/ken/main.go` (metrics) |
+| The migration's invariant assertions cannot stop its `COMMIT` under the invocation the docs prescribe; the python3 fallback discards the printed listing **and** the assertions | `upgrade/ken-5.x-to-6.0.0.sql`, `docs/UPGRADING-THE-DATABASE.md` |
+| `docs/OPERATION.md` and `docs/AI-INTEGRATION.md` still carry stale "human curates / agent proposes" prose in places | both |
+| Three console pages still tell the human they review and promote what agents write | `internal/i18n/locales/messages*.properties` |
+| The `seed` maturity tier is now unreachable, so `curated` is what every entry reports from its first write | `internal/store/search.go` |
+| The activity feed truncates at 200 rows silently, and each revision costs two | `internal/web/app.go` |
+| The activity feed prints raw UTC while every other console table renders local time | `internal/web/templates/activity.html` |
+| `enum.event.*` covers only the three event types 6.0.0 retired and none of the four it added | `internal/i18n/locales/messages*.properties` |
+| Godoc on `Save` / `SaveInput` / `ProposeEnhancement` still states the opposite of what they do | `internal/store/write.go` |
+| A revision to an **archived** entry succeeds and reports plain success, leaving the correction undiscoverable | `internal/store/write.go` |
+| `ken embed --help` still opens a database (flag parsing happens after the store opens). Now a refusal rather than a stray creation, so the harm is gone and the oddity is not | `cmd/ken/cli_embed.go` |
+| An absent `STATION: minted station` line that ken-prod measured for station 19 is **unexplained** — the OAuth path does log, and its `TokenID` is `oauth-<grantID>`. Their absence is evidence about the search as much as the event; not closed | — |
+
+### Also still open, from earlier
+
+- **`station_note_write`'s ~9.6 KB failure wearing a binding error** was resolved: there
+  is no ~8 KB cap (the page cap is 64 KiB, `app_setting` is empty on production, verified
+  by ken-prod from two independent paths). Closed, recorded here because the phantom
+  limit appears in older notes.
+- **Broadcast TTL**: an estate announcement's clock starts at the FIRST recipient's poll,
+  not per recipient, so a station waking 30+ hours later gets nothing — which bites exactly
+  the dormant stations estate-wide broadcast exists for. `ttl_seconds` does **not** fix it:
+  `internal/comm/message.go` restamps `expires_at` to the server's `MessageTTL`
+  unconditionally on first delivery, and `ttl_clamped_from` cannot see it because it is
+  computed at send. Documented, not fixed. See `t-N1qNuy7h`.
+- **`comm_poll` never tells a session it owes acks**, while `kb_get` returns
+  `outcome_owed` + a nudge in the same product on the same model. Measured twice: by
+  cc-self (11 polls, 0 acks, 46,466 bytes → 135 after acking) and by ken-dev on itself
+  (three redeliveries after completing every action the messages asked for). Sent to
+  `new_ken_dev` as design input. See `t-eyrIlzW7`.
+- **Vault has no human write path.** The console can reveal and restore a secret, never
+  create one, and there is no CLI verb — so the only first-write path is a session tool
+  call, which puts the credential in a transcript. See `t-PBU0u3py`.
