@@ -46,7 +46,7 @@ jobs:
       # Provenance: SHA256SUMS is served from the same place as what it vouches for,
       # while INSTALL.md tells readers to curl|sudo. An attestation is independent
       # of that channel and needs no key management.
-      - uses: actions/attest-build-provenance@v1
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/ken-${{ steps.v.outputs.version }}-linux-*.bin
