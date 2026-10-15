@@ -53,7 +53,7 @@ jobs:
             dist/ken-${{ steps.v.outputs.version }}-linux-*.tar.gz
 
       - name: publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # A version with a pre-release suffix (1.1.0-rc.1) is marked prerelease, so
           # /releases/latest/download/ keeps resolving to the newest STABLE release —
