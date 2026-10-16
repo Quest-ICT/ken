@@ -44,3 +44,7 @@ Web-UI-handoff.zip
 *~
 .idea/
 .vscode/
+.claude/project/
+.claude/work/
+.claude/settings.local.json
+.claude/ken-session-key
