@@ -1,0 +1,19 @@
+# cc-ken-waker.service — wake every live Claude Code session here that has Ken mail waiting
+# (systemd user unit). Each station is checked every 10 minutes. Install the package in
+# ~/.local/share/ken-waker (or edit the paths), set KEN_URL below, then:
+#   ln -sf ~/.local/share/ken-waker/systemd/cc-ken-waker.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now cc-ken-waker
+# Log: ~/.local/state/cc-wake/ken-waker.log. Manual: README.md.
+[Unit]
+Description=cc-ken-waker: wake Claude Code sessions that have Ken mail waiting
+After=default.target
+
+[Service]
+Type=simple
+Environment=KEN_URL=https://ken.example.com
+ExecStart=%h/.local/share/ken-waker/bin/cc-ken-waker.py --interval 600 --retry 60 --scan 15
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

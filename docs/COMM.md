@@ -1047,10 +1047,24 @@ own budget and miss block (`rl_waiting_*`, docs/OPERATION.md "Rate limiting"), b
 Claude Code session on a workstation shares one address: the mail check must neither spend the
 budget the rest of Ken runs on nor feed a block that would cut the whole machine off Ken.
 
-**Using it from Claude Code.** A hook knows the session key, not the station id, so each project
-keeps its station id in a file beside `.claude/ken-session-key`, written once from what
-`station_me` returns. A `SessionStart` or `UserPromptSubmit` hook then needs one `curl` and, on
-`{"mail":true}`, tells the session to call `comm_poll`.
+**Using it from Claude Code: `contrib/claude-code-waker/`** in this repository, whose README is
+the install guide. A user service wakes idle sessions, which a prompt hook cannot do. It finds
+the live Claude Code sessions in tmux and asks this endpoint about each one's station, staggered
+over a 600 s cycle. On `{"mail":true}` it types the fixed text `pull comm` into that session, and
+only when the session is idle, with no dialog open, no draft and nobody typing. What Ken answers
+is never typed. Something outside the session knows the session, not the station, so a
+`station_me` PostToolUse hook records each session's station id, read from the result's
+top-level `station_id` and nothing else. The checker sends nothing unless an id matches
+`^[A-Za-z0-9]{16}$`, which also refuses a session key. Refusals are honoured: a 429 waits out
+`Retry-After`, and a 403 pauses every check for the lockout and is logged as *blocked*, so
+silence is not read as an empty inbox. Measured on the workstation it was built on, with
+about 30 sessions: 40 s from send to `pull comm` typed. That was at a 60 s check interval; the
+service's default interval is 600 s.
+
+**The hazard on the client side: a wrong id is silent.** An id naming no station is answered
+exactly like an empty inbox, and each such request is a miss. Every session on one workstation
+shares an address, so one wrong record in one busy session can block the mail check for all of
+them. Take the id only from `station_me`'s own result, and check its shape before sending.
 
 **Not in this slice:** waiting for mail to arrive (a held request, as `comm_poll` does) — the
 check answers at once, and a held variant is added only if polling it turns out to cost

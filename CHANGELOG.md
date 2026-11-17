@@ -15,6 +15,17 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+### Added
+- **`contrib/claude-code-waker/` — a client that wakes idle Claude Code sessions when Ken mail
+  arrives.** A user service asks `POST /comm/waiting` for each live session's station. On
+  `{"mail":true}` it types `pull comm` into the session's tmux pane, and only when that session is
+  idle, has no dialog open, holds no draft and nobody is typing. A `station_me` PostToolUse hook
+  records each session's station id, read strictly from the result's top-level field, because a
+  wrong id is a silent miss. Measured on the workstation it was built on: 40 s from send to
+  `pull comm` typed. Contributed by the session that configures that workstation's Claude Code.
+  It relies on Claude Code internals that are not a published interface, and its README says
+  which.
+
 ## [6.1.0] — 2026-11-17
 
 ### Added

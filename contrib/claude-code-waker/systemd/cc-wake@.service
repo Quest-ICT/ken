@@ -1,0 +1,18 @@
+# cc-wake@.service — a permanent waker for one Claude Code session (systemd user template).
+# The instance name is a config file: ~/.config/cc-wake/<instance>.conf (see cc-wake.sh --help).
+#   ln -s ~/.local/share/ken-waker/systemd/cc-wake@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now cc-wake@<instance>
+# Manual: README.md of this package.
+[Unit]
+Description=cc-wake: wake a Claude Code session on a trigger (%i)
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/ken-waker/bin/cc-wake.sh --config %h/.config/cc-wake/%i.conf
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
