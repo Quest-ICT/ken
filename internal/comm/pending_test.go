@@ -231,10 +231,16 @@ func TestPendingCountersMatchBothPartyForms(t *testing.T) {
 	}
 	// Re-file it under the endpoint's OWN party, the shape a backwards ken.db restore
 	// leaves behind.
-	if _, err := st.W.ExecContext(ctx,
-		`UPDATE delivery SET party_key=? WHERE party_key=?`,
-		PartyOf(alpha), stationParty("st-alpha")); err != nil {
+	res, err := st.W.ExecContext(ctx, `UPDATE delivery SET party_key=? WHERE party_key=?`,
+		endpointPartyKey(alpha.ID), stationParty("st-alpha"))
+	if err != nil {
 		t.Fatal(err)
+	}
+	// PRECONDITION: the re-file must actually move a row. PartyOf(alpha) returns the STATION
+	// form for a bound endpoint, so re-filing under it was a no-op and this test passed
+	// without ever exercising the endpoint form (found by mutation, 2026-11-17).
+	if n, _ := res.RowsAffected(); n != 1 {
+		t.Fatalf("re-filed %d deliveries, want 1 — the test would prove nothing", n)
 	}
 
 	n, err := st.PendingTotalFor(ctx, alpha)

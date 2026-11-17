@@ -159,6 +159,11 @@ Rate limiting (env; on by default — loopback + KEN_RATELIMIT_ALLOW_CIDRS + /he
   KEN_RATELIMIT_BLOCK_AFTER  over-limit rejections before an IP is auto-blocked (default 100)
   KEN_RATELIMIT_LOCKOUT_SEC  auto-block duration, seconds (default 900)
   KEN_RATELIMIT_ALLOW_CIDRS  extra always-allowed CIDRs (comma-separated)
+  The mail check (POST /comm/waiting) has its own budget and block, separate from the above:
+  KEN_RATELIMIT_WAITING_RPM  per-IP requests/min (default 240); KEN_RATELIMIT_WAITING_BURST (default 60)
+  KEN_RATELIMIT_WAITING_MISS_LIMIT       lookups naming no station before a block (default 10; 0 = never)
+  KEN_RATELIMIT_WAITING_MISS_WINDOW_SEC  window those misses are counted in (default 600)
+  KEN_RATELIMIT_WAITING_LOCKOUT_SEC      how long a block lasts, mail check only (default 900)
 
 One machine surface — /mcp, carrying every tool (kb_*, comm_* and station_*):
                     a credential reaching it must carry EVERY capability, or it is refused
@@ -270,9 +275,13 @@ func runServe(args []string) {
 	// in-progress auto-block / throttle state.
 	rlGuard := &ratelimit.ReloadableGuard{}
 	rlToken := &ratelimit.ReloadableBucket{}
+	// The mail-waiting check's own guard: its own per-IP budget and a block that covers
+	// that endpoint alone (ratelimit.ProbeGuard says why it cannot share the IPGuard's).
+	rlWaiting := &ratelimit.ReloadableProbeGuard{}
 	rebuildRL := func(s *settings.Snapshot) {
 		rlGuard.Store(guardFromSettings(s, reg))
 		rlToken.Store(tokenBucketFromSettings(s))
+		rlWaiting.Store(waitingGuardFromSettings(s))
 	}
 	rebuildRL(live.Current())
 	lastRL := rlRelevant(live.Current().Values)
@@ -440,6 +449,9 @@ func runServe(args []string) {
 	// wedged COMM sweeper would pull a healthy knowledge base out of rotation.
 	// COMM may fail; the KB stays UP.
 	var commHandler *commserver.Handler
+	// The mail-waiting check, POST /comm/waiting. Built only when comm.db is open; nil
+	// otherwise, and then the path falls through to the guarded mux like any other.
+	var waitingHandler http.Handler
 	// Hoisted so the UNIFIED endpoint can see all three surfaces' dependencies. They are built
 	// inside their own enabled-blocks; this only widens the scope, never the construction, so the
 	// unified endpoint and the specific ones are wired from the SAME values by construction.
@@ -518,6 +530,9 @@ func runServe(args []string) {
 		// the live comm_files_enabled switch. Mounted as a prefix because the grant
 		// travels in the path.
 		mux.Handle("/comm/files/", commserver.NewFileHandler(commDeps, commHandler))
+		// The unauthenticated "is mail waiting for this station?" check. NOT mounted on the
+		// mux: it is routed around the outer IPGuard below, because it carries its own guard.
+		waitingHandler = reg.Counting("comm", commserver.NewWaitingHandler(rlWaiting, st, commStore))
 		// /comm/mcp IS GONE. There is one machine surface, /mcp, and it carries every tool.
 		// /comm/files/ above is NOT an MCP surface — it is the file-transfer path, whose grant
 		// travels in the URL — so it stays exactly where it is.
@@ -691,6 +706,21 @@ func runServe(args []string) {
 
 	// The per-IP abuse guard is the outermost handler — ahead of web routing and MCP auth.
 	handler := rlGuard.Wrap(mux)
+	// ...for every path but one. POST /comm/waiting bypasses it and answers to its own
+	// ProbeGuard instead: every Claude Code session on a workstation shares one address,
+	// so the mail check must neither spend the shared per-IP budget nor feed a block that
+	// would cut the whole machine off Ken. Exact path match only; anything else, including
+	// /comm/waiting/ with a trailing slash, goes through the guard.
+	if waitingHandler != nil {
+		guarded := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == commserver.WaitingPath {
+				waitingHandler.ServeHTTP(w, r)
+				return
+			}
+			guarded.ServeHTTP(w, r)
+		})
+	}
 
 	servers, err := tlsCfg.Build(handler, func(s *http.Server) {
 		s.ReadHeaderTimeout = 10 * time.Second
@@ -781,6 +811,15 @@ func runServe(args []string) {
 		}
 		log.Printf("rate limit: per-IP %d/min (burst %d), per-token %d/min (burst %d); %s (loopback + allow-CIDRs + /healthz exempt)",
 			s.IPPerMin, s.IPBurst, s.TokenPerMin, s.TokenBurst, block)
+		// The mail check has its own budget and block, so its numbers are printed apart:
+		// folding them into the line above would read as if it shared that guard.
+		waitBlock := fmt.Sprintf("block after %d misses in %ds, lockout %ds",
+			s.WaitingMissLimit, s.WaitingMissWindowSec, s.WaitingLockoutSec)
+		if s.WaitingMissLimit <= 0 {
+			waitBlock = "miss block off"
+		}
+		log.Printf("rate limit: mail check %s per-IP %d/min (burst %d); %s — its own budget and block, not the guard above",
+			commserver.WaitingPath, s.WaitingPerMin, s.WaitingBurst, waitBlock)
 	} else {
 		log.Print("rate limit: OFF")
 	}
@@ -924,6 +963,21 @@ func guardFromSettings(s *settings.Snapshot, reg *metrics.Registry) *ratelimit.I
 	return ratelimit.NewIPGuard(cfg, s.Resolver)
 }
 
+// waitingGuardFromSettings builds the mail-waiting check's guard from a live snapshot (nil
+// when rate limiting is disabled, which admits everything, exactly as rl_enabled=false does
+// for the rest of Ken). It shares the allowlist and the client-IP resolver with the IPGuard.
+func waitingGuardFromSettings(s *settings.Snapshot) *ratelimit.ProbeGuard {
+	return ratelimit.NewProbeGuard(ratelimit.ProbeConfig{
+		Enabled:    s.RLEnabled,
+		PerMin:     s.WaitingPerMin,
+		Burst:      s.WaitingBurst,
+		MissLimit:  s.WaitingMissLimit,
+		MissWindow: time.Duration(s.WaitingMissWindowSec) * time.Second,
+		Lockout:    time.Duration(s.WaitingLockoutSec) * time.Second,
+		Allow:      s.AllowNets,
+	}, s.Resolver)
+}
+
 // registerCollectors wires the on-scrape gauge sources: knowledge-base row counts
 // and database connection-pool stats. All are cheap reads evaluated per scrape.
 func registerCollectors(reg *metrics.Registry, st *store.Store) {
@@ -1047,10 +1101,14 @@ type rlKey struct {
 	Enabled                                                            bool
 	IPPerMin, IPBurst, TokenPerMin, TokenBurst, BlockAfter, LockoutSec int
 	Allow, Trusted                                                     string
+	// The mail-waiting check's guard (rl_waiting_*). Hand-listed like the rest, so
+	// TestEveryRateLimitSettingReachesTheRebuildDetector fails when one is left out.
+	WaitingPerMin, WaitingBurst, WaitingMissLimit, WaitingMissWindowSec, WaitingLockoutSec int
 }
 
 func rlRelevant(v settings.Values) rlKey {
-	return rlKey{v.RLEnabled, v.IPPerMin, v.IPBurst, v.TokenPerMin, v.TokenBurst, v.BlockAfter, v.LockoutSec, v.AllowCIDRs, v.TrustedProxies}
+	return rlKey{v.RLEnabled, v.IPPerMin, v.IPBurst, v.TokenPerMin, v.TokenBurst, v.BlockAfter, v.LockoutSec, v.AllowCIDRs, v.TrustedProxies,
+		v.WaitingPerMin, v.WaitingBurst, v.WaitingMissLimit, v.WaitingMissWindowSec, v.WaitingLockoutSec}
 }
 
 // loadOrCreateDedupSecret returns the HMAC key for the search->save dedup token.

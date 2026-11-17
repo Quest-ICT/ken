@@ -18,6 +18,7 @@ import (
 var testDefaults = settings.Values{
 	RLEnabled: true, IPPerMin: 120, IPBurst: 120, TokenPerMin: 120, TokenBurst: 60,
 	BlockAfter: 100, LockoutSec: 900, LoginMaxFails: 5, LoginLockoutSec: 300,
+	WaitingPerMin: 240, WaitingBurst: 60, WaitingMissLimit: 10, WaitingMissWindowSec: 600, WaitingLockoutSec: 900,
 	SessionTTLHours: 12, TLSMode: "off",
 	CommMaxBodyBytes: 64 * 1024, CommMaxUnacked: 64,
 	CommMessageTTLSec: 24 * 3600, CommMetadataTTLSec: 7 * 24 * 3600,

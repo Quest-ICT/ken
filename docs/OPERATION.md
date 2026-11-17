@@ -159,7 +159,7 @@ stops a first-run window from being an open door.
 Three layers, in order:
 
 ```
-compiled defaults  (settings.DefaultsFromEnv — 13 of 47 read an env var; the rest are literals)
+compiled defaults  (settings.DefaultsFromEnv — 18 of 50 read an env var; the rest are literals)
         ↓  overridden by
 app_setting rows   (written only by the Settings form)
         ↓  folded into
@@ -272,18 +272,37 @@ or bound of a pre-existing field changed.
 | Per-token burst | `rl_token_burst` | 60 | 1–1000000 |
 | Auto-block after | `rl_block_after` | 100 | 0–1000000 (0 = never block) |
 | Auto-block lockout (seconds) | `rl_lockout_sec` | 900 | 1–604800 |
+| Mail check: per-IP requests / minute | `rl_waiting_rpm` | 240 | 1–1000000 |
+| Mail check: per-IP burst | `rl_waiting_burst` | 60 | 1–1000000 |
+| Mail check: block after misses | `rl_waiting_miss_limit` | 10 | 0–1000000 (0 = never block) |
+| Mail check: miss window (seconds) | `rl_waiting_miss_window_sec` | 600 | 1–604800 |
+| Mail check: block lockout (seconds) | `rl_waiting_lockout_sec` | 900 | 1–604800 |
 | Always-allowed CIDRs | `rl_allow_cidrs` | *(empty)* | CIDR list |
 
-**These "defaults" are compiled FALLBACKS, not fixed values.** ALL EIGHT rate-limiting rows —
+**These "defaults" are compiled FALLBACKS, not fixed values.** ALL THIRTEEN rate-limiting rows —
 `rl_enabled` included, via `KEN_RATELIMIT` — plus `trusted_proxies`, `tls_mode`, `tls_domains`,
-`tls_email` and `curation_langs` read an environment variable at startup. That is the 13 of 47
-counted in §2.1. The value shown here is what you get *when the unit sets nothing and nothing
+`tls_email` and `curation_langs` read an environment variable at startup. That is the 18 of 50
+counted in §2.1 (it said 13 of 47 until 2026-11-17; the 47 was already wrong — there were 45). The value shown here is what you get *when the unit sets nothing and nothing
 has been saved over it*. Check the unit before concluding the table is wrong, and check
 `KEN_RATELIMIT` first — it is the one that can have switched the whole limiter off before the
 console ever rendered.
 
 **`/healthz` is exempt from rate limiting**, alongside loopback and the configured CIDRs. A
 health prober cannot lock itself out.
+
+**The mail check, `POST /comm/waiting`, has its own guard — the five `rl_waiting_*` rows.** It
+is routed around the per-IP guard above: it neither spends `rl_ip_rpm` nor counts toward
+`rl_block_after`, and its block refuses the mail check alone, never the rest of Ken. The reason
+is that every Claude Code session on a workstation calls from one address, so if a stale station
+id in one session's hook fed the shared block, every session on that machine would lose Ken —
+MCP included — for the lockout. What gets an address blocked here is *misses*: a lookup naming a
+station that does not exist, a malformed body, or a method other than POST. Misses are counted
+in a window (`rl_waiting_miss_window_sec`), not as a streak, so a real lookup in between does not
+reset the count. Throttling (429) is never a miss. Each block is logged once:
+`ratelimit: /comm/waiting blocked <addr> for <lockout> after <n> lookups that named no station`.
+**If that line names your own workstation**, a hook there holds a station id that no longer
+exists. Loopback and `rl_allow_cidrs` bypass this guard as they bypass the other, and
+`rl_enabled` off switches both off. The protocol is in docs/COMM.md, "The mail check".
 
 **A CIDR field rejects `/0` outright.** Both `rl_allow_cidrs` and `trusted_proxies` refuse
 it rather than accepting a value that would disable the protection entirely.

@@ -16,6 +16,24 @@ same change — never "docs later".
 ## [Unreleased]
 
 ### Added
+- **`POST /comm/waiting` — "is mail waiting for this station?", answered to anyone, with no MCP
+  and no credential.** The body is exactly `{"station":"<16-character station id>"}`; the answer is
+  `{"mail":true}` or `{"mail":false}` and nothing else — never the messages, a count or a sender.
+  It is the first piece of making Claude Code sessions independent of the claude.ai connector
+  (t-RTv78Q8R): on 2026-10-26 a session whose only way to learn about mail ran through Anthropic's
+  proxy had no way to learn about it while the proxy failed. Now a hook can ask with `curl`.
+  "Waiting" means what `pending_total` means — queued and deliverable, not delivered-but-unacked —
+  and asking delivers nothing and starts no expiry clock. An id naming no station gets the same
+  `{"mail":false}` as an empty station. Design and the reason for each restriction: docs/COMM.md §11a.
+- **The mail check has its own rate limit and its own block — `rl_waiting_*`, five live settings.**
+  It is routed around the shared per-IP guard, because every Claude Code session on a workstation
+  calls from one address: it must not spend the budget the rest of Ken runs on (the budget the
+  2026-10-26 rejections came out of), and its block must not cut the machine off Ken. Lookups of
+  stations that do not exist, malformed bodies and wrong methods are *misses*; 10 within 600 s
+  block that address **from the mail check only** for 900 s, and each block is logged with the
+  address. Misses are counted in a window, not a streak, so interleaving a real id cannot reset
+  them. Refusals are JSON (`403`/`429` with `Retry-After`), not text/plain. The startup log prints
+  the mail check's limits on a line of their own.
 - **Every tool now carries MCP annotations.** All 42 set only Name and Description, and the SDK's
   documented defaults are `DestructiveHint: true` and `OpenWorldHint: true` — so `kb_search`,
   `comm_directory` and `ken_version` each advertised themselves to every client as a destructive
@@ -32,6 +50,12 @@ same change — never "docs later".
   has always logged, so a scripted CLI mint was the one station whose origin left no journal trace.
 
 ### Fixed
+- **`TestPendingCountersMatchBothPartyForms` never tested the endpoint party form.** It re-filed a
+  delivery under `PartyOf(alpha)`, which for a bound endpoint *is* the station form, so the
+  `UPDATE` changed nothing and the test passed with the `e:<rowid>` half of the predicate deleted
+  (found by mutation while writing the mail check's copy of it). Both now re-file under
+  `endpointPartyKey`, and assert that a row actually moved.
+- docs/OPERATION.md said 13 of 47 settings read an environment variable; there were 45. Now 18 of 50.
 - **`station_me`'s connect-time copy said "nothing to approve" and was true of Ken while false of
   the experience** — a claude.ai session read it and was refused a task write minutes later. It now
   says the client may still ask, that the prompt is the client's rather than Ken's, and — the part

@@ -31,6 +31,16 @@ type Values struct {
 	LockoutSec  int
 	AllowCIDRs  string
 
+	// The mail-waiting check (POST /comm/waiting) has its own per-IP budget and its own
+	// block, separate from the fields above: every Claude Code session on a workstation
+	// shares one address, so it must neither draw on the shared budget nor feed the block
+	// that covers all of Ken. See ratelimit.ProbeGuard.
+	WaitingPerMin        int
+	WaitingBurst         int
+	WaitingMissLimit     int
+	WaitingMissWindowSec int
+	WaitingLockoutSec    int
+
 	LoginMaxFails   int
 	LoginLockoutSec int
 	SessionTTLHours int
@@ -171,6 +181,18 @@ var Fields = []Field{
 		func(v Values) int { return v.BlockAfter }, func(v *Values, n int) { v.BlockAfter = n }, 0, 1_000_000),
 	intField("rl_lockout_sec", "Rate limiting", "Auto-block lockout (seconds)", "How long an auto-blocked IP stays blocked. Blocking is a 403 returned before the request enters the chain, so a blocked caller costs nothing to refuse.",
 		func(v Values) int { return v.LockoutSec }, func(v *Values, n int) { v.LockoutSec = n }, 1, 7*24*3600),
+	intField("rl_waiting_rpm", "Rate limiting", "Mail check: per-IP requests / minute",
+		"Sustained rate for POST /comm/waiting, the unauthenticated \"is mail waiting?\" check. Its own budget, not the per-IP one above: every session on one machine shares an address.",
+		func(v Values) int { return v.WaitingPerMin }, func(v *Values, n int) { v.WaitingPerMin = n }, 1, 1_000_000),
+	intField("rl_waiting_burst", "Rate limiting", "Mail check: per-IP burst", "Bucket size for the mail check.",
+		func(v Values) int { return v.WaitingBurst }, func(v *Values, n int) { v.WaitingBurst = n }, 1, 1_000_000),
+	intField("rl_waiting_miss_limit", "Rate limiting", "Mail check: block after misses",
+		"Lookups naming no station (or malformed) within the window below before an address is blocked from the mail check. Blocks the mail check only, never the rest of Ken (0 = never block).",
+		func(v Values) int { return v.WaitingMissLimit }, func(v *Values, n int) { v.WaitingMissLimit = n }, 0, 1_000_000),
+	intField("rl_waiting_miss_window_sec", "Rate limiting", "Mail check: miss window (seconds)", "The window misses are counted in.",
+		func(v Values) int { return v.WaitingMissWindowSec }, func(v *Values, n int) { v.WaitingMissWindowSec = n }, 1, 7*24*3600),
+	intField("rl_waiting_lockout_sec", "Rate limiting", "Mail check: block lockout (seconds)", "How long a blocked address is refused by the mail check. Each block is logged with the address.",
+		func(v Values) int { return v.WaitingLockoutSec }, func(v *Values, n int) { v.WaitingLockoutSec = n }, 1, 7*24*3600),
 	{Key: "rl_allow_cidrs", Group: "Rate limiting", Label: "Always-allowed CIDRs", Type: "cidrs", Live: true,
 		Help: "Comma-separated CIDRs exempt from rate limiting (loopback is always exempt).",
 		Get:  func(v Values) string { return v.AllowCIDRs },
@@ -492,22 +514,28 @@ func (l *Live) swap(s *Snapshot) {
 // so the settings UI starts from what the operator configured at launch.
 func DefaultsFromEnv() Values {
 	v := Values{
-		RLEnabled:       envBool("KEN_RATELIMIT", true),
-		IPPerMin:        envInt("KEN_RATELIMIT_IP_RPM", 120),
-		IPBurst:         envInt("KEN_RATELIMIT_IP_BURST", 120),
-		TokenPerMin:     envInt("KEN_RATELIMIT_TOKEN_RPM", 120),
-		TokenBurst:      envInt("KEN_RATELIMIT_TOKEN_BURST", 60),
-		BlockAfter:      envInt("KEN_RATELIMIT_BLOCK_AFTER", 100),
-		LockoutSec:      envInt("KEN_RATELIMIT_LOCKOUT_SEC", 900),
-		AllowCIDRs:      strings.TrimSpace(os.Getenv("KEN_RATELIMIT_ALLOW_CIDRS")),
-		LoginMaxFails:   5,
-		LoginLockoutSec: 300,
-		SessionTTLHours: 12,
-		TrustedProxies:  strings.TrimSpace(os.Getenv("KEN_TRUSTED_PROXIES")),
-		TLSMode:         strings.ToLower(strings.TrimSpace(envOr("KEN_TLS", "off"))),
-		TLSDomains:      strings.TrimSpace(os.Getenv("KEN_TLS_DOMAINS")),
-		TLSEmail:        strings.TrimSpace(os.Getenv("KEN_TLS_EMAIL")),
-		CurationLangs:   strings.TrimSpace(os.Getenv("KEN_CURATION_LANGS")),
+		RLEnabled:   envBool("KEN_RATELIMIT", true),
+		IPPerMin:    envInt("KEN_RATELIMIT_IP_RPM", 120),
+		IPBurst:     envInt("KEN_RATELIMIT_IP_BURST", 120),
+		TokenPerMin: envInt("KEN_RATELIMIT_TOKEN_RPM", 120),
+		TokenBurst:  envInt("KEN_RATELIMIT_TOKEN_BURST", 60),
+		BlockAfter:  envInt("KEN_RATELIMIT_BLOCK_AFTER", 100),
+		LockoutSec:  envInt("KEN_RATELIMIT_LOCKOUT_SEC", 900),
+		AllowCIDRs:  strings.TrimSpace(os.Getenv("KEN_RATELIMIT_ALLOW_CIDRS")),
+
+		WaitingPerMin:        envInt("KEN_RATELIMIT_WAITING_RPM", 240),
+		WaitingBurst:         envInt("KEN_RATELIMIT_WAITING_BURST", 60),
+		WaitingMissLimit:     envInt("KEN_RATELIMIT_WAITING_MISS_LIMIT", 10),
+		WaitingMissWindowSec: envInt("KEN_RATELIMIT_WAITING_MISS_WINDOW_SEC", 600),
+		WaitingLockoutSec:    envInt("KEN_RATELIMIT_WAITING_LOCKOUT_SEC", 900),
+		LoginMaxFails:        5,
+		LoginLockoutSec:      300,
+		SessionTTLHours:      12,
+		TrustedProxies:       strings.TrimSpace(os.Getenv("KEN_TRUSTED_PROXIES")),
+		TLSMode:              strings.ToLower(strings.TrimSpace(envOr("KEN_TLS", "off"))),
+		TLSDomains:           strings.TrimSpace(os.Getenv("KEN_TLS_DOMAINS")),
+		TLSEmail:             strings.TrimSpace(os.Getenv("KEN_TLS_EMAIL")),
+		CurationLangs:        strings.TrimSpace(os.Getenv("KEN_CURATION_LANGS")),
 
 		// COMM defaults mirror comm.DefaultLimits(). They are duplicated rather than
 		// imported because internal/settings must not depend on an optional

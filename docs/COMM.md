@@ -990,6 +990,74 @@ Enforced properties of the relay:
 
 ---
 
+## 11a. The mail check — `POST /comm/waiting`
+
+**One question, answered to anyone: is mail waiting for this station?** It needs no MCP
+connection, no credential and no Anthropic proxy in the path — `curl` is enough. It is the first
+piece of making Claude Code sessions independent of the claude.ai connector (task t-RTv78Q8R):
+the connector failures of 2026-10-26 showed that a session whose only way to learn about mail
+runs through that proxy has no way to learn about it when the proxy fails.
+
+```
+$ curl -s -X POST https://kb.example/comm/waiting -d '{"station":"FUPgwKy8HZ9eYq0H"}'
+{"mail":true}
+```
+
+| Request | Answer |
+|---|---|
+| `POST`, body exactly `{"station":"<16-character station id>"}`, station exists | `200 {"mail":true}` or `200 {"mail":false}` |
+| the id names no station | `200 {"mail":false}` — the same bytes as a real, empty station — **and a miss** |
+| any other body (another field, trailing data, wrong length or alphabet, over 256 bytes) | `400 {"error":…}` — **a miss** |
+| any method but `POST` | `405 {"error":…}`, `Allow: POST` — **a miss** |
+| too many requests from the address | `429 {"error":…}` with `Retry-After` |
+| the address is blocked | `403 {"error":…}` |
+| Ken could not read its database | `503 {"error":…}` — not a miss |
+
+Every answer is `application/json` with `Cache-Control: no-store`; refusals also close the
+connection.
+
+**"Waiting" means queued and still deliverable** — the same meaning as `comm_channels`'
+`pending_total`, in every scope (pair, room, broadcast) and under both party forms. Mail already
+delivered but not yet acked is **not** waiting: the station has it, and counting it would nag a
+session on every prompt while it works on the message. **Asking delivers nothing**: no
+`first_delivered_at`, no expiry restamp, no claim.
+
+**Design, and why each restriction is there** (Vlad, 2026-11-17):
+
+- **The answer is one boolean.** Never the messages, a count or a sender. With no authentication
+  the answer must be worth nothing beyond "go and poll". Reading the mail stays on `comm_poll`.
+- **The caller sends the station id, never the session key.** A station id is visible to every
+  Ken user (`comm_directory` lists it) and grants nothing. A session key selects a station's
+  conversation; an unauthenticated endpoint that accepted one would let anyone test guesses.
+- **POST with the id in the body**, so it stays out of URLs — out of logs, histories and caches —
+  and browsers, link previews and scanners, which send GET, never perform a lookup.
+- **An unknown id is answered exactly like an empty station**, so the answer cannot be used to
+  test whether an id exists.
+- **Misses get the address blocked from this endpoint, and only this endpoint.** Asking about
+  stations that do not exist, malformed bodies and wrong methods all count. The block is the one
+  place an existing id can be told from a missing one: a prober can confirm one candidate for
+  `rl_waiting_miss_limit` requests and a lockout. Ids are 16 random base-62 characters (about 95
+  bits), so that confirms an id that has already leaked; it cannot find one.
+
+**What stays exposed, accepted deliberately:** whoever knows a station's id can learn *when* it
+has mail waiting — traffic timing, not content.
+
+**Rate limiting is its own.** The endpoint is routed around Ken's outer per-IP guard and has its
+own budget and miss block (`rl_waiting_*`, docs/OPERATION.md "Rate limiting"), because every
+Claude Code session on a workstation shares one address: the mail check must neither spend the
+budget the rest of Ken runs on nor feed a block that would cut the whole machine off Ken.
+
+**Using it from Claude Code.** A hook knows the session key, not the station id, so each project
+keeps its station id in a file beside `.claude/ken-session-key`, written once from what
+`station_me` returns. A `SessionStart` or `UserPromptSubmit` hook then needs one `curl` and, on
+`{"mail":true}`, tells the session to call `comm_poll`.
+
+**Not in this slice:** waiting for mail to arrive (a held request, as `comm_poll` does) — the
+check answers at once, and a held variant is added only if polling it turns out to cost
+something; reading, acking and replying outside MCP.
+
+---
+
 ## 12. Open questions
 
 - **Multi-instance.** Wakeups between a parked poll and an incoming send are in-process, so they do

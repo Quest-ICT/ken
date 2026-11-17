@@ -225,21 +225,7 @@ func (rb *ReloadableBucket) Store(b *Bucket) { rb.p.Store(b) }
 // Allow delegates to the current bucket (a nil bucket is nil-safe -> allowed).
 func (rb *ReloadableBucket) Allow(key string) (bool, time.Duration) { return rb.p.Load().Allow(key) }
 
-func (g *IPGuard) allowed(ip string) bool {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
-		return false
-	}
-	if parsed.IsLoopback() {
-		return true
-	}
-	for _, n := range g.allow {
-		if n.Contains(parsed) {
-			return true
-		}
-	}
-	return false
-}
+func (g *IPGuard) allowed(ip string) bool { return ipAllowed(ip, g.allow) }
 
 func (g *IPGuard) blocked(key string) bool {
 	if g.blockAfter <= 0 {

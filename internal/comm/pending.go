@@ -150,3 +150,32 @@ func (s *Store) countPending(ctx context.Context, ep *Endpoint, extra string) (i
 func replacePartyPlaceholder(sql, pred string) string {
 	return strings.Replace(sql, "%PARTY%", pred, 1)
 }
+
+// StationHasMail answers the one question the unauthenticated mail-waiting endpoint
+// (POST /comm/waiting) may answer: is anything queued and still deliverable for this
+// station? It returns a count only so it can share the counters' clause; callers outside
+// this package must reduce it to a yes/no and never expose the number.
+//
+// BY STATION ID, WITHOUT AN ENDPOINT, because the caller is not a connection: it is a hook
+// or a script holding nothing but the station's public id. That is why the party
+// predicate is built here rather than by partyPredicate, which needs an Endpoint. The two
+// forms are the same two forms partyColumnPredicate matches — 's:<station>', plus
+// 'e:<rowid>' for any endpoint bound to the station, whose rows may have been filed while
+// it was still unbound. Matching only the station form would answer "no mail" over mail a
+// poll would hand over, which is the drift this file exists to prevent.
+//
+// SAME MEANING AS EVERY COUNTER HERE: queued and not expired. Delivered-but-unacked is
+// mail the station already has, so it does not count. Reading delivers nothing, stamps
+// nothing and starts no clock: this must never become a second first-delivery.
+//
+// An id that names no station simply has no deliveries and returns 0. Whether the station
+// exists is ken.db's question, answered by the caller.
+func (s *Store) StationHasMail(ctx context.Context, stationID string) (int, error) {
+	pred := `(d.party_key = ? OR d.party_key IN (SELECT 'e:' || id FROM endpoint WHERE station_id = ?))`
+	q := `SELECT COUNT(*)` + pendingSQL(replacePartyPlaceholder(pendingScopeSQL, pred))
+	var n int
+	if err := s.R.QueryRowContext(ctx, q, stationParty(stationID), stationID).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
