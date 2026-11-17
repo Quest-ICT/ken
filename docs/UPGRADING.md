@@ -34,6 +34,56 @@ is what changed, this is what will bite.
 
 ## Unreleased
 
+## 6.1.0
+
+### A mail check any session can make with `curl`
+
+**NO DATABASE STEP.** ken.db stays at 27, comm.db at 22.
+
+```
+sudo ken-upgrade --version 6.1.0 && sudo systemctl restart ken
+```
+
+**What is added.** `POST /comm/waiting` with the body `{"station":"<16-character station id>"}`
+answers `{"mail":true}` or `{"mail":false}` — to anyone, with no MCP connection and no credential.
+Nothing else is in the answer: not the messages, not a count, not a sender. Asking delivers
+nothing and starts no expiry clock. The protocol and the reason for each restriction are in
+docs/COMM.md §11a. Clients use it from a Claude Code hook, so a session learns about mail even
+when the claude.ai connector is failing.
+
+**Check after the restart** (any real station id; `comm_directory` lists them):
+
+```
+curl -s -X POST https://<your host>/comm/waiting -d '{"station":"<id>"}'
+```
+
+It must print `{"mail":true}` or `{"mail":false}`. A `404` means the proxy in front of Ken does
+not forward the path, or the binary is still the old one.
+
+**Its own rate limit and block — five new live settings, defaults applied automatically.**
+`rl_waiting_rpm` 240, `rl_waiting_burst` 60, `rl_waiting_miss_limit` 10 (0 = never block),
+`rl_waiting_miss_window_sec` 600, `rl_waiting_lockout_sec` 900; env
+`KEN_RATELIMIT_WAITING_{RPM,BURST,MISS_LIMIT,MISS_WINDOW_SEC,LOCKOUT_SEC}`. The endpoint is
+routed around the shared per-IP guard, so it neither spends the budget the rest of Ken runs on
+nor feeds that guard's auto-block. A *miss* is a lookup of a station that does not exist, a
+malformed body or a wrong method; 10 misses within 600 s block that address **from the mail
+check only**, for 900 s. The startup log gains a second rate-limit line naming these numbers, and
+each block is logged with the address (`ratelimit: /comm/waiting blocked <address> …`).
+
+**It needs Ken to see the real client address.** Behind a reverse proxy, `trusted_proxies` /
+`KEN_TRUSTED_PROXIES` must name the proxy, as for the existing guard. Otherwise every caller has
+the proxy's address: one shared budget and one shared block for everybody — or, if the proxy
+connects over loopback, no limit and no block at all, because loopback is always allowlisted.
+
+**Every tool now carries MCP annotations** (read-only, idempotent, destructive, closed-world).
+A client that prompted for approval because an unannotated tool reads as "destructive, open
+world" should prompt less. Tool metadata pins when a conversation begins, so only conversations
+started after the restart see it.
+
+**Fixed:** 6.0.1's tool-call guard checked inherited fields on a revision, so an entry quoting a
+tool-call marker in a field the revision did not touch could not be enhanced. It now checks only
+the fields the call sent.
+
 ## 6.0.1
 
 ### A malformed tool call is refused instead of being stored as prose

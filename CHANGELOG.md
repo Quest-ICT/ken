@@ -15,6 +15,8 @@ same change — never "docs later".
 
 ## [Unreleased]
 
+## [6.1.0] — 2026-11-17
+
 ### Added
 - **`POST /comm/waiting` — "is mail waiting for this station?", answered to anyone, with no MCP
   and no credential.** The body is exactly `{"station":"<16-character station id>"}`; the answer is
@@ -62,8 +64,6 @@ same change — never "docs later".
   the affected session added — that **a refused call never reaches Ken and nothing is queued**, so
   it must be re-sent. "No approval received" reads as *pending* to anyone who has not seen the
   counters, and a session that believes its save is queued will not send it again.
-
-### Fixed
 - **6.0.1's tool-call guard ran over INHERITED fields on a revision, so any entry that legitimately
   quotes a marker became unenhanceable.** ken-prod hit it within the hour of taking the release, by
   accident, patching only `code` on an entry whose `solution` quotes `<parameter name=` because the

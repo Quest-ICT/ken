@@ -64,6 +64,13 @@ afterwards. **A human should be able to open this file and know exactly where we
 > **Slice 7 — retire the channel — is the item this wave did NOT close**, and it is what keeps the
 > COMM and station surfaces outside the byte-level compatibility contract.
 
+**Released: 6.1.0** (2026-11-17) — `POST /comm/waiting`, a mail check answered with one boolean to
+anyone holding a station id, so a Claude Code hook can learn about mail with `curl` while the
+claude.ai connector is down. First slice of t-RTv78Q8R (Ken independent of Anthropic's
+connector, Vlad 2026-11-17). It has its own rate limit and a miss block confined to the endpoint
+(`rl_waiting_*`). Also: every tool carries MCP annotations (unannotated read as "destructive, open
+world"), and 6.0.1's tool-call guard checks only the fields a revision sends.
+
 **Released: 6.0.1** (2026-09-08) — `kb_save` refuses a body containing its own tool-call syntax
 instead of storing it as prose. ken-prod measured 22 of 118 entries (19%) on the pre-rebuild KB
 with the whole body crammed into `problem` and the other fields NULL; `validateContent` checked
